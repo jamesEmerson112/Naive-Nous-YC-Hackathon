@@ -266,6 +266,19 @@ The hackathon asks for "a company run by agents". In the docs, a company comes f
   - **Media skills** turn 1–3 public short videos into a skill. ([api/media](https://usenaive.ai/docs/api/media), [api/characters](https://usenaive.ai/docs/api/characters), [api/media-skills](https://usenaive.ai/docs/api/media-skills))
 - **3D assets**: generate a textured 3D model from a description or photos, or build a dimensioned part in code. ([capabilities/3d](https://usenaive.ai/docs/capabilities/3d))
 - **Apps**: hosted web apps, covering provisioning, deployments, secrets, custom domains, the app database, and the app's own MCP endpoint. **Fullstack** apps add a managed **database** and object **storage**. ([api/apps](https://usenaive.ai/docs/api/apps), [api/database](https://usenaive.ai/docs/api/database), [api/storage](https://usenaive.ai/docs/api/storage))
+- **App MCP endpoint** (the app's `mcp` path, e.g. `/mcp`):
+  - Setting it mints a bearer token, stored as the app secret `VETTA_MCP_TOKEN`.
+  - Every agent that can reach the app is offered its tools as `<app-name>.<tool>`, under the agent's normal `allow` / `ask` / `deny` policy.
+  - The platform adds the token on its side, so it never reaches the sandbox.
+  - This is how the agency blueprint gives its crew CRM tools, and a way to wrap any outside API (see [../sponsors.md](../sponsors.md)).
+
+  ([api/apps](https://usenaive.ai/docs/api/apps))
+- **Store payments**: "A store app takes card payments on its owner's own Stripe account. Naive holds the only Stripe key."
+  - An owner starts Stripe onboarding with `POST /v1/apps/{id}/payments/onboarding`.
+  - The app's own key opens a Stripe Checkout with `POST /v1/apps/{id}/payments/checkouts`.
+  - An app with no server gets paid through pay links and invoices. These go through the template agent's `payments_request` tool, which asks the owner before every call.
+
+  ([api/apps](https://usenaive.ai/docs/api/apps))
 - **Paid advertising**: create and run paid campaigns through a connected advertiser account. It is in early access and turned on per organization, and campaigns start paused. ([api/ads](https://usenaive.ai/docs/api/ads), [sdk/ads](https://usenaive.ai/docs/sdk/ads))
 - **Reviews**: "Record a person's approve, reject or edit of agent work given outside the approval box." ([api/reviews](https://usenaive.ai/docs/api/reviews))
 

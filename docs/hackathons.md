@@ -6,7 +6,7 @@ Snapshot: 2026-11-07. Times are Pacific (PST) unless marked.
 |---|---|---|
 | Host | Naïve + Y Combinator | Nous Research |
 | Where | YC office, San Francisco (in person, both days) | Online |
-| Build window | **Sat Nov 7 1:00 PM → Sun Nov 8 11:00 AM** | Wed Nov 4 → **Wed Nov 11 5:00 PM EST (2:00 PM PST)** |
+| Build window | **Sat Nov 7 11:30 AM → Sun Nov 8 11:00 AM** (on-site schedule) | Wed Nov 4 → **Wed Nov 11 5:00 PM EST (2:00 PM PST)** |
 | Must use | The Naïve SDK | Hermes Agent's plugin system |
 | What you submit | A live demo of an agent-run company | A plugin: a catalog PR, a demo video on X, and a form |
 | Judged on | How much of the company runs without you | Usefulness, reliability, polish, creativity |
@@ -29,32 +29,47 @@ The page suggests four kinds of business, none of them required tracks:
 - **Commerce:** agents choose what to sell, run campaigns, handle customers, and adjust based on sales.
 - **Software:** agents build a product, bring in users, handle support, and improve from feedback.
 
-**Schedule**
+The on-site slides (photos, Nov 7) replace the website wherever the two differ. Ideas for what to build: [scenarios.html](scenarios.html). How each sponsor plugs into Naïve: [sponsors.md](sponsors.md).
+
+**Schedule** (Saturday from the on-site slide; Sunday from the website)
 
 | Sat Nov 7 | | Sun Nov 8 | |
 |---|---|---|---|
-| 11:00 AM | Doors open | 9:00 AM | Breakfast |
-| 11:30 AM | Welcome note | **11:00 AM** | **Hacking stops, judging begins** |
-| 12:00 PM | Lunch | 12:00 PM | Lunch |
-| **1:00 PM** | **Hacking begins** | 1:00 PM | Final presentations |
-| 6:30 PM | Dinner | 1:45 PM | Winners + prizes |
-| | | 2:30 PM | Event ends |
+| 10:30 AM | Doors open | 9:00 AM | Breakfast |
+| **11:30 AM** | **Hacking begins** | **11:00 AM** | **Hacking stops, judging begins** |
+| 11:30 AM | Welcome note · Sean Dorje, CEO @ Naïve | 12:00 PM | Lunch |
+| 11:45 AM | Keynote · Nikita Shamgunov, CEO @ Neon | 1:00 PM | Final presentations |
+| 12:15 PM | Timo Beckmann, Founding Team @ Mobilerun | 1:45 PM | Winners + prizes |
+| 12:30 PM | Adi Singh, Co-Founder @ AgentMail | 2:30 PM | Event ends |
+| 12:45 PM | Shengkun Ye, CEO @ Monid | | |
+| 1:00 PM | Lunch | | |
+| 6:00 PM | Dinner | | |
 
-The page's metadata says the event starts and ends at 19:00 UTC (11 AM PST) on Nov 7 and Nov 8, which matches "doors open" and "hacking stops". The written schedule above runs until 2:30 PM on Nov 8. Registration closed at 11 AM on Nov 7.
+The website had doors at 11:00, hacking at 1:00 PM and dinner at 6:30 PM; the slide moves all three earlier. That makes the build window about 23.5 hours.
 
-**Prizes**
-- 1st place: iPhone 18 Pro / AirPods 5, a **guaranteed YC interview**, and $50,000+ in sponsor credits.
-- 2nd place: Mac mini / AirPods 5.
-- 3rd place: Mac mini.
-- Category prizes ($15k+ total, including Pocket AI notetakers). The page names them two different ways:
-  - "Most Likely to Become a Unicorn · People's Choice · Best Mobile Automation"
-  - "Most likely to scale to millions · People's Choice · Best Design"
-- Every participant gets $1k+ in Naïve and sponsor credits.
+**Prize tracks: "Four ways to win"** (on-site slide). "Main track goes to the company most likely to scale to millions."
 
-**Best Mobile Automation track (run by Mobilerun):** agent-run businesses working on real phones and apps, for example publishing content, comparing ride quotes, placing delivery orders, or testing apps.
-- Every team gets 72 hours of Android and iOS device minutes and six team seats. iPhones are first come, first served.
-- Prizes are cloud iPhone packages, each lasting 12 months: 1st gets 3 ($8,520), 2nd gets 2 ($5,760), 3rd gets 1 ($3,000).
-- Naïve also has its own mobile devices: `computer/mobile`, `client.mobileDevices`, `naive mobile`.
+| Track | For | 1st | 2nd | 3rd |
+|---|---|---|---|---|
+| **Main** | Best autonomous company | iPhone 18 Pro / AirPods 5, plus a **guaranteed YC interview** and **$50K+ sponsor credits** | Mac mini / AirPods 5 | Mac mini (4th–6th: Pocket AI notetaker) |
+| **Mobilerun** | Best use of Mobilerun | 3 virtual iPhones ($8,520 value) | 2 virtual iPhones ($5,760) | 1 virtual iPhone ($3,000) |
+| **AgentMail** | Best use of AgentMail | $500 gift card + 6 months of AgentMail free | 6 months free | 6 months free |
+| **Monid** | Best use of Monid | $1,500 Monid credits + $1,500 Visa gift card | $1,000 + $1,000 | $500 + $500 |
+
+- Mobilerun also gives every team a **Developer plan** (slide). The website adds 72 hours of Android and iOS device minutes and six team seats; iPhones are first come, first served.
+- The website's category names (People's Choice, Best Design, Most Likely to Become a Unicorn) aren't on the slide.
+- Neither source says whether one company can win the Main track and a sponsor track together. Ask the organizers.
+- Naïve has its own cloud phones (`computer/mobile`, `client.mobileDevices`, `naive mobile`). Nothing says whether they count as "use of Mobilerun".
+
+**Credits every hacker gets** (on-site slide, "Credits for every hacker, from the stack you'll build on")
+
+| Sponsor | Credits |
+|---|---|
+| Naïve | $250 ("Need more Naïve credits? Ask the team.") |
+| Stripe | "$500 credits + inc. fee waived" *(inferred: probably the incorporation fee)* |
+| OpenAI | $100 API credits |
+| Apify | $50 |
+| Tavily | 8K credits |
 
 **Rules:**
 - Attend both days in SF; only approved attendees may attend.
@@ -62,7 +77,7 @@ The page's metadata says the event starts and ends at 19:00 UTC (11 AM PST) on N
 - Minimum age is 15; ages 15–17 need YC's parental consent form.
 - Bring a laptop and charger.
 
-**Sponsors:** OpenAI, HubSpot, Stripe, Vercel, OpenRouter, AgentMail, Luxor, Monid, Apify, Mobilerun, Render, Neon.
+**Sponsors** (on-site slide, "Twelve partners backing the weekend"): OpenAI, HubSpot, Stripe, Vercel, OpenRouter, AgentMail, Luxor, Monid, Apify, Neon, Mobilerun, Tavily. The website listed Render instead of Tavily.
 
 ---
 

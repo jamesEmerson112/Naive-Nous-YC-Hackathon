@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naïve Hackathon Scenarios</title>
+<link rel="stylesheet" href="diagrams.css">
+</head>
+<body>
+<main>
+  <h1>Naïve hackathon: four scenarios</h1>
+  <p class="lede">One agent-run company per prize track, showing how the judging, the Naïve pieces, the sponsor tools and your credits fit together. The facts come from the event page, the on-site slides, the Naïve docs and each sponsor's docs. The companies themselves are <strong>ideas</strong>. Details: <a href="hackathons.md">hackathons.md</a> · <a href="sponsors.md">sponsors.md</a> · <a href="naive/terminology.md">naive/terminology.md</a>.</p>
+  <nav class="toc" aria-label="Sections">
+    <a href="#dots">The dots</a>
+    <a href="#wiring">Wiring a sponsor</a>
+    <a href="#a">A · Main</a>
+    <a href="#b">B · Mobilerun</a>
+    <a href="#c">C · AgentMail</a>
+    <a href="#d">D · Monid</a>
+    <a href="#clock">The clock</a>
+    <a href="#ask">Ask on site</a>
+  </nav>
+
+  <!-- ───────────────────────── THE DOTS ───────────────────────── -->
+  <section class="naive" id="dots" aria-labelledby="dots-h">
+    <h2 id="dots-h">The dots: from what wins to what pays for it</h2>
+    <p class="muted">Read left to right (top to bottom on a phone). Each scenario below is one path through these four boxes.</p>
+    <figure>
+      <div class="flow">
+        <div class="band accent">
+          <p class="label">What wins</p>
+          <ul class="plain">
+            <li>Main track: the company "most likely to scale to millions" (slide)</li>
+            <li>Judges: "how much of the company runs without you" (event page)</li>
+            <li>Demo: what agents delivered, what they decided, where you stepped in</li>
+          </ul>
+        </div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent">
+          <p class="label">Naïve pieces that prove it</p>
+          <ul class="plain">
+            <li>Blueprint + template, applied with <code>naive up</code></li>
+            <li>Board cards: who did what overnight</li>
+            <li>Deployments (cron) that wake the crew</li>
+            <li>Approvals: each <code>ask</code> records who said yes, which shows "where you stepped in"</li>
+            <li>Digest and <code>session_spend</code>: what happened and what it cost</li>
+          </ul>
+        </div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent">
+          <p class="label">Sponsor tool per track</p>
+          <ul class="plain">
+            <li>Mobilerun: cloud phones, MCP <span class="fit yes">fits</span></li>
+            <li>AgentMail: inboxes, MCP <span class="fit maybe">check auth</span></li>
+            <li>Monid: 2,800+ tools, MCP <span class="fit maybe">check auth</span></li>
+            <li>Stripe: money in through a Naïve app <span class="fit yes">fits after setup</span></li>
+          </ul>
+        </div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent">
+          <p class="label">Paid with (per hacker)</p>
+          <ul class="plain">
+            <li>Naïve $250: the agents' model calls, computers and tools</li>
+            <li>Stripe $500 + fee waived</li>
+            <li>OpenAI $100 · Apify $50 · Tavily 8K</li>
+            <li>Mobilerun Developer plan (per team)</li>
+          </ul>
+        </div>
+      </div>
+      <figcaption>The fit markers come from <a href="sponsors.md">sponsors.md</a>. Naïve's vault sends a bearer token: Mobilerun accepts one, AgentMail documents an <code>x-api-key</code> header, and Monid documents an OAuth login.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── WIRING ───────────────────────── -->
+  <section class="naive" id="wiring" aria-labelledby="wiring-h">
+    <h2 id="wiring-h">Four ways to wire a sponsor into a Naïve agent</h2>
+    <p class="muted">This is the weekend's biggest technical decision. Naïve's MCP connector only reaches remote HTTPS servers, using a token from its vault. An agent's config can't carry a key, and the vault can't hand one to the sandbox.</p>
+    <figure>
+      <div class="grid">
+        <div class="band accent">
+          <p class="title">1 · Native Naïve tool</p>
+          <div class="loop after-title"><span class="step">agent</span><span aria-hidden="true">→</span><span class="step">Naïve tool</span></div>
+          <ul class="plain">
+            <li>Persona inbox <code>email.send</code>, the <code>mobile</code> tool (<code>pi</code> only), <code>web_search</code>, the CRM, store payments</li>
+            <li>Fastest to build, but it doesn't count as using a sponsor <em>(inferred)</em></li>
+          </ul>
+        </div>
+        <div class="band okcard">
+          <p class="title">2 · Direct MCP + vault</p>
+          <div class="loop after-title"><span class="step">agent</span><span aria-hidden="true">→</span><span class="step"><code>mcp_servers</code></span><span aria-hidden="true">→</span><span class="step">vault adds bearer</span><span aria-hidden="true">→</span><span class="step">sponsor</span></div>
+          <ul class="plain">
+            <li><strong>Mobilerun fits:</strong> <code>api.mobilerun.ai/v1/mcp</code> takes <code>Bearer dr_sk_…</code></li>
+            <li>Tools default to <code>ask</code>, so use <code>pi</code> and allow the safe ones</li>
+          </ul>
+        </div>
+        <div class="band bridgecard">
+          <p class="title">3 · App-wrapped MCP</p>
+          <div class="loop after-title"><span class="step">agent</span><span aria-hidden="true">→</span><span class="step"><code>&lt;app&gt;.&lt;tool&gt;</code></span><span aria-hidden="true">→</span><span class="step">your app's <code>/mcp</code> holds the key</span><span aria-hidden="true">→</span><span class="step">sponsor API</span></div>
+          <ul class="plain">
+            <li><strong>Fits any auth style:</strong> AgentMail (<code>x-api-key</code>), Monid, Tavily, Apify</li>
+            <li>Costs you one small server. Naïve injects <code>VETTA_MCP_TOKEN</code> for you</li>
+          </ul>
+        </div>
+        <div class="band warncard">
+          <p class="title">4 · Key in the sandbox (last resort)</p>
+          <div class="loop after-title"><span class="step">agent</span><span aria-hidden="true">→</span><span class="step"><code>bash</code> + a key in a file</span><span aria-hidden="true">→</span><span class="step">sponsor REST API</span></div>
+          <ul class="plain">
+            <li>Fastest when MCP auth doesn't fit and a wrapper would cost the afternoon</li>
+            <li>The model and the transcript see the key. Use a throwaway key and revoke it after the weekend <em>(inferred)</em></li>
+          </ul>
+        </div>
+      </div>
+      <figcaption>Sources: usenaive.ai/docs <code>capabilities/tools</code> (MCP connector), <code>identity/vault</code>, <code>api/apps</code> (app MCP endpoint); sponsor MCP docs listed in sponsors.md.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── A · MAIN ───────────────────────── -->
+  <section class="naive" id="a" aria-labelledby="a-h">
+    <h2 id="a-h">A · Self-running agency <span class="tag">Main track</span></h2>
+    <p class="muted">Idea: clone Naïve's agency blueprint, pick a niche, and let its seven-agent crew find clients, write proposals and keep the site fresh while you sleep.</p>
+    <figure>
+      <div class="flow">
+        <div class="band accent"><p class="label">Trigger</p><p class="note">Weekday timers, plus leads from the public site's contact form (<code>POST /api/leads</code>)</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Board</p><p class="note">Day-one tasks become cards. Agents hand work on, e.g. gap-researcher → content-writer</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Tools</p><p class="note">The dashboard's own <code>/mcp</code> (<code>dashboard.*</code>), <code>web_search</code> and <code>web_fetch</code>, and the persona's inbox</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Output</p><p class="note">Leads in the CRM, proposals and posts drafted, site edits waiting on Approvals</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band tint"><p class="label">Money</p><p class="note">Stripe through Naïve's payment routes</p></div>
+      </div>
+      <div class="band after-frame">
+        <p class="label">Crew (from the blueprint; <code>seo-geo</code> adds a paid-media planner)</p>
+        <div class="crew">
+          <div class="member"><b>sales</b><small>prospects become leads with a why-now; drafts openers</small></div>
+          <div class="member"><b>proposal-writer</b><small>proposal skeleton and package tiers</small></div>
+          <div class="member"><b>client-manager</b><small>onboarding and a 30-day calendar</small></div>
+          <div class="member"><b>gap-researcher</b><small>competitor gaps, handed to content</small></div>
+          <div class="member"><b>content-writer</b><small>calendar and drafts</small></div>
+          <div class="member"><b>content-reviser</b><small>revises the weakest posts</small></div>
+          <div class="member"><b>site-builder</b><small>rewrites the public site via <code>update_site</code></small></div>
+        </div>
+      </div>
+      <div class="grid after-frame">
+        <div class="band okcard"><p class="label">Show the judges</p><ul class="plain">
+          <li>Leads, openers and proposals the crew made overnight</li>
+          <li>The Approvals queue: where you stepped in (<code>email.send</code>, <code>update_site</code>)</li>
+          <li>Digest, plus spend against the $250</li>
+          <li>Growth story: per-client crews (<code>crew_per_client</code>)</li>
+        </ul></div>
+        <div class="band warncard"><p class="label">Check first</p><ul class="plain">
+          <li>The persona must exist, or agents get no mailbox tools</li>
+          <li>Timers are written in <code>America/New_York</code>; set your own time zone</li>
+          <li>Which Stripe route the dashboard app can use (store checkout or pay links)</li>
+        </ul></div>
+        <div class="band bridgecard"><p class="label">Hermes spin-off <span class="tag hermes">idea</span></p><p class="note">A Python plugin (<code>ctx.register_tool</code>) that reads and moves Naïve board cards over the REST API, so a Hermes profile can work the same board.</p></div>
+      </div>
+      <figcaption>Sources: github.com/usenaive/agency-blueprint (README, <code>naive.config.ts</code>); usenaive.ai/docs <code>concepts/templates</code>, <code>api/apps</code>.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── B · MOBILERUN ───────────────────────── -->
+  <section class="naive" id="b" aria-labelledby="b-h">
+    <h2 id="b-h">B · Mobile app QA studio <span class="tag">Mobilerun track</span></h2>
+    <p class="muted">Idea: app makers send a store link; agents install it on cloud phones, run the key flows and send back a bug report with screenshots. Here the phone is the product, not a side feature.</p>
+    <figure>
+      <div class="flow">
+        <div class="band accent"><p class="label">Trigger</p><p class="note">An app maker submits a link through a form on your Naïve app, or by email</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Board</p><p class="note">One card per flow: sign-up, checkout, settings…</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band okcard"><p class="label">Mobilerun MCP</p><p class="note">Install, tap, type and screenshot on a cloud phone (<code>mobilerun.*</code>). Receive-only SMS numbers (a paid add-on) can handle OTP sign-ups</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Output</p><p class="note">A bug report with screenshots (<code>publish_file</code>), emailed to the customer</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band tint"><p class="label">Money</p><p class="note">Stripe Checkout per report, opened by your app once Stripe onboarding is done</p></div>
+      </div>
+      <div class="band after-frame">
+        <p class="label">Crew (all on <code>pi</code>)</p>
+        <div class="crew">
+          <div class="member"><b>intake</b><small>reads requests, opens cards</small></div>
+          <div class="member"><b>planner</b><small>writes the test flows for each app</small></div>
+          <div class="member"><b>tester</b><small>drives one phone via Mobilerun; one tester per phone</small></div>
+          <div class="member"><b>reporter</b><small>report and screenshots, then sends them</small></div>
+        </div>
+      </div>
+      <div class="grid after-frame">
+        <div class="band okcard"><p class="label">Show the judges</p><ul class="plain">
+          <li>Mobilerun's live view of an agent testing an app</li>
+          <li>Reports for a few real apps, finished overnight</li>
+          <li>Cost per report against the price</li>
+        </ul></div>
+        <div class="band warncard"><p class="label">Check first</p><ul class="plain">
+          <li>The MCP's tool names (docs.mobilerun.ai/mcp-server), and how apps get onto its phones</li>
+          <li>iPhones are first come, first served</li>
+          <li>Set safe <code>mobilerun.*</code> tools to <code>allow</code> before night, or the testers stall waiting on <code>ask</code></li>
+          <li>Naïve's own phones only install from Naïve's catalogue (no links, no uploads), and may not count for this track</li>
+        </ul></div>
+        <div class="band bridgecard"><p class="label">Hermes spin-off <span class="tag hermes">idea</span></p><p class="note">A Mobilerun tool plugin that drives a cloud phone from any Hermes chat. Open catalog PRs already include a phone plugin (<code>phone-autopilot</code>, #150825), so lead with the QA reports.</p></div>
+      </div>
+      <figcaption>Sources: mobilerun.ai and mobilerun.ai/llms.txt; the event page (Mobilerun track examples include "test apps"); usenaive.ai/docs <code>api/apps</code> (store payments).</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── C · AGENTMAIL ───────────────────────── -->
+  <section class="naive" id="c" aria-labelledby="c-h">
+    <h2 id="c-h">C · Support desk as a service <span class="tag">AgentMail track</span></h2>
+    <p class="muted">Idea: every client business gets its own support inbox. Agents triage, answer from the client's FAQ, escalate the hard ones, and send a daily digest. Naïve's own <code>support</code> blueprint (template <code>inbox</code>) already uses this crew shape on Naïve email.</p>
+    <figure>
+      <div class="flow">
+        <div class="band accent"><p class="label">Trigger</p><p class="note">A customer emails the client's support address, which is an AgentMail inbox</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Wake</p><p class="note">A Naïve deployment (cron) checks threads every few minutes</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band bridgecard"><p class="label">AgentMail MCP</p><p class="note"><code>list_threads</code>, <code>get_thread</code>, <code>reply_to_message</code>. Replies wait for approval at first</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Output</p><p class="note">Answered threads, escalations via <code>ask_operator</code>, and a daily digest per client</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band tint"><p class="label">Money</p><p class="note">Billed per inbox through Stripe</p></div>
+      </div>
+      <div class="band after-frame">
+        <p class="label">Crew (all on <code>pi</code>)</p>
+        <div class="crew">
+          <div class="member"><b>onboarding</b><small><code>create_inbox</code> for a new client; keeps its FAQ in Files</small></div>
+          <div class="member"><b>triage</b><small>labels each thread and opens a card</small></div>
+          <div class="member"><b>answerer</b><small>replies in-thread from the FAQ</small></div>
+          <div class="member"><b>escalation</b><small>asks you about the hard ones and writes the digest</small></div>
+        </div>
+      </div>
+      <div class="grid after-frame">
+        <div class="band okcard"><p class="label">Show the judges</p><ul class="plain">
+          <li>Live: someone in the room emails the support address and gets an answer</li>
+          <li>Overnight counts of answered vs. escalated. Escalations and approvals show where you stepped in</li>
+          <li>A new client is one <code>create_inbox</code> call, which is the growth story</li>
+        </ul></div>
+        <div class="band warncard"><p class="label">Check first</p><ul class="plain">
+          <li>Auth: AgentMail documents <code>x-api-key</code> and Naïve sends a bearer. Ask, wrap it in your app, or use a key in the sandbox as a last resort</li>
+          <li>Treat inbound mail as untrusted input; Naïve's docs say the same about its own inbox</li>
+          <li>Faster alternative to polling <em>(idea)</em>: AgentMail webhook → your app → <code>sessions.send</code></li>
+        </ul></div>
+        <div class="band bridgecard"><p class="label">Hermes spin-off <span class="tag hermes">idea</span></p><p class="note">An AgentMail email channel for the Hermes gateway (a platform plugin), so a Hermes profile can live in an AgentMail inbox.</p></div>
+      </div>
+      <figcaption>Sources: docs.agentmail.to/integrations/mcp (URL, auth, tool names); usenaive.ai/docs <code>concepts/templates</code> (support blueprint), <code>capabilities/tools</code>, <code>concepts/events-and-streaming</code>.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── D · MONID ───────────────────────── -->
+  <section class="naive" id="d" aria-labelledby="d-h">
+    <h2 id="d-h">D · Market-intel report company <span class="tag">Monid track</span></h2>
+    <p class="muted">Idea: small businesses subscribe to a weekly report on their competitors. Research agents pull from many data providers through Monid, and a writer turns the findings into a report. The breadth of providers behind one integration is the point.</p>
+    <figure>
+      <div class="flow">
+        <div class="band accent"><p class="label">Trigger</p><p class="note">A weekly deployment (cron) for each customer</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Board</p><p class="note">One card per angle: web and SEO, reviews and social, hiring and people</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band bridgecard"><p class="label">Monid MCP</p><p class="note">Discover a tool, then run it: Exa, Firecrawl, Ahrefs, Reddit/TikTok scrapers, Apollo. One balance</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band accent"><p class="label">Output</p><p class="note">A report (<code>publish_file</code>), emailed to the customer</p></div>
+        <span class="to" aria-hidden="true"></span>
+        <div class="band tint"><p class="label">Money</p><p class="note">Stripe per report, through your app. <code>session_spend</code> plus Monid usage give the cost per report</p></div>
+      </div>
+      <div class="band after-frame">
+        <p class="label">Crew (all on <code>pi</code>)</p>
+        <div class="crew">
+          <div class="member"><b>account-manager</b><small>the customer's competitors and questions, as cards</small></div>
+          <div class="member"><b>researcher</b><small>one per angle, all using <code>monid.*</code></small></div>
+          <div class="member"><b>writer</b><small>findings into a report</small></div>
+          <div class="member"><b>delivery</b><small>sends it and logs feedback</small></div>
+        </div>
+      </div>
+      <div class="grid after-frame">
+        <div class="band okcard"><p class="label">Show the judges</p><ul class="plain">
+          <li>Three real reports produced overnight</li>
+          <li>Cost per report against the price: the unit economics behind "scale to millions"</li>
+          <li>How many providers the crew used through one integration</li>
+        </ul></div>
+        <div class="band warncard"><p class="label">Check first</p><ul class="plain">
+          <li>Auth: Monid documents an OAuth login. Ask for a bearer key, or wrap it in your app</li>
+          <li>Credit beyond the free $1</li>
+          <li>Each data provider's terms of use</li>
+        </ul></div>
+        <div class="band bridgecard"><p class="label">Hermes spin-off <span class="tag hermes">idea</span></p><p class="note">A Monid web-search provider plugin, so Hermes's <code>web_search</code> can route through Monid's providers.</p></div>
+      </div>
+      <figcaption>Sources: monid.ai and monid.ai/docs/guide/quickstart-mcp; hermes-agent docs <code>developer-guide/web-search-provider-plugin</code>.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── THE CLOCK ───────────────────────── -->
+  <section class="naive" id="clock" aria-labelledby="clock-h">
+    <h2 id="clock-h">The clock: build by day, let it run overnight</h2>
+    <p class="muted">The judges score what the company did without you, so the night is when your company earns its demo.</p>
+    <figure>
+      <div class="band">
+        <ol class="timeline">
+          <li><time>Sat 11:30 AM</time> Hacking begins. Pick a scenario.</li>
+          <li><time>12:15–12:45</time> Mobilerun, AgentMail and Monid talks. Ask the auth questions <a href="#ask">below</a>.</li>
+          <li><time>~1:00 PM</time> <code>naive claim</code>, then <code>naive up</code>. Do one full run while you watch (<code>immediate</code> window).</li>
+          <li><time>Afternoon</time> Wire the sponsor (pattern 2 or 3). Set budgets (<code>cap_micro_usd</code>, <code>max_task_micro_usd</code>) so the crew can't spend all $250 overnight.</li>
+          <li><time>Evening</time> Seed real work: board cards, real inputs, armed deployments. Set safe tools to <code>allow</code>; keep sends and payments on <code>ask</code>.</li>
+          <li><time>Overnight</time> Let it run; idle sessions cost storage, not compute. The cheaper <code>priority</code> and <code>loose</code> windows only work on <code>zai-org/GLM-5.2-FP8</code>, <code>moonshotai/Kimi-K2.6</code> and <code>google/gemma-4-31B-it</code>. Other models refuse with <code>window_unavailable</code>.</li>
+          <li><time>Sun 9:00 AM</time> Collect proof: the board, the digest, the approvals log, spend, and the sponsor dashboards.</li>
+          <li><time>11:00 AM</time> Hacking stops and judging begins. <time>1:00 PM</time> Final presentations.</li>
+        </ol>
+      </div>
+      <figcaption>Sources: on-site schedule slide; usenaive.ai/docs <code>concepts/budgets</code>, <code>concepts/runtime</code>, <code>concepts/completion-window</code>, <code>concepts/policies</code>.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── ASK ON SITE ───────────────────────── -->
+  <section id="ask" aria-labelledby="ask-h">
+    <h2 id="ask-h">Ask on site</h2>
+    <p class="muted">None of the sources answer these. Each answer can change which pattern or scenario you pick.</p>
+    <div class="grid">
+      <div class="band"><p class="title">Mobilerun</p><ul class="plain">
+        <li>What are the MCP's tool names?</li>
+        <li>Can our team get an iPhone?</li>
+        <li>Does Naïve's own <code>mobile</code> tool count as "use of Mobilerun"?</li>
+      </ul></div>
+      <div class="band"><p class="title">AgentMail</p><ul class="plain">
+        <li>Does <code>mcp.agentmail.to</code> accept <code>Authorization: Bearer &lt;key&gt;</code>?</li>
+        <li>Which events do webhooks send?</li>
+      </ul></div>
+      <div class="band"><p class="title">Monid</p><ul class="plain">
+        <li>Is there a bearer or API key for the MCP, not just OAuth?</li>
+        <li>Is there hackathon credit beyond the free $1?</li>
+      </ul></div>
+      <div class="band"><p class="title">Organizers</p><ul class="plain">
+        <li>Can one company win the Main track and a sponsor track?</li>
+        <li>What is Stripe's "inc. fee waived"?</li>
+        <li>How do we get more Naïve credits?</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <footer>
+    Snapshot 2026-11-07 · Architecture diagrams: <a href="setup-diagrams.html">setup-diagrams.html</a> · Sponsor wiring: <a href="sponsors.md">sponsors.md</a> · Prizes and schedule: <a href="hackathons.md">hackathons.md</a>
+  </footer>
+</main>
+</body>
+</html>
