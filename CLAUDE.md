@@ -10,6 +10,8 @@ Prep and build work for two hackathons running at the same time:
 - **Hermes Agent Plugin Hackathon** (Nous Research, online). Entries are due **Wed Nov 11, 5 PM EST**.
 
 ## Where things are
+- `docs/project-overview.md`: everything about the self-healing robot project (problem, layers, hardware, healing loop, cloud, demo, open questions); a living doc
+- `docs/fault-catalog.md`: every fault to plant, test or demo, with how to plant, detect, fix and verify each one (Pi app, arm, camera, ultrasonic, STM32 firmware)
 - `docs/hackathons.md`: rules, schedule, prize tracks, credits
 - `docs/scenarios.html`: four prize-track scenarios with diagrams (open it in a browser)
 - `docs/sponsors.md`: how each sponsor (Mobilerun, AgentMail, Monid, Stripe…) connects to a Naïve agent
