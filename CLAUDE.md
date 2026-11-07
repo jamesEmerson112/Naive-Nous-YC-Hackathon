@@ -96,33 +96,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 3:48 PM PST_
+_Last updated: Sat Nov 7, 3:58 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Planning is done and Kent is writing the cloud-platform code, starting with M0 (scaffold, contracts v0.1, one real Naïve card, one real LLM call) due 5:15 PM. Ishaan is settling device-side questions.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has locked every cloud decision (D15–D22) and is writing M0 (scaffold, contracts v0.1, one real Naïve card, one real LLM call), due 5:15 PM. Ishaan is building the device-side healer test bed in `edge/` (local, uncommitted).
 
 **Recently done:**
-- Kent approved D18 (architecture: Docker Compose, Postgres 17, FastAPI, Jinja + htmx) and D20 (telemetry: LeRobot v3 incident windows, MCAP logs, JSONL agent traces), and decided D21: a coding agent turns code patches in held overlays into gated candidates (3:46 PM)
-- Kent pushed a reading-order guide `docs/cloud-platform-planning/README.md`, v0 plan v2 and Naïve company setup notes `docs/naive/company-setup.md` (3:38 PM)
-- Ishaan settled device-side questions: the device runs its own small model and harness (not Hermes), the healer may patch everything incl. the safety layer and visor (D5a changed), and the STM32 talks to the Pi over USB serial (3:39 PM)
-- James refreshed the stack hub (`hub/`) and added `features.txt`: one line per feature, claim one with "<--- Name" (3:36 PM)
+- Kent decided D19b (over-cap work orders are blocked as `blocked_over_cap` until a person resolves them) and D22 (one OpenAI-compatible LLM adapter: Naïve model proxy by default, James's RunPod vLLM as the alternative; a swappable `Coder` in a new `coder` sandbox) (3:56 PM)
+- James refreshed the stack hub with Kent's decisions D15–D21 and the Naïve org setup, and pointed CLAUDE.md at `features.txt` (3:53 PM)
+- Ishaan wrote the `edge/` test bed so far: robot app, fake SO-101 arm, HC-SR04 trace replay, a supervisor with tier 1–3 health checks, and the healer harness; next is benchmarking faults D1–D3, S1, S2, A5 (3:58 PM)
+- Kent approved D18 (Docker Compose, Postgres 17, FastAPI, Jinja + htmx) and D20 (telemetry), and decided D21 (a coding agent for code patches) (3:46 PM)
 
 **Open questions:**
-- Still open: D19 (Naïve integration), D19b (spend over the cap), D21a (when the coding agent gets built)
-- Ishaan's D5a change (healer may patch the safety layer and visor) needs Kent's review
-- Which small model and harness run on the Pi 5 (pi vs mini-swe-agent), and which big model runs cloud diagnosis on RunPod?
+- Kent is blocked on: device code and tests in `device/` (B1), the code-package and `code_patch` formats (B2, B3), the STM32 toolchain in the sandbox (B8), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4)
+- Ishaan's D5a change (healer may patch the safety layer and visor) still needs Kent's review; Kent notes it conflicts with keeping the model out of the safety loop
+- Which small model and harness run on the Pi 5 (Ishaan is trying mini-swe-agent on Ollama), and which RunPod model ids does James's lane use?
 - What does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `e8f196f` Sat 15:58 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `199e767` Sat 15:57 · Kent Gang · Update Kent status in CLAUDE.md
+- `c8eef1a` Sat 15:56 · Kent Gang · Decide spend-cap blocking (D19b) and batch LLM and coding agent (D22); add coder sandbox
+- `821ad27` Sat 15:53 · jamesEmerson112 · Refresh hub with Kent's decisions D15-D21 and the Naive org setup
+- `7d952ed` Sat 15:52 · Kent Gang · more planning updates
+- `2267167` Sat 15:49 · jamesEmerson112 · Fold Kent's and Olir's notes into the hub; point CLAUDE.md at features.txt
+- `fc8158d` Sat 15:48 · jamesEmerson112 · Update team status in CLAUDE.md
 - `a0ca803` Sat 15:47 · Kent Gang · Update Kent status in CLAUDE.md
 - `7ce7941` Sat 15:46 · Kent Gang · Approve architecture (D18) and telemetry (D20); decide coding agent for code patches (D21)
 - `dab713d` Sat 15:38 · Kent Gang · final refinements before generating cloud platform code
-- `5cea9c2` Sat 15:39 · Ishaan Ranjan · Device-side answers: healer can patch everything; device and cloud harnesses are separate
-- `8cc37ff` Sat 15:38 · jamesEmerson112 · Update team status in CLAUDE.md
-- `2283dce` Sat 15:36 · jamesEmerson112 · Refresh stack hub with team updates; add features.txt
-- `2e99839` Sat 15:36 · Kent Gang · Update Kent status in CLAUDE.md
-- `13d0f09` Sat 15:35 · Kent Gang · Add cloud-platform build plan, Naive integration and telemetry docs; expand APIs
-- `19e2982` Sat 15:31 · Kent Gang · more planning
-- `2b7a4dc` Sat 15:28 · jamesEmerson112 · Update team status in CLAUDE.md
 
 **Branches on GitHub:** `main`, `firmware` (Olir)
 <!-- team-status:end -->
