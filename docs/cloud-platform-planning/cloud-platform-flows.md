@@ -1,6 +1,6 @@
 # Cloud platform: core flows and happy paths
 
-Ten flows define "working" for the cloud platform. Each one is:
+Eleven flows define "working" for the cloud platform. Each one is:
 - a user-visible path, written as numbered steps;
 - a list of **checks** that must hold;
 - one flow test in `cloud/tests/flows/` with the same ID.
@@ -27,6 +27,7 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 | **F8** Dataset snapshot and export | P1 | M6 | `test_f8_datasets.py` | ⬜ | ⬜ | Uses overnight data |
 | **F9** Offline backfill | P1 | M7 | `test_f9_offline.py` | ⬜ | ⬜ | |
 | **F10** Overnight unattended run | P0 | M7 | manual + `make digest` | ⬜ | ⬜ | Starts by ~12:30 AM |
+| **F11** Code patch → coding agent → candidate | P1 (first) | M8 | `test_f11_coding_agent.py` | ⬜ | ⬜ | Starts when blockers B1–B7 clear (build plan §3, M8) |
 
 **Shared setup:** `make seed` creates firmware v1, harness v1, `arm-1` (real, normal), `sim-1` (normal), `sim-2` (canary) and `sim-3` (normal), all in `device_class = so101`.
 
@@ -184,6 +185,21 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 - The blob store stayed under `BLOB_BUDGET_GB`.
 
 **Demo beat:** step 6, the overnight numbers.
+
+## F11. Code patch → coding agent → candidate (P1, D21, D21a)
+
+**Starting point:** M8's blockers are cleared (build plan §3, M8). A device reports an incident whose overlay carries a `code_patch` (a unified diff against `code_rev`), and later reports it `held`.
+
+1. The batch job sends the patch, the incident and the device code at `code_rev` to the coding agent in the `coder` sandbox.
+2. The coding agent writes a clean change and runs the device test suite. The platform stores the result as code version `rev+1`, a tarball with its sha256.
+3. A candidate is created with a manifest whose `code_rev` points to the new version. Its `why` holds the coding agent's summary and the test results.
+4. The gate first runs the device tests in the sandbox, then canaries the candidate on a device that runs real code (the sim twin). If it's healthy, the candidate is promoted.
+
+**Checks:**
+- A code change never reaches a device without passing its tests and a real-code canary.
+- If no real-code canary exists, the candidate stops at `awaiting_canary`, and the timeline says why.
+- The coding agent's diff, test output and summary can be read from the incident's story.
+- The coding agent never edits the manifest; the merge does (PRD principle 7).
 
 ---
 

@@ -14,7 +14,7 @@ Planning docs for the Romulus cloud platform: the cloud half of the arm company'
 | 6 | [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md) | How the platform uses Naïve: cards, polling, spend caps, secrets, crew config, the spike | Working on work orders or Naïve |
 | 7 | [`cloud-platform-architecture.md`](cloud-platform-architecture.md) | Containers, repo layout, code structure, config, libraries, commands, rules for coding sessions | Before writing code |
 | 8 | [`cloud-platform-build-plan.md`](cloud-platform-build-plan.md) | Priorities, timeline, milestone tasks, checkpoints, risks, cut lines, dependencies | Deciding what to do next |
-| 9 | [`cloud-platform-flows.md`](cloud-platform-flows.md) | The ten core flows (happy paths and checks) and the **progress tracker** | Testing, demoing, checking status |
+| 9 | [`cloud-platform-flows.md`](cloud-platform-flows.md) | The eleven core flows (happy paths and checks) and the **progress tracker** | Testing, demoing, checking status |
 
 ## Rules for these docs
 
@@ -31,7 +31,7 @@ Planning docs for the Romulus cloud platform: the cloud half of the arm company'
   - D19: Naïve design.
   - D19b: what happens over the spend cap.
   - D20: telemetry formats.
-  - Q1 and Q2 in v0 plan §9: code patches in overlays, and which LLM the batch job uses.
+  - Q2 in v0 plan §9: which LLM and coding agent the batch job uses.
 - **Next step:** build plan **M0**, which covers the scaffold, contracts v0.1 for the device teammate, and the Naïve and LLM spikes.
 
 ## For a coding session

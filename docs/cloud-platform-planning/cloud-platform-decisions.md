@@ -33,11 +33,11 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 | D16 | Role of robot telemetry | A first-class, general-purpose asset: synced, curated, versioned datasets for models, harnesses and firmware | ✅ |
 | D17 | Runtime | Local Docker containers; Python + FastAPI | ✅ |
 | D18 | Architecture details | Approved as proposed: Compose (Postgres 17, api + worker from one image), uv workspace + `romulus-contracts`, pure domain core, fakes by default, filesystem blobs, Jinja + htmx | ✅ |
-| D19 | Naïve integration design | Proposed in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md) | ⏳ |
+| D19 | Naïve integration design | Approved: outbound only, cards with an `Idempotency-Key`, poll by card id, caps in our code, `fleet-ops` in `naive/naive.config.json` (pi harness), Mobilerun bearer in the vault, `actor_class` on events | ✅ |
 | D19b | What happens over the spend cap | (a) block and wait for a person *(recommended)* · (b) gated agent with `ask` | ⏳ |
 | D20 | Telemetry formats and capture policy | Approved: LeRobot v3 tar per incident window, MCAP log window, JSONL agent trace, metrics rows, sampled episodes (P1), schema v0.1 frozen tonight | ✅ |
 | D21 | Code patches in held overlays (was Q1) | A coding agent drafts a clean change, runs tests, submits a candidate through the gate; code versions served as tarballs | ✅ |
-| D21a | Where the coding agent sits in the build order | — | ⏳ |
+| D21a | Where the coding agent sits in the build order | P1, first P1 item, starts as soon as its tracked blockers clear (build plan M8) | ✅ |
 
 ---
 
@@ -362,9 +362,14 @@ From Kent's round-2 feedback: reconcile with the PRD; lean more on telemetry and
 
 Details in [`cloud-platform-architecture.md`](cloud-platform-architecture.md).
 
-### D19. Naïve integration design ⏳
+### D19. Naïve integration design ✅
 **Question:** Approve the proposed Naïve integration?
-**Proposal:**
+**Decision:** **Approved as proposed** (Kent, Sat Nov 7). [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md) is now the plan to build from.
+**Options not chosen:** also exposing a read-only MCP of the platform through a stable named tunnel; handing the crew config to a teammate.
+**What this means for the build** *(inferred)*: the crew config (`naive/`, fleet-ops, vault, Mobilerun) wasn't delegated, so it stays with Kent unless someone else takes it. Next step: the M0 spike (Naïve integration §5).
+**History:** proposed and approved Sat Nov 7 (round-2 lock-down).
+
+**What was approved:**
 - outbound only;
 - self-contained cards with an `Idempotency-Key`;
 - status by polling;
@@ -374,7 +379,6 @@ Details in [`cloud-platform-architecture.md`](cloud-platform-architecture.md).
 - `actor_class` on every event for the autonomy ledger.
 
 Details in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md).
-**Decision:** _pending._
 
 ### D19b. What happens over the spend cap ⏳
 **Question:** When a work order is over a spend cap, what happens?
@@ -410,7 +414,14 @@ Details in [`cloud-platform-telemetry.md`](cloud-platform-telemetry.md).
 - The batch job gains a third path besides the rules/params merge and the harness skill: `code_patch → coding agent → candidate with a new code_rev`.
 - **The device needs a way to fetch code by version.** Proposal: treat code like harness packages, as a versioned tarball in the registry served by the platform (`GET /v1/code/{rev}/package` + sha256). The device then needs no git credentials. This has to be agreed with the device teammate and added to contracts v0.1.
 - The coding agent needs the device code (`device/`) and its tests, and runs in a sandbox (a container, not the API process). Which agent and LLM: see Q2.
-- **Pending:** where this sits in the build order (D21a).
+- **Build order:** P1, starting as soon as its blockers clear (D21a).
 - Keeps PRD principle 7 intact: the agent writes *code changes* that the gate tests; it still never edits the manifest, which the deterministic merge produces.
 
+**History:** decided Sat Nov 7 (round-2 lock-down).
+
+### D21a. Where the coding agent sits in the build order ✅
+**Question:** Where does the coding-agent path (code patch → clean change → candidate) sit in the build order?
+**Decision:** **P1, built as soon as nothing blocks it** (Kent, Sat Nov 7). It is the first P1 item to pick up. It starts the moment its blockers are clear, as long as no P0 milestone is running late. Kent asked for the blockers to be spelled out and tracked. They are in [build plan](cloud-platform-build-plan.md) §3, M8, and the flow is F11 in [flows](cloud-platform-flows.md).
+**Options not chosen:** after M6 on Sunday; P0 before the overnight run; stretch only.
+**What this means for the build** *(inferred)*: the contract pieces (code packages, `code_patch` format) go into contracts v0.1 in M0, so the device teammate can plan for them now, even though M8 is built later.
 **History:** decided Sat Nov 7 (round-2 lock-down).

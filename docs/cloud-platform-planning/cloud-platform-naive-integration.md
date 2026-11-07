@@ -1,6 +1,6 @@
 # Cloud platform: Naïve integration
 
-- **Status:** researched Sat Nov 7. The proposed design is pending decision **D19** ([decision log](cloud-platform-decisions.md)).
+- **Status:** researched and approved Sat Nov 7 (**D19**, [decision log](cloud-platform-decisions.md)). What happens over the spend cap (D19b) is still open.
 - **Source:** the local Naïve docs dump `docs/raw/naive-llms-full.txt` (snapshot 2026-11-07; refresh with `bash docs/raw/fetch.sh`). Each citation below is a path under `https://usenaive.ai/docs/`. *(inferred)* marks our own reasoning; **ask** marks what the docs don't say.
 
 ---

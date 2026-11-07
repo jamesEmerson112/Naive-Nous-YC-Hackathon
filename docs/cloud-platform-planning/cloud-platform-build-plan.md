@@ -41,6 +41,8 @@ Judges score "how much of the company runs without you" (`~/git2/docs/STRATEGY.m
 
 M6 deliberately comes after M7 (§1, item 5).
 
+**M8 (coding agent) has no fixed slot.** It starts as soon as its blockers B1–B7 clear (§3, M8), and it is the first P1 item to pick up. Its contract pieces ship in M0. The earliest real start is after M3, because blocker B6 is the gate.
+
 ## 3. Milestone tasks
 
 Tick these off in this file as you go. Each milestone ends with its flows' tracker rows updated.
@@ -49,7 +51,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 - [ ] uv workspace: root `pyproject.toml`, `packages/contracts`, `cloud`, `tools/fake_device` (architecture §3)
 - [ ] `compose.yaml` (db, api, worker; `sim` profile), `cloud/Dockerfile`, `Makefile`, `.env.example` with fake modes
 - [ ] `settings.py`, `db.py`, `models.py` (every table, even the empty ones), `events.record()`
-- [ ] Contracts v0.1: the Pydantic models from APIs §2, plus `rules.evaluate()` with unit tests
+- [ ] Contracts v0.1: the Pydantic models from APIs §2, including the code-package and `code_patch` contract (§2.10, D21), plus `rules.evaluate()` with unit tests
 - [ ] `cloud/CLAUDE.md` (architecture §9)
 - [ ] **Naïve spike (15 min):** with a real API key, create and read one card on the company board ([Naïve integration](cloud-platform-naive-integration.md) §5). Write down the board ID and the ops agent's name
 - [ ] **LLM spike (10 min):** one live call from the `llm` adapter
@@ -97,6 +99,30 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 - [ ] Commit, tag `demo-overnight`, push
 - [ ] (If quick) F9 offline test
 
+### M8 · Coding agent for code patches (P1, starts as soon as nothing blocks it; D21, D21a)
+
+**Goal:** a held overlay with a `code_patch` → a coding agent writes a clean change and runs the device tests → a candidate with a new code version → the same gate (D6). Flow F11.
+
+**Rule:** M8 is the first P1 item to pick up. It starts the moment every blocker below is 🟢, and runs in any slack, as long as no P0 milestone is late. Update this table at every checkpoint.
+
+| # | Blocker | Owner | Status | How it clears |
+|---|---|---|---|---|
+| B1 | **Device code is in the repo with a test suite the agent can run** (`device/`, one command such as `uv run pytest`) | Device teammate | 🔴 | The teammate pushes code and tests, and they pass in a clean container |
+| B2 | **Code-package contract agreed:** the device fetches code by version from the platform (`GET /v1/code/{rev}/package` + sha256), and the visor installs it with hash check, health check and rollback (D7) | Kent proposes (M0) · teammate implements in the visor | 🔴 | In contracts v0.1 (APIs §2.10, §3); the teammate confirms |
+| B3 | **`code_patch` format agreed:** a unified diff against `code_rev`, with paths relative to `device/` | Kent proposes (M0) · teammate's agent produces it | 🔴 | In contracts v0.1 (APIs §2.10); one real example from the device agent |
+| B4 | **Which coding agent and LLM, plus access** (Q2) | Kent | 🔴 | Q2 decided; key in `.env`; one headless run works |
+| B5 | **Sandbox:** a `coder` container that mounts a scratch copy of `device/`, can reach only the LLM API, and is run by the worker | Kent | 🔴 | Built after M0; one dry run that edits and tests a toy change |
+| B6 | **The gate exists** (M3): candidates, replay, canary and promote are working | Kent | 🔴 | F3 and F4 🟩 |
+| B7 | **A canary that runs real device code.** The fake devices don't execute device code, so a code candidate needs the teammate's sim twin (MuJoCo SO-101 running the device stack) or a supervised real-arm canary | Device teammate (sim twin) · Kent (gate rule) | 🔴 | A sim-twin device checks in with `kind = sim` and can install a code package |
+
+**Tasks** (each can start as soon as its own blockers clear):
+- [ ] (M0) Code-package and `code_patch` contract in v0.1 (APIs §2.10); `code_versions` table; `POST /v1/code`, `GET /v1/code/{rev}/package` *(B2, B3)*
+- [ ] `coder` container + `adapters/coder.py` (Protocol + Fake) *(B4, B5)*
+- [ ] `services/batch.py` third path: `code_patch → coder → code version → candidate`, with the coder's test output recorded in the candidate's `why` *(B1, B6)*
+- [ ] Gate rule: a code candidate first runs the device tests (in the sandbox), then goes to a canary that can run real code (B7). If no such canary exists, it stops at `awaiting_canary` and says so on the timeline
+- [ ] Fake device: one scripted incident with a `code_patch` for the demo
+- [ ] Flow test F11
+
 ### M6 · Datasets (Sun morning)
 - [ ] Labels: add or remove on a recording (ops API and a small Data page)
 - [ ] Snapshots: create an immutable dataset version from a filter
@@ -106,7 +132,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 
 ## 4. Checkpoints (every ~90 minutes, ≤10 minutes each)
 
-1. Run `make flows`, and update the tracker in the flows doc.
+1. Run `make flows`, and update the tracker in the flows doc. Update the M8 blocker table (§3); if every blocker is 🟢 and no P0 milestone is late, start M8.
 2. Click through the hero path (F2 → F3 → F4) on the timeline, as a judge would.
 3. Re-read §5 (risks). Has anything changed likelihood?
 4. Behind schedule? Cut from the bottom of §6 and write the cut into the tracker's notes.
@@ -142,6 +168,7 @@ Fixed checkpoints: **5:15 PM** (M0), **7:30 PM**, **9:30 PM**, **11:30 PM**, **1
 | F1–F5 with fake devices | F6 live with the real Naïve agent and Mobilerun | Uploading every task episode | Policy training |
 | Incident timeline with a "why" on every step | F8 snapshots and regression-corpus replay | `traces_jsonl` export | Push to the HF Hub |
 | F6 in fake mode | F9 offline backfill | LeRobotDataset export | Tunnel / inbound MCP for Naïve |
+| | **F11 coding agent for code patches (first P1; D21a)** | | |
 | F7 incident evidence | Real arm for F2 and F3 | Fleet grid and version-pipeline pages | Auth, billing, trust ledger |
 | F10 overnight run plus digest | Data page for labels | Rerun viewer embed | Digital twins, ERP |
 
@@ -151,7 +178,7 @@ When behind, cut from the right. Never cut a Must to add a Could (`~/git2/docs/1
 
 | Who | What we need | By when | Fallback |
 |---|---|---|---|
-| Device teammate (TBD, D14) | Agreement on contracts v0.1, **including the frozen dataset schema** (telemetry §8); first real check-in; one real incident with an overlay and recordings; answers to telemetry §11's open questions (rollout or scripted stack; Hermes or not) | 5:15 PM / 9:30 PM / Sun 9:00 AM | Fake fleet only; the real arm stays off the demo path |
+| Device teammate (TBD, D14) | M8 blockers B1 (device code and tests in the repo), B2/B3 (code-package and `code_patch` contract), B7 (sim-twin canary). Agreement on contracts v0.1, **including the frozen dataset schema** (telemetry §8); first real check-in; one real incident with an overlay and recordings; answers to telemetry §11's open questions (rollout or scripted stack; Hermes or not) | 5:15 PM / 9:30 PM / Sun 9:00 AM | Fake fleet only; the real arm stays off the demo path |
 | Whoever owns Naïve for the team | API key with board scopes; `fleet-ops` declared in `naive/naive.config.json`; Mobilerun bearer in the vault, bound to fleet-ops; a Naïve budget on fleet-ops ([Naïve integration](cloud-platform-naive-integration.md) §3.5–3.6) | 5:15 PM (key) / 11:30 PM (agent) | `NAIVE_MODE=fake`; show the card payload instead |
 | LLM access | API key, or a RunPod endpoint for batch explanations | 5:15 PM | `LLM_MODE=fake` (templated text) |
 

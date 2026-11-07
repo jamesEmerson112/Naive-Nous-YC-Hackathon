@@ -122,7 +122,9 @@ Runs on demand and on a timer (`BATCH_INTERVAL_S`).
 3. **Explain and teach, with the LLM:** it writes the candidate's `why` and a markdown skill. The skill goes into a harness candidate under `knowledge_dir`.
 4. Write Events, then hand the candidates to the gate.
 
-The LLM only writes prose and skills, never the manifest (PRD principle 7). An overlay with a `code_patch` is flagged on the timeline and skipped (open question Q1).
+The LLM only writes prose and skills, never the manifest (PRD principle 7).
+
+**Third path, for code patches (D21; P1, build plan M8):** a held overlay with a `code_patch` goes to a coding agent in a sandbox. It writes a clean change and runs the device tests, and the result becomes a new code version and a candidate. The gate then runs the tests again and canaries the candidate on a device that runs real code (flow F11).
 
 ### 7.4 Gate (D6) and kill switch (D11)
 1. **Replay** through the shared `evaluate(rules, signals)` (APIs §2.7):
@@ -171,7 +173,7 @@ The full design is in [telemetry](cloud-platform-telemetry.md).
 ## 9. Open questions
 
 **For Kent:**
-- **Q1, code patches in overlays:** D5 allows them, but the batch job only locks in rules, params and harness. Flag and skip, or add a coding agent later?
+- ~~Q1, code patches in overlays~~: decided as D21 (a coding agent drafts them) and D21a (P1, as soon as nothing blocks it).
 - **Q2, the batch job's LLM:** the Claude API, or the team's RunPod model?
 - **D18:** approve the architecture proposals.
 - **D19:** approve the Naïve design, and D19b: what happens over the spend cap.

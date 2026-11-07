@@ -154,6 +154,12 @@ A candidate **passes replay** for an incident when that incident's `resolving_ac
 
 Every `lerobot_v3_tar` recording uses the same LeRobot features (schema **v0.1**), defined in [telemetry](cloud-platform-telemetry.md) §8, so the platform can merge them. Changing that list bumps both `schema_version` and `CONTRACT_VERSION`.
 
+### 2.10 Code packages and `code_patch` (D21)
+
+- **`code_rev`** in the firmware manifest names a code version in the platform's registry. It isn't a git ref the device has to fetch.
+- **Code packages:** a code version is a `.tar.gz` of `device/` at that version, with a sha256. The device pulls it like a harness package (§3.3c) and installs it with hash check, health check and rollback (D7).
+- **`code_patch`** in an overlay (§2.5) is a **unified diff** against the overlay's base `code_rev`, with paths relative to the `device/` root, for example `--- a/control/gripper.py`. It is `null` if the agent only changed rules or params.
+
 ## 3. Device-facing routes
 
 | # | Route | Body → response | Notes |
@@ -161,6 +167,7 @@ Every `lerobot_v3_tar` recording uses the same LeRobot features (schema **v0.1**
 | 3.1 | `POST /v1/devices/{device_id}/checkin` | §2.3 → §2.3 response | Every ~10 s. It also serves as the canary health signal |
 | 3.2 | `GET /v1/firmware/{version}` | → `{"manifest": §2.1, "sha256": "…"}` | `sha256` is computed over the canonical JSON of the manifest |
 | 3.3 | `GET /v1/harness/{version}/package` | → tarball, with header `X-Sha256` | |
+| 3.3c | `GET /v1/code/{rev}/package` | → tarball, with header `X-Sha256` | Code packages (§2.10, D21) |
 | 3.4 | `POST /v1/devices/{device_id}/installs` | §2.4 → `204` | |
 | 3.5 | `POST /v1/devices/{device_id}/incidents` | §2.5 → `201 {"incident_id"}`, or `200` if already received | Idempotent on `incident_id` |
 | 3.6 | `POST /v1/devices/{device_id}/overlays/{overlay_id}` | §2.6 → `204` | |
@@ -181,6 +188,7 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 | `GET /v1/firmware`, `GET /v1/firmware/{v}` | List or read |
 | `POST /v1/firmware/{v}/retire` | Hide from new assignments (versions are never deleted) |
 | `POST /v1/harness` (multipart tarball), `GET /v1/harness`, `GET /v1/harness/{v}`, `POST /v1/harness/{v}/retire` | Same, for harness packages (CRUD on the embedded SRE) |
+| `POST /v1/code` (multipart tarball), `GET /v1/code`, `GET /v1/code/{rev}` | Code versions: seeded by hand, then created by the coding agent (D21) |
 | `GET /v1/devices`, `POST /v1/devices`, `PATCH /v1/devices/{id}` | Register devices; set `role` (normal/canary) and `device_class` |
 
 ### 4.2 Harness updates: incidents, batch and gate
@@ -232,7 +240,8 @@ Every event has `actor`, `kind`, `refs` and `why` (v0 plan §4).
 |---|---|
 | Devices | `device.first_seen`, `device.health_changed`, `install.reported` |
 | Incidents | `incident.reported`, `overlay.held`, `overlay.reverted`, `overlay.locked_in`, `overlay.dropped` |
-| Batch and gate | `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen` |
+| Batch and gate | `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.awaiting_canary` |
+| Coding agent (D21) | `coder.started`, `coder.drafted`, `coder.tests_passed`, `coder.tests_failed`, `code.version_created` |
 | Fleet | `fleet.frozen`, `fleet.unfrozen` |
 | Work orders | `workorder.created`, `workorder.card_posted`, `workorder.status_changed` |
 | Data | `recording.received`, `label.changed`, `dataset.snapshotted`, `export.built` |
