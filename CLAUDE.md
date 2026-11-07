@@ -76,23 +76,25 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 3:08 PM PST_
+_Last updated: Sat Nov 7, 3:18 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is adding Romulus, a self-healing and fleet layer, and is planning it as a general cloud platform for robot fleets (`docs/cloud-platform-planning/`). James is building the shared tech-stack artifact page (Naïve SDK, Hermes harness, RunPod rather than a local setup) with source links into the Naïve and Hermes docs, and is now adding a tech-stack pyramid and switching it to dark mode; `docs/robotic-arm.html` is still uncommitted. Next for James: how the bench and the cloud connect using plain APIs. Olir started a `firmware` branch on GitHub (placeholder `firmware/readme.txt` so far).
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent narrowed Romulus to the cloud half of the self-healing loop for our own arms (single tenant; "general purpose" dropped) and pushed a proposed v0 build plan plus a decision log (D0–D15) in `docs/cloud-platform-planning/`. James is building a new tech-stack page with live hackathon countdowns and an animated system diagram, checking it in the Browser pane; `docs/robotic-arm.html` is still uncommitted. Olir started a `firmware` branch on GitHub (placeholder `firmware/readme.txt` so far).
 
 **Recently done:**
+- Kent pushed `cloud-platform-v0-plan.md` and `cloud-platform-decisions.md` (3:16 PM). The loop: the on-device agent patches as a self-reverting local overlay → reports to the cloud → a batch job locks held overlays into a new version → replay, one canary, then auto-promote or auto-rollback. Hardware faults become Naïve work orders, and a Naïve agent calls Mobilerun. The only human control is a kill switch; the one screen that must work is the incident timeline
 - James asked everyone (Ishaan, Olir, Andre) to set up their own 10-minute status sync, each editing only their own `<name>-sync` block under **Notes from the team**; a ready-to-paste prompt is there
 - Olir pushed a new `firmware` branch (3 commits, 2:33–2:37 PM): a `firmware/` folder with a one-line readme, not merged into `main`
-- Kent pushed the first cloud-platform PRD and API outline (`docs/cloud-platform-planning/`): CI/CD for firmware and the self-healing agent, edge logs pushed to the cloud for batch analysis, a fleet dashboard, and Mobilerun calls to order parts or book technicians
 - Confirmed the on-site arm is an SO-101 (red follower plus white leader, 6 Feetech STS3215 servos); in LeRobot set `robot_type` to `so101_follower`
 
 **Open questions:**
-- RunPod: Kent's notes lean serverless with an image-reading model, since the LLM is outside the control loop. Which model, and is that decided?
-- NVIDIA simulation on RunPod: which GPU type?
+- Who owns the device side (embedded agent, overlays, harness)? Kent's decision D14 leaves it to a teammate, still TBD, and the v0 plan (D15) awaits approval
+- RunPod: Kent's notes lean serverless with an image-reading model, since the LLM is outside the control loop. Which model, and is that decided? Which GPU type for NVIDIA simulation?
 - How the bench and the board connect: the bench pulls cards over Naïve's REST API (proposed, nothing exposed), or a tunnel, since Naïve only accepts MCP servers at public HTTPS URLs? The team is leaning toward plain APIs.
 - AgentMail and Monid MCP auth (bearer token?); can one company win the Main track and a sponsor track?
 
 **Recent commits (all authors):**
+- `ee92568` Sat 15:16 · Kent Gang · v0 plan
+- `b845120` Sat 15:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `192a279` Sat 14:58 · jamesEmerson112 · Update team status in CLAUDE.md
 - `7d192ef` Sat 14:49 · jamesEmerson112 · Update team status in CLAUDE.md
 - `1762eb7` Sat 14:45 · jamesEmerson112 · Ask teammates to set up a 10-minute status sync in CLAUDE.md
@@ -101,8 +103,6 @@ _Last updated: Sat Nov 7, 3:08 PM PST_
 - `8f534c3` Sat 14:23 · Kent Gang · cloud platform prd/apis and setup for more planning
 - `973c496` Sat 14:19 · jamesEmerson112 · Update team status in CLAUDE.md
 - `ad66060` Sat 14:06 · jamesEmerson112 · Update team status in CLAUDE.md
-- `d0ac517` Sat 14:05 · Kent Gang · Add Romulus self-healing/fleet notes to CLAUDE.md
-- `4abbebd` Sat 13:48 · jamesEmerson112 · Update team status in CLAUDE.md
 
 **Branches on GitHub:** `main`, `firmware` (Olir)
 <!-- team-status:end -->
