@@ -138,7 +138,7 @@ The LLM only writes prose and skills, never the manifest (PRD principle 7).
 The full design is in [Naïve integration](cloud-platform-naive-integration.md) §3.
 
 1. `domain/triage.py` returns a work order for an incident that is unresolved and `suspected_cause: hardware`. It maps the fault kind to a part using `cloud/config/parts.yaml`.
-2. **Spend caps are checked in our code first** (`ORDER_MAX_USD`, `ORDERS_PER_DAY_MAX`, `ORDERS_PER_ROBOT_DAY_MAX`). An order over a cap becomes `blocked_over_cap` and waits for a person (D19b, pending).
+2. **Spend caps are checked in our code first** (`ORDER_MAX_USD`, `ORDERS_PER_DAY_MAX`, `ORDERS_PER_ROBOT_DAY_MAX`). An order over a cap becomes `blocked_over_cap` and waits for a person (D19b).
 3. The worker posts a self-contained card to the company board, with an `Idempotency-Key` header, assigned to `fleet-ops`.
 4. It polls each open card by id and parses the note: `RESULT: ordered ORDER_REF=…` or `STOPPED: …`. Anything else becomes `needs_human`.
 
@@ -174,7 +174,7 @@ The full design is in [telemetry](cloud-platform-telemetry.md).
 
 **For Kent:**
 - ~~Q1, code patches in overlays~~: decided as D21 (a coding agent drafts them) and D21a (P1, as soon as nothing blocks it).
-- **Q2, the batch job's LLM:** the Claude API, or the team's RunPod model?
+- ~~Q2, the batch job's LLM~~: decided as D22 (Naïve proxy and RunPod first, behind swappable adapters).
 - **D18:** approve the architecture proposals.
 - **D19:** approve the Naïve design, and D19b: what happens over the spend cap.
 - **D20:** approve the telemetry formats and capture policy.

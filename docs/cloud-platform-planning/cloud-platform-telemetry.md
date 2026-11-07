@@ -41,7 +41,7 @@ The regression corpus is what connects the data to the loop. The more the fleet 
 - **MCAP** is an append-only, self-describing log container that can be indexed and compressed. It is the ROS 2 default, and a truncated file can be repaired with `mcap recover` ([mcap.dev](https://mcap.dev/), [CLI](https://mcap.dev/guides/cli)).
   - Python writers: `mcap` 1.6.0 (2026-10-19) and `foxglove-sdk` 0.30.3 (2026-10-26) (PyPI).
   - It suits logs and diagnostics, but it isn't a training format *(inferred)*.
-- **Agent traces, if the agent is Hermes** (D4 leaves this to the teammate):
+- **Agent traces.** The device's embedded agent is **not Hermes**: it's a small local model with a small harness (pi or mini-swe-agent being tested). Source: device side, `docs/project-overview.md`; D4 History. So the trace comes from that harness's own transcript, exported as JSONL. The Hermes facts below still apply to the bench's Hermes agent, which drives the arm for job-board tasks (`hub/`):
   - Hermes stores sessions in SQLite at `~/.hermes/state.db`.
   - `hermes sessions export --format jsonl|trace --redact` exports one session ([sessions](https://hermes-agent.nousresearch.com/docs/user-guide/sessions)).
   - Plugin hooks (`on_session_start`, `post_llm_call`, `post_tool_call`, `on_session_end`) can stream it live ([hooks](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks)).
@@ -189,4 +189,4 @@ Every `incident_window` and `episode` dataset uses the same LeRobot features, so
 | LeRobot v0.7.0 changed the Feetech motor bus (now rustypot `SerialMotorsBus`) and could break existing SO-101 code ([release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)) | Teammate; pin versions |
 | Clock skew between arm and laptop | Store both monotonic and wall-clock time; NTP; sort by `occurred_at` |
 | **Open:** is the arm driven by `lerobot-rollout` with a policy, or by a scripted stack? That decides whether the `highlight` and `dagger` strategies apply | Teammate |
-| **Open:** is the embedded agent Hermes (D4)? That decides the trace source | Teammate |
+| ~~Is the embedded agent Hermes?~~ **No:** a small local model with the pi or mini-swe-agent harness (D4 History). Still open: that harness's transcript format, mapped to JSONL | Teammate |

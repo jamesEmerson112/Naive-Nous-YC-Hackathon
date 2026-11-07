@@ -43,7 +43,7 @@ A rule fires when any sample of its `signal` is `below` or `above` the threshold
 The package is a `.tar.gz` whose contents belong to the device team. It must contain `harness.json` at its root:
 
 ```json
-{"version": 5, "framework": "hermes", "knowledge_dir": "skills/"}
+{"version": 5, "framework": "pi", "knowledge_dir": "skills/"}
 ```
 
 The batch job adds markdown files under `knowledge_dir` and touches nothing else.
@@ -52,11 +52,11 @@ The batch job adds markdown files under `knowledge_dir` and touches nothing else
 
 Request:
 ```json
-{"running": {"firmware": 7, "harness": 4} , "overlay_id": "ov-12",
+{"running": {"firmware": 7, "harness": 4, "code_rev": "a1b2c3d", "mcu_build": "stm32-f042-0007"}, "overlay_id": "ov-12",
  "health": "ok", "metrics": {"task_success_rate": 0.92, "servo_temp_c_max": 41.5, "bus_voltage_v": 12.1},
  "contract_version": "0.1"}
 ```
-- `running` is `null` on first boot.
+- `running` is `null` on first boot. `mcu_build` is the STM32's C-firmware build id; the healer reflashes it on the device, so the cloud tracks it as reported, not assigned (device side, `docs/project-overview.md`).
 - `health` is `ok`, `degraded` or `failing`.
 - `metrics` is a free-form dict of numbers, kept as environmental history ([telemetry](cloud-platform-telemetry.md) §3).
 

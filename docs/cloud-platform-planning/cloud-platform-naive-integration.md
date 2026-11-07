@@ -1,6 +1,6 @@
 # Cloud platform: Naïve integration
 
-- **Status:** researched and approved Sat Nov 7 (**D19**, [decision log](cloud-platform-decisions.md)). What happens over the spend cap (D19b) is still open.
+- **Status:** researched and approved Sat Nov 7 (**D19**, and **D19b** for over-cap orders; [decision log](cloud-platform-decisions.md)).
 - **Source:** the local Naïve docs dump `docs/raw/naive-llms-full.txt` (snapshot 2026-11-07; refresh with `bash docs/raw/fetch.sh`). Each citation below is a path under `https://usenaive.ai/docs/`. *(inferred)* marks our own reasoning; **ask** marks what the docs don't say.
 
 ---
@@ -92,7 +92,7 @@ Rules:
 Naïve can't cap the dollar amount of an order, so the caps are layered *(inferred)*:
 
 1. **In our code, before posting:** limits on dollars per order, orders per day, and orders per robot. These are in `settings` and are not visible to any LLM.
-2. **Over the cap.** This is the decision for Kent (D19b):
+2. **Over the cap: decided (D19b), option (a).**
    - **(a) recommended, keeps D11:** the work order isn't posted. It shows as `blocked: over cap` and waits for a person. That's an escalation, not an approval step, so the kill switch stays the only human control.
    - **(b)** Route it to a second agent, `fleet-ops-gated`, whose Mobilerun tool is set to `ask`, so a person approves it inside Naïve. The gate then lives in Naïve policy, which the agent can't change, but this adds a second human control and changes D11.
 3. **The agent's own model spend:** a Naïve budget on fleet-ops (for example `max_task_micro_usd` for $2 per task, and a daily cap) (concepts/budgets).

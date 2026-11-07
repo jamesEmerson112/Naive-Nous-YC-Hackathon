@@ -101,6 +101,8 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 
 ### M8 · Coding agent for code patches (P1, starts as soon as nothing blocks it; D21, D21a)
 
+**Why it matters more now:** the device side says the demo's fixes are code patches (D1 and F1–F11 in `docs/fault-catalog.md`; `docs/project-overview.md`). Without M8, the real-arm lock-in demo can't happen; the fake fleet still shows F3 with rules and params. It stays P1 (D21a), but it is on the real-arm demo path.
+
 **Goal:** a held overlay with a `code_patch` → a coding agent writes a clean change and runs the device tests → a candidate with a new code version → the same gate (D6). Flow F11.
 
 **Rule:** M8 is the first P1 item to pick up. It starts the moment every blocker below is 🟢, and runs in any slack, as long as no P0 milestone is late. Update this table at every checkpoint.
@@ -110,9 +112,10 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 | B1 | **Device code is in the repo with a test suite the agent can run** (`device/`, one command such as `uv run pytest`) | Device teammate | 🔴 | The teammate pushes code and tests, and they pass in a clean container |
 | B2 | **Code-package contract agreed:** the device fetches code by version from the platform (`GET /v1/code/{rev}/package` + sha256), and the visor installs it with hash check, health check and rollback (D7) | Kent proposes (M0) · teammate implements in the visor | 🔴 | In contracts v0.1 (APIs §2.10, §3); the teammate confirms |
 | B3 | **`code_patch` format agreed:** a unified diff against `code_rev`, with paths relative to `device/` | Kent proposes (M0) · teammate's agent produces it | 🔴 | In contracts v0.1 (APIs §2.10); one real example from the device agent |
-| B4 | **Which coding agent and LLM, plus access** (Q2) | Kent | 🔴 | Q2 decided; key in `.env`; one headless run works |
+| B4 | **Coding agent and LLM access** (D22: Naïve proxy or RunPod, local open-source agent) | Kent (+ James for RunPod) | 🟡 | D22 decided. Still needed: a key with `proxy:write` or the RunPod endpoint; the agent chosen (align with the device team's pi or mini-swe-agent); one headless run that edits and tests a toy change |
 | B5 | **Sandbox:** a `coder` container that mounts a scratch copy of `device/`, can reach only the LLM API, and is run by the worker | Kent | 🔴 | Built after M0; one dry run that edits and tests a toy change |
 | B6 | **The gate exists** (M3): candidates, replay, canary and promote are working | Kent | 🔴 | F3 and F4 🟩 |
+| B8 | **STM32 toolchain in the sandbox.** The demo's fixes include STM32 C firmware (device side, `docs/project-overview.md`), so building and checking them needs `arm-none-eabi-gcc` and the firmware's build script in the `coder` image | Kent (image) · teammate (build script) | 🔴 | `make` of `firmware/` succeeds in the `coder` container |
 | B7 | **A canary that runs real device code.** The fake devices don't execute device code, so a code candidate needs the teammate's sim twin (MuJoCo SO-101 running the device stack) or a supervised real-arm canary | Device teammate (sim twin) · Kent (gate rule) | 🔴 | A sim-twin device checks in with `kind = sim` and can install a code package |
 
 **Tasks** (each can start as soon as its own blockers clear):

@@ -34,10 +34,11 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 | D17 | Runtime | Local Docker containers; Python + FastAPI | ✅ |
 | D18 | Architecture details | Approved as proposed: Compose (Postgres 17, api + worker from one image), uv workspace + `romulus-contracts`, pure domain core, fakes by default, filesystem blobs, Jinja + htmx | ✅ |
 | D19 | Naïve integration design | Approved: outbound only, cards with an `Idempotency-Key`, poll by card id, caps in our code, `fleet-ops` in `naive/naive.config.json` (pi harness), Mobilerun bearer in the vault, `actor_class` on events | ✅ |
-| D19b | What happens over the spend cap | (a) block and wait for a person *(recommended)* · (b) gated agent with `ask` | ⏳ |
+| D19b | What happens over the spend cap | Block and wait: not posted, `blocked_over_cap` on the timeline, a person resolves it. D11 holds | ✅ |
 | D20 | Telemetry formats and capture policy | Approved: LeRobot v3 tar per incident window, MCAP log window, JSONL agent trace, metrics rows, sampled episodes (P1), schema v0.1 frozen tonight | ✅ |
 | D21 | Code patches in held overlays (was Q1) | A coding agent drafts a clean change, runs tests, submits a candidate through the gate; code versions served as tarballs | ✅ |
 | D21a | Where the coding agent sits in the build order | P1, first P1 item, starts as soon as its tracked blockers clear (build plan M8) | ✅ |
+| D22 | Models and agents for the batch job (was Q2) | Naïve and RunPod first, swappable: OpenAI-compatible LLM adapter (Naïve proxy default, RunPod per James's lane), coding agent behind a `Coder` adapter (local open-source agent first) | ✅ |
 
 ---
 
@@ -380,13 +381,18 @@ Details in [`cloud-platform-architecture.md`](cloud-platform-architecture.md).
 
 Details in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md).
 
-### D19b. What happens over the spend cap ⏳
+### D19b. What happens over the spend cap ✅
 **Question:** When a work order is over a spend cap, what happens?
+**Decision:** **(a) Block and wait** (Kent, Sat Nov 7).
+- The work order isn't posted to Naïve. It shows as `blocked_over_cap` on the timeline and waits for a person.
+- That's an escalation, not an approval step, so D11 holds: the kill switch is the only human control.
+- The caps are `ORDER_MAX_USD`, `ORDERS_PER_DAY_MAX` and `ORDERS_PER_ROBOT_DAY_MAX`, enforced in our code (architecture §6).
+
+**Options not chosen:** a gated Naïve agent with `ask`; raising the caps so they never trigger.
+**History:** decided Sat Nov 7 (round-2 lock-down).
 **Options:**
 - **(a) recommended, keeps D11:** it isn't posted; it shows as `blocked_over_cap` and waits for a person.
 - **(b)** It's routed to `fleet-ops-gated`, whose Mobilerun tool is set to `ask`, so a person approves it inside Naïve. This adds a second human control.
-
-**Decision:** _pending._
 
 ### D20. Telemetry formats and capture policy ✅
 **Question:** Approve the proposed formats and capture policy?
@@ -424,4 +430,22 @@ Details in [`cloud-platform-telemetry.md`](cloud-platform-telemetry.md).
 **Decision:** **P1, built as soon as nothing blocks it** (Kent, Sat Nov 7). It is the first P1 item to pick up. It starts the moment its blockers are clear, as long as no P0 milestone is running late. Kent asked for the blockers to be spelled out and tracked. They are in [build plan](cloud-platform-build-plan.md) §3, M8, and the flow is F11 in [flows](cloud-platform-flows.md).
 **Options not chosen:** after M6 on Sunday; P0 before the overnight run; stretch only.
 **What this means for the build** *(inferred)*: the contract pieces (code packages, `code_patch` format) go into contracts v0.1 in M0, so the device teammate can plan for them now, even though M8 is built later.
+**History:** decided Sat Nov 7 (round-2 lock-down).
+
+### D22. Models and agents for the batch job (was Q2) ✅
+**Question:** Which models and agents does the batch job use: (1) an LLM for explanations and harness skills, (2) a coding agent for code patches (D21)?
+**Decision:** **Use Naïve and RunPod as much as possible. Follow James's work in the stack hub (`hub/`) for the RunPod side. Keep everything swappable** (Kent, Sat Nov 7).
+**Options not chosen:** Claude for both; RunPod prose with a Claude coder; Hermes as the coder; RunPod for both.
+**What this means for the build** *(inferred)*:
+- **One OpenAI-compatible LLM adapter, with the provider set in config:**
+  - `LLM_PROVIDER = naive_proxy`: Naïve's model proxy, `https://api.vetta.sh/v1/proxy/openai/v1`, billed to the org's balance. It needs a key with `proxy:write` ([api/proxy](https://usenaive.ai/docs/api/proxy)). This is the default live choice, because it has no cold start and counts as Naïve usage.
+  - `runpod`: the team's vLLM endpoint from James's lane. The hub (`hub/src/content/event.ts`, `journey.ts`) says it's serverless vLLM with Qwen3-VL as the example model, and that cold starts take minutes, so it suggests a pod overnight.
+  - `fake`: the offline default.
+- **The coding agent sits behind a `Coder` adapter, also set in config:**
+  - `CODER_PROVIDER = local_agent`: an open-source coding agent in the `coder` sandbox, pointed at the same OpenAI-compatible endpoint (Naïve proxy or RunPod). Prefer whatever the device team settles on (it's testing pi and mini-swe-agent; `docs/project-overview.md`), so both sides share know-how.
+  - `naive_session`: a Naïve managed-agent session with its own computer, which clones the repo and returns a diff. Later, if `local_agent` is weak.
+  - `fake`.
+- **Pick model ids from Naïve's live catalogue** (`GET /v1/models` or `naive proxy message`); the catalogue is read live, "never a fixed list" (concepts/model-router). Pick RunPod model ids from James.
+- **Changing a provider is a config change only** (architecture §6).
+
 **History:** decided Sat Nov 7 (round-2 lock-down).

@@ -31,7 +31,6 @@ Planning docs for the Romulus cloud platform: the cloud half of the arm company'
   - D19: Naïve design.
   - D19b: what happens over the spend cap.
   - D20: telemetry formats.
-  - Q2 in v0 plan §9: which LLM and coding agent the batch job uses.
 - **Next step:** build plan **M0**, which covers the scaffold, contracts v0.1 for the device teammate, and the Naïve and LLM spikes.
 
 ## For a coding session

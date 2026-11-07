@@ -39,6 +39,7 @@ What the system does: [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md). 
 | `api` | built from `cloud/Dockerfile` | `uvicorn romulus_cloud.main:app --host 0.0.0.0 --port 8000` | Port `8000` on the LAN. Mounts `./data/blobs`. Starts after `db` is healthy. |
 | `worker` | same image as `api` | `python -m romulus_cloud.worker` | One instance. Runs the background loops (§5). Mounts `./data/blobs`. |
 | `fake-devices` | built from `tools/fake_device/Dockerfile` | `python -m fake_device --n 4` | Profile `sim`. Depends only on the contracts package (§3). |
+| `coder` | built from `cloud/coder/Dockerfile` | started by the worker for each code patch | **M8 (D21).** Holds a scratch copy of `device/`, the open-source coding agent, and the STM32 toolchain if patches touch C firmware. Network: the LLM endpoint only |
 | `tunnel` | `cloudflare/cloudflared` | quick tunnel to `api:8000` | Profile `tunnel`. **Off by default.** Only if Naïve agents must call us (open question N3). |
 
 **Why Postgres instead of SQLite:** two containers (`api` and `worker`) write at the same time, and JSONB suits manifests, labels and diffs. Postgres in Compose costs one service definition.
@@ -106,7 +107,8 @@ romulus_cloud/
 ├── adapters/          # the outside world, each behind a Protocol with a Fake
 │   ├── blobstore.py   # BlobStore: put(sha256, stream), get, exists. FsBlobStore now; S3 later
 │   ├── naive.py       # NaiveClient: create_card, get_cards. HttpNaive | FakeNaive
-│   └── llm.py         # Llm: explain(incident) -> str; write_skill(incident) -> str. Live | FakeLlm
+│   ├── llm.py         # Llm: explain(incident) -> str; write_skill(incident) -> str. OpenAICompat (naive_proxy | runpod) | FakeLlm
+│   └── coder.py       # Coder: draft(patch, incident, code_rev) -> CodeDraft. LocalAgent | NaiveSession | FakeCoder (M8)
 ├── api/
 │   ├── device.py      # device-facing routes (APIs §3)
 │   ├── ops.py         # operator JSON routes (APIs §4)
@@ -145,7 +147,8 @@ The state lives in Postgres: candidate status, `fleet_state.batch_requested`, wo
 | `NAIVE_API_KEY`, `NAIVE_BASE_URL` (`https://api.vetta.sh/v1`), `NAIVE_VERSION` (`2026-09-30`), `NAIVE_BOARD_ID` (the CEO's `agt_` id), `NAIVE_OPS_AGENT` (`fleet-ops`) | — | See the Naïve integration doc |
 | `ORDER_MAX_USD`, `ORDERS_PER_DAY_MAX`, `ORDERS_PER_ROBOT_DAY_MAX` | `50`, `3`, `1` | Spend caps, enforced in our code before a card is posted (Naïve integration §3.4) |
 | `LLM_MODE` | `fake` | `fake` returns templated text; `live` calls the provider |
-| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` | — | Open question Q2 in v0 plan §9 (Claude API or the team's RunPod model) |
+| `LLM_PROVIDER` (`fake` \| `naive_proxy` \| `runpod`), `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | `fake` | One OpenAI-compatible client for both live providers (D22). Naïve proxy: `https://api.vetta.sh/v1/proxy/openai/v1`, key with `proxy:write`. RunPod: the team's vLLM endpoint (James's lane) |
+| `CODER_PROVIDER` (`fake` \| `local_agent` \| `naive_session`), `CODER_AGENT`, `CODER_IMAGE` | `fake` | The coding agent for code patches (D21, D22). `local_agent` runs in the `coder` container against the same LLM endpoint |
 | `CANARY_WINDOW_S` | `120` | 1200 for the overnight run |
 | `BATCH_INTERVAL_S` | `120` | 3600 for the overnight run |
 
@@ -159,7 +162,7 @@ Pinned in `uv.lock` at M0. Adding a library means adding a row here.
 |---|---|
 | Web framework and validation | FastAPI, Pydantic v2, pydantic-settings, uvicorn |
 | Database | SQLAlchemy 2 (typed ORM), psycopg 3 |
-| HTTP client (Naïve, LLM) | httpx |
+| HTTP client (Naïve, LLM) | httpx; the `openai` Python client pointed at `LLM_BASE_URL` for Chat Completions (works for the Naïve proxy and vLLM, D22) |
 | Pages | Jinja2, htmx (one vendored JS file) |
 | Tests | pytest, pytest-asyncio (only if needed) |
 | Lint and format | ruff |
