@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naïve × Hermes Diagrams</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1d1d1f; --muted: #5b5b63; --card: #ffffff; --line: #d6d6dc;
+    --naive: #1f6feb; --naive-soft: #e8f0fe;
+    --hermes: #8a3ffc; --hermes-soft: #f1e9ff;
+    --bridge: #b35c00; --bridge-soft: #fff1e0;
+    --warn: #b42318; --warn-soft: #fdecea;
+    --ok: #1a7f37; --ok-soft: #e6f4ea;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141416; --fg: #ececf1; --muted: #a3a3ad; --card: #1e1e22; --line: #3a3a42;
+      --naive: #6ea8ff; --naive-soft: #16243d;
+      --hermes: #b98cff; --hermes-soft: #261a3d;
+      --bridge: #f0a35e; --bridge-soft: #33240f;
+      --warn: #ff8a80; --warn-soft: #3a1a18;
+      --ok: #6fd28a; --ok-soft: #12301c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141416; --fg: #ececf1; --muted: #a3a3ad; --card: #1e1e22; --line: #3a3a42;
+    --naive: #6ea8ff; --naive-soft: #16243d;
+    --hermes: #b98cff; --hermes-soft: #261a3d;
+    --bridge: #f0a35e; --bridge-soft: #33240f;
+    --warn: #ff8a80; --warn-soft: #3a1a18;
+    --ok: #6fd28a; --ok-soft: #12301c;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 40px 0 6px; }
+  p.lede, .muted { color: var(--muted); }
+  p.lede { margin: 0 0 8px; }
+  a { color: inherit; text-underline-offset: 2px; }
+  code { font-family: var(--mono); font-size: .86em; overflow-wrap: anywhere; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+  nav.toc a { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; text-decoration: none; background: var(--card); font-size: .9rem; }
+
+  figure { margin: 12px 0 0; }
+  figcaption { color: var(--muted); font-size: .88rem; margin-top: 10px; }
+  .band {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+    padding: 12px 14px; position: relative;
+  }
+  .band + .arrow { margin: 0; }
+  .label { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--muted); margin: 0 0 6px; }
+  .title { font-weight: 650; margin: 0 0 4px; }
+  .arrow { text-align: center; color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 6px 0; }
+  .arrow span { font-size: .78rem; margin-left: 6px; vertical-align: middle; }
+  ul.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  ul.chips li { border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: .86rem; background: var(--bg); }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .grid > .band { height: 100%; }
+  .naive  .accent { border-left: 4px solid var(--naive); }
+  .hermes .accent { border-left: 4px solid var(--hermes); }
+  .naive  .tint { background: var(--naive-soft); border-color: var(--naive); }
+  .hermes .tint { background: var(--hermes-soft); border-color: var(--hermes); }
+  .bridgecard { background: var(--bridge-soft); border-color: var(--bridge); }
+  .warncard { background: var(--warn-soft); border-color: var(--warn); }
+  .okcard { background: var(--ok-soft); border-color: var(--ok); }
+  .tag { display: inline-block; font-size: .7rem; font-weight: 700; padding: 1px 6px; border-radius: 6px; border: 1px solid currentColor; margin-left: 6px; vertical-align: 1px; }
+  .tag.bridge { color: var(--bridge); }
+  .tag.hermes { color: var(--hermes); }
+  .harnesses { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .harness { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--bg); }
+  .harness.hl { border: 2px solid var(--bridge); background: var(--bridge-soft); }
+  .harness b { font-family: var(--mono); }
+  .harness small { display: block; color: var(--muted); }
+  .loop { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; }
+  .loop .step { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); }
+  .vm { border: 2px dashed var(--bridge); border-radius: 12px; padding: 12px; background: var(--card); }
+  .split { display: grid; gap: 10px; grid-template-columns: 1fr; }
+  @media (min-width: 760px) { .split { grid-template-columns: 1fr auto 1fr; align-items: stretch; } }
+  .split .endpoint { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; color: var(--bridge); font-weight: 650; font-size: .9rem; padding: 4px 8px; }
+  .split .endpoint .big { font-size: 1.4rem; line-height: 1; }
+  ul.plain { margin: 4px 0 0; padding-left: 18px; }
+  ul.plain li { margin: 2px 0; }
+  footer { margin-top: 48px; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Naïve × Hermes: setup diagrams</h1>
+  <p class="lede">How each system is put together, and how they meet when Naïve runs <code>harness: "hermes"</code>. Built from the docs snapshot of 2026-11-07; terms are defined in <a href="naive/terminology.md">naive/terminology.md</a>, <a href="hermes/terminology.md">hermes/terminology.md</a> and <a href="cross-reference.md">cross-reference.md</a>.</p>
+  <nav class="toc" aria-label="Diagrams">
+    <a href="#naive">1 · Naïve Managed Agents</a>
+    <a href="#hermes">2 · Hermes Agent</a>
+    <a href="#bridge">3 · Hermes inside Naïve</a>
+  </nav>
+
+  <!-- ───────────────────────── 1. NAIVE ───────────────────────── -->
+  <section class="naive" id="naive" aria-labelledby="naive-h">
+    <h2 id="naive-h">1 · Naïve Managed Agents</h2>
+    <p class="muted">You configure the agent. Naïve operates the three layers underneath it: harness, tools, runtime.</p>
+    <figure>
+      <div class="band accent">
+        <p class="label">How you reach it</p>
+        <ul class="chips">
+          <li>REST <code>https://api.vetta.sh/v1</code></li>
+          <li>TS SDK <code>@usenaive-sdk/managed-agents</code></li>
+          <li>CLI <code>naive</code></li>
+          <li>MCP server (the API as tools)</li>
+          <li>Studio / dashboard</li>
+        </ul>
+      </div>
+      <div class="arrow" aria-hidden="true">↓</div>
+
+      <div class="band tint">
+        <p class="label">The hackathon on-ramp: a company</p>
+        <p class="title">Blueprint (repo, apps, routes) + Template (crew, ≤4 setup questions, day-one tasks)</p>
+        <div class="loop" style="margin-top:6px">
+          <span class="step"><code>naive template</code> / clone</span><span aria-hidden="true">→</span>
+          <span class="step"><code>naive claim</code></span><span aria-hidden="true">→</span>
+          <span class="step"><code>naive up</code> (reconcile <code>naive.config.*</code>)</span><span aria-hidden="true">→</span>
+          <span class="step">crew + apps + persona + board cards</span>
+        </div>
+      </div>
+      <div class="arrow" aria-hidden="true">↓ <span>each crew member is an agent</span></div>
+
+      <div class="grid">
+        <div class="band accent">
+          <p class="label">Agent: a versioned config</p>
+          <ul class="chips">
+            <li><code>model</code></li><li><code>system</code></li><li><code>harness</code></li>
+            <li><code>tools</code> / <code>mcp_servers</code></li><li><code>skills</code></li>
+            <li><code>budget</code> (required)</li><li><code>window</code></li><li><code>output_schema</code></li>
+          </ul>
+        </div>
+        <div class="band accent">
+          <p class="label">Runs</p>
+          <p class="title">Sessions · Deployments (cron)</p>
+          <p class="muted" style="margin:0">Status <code>queued → running → idle</code>, then <code>completed</code> / <code>failed</code> / <code>cancelled</code>. An idle session carries a <code>stop_reason</code>.</p>
+        </div>
+        <div class="band accent">
+          <p class="label">Events</p>
+          <p class="title">A <code>{domain}.{action}</code> SSE stream</p>
+          <p class="muted" style="margin:0">Ordered by <code>seq</code> and resumable with <code>after_seq</code>: <code>message.completed</code>, <code>tool.confirm</code>, <code>budget.exceeded</code>…</p>
+        </div>
+      </div>
+      <div class="arrow" aria-hidden="true">↓</div>
+
+      <div class="band">
+        <p class="label">Harness: the one layer you pick (set at creation only)</p>
+        <div class="harnesses">
+          <div class="harness"><b>pi</b> <small>default · ga · sandbox · approvals ✓ · typed ✓ · streaming ✓ · mobile ✓</small></div>
+          <div class="harness"><b>vetta</b> <small>preview · <strong>isolate</strong> (an idle session holds nothing) · approvals ✓</small></div>
+          <div class="harness"><b>claude_code</b> <small>preview · sandbox · CLI process · approvals ✗</small></div>
+          <div class="harness hl"><b>hermes</b><span class="tag bridge">bridge</span> <small>preview · sandbox · CLI process · approvals ✗ · see diagram 3</small></div>
+        </div>
+      </div>
+      <div class="arrow" aria-hidden="true">↓</div>
+
+      <div class="band tint">
+        <p class="label">Runtime (Naïve's, beneath every harness)</p>
+        <div class="loop" aria-label="Durable loop: wake, turn, commit, sleep">
+          <span class="step">wake</span><span aria-hidden="true">→</span>
+          <span class="step">one bounded turn</span><span aria-hidden="true">→</span>
+          <span class="step">commit</span><span aria-hidden="true">→</span>
+          <span class="step">sleep</span><span aria-hidden="true">↺</span>
+        </div>
+        <ul class="chips" style="margin-top:8px">
+          <li>budget gate (quote before every call, micro-USD)</li>
+          <li>policy <code>allow</code> / <code>ask</code> / <code>deny</code></li>
+          <li>event log</li><li>ledger (5 token tiers)</li><li>idle costs storage, not compute</li>
+        </ul>
+      </div>
+      <div class="arrow" aria-hidden="true">↓ <span>tools and capabilities</span></div>
+
+      <div class="grid">
+        <div class="band accent">
+          <p class="title">Computer</p>
+          <p class="muted" style="margin:0 0 6px">A Linux micro-VM, paused while the agent sleeps</p>
+          <ul class="chips"><li>filesystem</li><li><code>bash</code></li><li>browser</li><li>mobile device</li><li>snapshots</li></ul>
+        </div>
+        <div class="band accent">
+          <p class="title">Identity (persona)</p>
+          <p class="muted" style="margin:0 0 6px">Who the agent acts as</p>
+          <ul class="chips"><li>email</li><li>phone/SMS</li><li>domains</li><li>connections</li><li>vault</li><li>wallet</li><li>cards</li><li>social</li><li>legal/KYC</li></ul>
+        </div>
+        <div class="band accent">
+          <p class="title">Team</p>
+          <p class="muted" style="margin:0 0 6px">Coordinator + version-pinned roster</p>
+          <ul class="chips"><li>delegation <code>send_to_agent</code></li><li>board <code>todo·doing·blocked·done</code></li><li>handoffs</li></ul>
+        </div>
+      </div>
+      <figcaption>Sources: usenaive.ai/docs pages <code>how-managed-agents-is-built</code>, <code>capabilities/agent</code>, <code>concepts/runtime</code>, <code>concepts/harnesses</code>, <code>concepts/harness-capabilities</code>, <code>concepts/templates</code>, <code>team/overview</code>, <code>cli/naive</code>.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── 2. HERMES ───────────────────────── -->
+  <section class="hermes" id="hermes" aria-labelledby="hermes-h">
+    <h2 id="hermes-h">2 · Hermes Agent</h2>
+    <p class="muted">One <code>AIAgent</code> class serves every entry point. Plugins attach through public interfaces.</p>
+    <figure>
+      <div class="band accent">
+        <p class="label">Entry points</p>
+        <ul class="chips">
+          <li>CLI / TUI</li><li>Gateway (25+ messaging platforms)</li><li>ACP (VS Code, Zed, JetBrains)</li>
+          <li>API server (OpenAI-compatible)</li><li>Desktop</li><li>Batch runner</li><li>Python library</li>
+        </ul>
+      </div>
+      <div class="arrow" aria-hidden="true">↓</div>
+
+      <div class="band tint">
+        <p class="label">AIAgent (the loop)</p>
+        <div class="grid">
+          <div class="band"><p class="title">Prompt builder</p><p class="muted" style="margin:0">Tiers <code>stable → context → volatile</code>; <code>SOUL.md</code> is slot 1</p></div>
+          <div class="band"><p class="title">Provider resolution</p><p class="muted" style="margin:0">3 API modes: <code>chat_completions</code> · <code>codex_responses</code> · <code>anthropic_messages</code></p></div>
+          <div class="band"><p class="title">Tool dispatch</p><p class="muted" style="margin:0">Registry: 70+ tools in ~28 toolsets</p></div>
+          <div class="band"><p class="title">Compression &amp; caching</p><p class="muted" style="margin:0">Summarizes the middle of long chats; micro-compaction</p></div>
+        </div>
+      </div>
+      <div class="arrow" aria-hidden="true">↓</div>
+
+      <div class="grid">
+        <div class="band accent">
+          <p class="title">Tool backends</p>
+          <ul class="chips"><li>terminal: local · Docker · SSH · Daytona · Modal · Vercel Sandbox · plugins</li><li>browser</li><li>web</li><li>MCP (dynamic)</li></ul>
+        </div>
+        <div class="band accent">
+          <p class="title">State</p>
+          <ul class="chips"><li>sessions: SQLite + FTS5</li><li><code>MEMORY.md</code> · <code>USER.md</code></li><li>skills <code>~/.hermes/skills/</code></li><li>profiles (<code>HERMES_HOME</code>)</li></ul>
+        </div>
+        <div class="band accent">
+          <p class="title">Automation</p>
+          <ul class="chips"><li>cron jobs</li><li><code>delegate_task</code></li><li>Kanban</li><li>goals · loops · heartbeats</li></ul>
+        </div>
+      </div>
+      <div class="arrow" aria-hidden="true">↑ <span>plugins attach here</span></div>
+
+      <div class="band bridgecard">
+        <p class="label">Plugin interfaces <span class="tag hermes">hackathon entry</span></p>
+        <p class="title"><code>plugin.yaml</code> + <code>register(ctx)</code> (or <code>desktop/plugin.js</code>, <code>plugin.json</code>, <code>dashboard/manifest.json</code>)</p>
+        <ul class="chips" style="margin-top:6px">
+          <li>tools <code>ctx.register_tool</code></li><li>hooks <code>pre_tool_call</code> …</li><li>middleware</li>
+          <li>slash / CLI commands</li><li>skills</li><li><code>ctx.llm</code></li>
+          <li>providers: model · memory · context engine · delegation · browser · image/video · web search · terminal env · secret source · platform</li>
+          <li>Desktop SDK <code>@hermes/plugin-sdk</code></li>
+        </ul>
+        <p class="muted" style="margin:8px 0 0">Ship it: <code>hermes plugins validate</code> → PR adding <code>plugin-catalog/&lt;name&gt;.yaml</code> (pinned 40-char SHA) → demo video on X → form.</p>
+      </div>
+      <figcaption>Sources: hermes-agent.nousresearch.com/docs pages <code>developer-guide/architecture</code>, <code>developer-guide/plugins</code>, <code>developer-guide/plugins/catalog-submission</code>, <code>user-guide/which-file-does-what</code>.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ───────────────────────── 3. BRIDGE ───────────────────────── -->
+  <section id="bridge" aria-labelledby="bridge-h">
+    <h2 id="bridge-h">3 · Hermes inside Naïve (<code>harness: "hermes"</code>)</h2>
+    <p class="muted">Naïve runs Hermes as "an external coding agent, run as a process" on a micro-VM. Hermes owns the turn loop; Naïve owns everything beneath it.</p>
+    <figure>
+      <div class="band" style="border-color:var(--naive)">
+        <p class="label">Naïve runtime: durable loop · budget gate · policy · ledger · events</p>
+        <div class="split">
+          <div class="vm">
+            <p class="label">micro-VM (held while the session is idle)</p>
+            <p class="title">Hermes process (CLI)</p>
+            <ul class="chips"><li>its own file tools</li><li>its own shell</li><li>its own search</li></ul>
+          </div>
+          <div class="endpoint" role="img" aria-label="Session-scoped tool endpoint, two-way">
+            <span class="big" aria-hidden="true">⇄</span>
+            session-scoped<br>tool endpoint
+            <small class="muted">set up every turn;<br>"you configure nothing"</small>
+          </div>
+          <div class="band okcard">
+            <p class="label">Naïve tools that DO reach Hermes</p>
+            <ul class="chips">
+              <li>team: <code>send_to_agent</code> · <code>wait_for_agents</code> · <code>list_agents</code> · <code>board_read</code> / <code>board_write</code></li>
+              <li>MCP servers <code>&lt;server&gt;.&lt;tool&gt;</code></li>
+              <li>connections <code>&lt;connector&gt;.&lt;tool&gt;</code></li>
+              <li>social publishing</li><li>your apps' tools</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top:10px">
+        <div class="band warncard">
+          <p class="label">Does NOT reach Hermes</p>
+          <ul class="plain">
+            <li>Naïve built-ins: <code>web_search</code>/<code>web_fetch</code>, image/video generation, skill disclosure, <code>publish_file</code>, managed browser</li>
+            <li>the <code>mobile</code> tool (<code>pi</code> only)</li>
+            <li>any <code>ask</code> tool: it is left out, and a toolset with an <code>ask</code> is <strong>refused at session start</strong></li>
+          </ul>
+        </div>
+        <div class="band warncard">
+          <p class="label">Behaves differently</p>
+          <ul class="plain">
+            <li>no structured output and no streaming deltas: the answer arrives whole</li>
+            <li><code>wait_for_agents</code> doesn't pause the turn</li>
+            <li>no <code>tool.started</code>/<code>tool.completed</code> events, though cost is still metered</li>
+            <li><code>social.post</code>/<code>social.cancel</code> default to <code>ask</code>, so set them to <code>allow</code> by name</li>
+          </ul>
+        </div>
+        <div class="band bridgecard">
+          <p class="label">Test before relying on it</p>
+          <ul class="plain">
+            <li>Status is <code>preview</code>; check <code>runnable</code> on <code>GET /v1/harnesses</code></li>
+            <li>Whether your own Hermes plugins or <code>SOUL.md</code> load inside a Naïve-hosted session isn't documented</li>
+            <li>A <code>hermes</code> agent can be a team member <em>or</em> coordinator, and harnesses can be mixed</li>
+          </ul>
+        </div>
+      </div>
+      <figcaption>Sources: usenaive.ai/docs pages <code>concepts/harnesses</code> and <code>concepts/harness-capabilities</code>; the "test" items are open questions, not documented facts.</figcaption>
+    </figure>
+  </section>
+
+  <footer>
+    Snapshot 2026-11-07 · Refresh the raw docs with <code>bash docs/raw/fetch.sh</code> · Hackathon facts: <a href="hackathons.md">hackathons.md</a>
+  </footer>
+</main>
+</body>
+</html>
