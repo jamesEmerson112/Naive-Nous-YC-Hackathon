@@ -1,0 +1,70 @@
+FEATURES: who is on what
+Claim a line by adding "<--- Name". Move done lines to FINISHED.
+Started Sat Nov 7, 3:45 PM PST from CLAUDE.md, commits and docs/.
+
+BUSINESS (Naive)
+Naive company agents setup
+Order intake (inbox or form)
+Planner creates arm job cards
+Stripe payment for jobs
+Daily digest and budgets
+Naive agent calls via Mobilerun
+AgentMail incident email
+
+BENCH CONTROL (Hermes)
+Hermes arm plugin tools
+pre_tool_call safety guard
+Cron pulls next board card
+Gateway phone alerts
+Hermes plugin catalog submission
+
+DEVICE (Pi 5, STM32)
+Pi app: hold object
+Ultrasonic distance reading
+One serial-port owner (arm host)
+Healer agent on the Pi
+Health checks, tiers 1-3
+Snapshot and park on fault
+Overlay patches with self-revert
+Visor: pull, install, roll back
+Local model on the Pi
+STM32 firmware control loop             <--- Olir
+STM32 to Pi link
+
+ROMULUS CLOUD
+Device contracts (M0)                   <--- Kent
+Registry and device API (M1)            <--- Kent
+Incident timeline page (M2)             <--- Kent
+Batch job: overlay to version (M3)      <--- Kent
+Replay, canary, kill switch (M4)        <--- Kent
+Work orders to Naive cards (M5)         <--- Kent
+Overnight unattended run (M6)           <--- Kent
+
+DEMO AND FAULTS
+Plant demo faults D1-D3
+STM32 C bug demo (F1, F2)
+Camera-cover hero demo
+Healer benchmark, harness versions
+Demo script and rehearsal
+Backup demo video
+
+SIM AND CONTROL
+Bench to cloud API bridge               <--- James
+NVIDIA sim on RunPod                    <--- James
+Sim canary device for Romulus           <--- James
+VLA vs LLM control benchmark            <--- James
+Self-reset retry loop
+VLA policy (if training allowed)
+
+HUB AND DOCS
+Stack hub refresh                       <--- James
+
+FINISHED
+Team status sync in CLAUDE.md           <--- James
+SO-101 research notes                   <--- James
+Stack hub artifact v1                   <--- James
+Cloud platform PRD and APIs             <--- Kent
+Romulus v0 plan and decisions           <--- Kent
+Project overview                        <--- Ishaan
+Fault catalog                           <--- Ishaan
+STM32 firmware boilerplate              <--- Olir

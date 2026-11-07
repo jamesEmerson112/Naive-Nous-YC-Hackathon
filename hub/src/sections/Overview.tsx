@@ -14,7 +14,7 @@ export function Glance() {
         layer="sim"
         items={[
           { icon: "alert", title: "Fault drill", sub: "break it, watch it heal" },
-          { icon: "arm", title: "VLA on the arm", sub: "a policy we trained" },
+          { icon: "arm", title: "VLA on the arm", sub: "a policy we trained", flag: "team overview: no model training this hackathon" },
           { icon: "loop", title: "Self-reset loop", sub: "it puts the cube back" },
           { icon: "chart", title: "Benchmark chart", sub: "VLA vs LLM" },
         ]}

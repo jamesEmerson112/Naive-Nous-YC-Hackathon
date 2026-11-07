@@ -17,15 +17,16 @@ export const JOURNEY: Hop[] = [
   { who: "Hermes cron", title: "Pull ≤ 60 s", layer: "hermes", icon: "loop", line: "Every minute a cheap script asks Naïve's REST API for new cards; only then does the agent wake. Card → doing." },
   { who: "Model on RunPod", title: "Pick a tool", layer: "compute", icon: "eye", line: "Hermes sends the card and the arm's tool list to its model (e.g. Qwen3-VL on vLLM). Reply: arm_gesture(\"wave\")." },
   { who: "Guard hook", title: "Check", layer: "hermes", icon: "shield", line: "pre_tool_call checks that the gesture is allowed, the arm is in a safe mode, and no faults are active." },
-  { who: "Arm host", title: "Move", layer: "edge", icon: "arm", line: "POST /skill/gesture plays a pre-defined wave through LeRobot send_action, every step checked against joint limits. The model never moves joints itself." },
+  { who: "Pi 5 app", title: "Move", layer: "edge", icon: "arm", line: "The Pi app plays a pre-defined wave through LeRobot send_action, every step checked against joint limits. The model never moves joints itself." },
   { who: "Back up", title: "Report", layer: "naive", icon: "chart", line: "post_tool_call logs \"wave ok, 3.2 s\"; Hermes comments on the card and marks it done; Naïve replies to you." },
 ];
 
 export const JOURNEY_FAIL: Hop[] = [
-  { who: "Arm host", title: "Overheat", layer: "edge", icon: "alert", line: "The gripper servo overheats mid-wave. The reflex stops the motion and goes to a safe pose." },
-  { who: "Romulus", title: "Diagnose", layer: "heal", icon: "doc", line: "The watchdog reads the logs, diagnoses \"overheat\", and proposes a cooldown." },
-  { who: "Hermes gateway", title: "Alert", layer: "hermes", icon: "phone", line: "Your phone gets a text." },
-  { who: "Board", title: "Blocked", layer: "naive", icon: "doc", line: "The card goes to blocked, with the reason." },
+  { who: "SO-101", title: "Servo jams", layer: "edge", icon: "alert", line: "A servo jams mid-wave (A6 in the fault catalog). A tier 1 health check catches it." },
+  { who: "Pi 5", title: "Park", layer: "edge", icon: "shield", line: "Snapshot first, then safe pose and torque off." },
+  { who: "Healer", title: "Diagnose", layer: "edge", icon: "bug", line: "The healer and its local model see a hardware fault: no code fix, so it shows restraint." },
+  { who: "Romulus", title: "Work order", layer: "heal", icon: "doc", line: "The incident reaches the cloud and becomes a work order: a Naïve board card (D12)." },
+  { who: "Naïve agent", title: "Parts call", layer: "naive", icon: "phone", line: "The assigned agent phones in the part via Mobilerun. The incident timeline shows every step and why." },
 ];
 
 export const JOURNEY_NOTES: { k: string; v: string }[] = [

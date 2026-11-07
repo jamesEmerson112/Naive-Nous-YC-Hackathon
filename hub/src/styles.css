@@ -449,7 +449,7 @@ svg.mini { display: block; width: 100%; height: auto; }
 @keyframes dash { to { stroke-dashoffset: -24; } }
 
 /* ---------- Steps strip with a walking highlight ---------- */
-.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
 .step { margin: 0; position: relative; display: grid; gap: 4px; justify-items: start; align-content: start; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); animation: stepHi calc(var(--n) * 1.4s) linear infinite; animation-delay: calc(var(--i) * 1.4s); }
 .step + .step::before { content: "→"; position: absolute; left: -8px; top: 50%; transform: translate(-50%, -50%); color: var(--muted); }
 .step-icon { color: var(--l); display: inline-flex; }
@@ -459,13 +459,12 @@ svg.mini { display: block; width: 100%; height: auto; }
   0%, 17% { border-color: var(--l); background: var(--ls); box-shadow: inset 0 0 0 1px var(--l); }
   24%, 100% { border-color: var(--line); background: var(--panel); box-shadow: none; }
 }
-@media (max-width: 760px) {
-  .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 560px) {
   .step + .step::before { display: none; }
 }
 
 /* ---------- Ranked priorities: emphasis fades with rank ---------- */
-.ranked { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
+.ranked { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
 .ranked li + li { margin-top: 0; }
 .rank { margin: 0; display: grid; gap: 4px; align-content: start; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); opacity: calc(1 - var(--r) * 0.12); }
 .rank:first-child { background: var(--ls); border: 2px solid var(--l); opacity: 1; }
@@ -474,6 +473,38 @@ svg.mini { display: block; width: 100%; height: auto; }
 .rank-meter { display: inline-flex; gap: 3px; }
 .rank-meter span { width: 10px; height: 6px; border-radius: 1px; background: var(--panel-2); border: 1px solid var(--line-strong); }
 .rank-meter span.on { background: var(--l); border-color: var(--l); }
+
+.rank-flag { display: inline-flex; gap: 5px; align-items: center; margin-top: 4px; padding: 3px 8px; border-radius: var(--radius); background: var(--risk-soft); border: 1px solid color-mix(in srgb, var(--risk) 45%, transparent); color: var(--ink); font-size: var(--fs-xs); }
+.rank-flag .icon { color: var(--risk); flex: none; }
+
+/* ---------- Bench hardware ---------- */
+.hw { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
+.hw-card { display: grid; gap: 4px; align-content: start; justify-items: start; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--l); border-radius: var(--radius); }
+.hw-icon { color: var(--l); }
+
+/* ---------- Self-healing extras ---------- */
+.side3 { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); }
+.side-card { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 2px; align-items: center; padding: 10px 12px; background: var(--ls); border: 1px solid color-mix(in srgb, var(--l) 40%, transparent); border-radius: var(--radius); color: var(--l); }
+.side-card b { color: var(--ink); font-family: var(--font-display); }
+.side-card .small { grid-column: 1 / -1; }
+.decisions { display: flex; flex-wrap: wrap; gap: 5px; }
+.dec { font: 600 var(--fs-xs)/1 var(--font-mono); padding: 6px 8px; border-radius: var(--radius); border: 1px solid var(--line-strong); cursor: help; }
+.dec.decided { background: var(--heal-soft); border-color: color-mix(in srgb, var(--heal) 50%, transparent); }
+.dec.open { border-style: dashed; color: var(--muted); }
+.dec.proposed { border-style: dotted; color: var(--muted); }
+.msbar { display: flex; height: 30px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line-strong); }
+.ms { display: flex; align-items: center; justify-content: center; min-width: 0; flex-basis: 0; background: color-mix(in srgb, var(--heal) 28%, var(--panel)); border-right: 2px solid var(--bg); font: 600 var(--fs-xs)/1 var(--font-mono); animation: grow 0.9s ease-out both; transform-origin: left; }
+.ms:last-child { border-right: 0; }
+.ms-list { list-style: none; padding: 0; display: grid; gap: 2px; }
+.ms-list li + li { margin-top: 0; }
+.hooks { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--sim) 45%, var(--line)); background: var(--sim-soft); border-radius: var(--radius); }
+.hook { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: baseline; }
+@media (max-width: 560px) { .hook { grid-template-columns: minmax(0, 1fr); } .hook .ff-arrow { display: none; } }
+.catalog { display: grid; gap: 10px; }
+.fault-name { color: var(--muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fault-flow.five { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); }
+@media (max-width: 900px) { .fault-flow.five { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); } .fault-flow.five .ff-arrow { display: none; } }
+.fault code { white-space: nowrap; overflow-wrap: normal; flex: none; }
 
 /* ---------- Request journey ---------- */
 .journey { display: grid; gap: 10px; }

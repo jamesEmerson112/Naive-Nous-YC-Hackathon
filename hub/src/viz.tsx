@@ -62,7 +62,7 @@ export function Steps({ items, layer = "neutral", label }: { items: { icon: Icon
 }
 
 /* ---------- Ranked: a priority list, not a sequence (no arrows, no walking highlight) ---------- */
-export function Ranked({ items, layer = "neutral", label }: { items: { icon: IconName; title: string; sub?: string }[]; layer?: Layer; label: string }) {
+export function Ranked({ items, layer = "neutral", label }: { items: { icon: IconName; title: string; sub?: string; flag?: string }[]; layer?: Layer; label: string }) {
   return (
     <ol className={`ranked l-${layer}`} aria-label={label}>
       {items.map((s, i) => (
@@ -80,6 +80,11 @@ export function Ranked({ items, layer = "neutral", label }: { items: { icon: Ico
           </span>
           <span className="step-title">{s.title}</span>
           {s.sub ? <span className="step-sub">{s.sub}</span> : null}
+          {s.flag ? (
+            <span className="rank-flag">
+              <Icon name="alert" size={14} /> {s.flag}
+            </span>
+          ) : null}
         </li>
       ))}
     </ol>
@@ -176,10 +181,10 @@ type NodeId = "naive" | "board" | "romulus" | "hermes" | "armhost" | "so101" | "
 const NODES: { id: NodeId; x: number; y: number; title: string; sub: string; layer: Layer; line: string; href: string }[] = [
   { id: "naive", x: 40, y: 60, title: "Naïve", sub: "company agents", layer: "naive", line: "Runs the company: orders, board, inbox, payments, budgets. Its SDK is required.", href: "#hosts" },
   { id: "board", x: 400, y: 60, title: "Board", sub: "one card per arm job", layer: "naive", line: "Where the company and the bench meet. The bench pulls the next card (proposed).", href: "#infra" },
-  { id: "romulus", x: 760, y: 60, title: "Romulus", sub: "self-healing · Kent", layer: "heal", line: "Detect → diagnose → act → verify → learn. Writes the incident, calls for parts.", href: "#lanes" },
+  { id: "romulus", x: 760, y: 60, title: "Romulus", sub: "incidents → versions · Kent", layer: "heal", line: "Kent's v0: incidents in, held fixes locked into versions, replay and one canary, then auto promote or rollback. A kill switch is the only human control.", href: "#interfaces" },
   { id: "hermes", x: 400, y: 240, title: "Hermes", sub: "bench agent + arm plugin", layer: "hermes", line: "Takes a card, decides each step, calls arm tools. A guard hook checks every call.", href: "#hosts" },
-  { id: "armhost", x: 400, y: 420, title: "Arm host", sub: "bus owner · reflexes", layer: "edge", line: "The one process that talks to the servos: telemetry, fast reflexes, typed actions.", href: "#interfaces" },
-  { id: "so101", x: 40, y: 420, title: "SO-101", sub: "6 servos · camera", layer: "edge", line: "The red follower arm, its camera and a physical e-stop.", href: "#infra" },
+  { id: "armhost", x: 400, y: 420, title: "Pi 5", sub: "app · healer · visor", layer: "edge", line: "The edge computer: robot app, a healer agent with a local model, and the visor that installs versions. Owner TBD (D14).", href: "#interfaces" },
+  { id: "so101", x: 40, y: 420, title: "SO-101", sub: "servos · camera · sonar", layer: "edge", line: "The red follower arm, a USB camera, an HC-SR04 ultrasonic sensor, an STM32 board and a physical e-stop.", href: "#lanes" },
   { id: "models", x: 760, y: 240, title: "Models", sub: "vLLM · OpenAI", layer: "compute", line: "The model Hermes calls, served on a RunPod GPU, plus OpenAI for comparison.", href: "#ours" },
   { id: "sim", x: 760, y: 420, title: "NVIDIA sim", sub: "Isaac · LeIsaac · training", layer: "sim", line: "Tests every new policy before the arm runs it, and drills faults safely.", href: "#ours" },
 ];
@@ -190,8 +195,8 @@ const EDGES: { id: string; d: string; label: string; lx: number; ly: number; dur
   { id: "calls", d: "M500 310 V420", label: "tool calls", lx: 510, ly: 370, dur: 2.2, anchor: "start" },
   { id: "goals", d: "M400 448 H240", label: "joint goals", lx: 320, ly: 440, dur: 2.2 },
   { id: "health", d: "M240 470 H400", label: "temp · load", lx: 320, ly: 490, dur: 2.6 },
-  { id: "tlm", d: "M600 445 H655 V125 Q655 110 670 110 H760", label: "telemetry", lx: 668, ly: 300, dur: 3.2, rotate: true },
-  { id: "incident", d: "M860 60 V40 Q860 28 848 28 H152 Q140 28 140 40 V60", label: "incident report · parts call", lx: 500, ly: 22, dur: 4.2 },
+  { id: "tlm", d: "M600 445 H655 V125 Q655 110 670 110 H760", label: "incidents", lx: 668, ly: 300, dur: 3.2, rotate: true },
+  { id: "incident", d: "M860 60 V40 Q860 28 848 28 H152 Q140 28 140 40 V60", label: "work orders → parts call", lx: 500, ly: 22, dur: 4.2 },
   { id: "ask", d: "M600 262 H760", label: "model calls", lx: 712, ly: 254, dur: 1.8 },
   { id: "answer", d: "M760 290 H600", label: "", lx: 0, ly: 0, dur: 1.8 },
   { id: "policy", d: "M760 455 H600", label: "policy ✓", lx: 712, ly: 447, dur: 2.6 },
@@ -415,14 +420,14 @@ export function Bridge() {
 
 /* ---------- DevOps loop: the project is DevOps for a physical arm ---------- */
 const DEVOPS: { stage: string; ours: string; layer: Layer; x: number; y: number; anchor: "start" | "middle" | "end" }[] = [
-  { stage: "Plan", ours: "Romulus learns a fix", layer: "heal", x: 260, y: 38, anchor: "middle" },
-  { stage: "Build", ours: "train on RunPod", layer: "compute", x: 128, y: 146, anchor: "end" },
-  { stage: "Test", ours: "sim canary (Isaac)", layer: "sim", x: 260, y: 268, anchor: "middle" },
-  { stage: "Release", ours: "version: policy / harness", layer: "heal", x: 400, y: 214, anchor: "middle" },
-  { stage: "Deploy", ours: "OTA to the arm (visor)", layer: "edge", x: 540, y: 38, anchor: "middle" },
-  { stage: "Operate", ours: "Hermes runs jobs", layer: "hermes", x: 672, y: 146, anchor: "start" },
-  { stage: "Monitor", ours: "telemetry + reflexes", layer: "edge", x: 540, y: 268, anchor: "middle" },
-  { stage: "Respond", ours: "diagnose → alert → heal", layer: "heal", x: 400, y: 92, anchor: "middle" },
+  { stage: "Plan", ours: "incident report in", layer: "heal", x: 260, y: 38, anchor: "middle" },
+  { stage: "Build", ours: "batch lock-in", layer: "heal", x: 128, y: 146, anchor: "end" },
+  { stage: "Test", ours: "replay + canary", layer: "sim", x: 260, y: 268, anchor: "middle" },
+  { stage: "Release", ours: "versioned manifest (D3)", layer: "heal", x: 400, y: 214, anchor: "middle" },
+  { stage: "Deploy", ours: "visor pulls + checks", layer: "edge", x: 540, y: 38, anchor: "middle" },
+  { stage: "Operate", ours: "Pi app + Hermes", layer: "hermes", x: 672, y: 146, anchor: "start" },
+  { stage: "Monitor", ours: "health tiers 1–3", layer: "edge", x: 540, y: 268, anchor: "middle" },
+  { stage: "Respond", ours: "park → healer overlay", layer: "edge", x: 400, y: 92, anchor: "middle" },
 ];
 const INFINITY = "M400 150 C 340 64 140 64 140 150 C 140 236 340 236 400 150 C 460 64 660 64 660 150 C 660 236 460 236 400 150 Z";
 

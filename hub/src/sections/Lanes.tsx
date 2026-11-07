@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { HERO_STEPS, LANES, PEOPLE, PRD, ROMULUS_RULES, TEAM_SRC } from "../content/team";
+import { LANES, PEOPLE, PRD, ROMULUS_RULES, TEAM_SRC } from "../content/team";
+import { DEMO_PLAN, HARDWARE, HARDWARE_NOTE } from "../content/heal";
 import { TEAM_AS_OF } from "../content/meta";
 import { More, Section, Sources, StatusChip, Txt } from "../ui";
-import { Avatars, Steps } from "../viz";
+import { Avatars, Icon, Steps } from "../viz";
 
 function List({ title, items }: { title: string; items: string[] }) {
   return (
@@ -67,10 +68,25 @@ export function Lanes() {
         })}
       </div>
 
-      <h3>Kent's hero demo</h3>
-      <Steps label="Hero demo" layer="heal" items={HERO_STEPS} />
+      <h3>On the bench</h3>
+      <div className="hw">
+        {HARDWARE.map((h) => (
+          <div key={h.name} className={`hw-card l-${h.layer}`}>
+            <span className="hw-icon">
+              <Icon name={h.icon} size={22} />
+            </span>
+            <b>{h.name}</b>
+            <span className="small muted">{h.role}</span>
+            {h.note ? <span className="chip">{h.note}</span> : null}
+          </div>
+        ))}
+      </div>
+      <p className="small muted">{HARDWARE_NOTE}</p>
+
+      <h3>Demo plan (being designed)</h3>
+      <Steps label="Demo plan" layer="heal" items={DEMO_PLAN} />
       <div className="grid-2">
-        <More title="Romulus design rules" hint="6 rules">
+        <More title="Kent's first Romulus notes" hint="6 rules, before v0">
           <ul className="small">
             {ROMULUS_RULES.map((r) => (
               <li key={r}>
