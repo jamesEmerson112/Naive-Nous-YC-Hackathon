@@ -81,33 +81,33 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 3:28 PM PST_
+_Last updated: Sat Nov 7, 3:38 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Ishaan pushed the project's living docs: `docs/project-overview.md` (layers, hardware, healing loop, cloud decisions, demo, open questions) and `docs/fault-catalog.md` (every fault to plant, detect, fix and verify). James pushed the stack hub (`hub/`, a React page built into an artifact) and is now pulling Ishaan's overview and fault catalog into it. Kent's v0 plan (D15) still awaits approval.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is finishing the cloud-platform build plan (hero loop F2→F3→F4 first, overnight run F10 launching by about 12:30 AM, code freeze Sun 10 AM). James is folding Kent's new docs into the stack hub and `features.txt`, then specifying the bench-to-cloud bridge (Naïve REST, Romulus device API, RunPod).
 
 **Recently done:**
-- Ishaan added `docs/project-overview.md` and `docs/fault-catalog.md` (3:22 PM), folded in Kent's decision log and v0 plan (3:25), and added SO-101 facts (3:26). The catalog covers Pi app bugs D1–D3, STM32 firmware faults F1–F11, and system, arm, camera, ultrasonic and model-server faults
-- James pushed the stack hub artifact (`hub/`) and `docs/so101-research.md` (3:22 PM); the uncommitted `docs/robotic-arm.html` is gone from the working tree
-- Kent pushed `cloud-platform-v0-plan.md` and `cloud-platform-decisions.md` (3:16 PM): self-reverting device overlays → cloud batch lock-in → replay, one canary, auto-promote or auto-rollback; hardware faults become Naïve work orders; the only human control is a kill switch
-- Isaac Sim itself is free but needs an NVIDIA RTX GPU (A6000/4090 about $0.33/hr on RunPod community cloud; A100/H100 unsupported); MuJoCo with the Menagerie SO-101 model is the free fallback on a Mac
+- James refreshed the stack hub (`hub/`) with Kent's v0 plan and decisions D0–D15, Ishaan's overview and 47-fault catalog, the bench hardware and heal loops, and added `features.txt`: one line per feature, claim one with "<--- Name" (3:36 PM)
+- Kent pushed `docs/cloud-platform-planning/`: build plan, Naïve integration (pending D19), telemetry (pending D20), expanded APIs, architecture and flows/progress tracker (3:31–3:35 PM)
+- Ishaan added `docs/project-overview.md` and `docs/fault-catalog.md`, folded in Kent's decision log and v0 plan, and added SO-101 facts (3:22–3:26 PM)
+- Isaac Sim needs an NVIDIA RTX GPU (about $0.33/hr on RunPod community cloud); MuJoCo with the Menagerie SO-101 model is the free fallback on a Mac
 
 **Open questions:**
-- Who owns the device side (embedded agent, overlays, visor, harness)? D14 leaves it to a teammate, still TBD
-- What does the STM32 do in the robot loop, and does the cloud manifest cover its build, or are C fixes local patches only? The v0 batch job skips code patches, and D1 and F1–F11 are code patches
+- Decisions waiting on the team: D15 (v0 plan), D19 (Naïve integration, incl. D19b on spend over the cap), D20 (telemetry)
+- Who owns the device side (embedded agent, overlays, visor, harness)? D14 still needs a teammate
+- What does the STM32 do in the robot loop, and are C fixes (D1, F1–F11) cloud-deployed or local patches only? The v0 batch job skips code patches
 - Which harness and model run on the Pi 5, and which model runs cloud diagnosis on RunPod?
-- AgentMail and Monid MCP auth (bearer token?); can one company win the Main track and a sponsor track?
 
 **Recent commits (all authors):**
+- `2283dce` Sat 15:36 · jamesEmerson112 · Refresh stack hub with team updates; add features.txt
+- `2e99839` Sat 15:36 · Kent Gang · Update Kent status in CLAUDE.md
+- `13d0f09` Sat 15:35 · Kent Gang · Add cloud-platform build plan, Naive integration and telemetry docs; expand APIs
+- `19e2982` Sat 15:31 · Kent Gang · more planning
+- `2b7a4dc` Sat 15:28 · jamesEmerson112 · Update team status in CLAUDE.md
 - `325a4bb` Sat 15:26 · Ishaan Ranjan · Add SO-101 research facts to the overview and fault catalog
 - `38771aa` Sat 15:25 · Ishaan Ranjan · Fold the cloud decision log and v0 plan into the project overview
 - `f5336a4` Sat 15:22 · jamesEmerson112 · Add stack hub artifact and SO-101 research notes
 - `16c6b9c` Sat 15:22 · Ishaan Ranjan · Add project overview and fault catalog for the self-healing robot
 - `5a69311` Sat 15:18 · jamesEmerson112 · Update team status in CLAUDE.md
-- `ee92568` Sat 15:16 · Kent Gang · v0 plan
-- `b845120` Sat 15:08 · jamesEmerson112 · Update team status in CLAUDE.md
-- `192a279` Sat 14:58 · jamesEmerson112 · Update team status in CLAUDE.md
-- `7d192ef` Sat 14:49 · jamesEmerson112 · Update team status in CLAUDE.md
-- `1762eb7` Sat 14:45 · jamesEmerson112 · Ask teammates to set up a 10-minute status sync in CLAUDE.md
 
 **Branches on GitHub:** `main`, `firmware` (Olir)
 <!-- team-status:end -->
