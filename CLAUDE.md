@@ -26,6 +26,17 @@ Prep and build work for two hackathons running at the same time:
 ## Notes from the team
 _Add anything others should know here (who is doing what, decisions, blockers)._
 
+### Please everyone: set up your own status sync (from James)
+James and Kent each run a Claude session that posts what they're working on here about every 10 minutes. Please set one up too (Ishaan, Olir, Andre), so we can all see who's on what and don't redo or overwrite each other's work.
+
+**How to set it up:** in the Claude desktop app, create a scheduled task that runs every 10 minutes, or in Claude Code run `/loop 10m <prompt>`. Use a prompt like this one:
+
+> In this repo, run `git pull --rebase origin main`. Rewrite only my own block in CLAUDE.md, between `<!-- <name>-sync:start -->` and `<!-- <name>-sync:end -->` (create the block under "Notes from the team" if it's missing). Write 3–5 lines on what I'm working on, what I just finished, what I'm blocked on, and my branch and files. Don't touch anything else. If only the timestamp would change, make no commit. Otherwise `git add CLAUDE.md`, commit "Update <name> status in CLAUDE.md", and `git push origin main`. If the push is rejected, pull --rebase once and retry. Never force-push.
+
+**Rules:**
+- Edit only your own block. The `team-status` and `romulus-sync` blocks belong to James and Kent.
+- Before you start something big, check here that nobody else already has it.
+
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
 _Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 2:15 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
