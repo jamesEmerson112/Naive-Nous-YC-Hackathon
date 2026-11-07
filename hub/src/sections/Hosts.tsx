@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { CONNECT, HARNESS_SPLIT, HERMES, HOST_RULES, NAIVE, type Term } from "../content/stack";
+import { CONNECT, CONNECT_STEPS, HARNESS_SPLIT, HERMES, HOST_RULES, NAIVE, NAIVE_FINDINGS, NAIVE_N, NAIVE_ORG, type Term } from "../content/stack";
+import { repo } from "../content/meta";
 import { More, Section, Sources, StatusChip, Txt } from "../ui";
 import { Icon } from "../viz";
 
@@ -38,6 +39,49 @@ export function Hosts() {
         <Board title="Naïve · the office" layer="naive" items={NAIVE} />
         <Board title="Hermes · the hands" layer="hermes" items={HERMES} />
       </div>
+
+      <h3>Our Naïve org today</h3>
+      <div className="org" aria-label="Our Naïve org">
+        {NAIVE_ORG.map((o) => (
+          <div key={o.k} className="org-tile l-naive">
+            <span className="eyebrow">{o.k}</span>
+            <b>{o.v}</b>
+          </div>
+        ))}
+      </div>
+      <div className="grid-2">
+        <div className="panel">
+          <h4>What Kent found</h4>
+          <ul className="small">
+            {NAIVE_FINDINGS.map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
+        </div>
+        <div className="panel">
+          <h4>Org decisions</h4>
+          <ul className="terms">
+            {NAIVE_N.map((n) => (
+              <li key={n.id}>
+                <span className="term">
+                  {n.id} · {n.q}
+                </span>
+                <span className="what">{n.d}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <More title="Connect your own Claude Code to Naïve" hint="3 steps · your own token, local scope only">
+        <ol className="small">
+          {CONNECT_STEPS.map((c) => (
+            <li key={c}>
+              <code>{c}</code>
+            </li>
+          ))}
+        </ol>
+      </More>
+      <Sources items={[repo("docs/naive/company-setup.md", "Kent's Naïve company setup")]} />
 
       <h3>Hermes inside Naïve</h3>
       <div className="nest l-naive" aria-label="What Naïve owns contains what Hermes owns">

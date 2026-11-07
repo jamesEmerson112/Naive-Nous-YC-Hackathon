@@ -51,6 +51,7 @@ export const HERMES: Term[] = [
 ];
 
 /** "Hermes inside Naïve" ownership split, from docs/cross-reference.md. */
+export const HARNESS_SPLIT_NOTE = "Source for the runnable check: docs/naive/company-setup.md.";
 export const HARNESS_SPLIT = {
   hermesOwns: [
     "The turn loop and its own toolset (file, shell and search tools) inside the machine.",
@@ -61,7 +62,7 @@ export const HARNESS_SPLIT = {
     "The micro-VM: sandbox execution; an idle session holds the machine.",
     "Personas, connections, MCP servers, apps and team tools, which reach Hermes through a session-scoped tool endpoint. \"You configure nothing.\"",
   ],
-  status: "preview. Runnable only where a base image exists; check GET /v1/harnesses (runnable) first. No approvals, typed output or streaming; ask tools are refused.",
+  status: "preview, and on our deploy GET /v1/harnesses reports hermes as not runnable (Kent, 3 PM). No approvals, typed output or streaming; ask tools are refused.",
   src: [repo("docs/cross-reference.md"), naiveDoc("concepts/harnesses"), naiveDoc("concepts/harness-capabilities")] as Src[],
 };
 
@@ -85,4 +86,34 @@ export const HOST_RULES: Point[] = [
   { point: "Hermes entry: three things by Wed Nov 11, 2:00 PM PST", detail: "A catalog PR adding plugin-catalog/<name>.yaml (sha pinned to a full commit), a demo video on X under 90 s tagging @NousResearch, and the form.", src: [repo("docs/hackathons.md")] },
   { point: "Catalog rules that bite a hardware plugin", detail: "11: secrets only via get_secret. 12: never route around approvals; fail cleanly when nobody answers. 13: disclose network, shell, background processes, credentials. 17: no compiled binaries or .pyc.", src: [hermesDoc("developer-guide/plugins/catalog-submission")] },
   { point: "Validate before the PR", detail: "hermes plugins validate <path> --install-deps must pass; it is the same check CI runs.", src: [repo("docs/hackathons.md")] },
+];
+
+/** Kent's docs/naive/company-setup.md (live API snapshot, Sat 3:00 PM). */
+export const NAIVE_ORG: { k: string; v: string }[] = [
+  { k: "Plan", v: "Pro · cancels Dec 1" },
+  { k: "Balance", v: "$249.92" },
+  { k: "Agents", v: "1 · CEO" },
+  { k: "CEO model", v: "Claude Opus 5.5 · pi" },
+  { k: "CEO caps", v: "$50/mo · $5/task" },
+  { k: "Board cards", v: "1 · hiring specs" },
+];
+
+export const NAIVE_FINDINGS: string[] = [
+  "Hermes can't run hosted here: GET /v1/harnesses says hermes and claude_code are not runnable, so Hermes stays on the bench.",
+  "The bench reaches the Board with no tunnel: a scoped MCP token limited to the board tools is its credential.",
+  "Cheap completion windows exist on only three models; everything else bills at immediate prices.",
+  "Templates declare caps of $155 to $15K a month: lower them before installing one.",
+  "A CEO turn on Opus costs about $0.10–0.30.",
+];
+
+export const NAIVE_N: { id: string; q: string; d: string }[] = [
+  { id: "N1", q: "Hire Operator, Insights, Roboticist now?", d: "Hold off until the control plane exists" },
+  { id: "N2", q: "Model and caps once hired", d: "Claude Sonnet 5.5, $10 a day each" },
+  { id: "N3", q: "Where the Romulus control plane lives", d: "A Naïve fullstack app (3 PM). D17/D18 later chose local Docker." },
+];
+
+export const CONNECT_STEPS: string[] = [
+  "naive mcp create --name \"<you> claude code\"   (prints an mcp_… token once)",
+  "claude mcp add --scope local --transport http naive https://api.vetta.sh/v1/mcp --header \"Authorization: Bearer mcp_…\"",
+  "Restart Claude Code. You get tools_search and tools_execute; results are cut at 8,000 characters.",
 ];

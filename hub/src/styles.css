@@ -713,3 +713,10 @@ svg.mini { display: block; width: 100%; height: auto; }
 .gap-chip { cursor: pointer; font-family: var(--font-mono); border-style: dashed; background: transparent; color: var(--muted); }
 .gap-chip:hover, .owner-chip:hover { border-color: var(--ink); color: var(--ink); }
 .owner-chip:focus-visible, .gap-chip:focus-visible { outline: 2px solid var(--naive); outline-offset: 2px; }
+
+/* ---------- Our Naïve org ---------- */
+.org { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (min-width: 1000px) { .org { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@media (max-width: 460px) { .org { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.org-tile { display: grid; gap: 4px; padding: 10px 12px; background: var(--ls); border: 1px solid color-mix(in srgb, var(--l) 40%, transparent); border-radius: var(--radius); }
+.org-tile b { font: 600 var(--fs-md)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }

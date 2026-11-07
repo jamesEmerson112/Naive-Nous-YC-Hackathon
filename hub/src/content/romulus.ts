@@ -26,11 +26,11 @@ export interface Decision {
 export const DECISIONS: Decision[] = [
   { id: "D0", text: "The agent fixes; the batch locks it in as firmware and skills", status: "decided" },
   { id: "D1", text: "User is us, the arm company; single tenant", status: "decided" },
-  { id: "D2", text: "Narrow to the cloud half of the loop; \"general purpose\" dropped", status: "decided" },
+  { id: "D2", text: "Narrow loop: the cloud half of self-healing (refined by D16: narrow loop, general data)", status: "decided" },
   { id: "D3", text: "Firmware = versioned manifest: code rev + rules/params + policy model", status: "decided" },
   { id: "D4", text: "Harness = versioned folder; the device teammate picks the framework", status: "decided" },
   { id: "D5", text: "The on-device agent may patch code or rules, then report", status: "decided" },
-  { id: "D5a", text: "Patches are self-reverting overlays; safety layer and visor can't be patched", status: "decided" },
+  { id: "D5a", text: "Patches are self-reverting overlays. Ishaan now proposes the healer may patch everything, safety layer and visor included; Kent to review", status: "open" },
   { id: "D6", text: "Replay, then canary, then auto promote or rollback; no human gate", status: "decided" },
   { id: "D7", text: "Device: hash check, install, health check, roll back on failure", status: "decided" },
   { id: "D8", text: "Cloud down: run last good, queue reports on disk, never bricked", status: "decided" },
@@ -40,9 +40,15 @@ export const DECISIONS: Decision[] = [
   { id: "D12", text: "Naïve runs parts and technician agents via board cards and Mobilerun", status: "decided" },
   { id: "D13", text: "Cut: twins/ERP, billing per heal, trust ledger, policy retraining", status: "decided" },
   { id: "D14", text: "A teammate (TBD) owns the device side; Kent owns cloud and contracts", status: "open" },
-  { id: "D15", text: "The v0 build plan, waiting for approval", status: "proposed" },
-  { id: "D19", text: "Naïve integration (incl. D19b: over-cap work orders), pending", status: "proposed" },
-  { id: "D20", text: "Telemetry design, pending", status: "proposed" },
+  { id: "D15", text: "The v0 build plan: approved in principle (v2)", status: "decided" },
+  { id: "D16", text: "Robot telemetry is a first-class asset: synced, curated, versioned datasets", status: "decided" },
+  { id: "D17", text: "Runtime: local Docker containers; Python + FastAPI", status: "decided" },
+  { id: "D18", text: "Architecture: Compose, Postgres 17, one image for api + worker, Jinja + htmx", status: "decided" },
+  { id: "D19", text: "Naïve integration design, pending", status: "proposed" },
+  { id: "D19b", text: "Over the spend cap: (a) block and wait for a person (recommended) or (b) gated agent", status: "open" },
+  { id: "D20", text: "Telemetry: LeRobot v3 incident windows, MCAP logs, JSONL traces, schema v0.1", status: "decided" },
+  { id: "D21", text: "A coding agent turns code patches into candidates through the gate", status: "decided" },
+  { id: "D21a", text: "Where the coding agent sits in the build order", status: "open" },
 ];
 
 /** Kent's timed build plan (cloud-platform-build-plan.md). Times are PST; Sun = day 2. */
@@ -155,7 +161,8 @@ export const HOOKS: { q: string; ours: string }[] = [
 
 export const ROMULUS_OPEN: string[] = [
   "D14: who owns the device side (embedded agent, overlays, visor)?",
-  "D15, D19, D19b, D20: approve the v0 plan, Naïve integration and telemetry?",
+  "D19, D19b, D21a: Naïve integration, the over-cap rule, and when the coding agent gets built.",
+  "D5a: may the healer patch the safety layer and visor (Ishaan's answer), or not?",
   "Q1: does calling Naïve's REST API from Python count as using the Naïve SDK?",
   "How does a phone order get paid (wallet returns 501)? Parts catalogue (parts.yaml) is undefined.",
   "Is the arm run by lerobot-rollout or a scripted stack?",

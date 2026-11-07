@@ -10,9 +10,9 @@ export interface Person {
 
 export const PEOPLE: Person[] = [
   { who: "James", initial: "J", layer: "sim", doing: "Putting it all together: this map, research; sim + control next", synced: "3:50 PM" },
-  { who: "Kent", initial: "K", layer: "heal", doing: "Romulus: cloud half of the heal loop; v0 plan + decisions D0–D15", synced: "3:16 PM" },
+  { who: "Kent", initial: "K", layer: "heal", doing: "Planning done (D0–D21); coding Romulus M0 now, due 5:15 PM. Set up the Naïve org.", synced: "3:47 PM" },
   { who: "Olir", initial: "O", layer: "edge", doing: "STM32 sanity firmware: LED, banner, heartbeat, build-ID check (firmware branch)", synced: "3:11 PM" },
-  { who: "Ishaan", initial: "I", layer: "heal", doing: "Project overview + fault catalog", synced: "3:26 PM" },
+  { who: "Ishaan", initial: "I", layer: "heal", doing: "Overview, fault catalog, device-side answers (healer may patch everything)", synced: "3:39 PM" },
   { who: "Andre", initial: "A", layer: "neutral", doing: "no status yet", synced: "—" },
 ];
 
@@ -38,7 +38,7 @@ export const LANES: Lane[] = [
     owner: "unassigned",
     status: "open",
     pills: ["intake", "board → Stripe", "work orders"],
-    sunday: ["The company itself, built with the required Naïve SDK.", "Intake → planner → board card → Stripe → digest.", "A Naïve agent takes Romulus work orders and phones in parts via Mobilerun (D12)."],
+    sunday: ["Org exists: Pro plan, $249.92, one CEO agent (Kent set it up).", "Hires (Operator, Insights, Roboticist) on hold until the control plane exists (N1).", "fleet-ops takes Romulus work orders and phones in parts via Mobilerun."],
     stretch: ["Storefront app", "CRM for customers", "AgentMail customer updates"],
     needs: ["The bench ↔ cloud bridge", "Mobilerun MCP set up with a spend cap"],
     overlaps: "Kent's M5 posts the work-order cards this lane's agent picks up.",
@@ -74,7 +74,7 @@ export const LANES: Lane[] = [
     owner: "Kent",
     status: "tentative",
     pills: ["incident timeline", "replay + canary", "kill switch"],
-    sunday: ["M0–M7 from 4:15 PM: contracts, skeleton, timeline, gate, telemetry, work orders, overnight launch by 12:30 AM.", "Code freeze Sun 10 AM; rehearse ×3."],
+    sunday: ["Planning done; coding M0 now (contracts, one real Naïve card, one real LLM call), due 5:15 PM.", "M1–M7 through the overnight launch at 12:30 AM; code freeze Sun 10 AM."],
     stretch: ["Fleet grid and version pipeline screens"],
     needs: ["Device contracts by 5:15 PM", "Naïve API key by 5:15 PM", "LLM endpoint by 5:15 PM", "fleet-ops agent by 11:30 PM"],
     overlaps: "The canary device can be our NVIDIA sim.",
@@ -127,9 +127,11 @@ export interface Question {
 }
 
 export const OPEN: Question[] = [
-  { q: "Bench ↔ clouds with plain APIs. Romulus devices pull every ~10 s; how do the bench, Naïve and RunPod connect?", who: "James + Claude, next", status: "open" },
+  { q: "Bench ↔ clouds with plain APIs. Answered so far: board via a scoped MCP token, Romulus via LAN check-ins. Left: Hermes and the Pi's wiring.", who: "James + Claude, next", status: "open" },
+  { q: "Where does Romulus live? N3 (3 PM) said a Naïve app; D17/D18 (3:46 PM) say local Docker. Newer wins?", who: "Kent", status: "open" },
+  { q: "D5a: may the healer patch the safety layer and visor (Ishaan) or not (original rule)?", who: "Kent, Ishaan", status: "open" },
   { q: "D14: who owns the device side (healer, overlays, visor)?", who: "team", status: "open" },
-  { q: "D15: approve Kent's v0 plan?", who: "team", status: "proposed" },
+  { q: "D19, D19b, D21a: Naïve integration, over-cap rule, coding-agent timing.", who: "Kent", status: "open" },
   { q: "Train a model this hackathon? The overview says no; P2 (VLA) needs training.", who: "James, team", status: "open" },
   { q: "What does the STM32 do in the loop, and how does it talk to the Pi?", who: "Olir", status: "open" },
   { q: "Which harness and model run on the Pi (pi or mini-swe-agent; llama.cpp)?", who: "device owner", status: "open" },

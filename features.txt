@@ -1,11 +1,13 @@
 FEATURES: who is on what
 Claim a line by adding "<--- Name". Move done lines to FINISHED.
-Updated Sat Nov 7, 3:50 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 3:52 PM PST from CLAUDE.md, commits and docs/.
 
 BUSINESS (Naive)
 Naive API key for Romulus (by 5:15 PM)
 fleet-ops agent: work orders (by 11:30 PM)
 Mobilerun bearer in Naive vault
+Bench board token (scoped MCP session)
+Hire Operator, Insights, Roboticist (on hold, N1)
 Parts catalogue (parts.yaml)
 Naive company agents setup
 Order intake (inbox or form)
@@ -45,6 +47,7 @@ Telemetry ingest F7 (M4)                <--- Kent
 Work orders to Naive F6 (M5)            <--- Kent
 Overnight launch F10 (M7)               <--- Kent
 Datasets and exports F8 (M6)            <--- Kent
+Coding agent for code patches (D21)
 Batch LLM endpoint (by 5:15 PM)
 
 DEMO AND FAULTS
@@ -74,6 +77,9 @@ Stack hub refresh, features.txt         <--- James
 Cloud platform PRD and APIs             <--- Kent
 Romulus v0 plan and decisions           <--- Kent
 Build plan, Naive, telemetry docs       <--- Kent
+Cloud planning D15-D21, v0 plan v2      <--- Kent
+Naive company setup notes               <--- Kent
 Project overview                        <--- Ishaan
 Fault catalog                           <--- Ishaan
+Device-side answers (healer scope)      <--- Ishaan
 STM32 firmware boilerplate              <--- Olir

@@ -200,16 +200,16 @@ const NH = 66;
 
 const NODES: LoopNode[] = [
   {
-    id: "naive", x: 30, y: 62, who: ["?"],  title: "Naïve", sub: "the office", layer: "naive", href: "#hosts", owner: "host platform · business lane open",
-    plain: "A hosted platform where AI agents run the company. Naïve provides the infrastructure the agents live on; we write the agents. Both notes are right. It never touches the arm.",
+    id: "naive", x: 30, y: 62, who: ["K"],  title: "Naïve", sub: "the office", layer: "naive", href: "#hosts", owner: "Kent set up the org · hires on hold (N1)",
+    plain: "A hosted platform where AI agents run the company. Naïve provides the infrastructure the agents live on; we write the agents. Both notes are right. It never touches the arm. Today: Pro plan, $249.92, one CEO agent.",
     a: { h: "Naïve gives us", items: ["agent runtime (micro-VMs)", "Board", "persona inbox + phone", "vault for secrets", "apps + database", "CRM", "budgets + approvals", "audit log"] },
     b: { h: "We build on it", items: ["agent configs: planner, ops", "fleet-ops work-order agent", "customer intake", "Stripe store"] },
   },
   {
-    id: "board", x: 300, y: 62, who: ["?"],  title: "Board", sub: "shared to-do list", layer: "naive", href: "#infra", owner: "part of Naïve",
+    id: "board", x: 300, y: 62, who: ["K"],  title: "Board", sub: "shared to-do list", layer: "naive", href: "#infra", owner: "part of Naïve · Kent's setup",
     plain: "Naïve's shared to-do list, like Trello. Each job is a card that moves todo → doing → blocked → done.",
     a: { h: "Cards come from", items: ["Naïve agents: arm jobs", "Romulus: work orders"] },
-    b: { h: "Cards go to", items: ["Hermes on the bench: arm jobs", "fleet-ops agent: work orders"] },
+    b: { h: "Cards go to", items: ["Hermes on the bench: arm jobs (scoped token, no tunnel)", "fleet-ops agent: work orders"] },
   },
   {
     id: "models", x: 560, y: 62, who: ["?"],  title: "Models", sub: "RunPod · OpenAI", layer: "compute", href: "#ours", owner: "machine room",
