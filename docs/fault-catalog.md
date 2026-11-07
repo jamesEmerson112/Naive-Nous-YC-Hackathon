@@ -205,6 +205,10 @@ These come from the Nov 7 research. Pick from here for the wider benchmark.
   - Plant: stop time sync and set the date to 1970.
   - Sees: log timestamps far in the past.
   - Tier 3, `ops`: record the offset and mark the logs. *(inferred)* Mac: `faketime`.
+- **S9. Python too old for LeRobot 0.7.**
+  - LeRobot v0.7.0 needs Python 3.12 or newer, installed with `uv sync --locked --extra feetech` (`docs/so101-research.md`). Raspberry Pi OS Bookworm ships Python 3.11 *(general knowledge: Debian 12)*.
+  - Sees: the install refuses the interpreter version (capture the exact text on the Pi).
+  - Tier 1, `ops`: install Python 3.12 with uv and recreate the venv. Mac: run the install under a Python 3.11 venv.
 
 ### Arm (SO-101, LeRobot v0.7.0)
 
@@ -222,12 +226,18 @@ These come from the Nov 7 research. Pick from here for the wider benchmark.
   - Tier 1, `park`. Mac: `MockBus` with `absent`.
 - **A6. Jammed or overloaded servo.**
   - Sees: `Failed to write 'Torque_Enable' … Incorrect status packet!` (https://github.com/huggingface/lerobot/issues/2819).
+  - Servo alarm bits never raise an exception, and `sync_write` drops packets silently. So the health check has to poll the `status` register (`robot.bus.sync_read("status", normalize=False)`). A gripper overload alarm can need a power cycle (`docs/so101-research.md`).
   - Tier 1–2, `park` (torque off).
 - **A7. Calibration file deleted or wrong.**
   - Plant: delete or swap the file under `~/.cache/huggingface/lerobot/calibration/` (path unverified on v0.7.0).
   - Sees: a calibration prompt, or a bad pose.
   - Tier 3, `ops`: restore the last good copy from the snapshot. Recalibrating needs a person.
 - **A8. Gripper snaps open at the start of teleop.** Caused by a drive-mode or offset mismatch (https://github.com/huggingface/lerobot/issues/3942). Tier 3, restore the calibration or `park`.
+- **A9. Two processes open the arm's serial port.**
+  - Only one process can own the port, so a single arm host should hold it (`docs/so101-research.md`, inferred there).
+  - This matters for the healer itself: it must talk to the arm through the running app, or stop the app first, and never open the port alongside it. *(inferred)*
+  - Sees: the second open fails, or reads from the arm turn garbled (exact text unverified).
+  - Tier 1, `fix-code`: route every arm access through one owner.
 
 ### Camera (HBV-W20217 V22 USB module on the Pi)
 

@@ -10,6 +10,7 @@ Everything we know about the project, in one place. This is a living doc, so upd
 - **Companion docs:**
   - [fault-catalog.md](fault-catalog.md): every fault we plan to plant, test or demo.
   - `docs/cloud-platform-planning/`: the cloud PRD, the API outline, the cloud decision log (`cloud-platform-decisions.md`, D0–D15), and the v0 build plan with the device contracts (`cloud-platform-v0-plan.md`, proposed).
+  - `docs/so101-research.md`: LeRobot v0.7 on the SO-101, sim options, and notes on the edge device.
   - [hackathons.md](hackathons.md) and [sponsors.md](sponsors.md): event rules and sponsors.
 
 ## TL;DR
@@ -101,6 +102,12 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
   - The Linux torch builds are CUDA 13, which needs NVIDIA driver 580+.
 
   Pin this version, since it has breaking changes (Romulus notes).
+- **LeRobot on the Pi** (`docs/so101-research.md`):
+  - It needs Python 3.12 or newer (`uv sync --locked --extra feetech`). Raspberry Pi OS Bookworm ships 3.11 *(general knowledge)*.
+  - `SO101Follower` imports torch. A torch-free path is still an open PR (https://github.com/huggingface/lerobot/pull/4693).
+  - Telemetry comes from `robot.bus.sync_read(<register>, normalize=False)`, with `present_position`, `present_speed`, `present_load`, `present_temperature`, `status` and `moving` confirmed.
+  - Servo alarm bits never raise an exception, and `sync_write` drops packets silently, so a watchdog has to poll.
+  - Only one process can open the arm's serial port.
 - **Simulation:** MuJoCo Menagerie ships an SO-101 model, `robotstudio_so101`, that runs on macOS (https://github.com/google-deepmind/mujoco_menagerie). MuJoCo 4.0.0 shipped Nov 6 (Romulus notes).
 - **Ultrasonic:** gpiozero with the `lgpio` pin factory. RPi.GPIO doesn't work on the Pi 5 (https://gpiozero.readthedocs.io/en/stable/api_pins.html; https://bugs.launchpad.net/raspbian/+bug/2058658).
 - **Camera:** OpenCV, through LeRobot's `OpenCVCamera`. It accepts a device index, a device path, or a video file (`src/lerobot/cameras/opencv/configuration_opencv.py` on GitHub).
@@ -152,7 +159,7 @@ Long heals are fine, because the robot is parked and the process is autonomous. 
 |---|---|---|
 | 1 | Crashes and errors | Non-zero exit code, a traceback, `E code=…` lines, a failed build or flash |
 | 2 | Stuck loops and hangs | Heartbeat age (the firmware already prints `alive: uptime …` every second), loop period, stale camera frames, watchdog resets (`reset : iwdg`), `py-spy dump` |
-| 3 | Wrong behavior (a full, intelligent assessment; later, on the device or in the cloud) | Values outside their physical range, behavior that breaks `SPEC.md`, black or frozen frames, `get_throttled` nonzero, temperatures |
+| 3 | Wrong behavior (a full, intelligent assessment; later, on the device or in the cloud) | Values outside their physical range, behavior that breaks `SPEC.md`, black or frozen frames, `get_throttled` nonzero, temperatures, servo alarm bits in the `status` register (they never raise an exception, so poll them; `docs/so101-research.md`) |
 
 Cheap camera checks: brightness and frame-to-frame difference on a small grayscale copy; frame age measured against the fps. LeRobot's `read_latest(max_age_ms)` raises `TimeoutError` (LeRobot `camera_opencv.py` on main).
 
@@ -186,6 +193,7 @@ Pick by running both on the benchmark. *(team: "make the harness better for it, 
   - A loop of about 100 lines whose only tool is bash, so there's no tool-call format for a small model to get wrong.
   - The prompts live in YAML, and it runs local models through litellm (`docs/models/local_models.md`).
   - For unknown models, set `cost_tracking: ignore_errors`.
+- **Hermes** (the cloud's likely pick, D4): it needs a model with at least a 64K context window (`docs/so101-research.md`, citing https://hermes-agent.nousresearch.com/docs/integrations/providers). That's heavy for a model small enough for a Pi 5. *(inferred)*
 
 ### 8.6 Guardrails
 - Snapshot before every fix, and roll back automatically if the checks fail. *(team)*
