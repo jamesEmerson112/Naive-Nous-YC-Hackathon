@@ -85,6 +85,15 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 - **Note:** Ishaan changed D5a so the healer may patch the safety layer and the visor. That's at odds with the design rule above about keeping the model out of the safety loop *(inferred)*.
 <!-- romulus-sync:end -->
 
+### Device-side healer (Ishaan)
+<!-- ishaan-sync:start -->
+_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 3:58 PM PST._
+- **Now:** building the Mac test bed for the device-side healer in `edge/` (uncommitted). Written so far: the robot app, a fake SO-101 arm and HC-SR04 trace replay, a supervisor with tier 1-3 health checks, and the healer harness (prompt, skills, health/park/report tools). Next: benchmark faults D1-D3, S1, S2 and A5 from `docs/fault-catalog.md`, then a small local model through mini-swe-agent on Ollama.
+- **Just finished:** the project overview and fault catalog (`16c6b9c`, `38771aa`, `325a4bb`), and device-side answers in Kent's decision log (`5cea9c2`): the healer may patch everything, including the safety layer and the visor, and the device runs its own small model and harness, not Hermes.
+- **Blocked on:** nothing. Kent's review of the D5a change is still open.
+- **Branch and files:** `main`. `edge/` stays local until its own checks pass.
+<!-- ishaan-sync:end -->
+
 ## Team status
 <!-- team-status:start -->
 _Last updated: Sat Nov 7, 3:48 PM PST_
