@@ -28,20 +28,23 @@ _Add anything others should know here (who is doing what, decisions, blockers)._
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 1:16 PM PST_
+_Last updated: Sat Nov 7, 1:27 PM PST_
 
-**Current focus:** picking which agent-run company to build for the Naïve hackathon. The options are the four scenarios in `docs/scenarios.html` (Main, Mobilerun, AgentMail, Monid).
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; the LLM that operates the arm runs on RunPod. Draft diagrams are in `docs/robotic-arm.html` (not committed yet).
 
 **Recently done:**
-- Terminology for Naïve and Hermes, architecture diagrams, hackathon facts
+- Robotic-arm diagrams: who manages the arms, how logs reach people, and the RunPod model layer
+- Read the HIL-SERL paper (arXiv 2410.21845): resets are scripted or done by a person; it doesn't learn its own resets
+- Shared `CLAUDE.md` with this status section, refreshed about every 10 minutes
 - Scenarios page and sponsor wiring guide, updated from the on-site slides
 
-**Open questions (ask on site):**
-- AgentMail: does its MCP accept a bearer token, or only `x-api-key`?
-- Monid: is there a bearer key, or only OAuth?
-- Organizers: can one company win the Main track and a sponsor track?
+**Open questions:**
+- RunPod: serverless or an always-on pod for the overnight run? Which tool-calling model, and does it need to read images?
+- How the bench and the board connect: the bench pulls cards (proposed), or the bench is exposed through a tunnel?
+- AgentMail and Monid MCP auth (bearer token?); can one company win the Main track and a sponsor track?
 
 **Recent commits (all authors):**
+- `fe9f5b0` Sat 13:16 · jamesEmerson112 · Add shared CLAUDE.md with auto-updated team status
 - `a2fa81d` Sat 13:12 · jamesEmerson112 · Add hackathon scenarios, sponsor wiring guide, and on-site updates
 - `60f3b07` Sat 12:10 · jamesEmerson112 · Add hackathon prep docs for Naïve and Hermes Agent
 - `fc6a3ff` Sat 10:24 · jamesEmerson112 · Initial commit
