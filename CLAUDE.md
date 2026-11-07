@@ -45,7 +45,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 3:50 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 3:59 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
 
 **The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
 - **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
@@ -79,9 +79,10 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 **Kent's status (branch `main`, all in `docs/cloud-platform-planning/`):**
 - **Now:** planning is finished and Kent is starting to write the cloud-platform code. First is M0 (scaffold, contracts v0.1 for the device teammate, one real Naïve card, one real LLM call), due by 5:15 PM. The overnight run launches at 12:30 AM and the code freeze is Sun 10 AM ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §2).
-- **Decisions locked:** D15 (v0 plan, approved in principle; v2), D17 and D18 (Docker Compose, **Postgres 17**, FastAPI, Jinja + htmx; *not* SQLite), D20 (telemetry: LeRobot v3 incident windows, MCAP logs, JSONL agent traces), and D21 (a coding agent turns code patches from held overlays into candidates that go through the gate).
-- **Just pushed:** a reading-order guide at `docs/cloud-platform-planning/README.md`, v0 plan v2, the Naïve company setup notes at `docs/naive/company-setup.md`, and the decision log updates above.
-- **Still open:** D19 (Naïve integration), D19b (what happens when spend goes over the cap) and D21a (when the coding agent gets built). Ishaan's change to D5a lets the healer patch the safety layer and the visor, which needs Kent's review ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
+- **Decisions locked (D15–D22, all ✅):** v0 plan v2; Docker Compose with **Postgres 17**, FastAPI, Jinja + htmx; Naïve integration is outbound only, with caps checked in our code and over-cap orders blocked until a person resolves them (D19, D19b); telemetry formats (D20); a coding agent for code patches (D21), built as M8 and the first P1 item once its blockers clear (D21a) ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
+- **Just pushed — D22, the batch job's models:** one OpenAI-compatible client that talks to Naïve's model proxy by default or to James's RunPod vLLM, plus a swappable `Coder` that starts as a local open-source agent in a new `coder` sandbox container ([architecture](docs/cloud-platform-planning/cloud-platform-architecture.md)).
+- **Blocked on the device side and James:** the device code and tests need to be in `device/` (B1), the code-package and `code_patch` formats need agreement (B2, B3), and the STM32 toolchain has to go in the sandbox (B8). Either a Naïve key with `proxy:write` or James's RunPod endpoint is needed (B4) ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §3, M8).
+- **Note:** Ishaan changed D5a so the healer may patch the safety layer and the visor. That's at odds with the design rule above about keeping the model out of the safety loop *(inferred)*.
 <!-- romulus-sync:end -->
 
 ## Team status
