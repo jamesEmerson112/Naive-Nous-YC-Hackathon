@@ -117,8 +117,8 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 
 1. The device reports `gripper_stall`, `resolved: false`, `suspected_cause: hardware`. Its overlay reverted itself.
 2. The platform creates work order `wo_…` ("replace servo 3 on arm-1").
-3. The worker posts a Naïve board card with `key = wo-<id>`, assigned to the ops agent.
-4. The worker polls the card's status and shows it in the incident's story.
+3. The worker posts a Naïve board card with header `Idempotency-Key: wo_<id>`, assigned to `fleet-ops`. The card body follows the template in [Naïve integration](cloud-platform-naive-integration.md) §3.3.
+4. The worker polls the card by id and shows its status in the incident's story. A `RESULT: ordered ORDER_REF=…` note means done; anything else means `needs_human`.
 
 **Checks:**
 - Exactly one card per work order, even after retries.
@@ -132,11 +132,11 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 
 **Starting point:** F2.
 
-1. Alongside the incident, the device uploads recordings, each as metadata first and then the blob:
-   - the **incident window** (sensor and joint data, about ±30 s);
-   - a **log chunk**;
-   - the **agent trace**.
-2. **(P1)** It also uploads every finished task **episode**.
+1. Alongside the incident, the device uploads recordings, each as metadata first and then the blob ([telemetry](cloud-platform-telemetry.md) §2):
+   - the **incident window**: joints, servos and a low-res camera for about ±30 s, as a LeRobotDataset v3.0 tar;
+   - the **log window**, as MCAP;
+   - the **agent trace**, as JSONL.
+2. **(P1)** It also uploads sampled normal task **episodes**.
 
 **Checks:**
 - Each blob is stored once by `sha256`; uploading it again changes nothing.
