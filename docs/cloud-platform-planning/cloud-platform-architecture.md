@@ -1,6 +1,6 @@
 # Cloud platform: technical architecture
 
-**Status:** proposed, Sat Nov 7. **Decided:** it runs locally in Docker containers, with Python and FastAPI as the main frameworks (D17). Everything else here is a proposal *(inferred)* and is listed for approval as D18 in [`cloud-platform-decisions.md`](cloud-platform-decisions.md).
+**Status:** approved Sat Nov 7 (D17: Docker, Python and FastAPI; D18: everything else in this doc). Build from it. Changes go through the [decision log](cloud-platform-decisions.md) first.
 
 What the system does: [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md). Payloads and routes: [`cloud-platform-apis.md`](cloud-platform-apis.md). Build order: [`cloud-platform-build-plan.md`](cloud-platform-build-plan.md).
 

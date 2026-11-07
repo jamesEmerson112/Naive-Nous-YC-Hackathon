@@ -32,10 +32,12 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 | D15 | The v0 build plan | Approved in principle; v2 in [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md) | ✅ |
 | D16 | Role of robot telemetry | A first-class, general-purpose asset: synced, curated, versioned datasets for models, harnesses and firmware | ✅ |
 | D17 | Runtime | Local Docker containers; Python + FastAPI | ✅ |
-| D18 | Architecture details | Proposed in [`cloud-platform-architecture.md`](cloud-platform-architecture.md) | ⏳ |
+| D18 | Architecture details | Approved as proposed: Compose (Postgres 17, api + worker from one image), uv workspace + `romulus-contracts`, pure domain core, fakes by default, filesystem blobs, Jinja + htmx | ✅ |
 | D19 | Naïve integration design | Proposed in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md) | ⏳ |
 | D19b | What happens over the spend cap | (a) block and wait for a person *(recommended)* · (b) gated agent with `ask` | ⏳ |
-| D20 | Telemetry formats and capture policy | Proposed in [`cloud-platform-telemetry.md`](cloud-platform-telemetry.md) | ⏳ |
+| D20 | Telemetry formats and capture policy | Approved: LeRobot v3 tar per incident window, MCAP log window, JSONL agent trace, metrics rows, sampled episodes (P1), schema v0.1 frozen tonight | ✅ |
+| D21 | Code patches in held overlays (was Q1) | A coding agent drafts a clean change, runs tests, submits a candidate through the gate; code versions served as tarballs | ✅ |
+| D21a | Where the coding agent sits in the build order | — | ⏳ |
 
 ---
 
@@ -343,9 +345,13 @@ From Kent's round-2 feedback: reconcile with the PRD; lean more on telemetry and
 **What this means for the build:** see [`cloud-platform-architecture.md`](cloud-platform-architecture.md). Postgres replaces the SQLite in the v1 plan, because two containers write at the same time (D18).
 **History:** decided Sat Nov 7 (Kent, round-2 feedback).
 
-### D18. Architecture details ⏳
+### D18. Architecture details ✅
 **Question:** Approve the proposed architecture?
-**Proposal:**
+**Decision:** **Approved as proposed** (Kent, Sat Nov 7). [`cloud-platform-architecture.md`](cloud-platform-architecture.md) is no longer a proposal; it is the plan to build from.
+**Options not chosen:** a separate React dashboard (Vite or Next.js) in its own container; SQLite shared by api and worker instead of Postgres.
+**History:** proposed and approved Sat Nov 7 (round-2 lock-down).
+
+**What was approved:**
 - one image for `api` and `worker`;
 - Postgres 17;
 - a uv workspace with a shared `romulus-contracts` package;
@@ -355,7 +361,6 @@ From Kent's round-2 feedback: reconcile with the PRD; lean more on telemetry and
 - Jinja + htmx pages.
 
 Details in [`cloud-platform-architecture.md`](cloud-platform-architecture.md).
-**Decision:** _pending._
 
 ### D19. Naïve integration design ⏳
 **Question:** Approve the proposed Naïve integration?
@@ -379,9 +384,14 @@ Details in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integrat
 
 **Decision:** _pending._
 
-### D20. Telemetry formats and capture policy ⏳
+### D20. Telemetry formats and capture policy ✅
 **Question:** Approve the proposed formats and capture policy?
-**Proposal:**
+**Decision:** **Approved as proposed** (Kent, Sat Nov 7). These formats go into contracts v0.1 (APIs §2.8–2.9) for the device teammate.
+**Options not chosen:** one opaque tar bundle per incident (any format inside); simpler formats with plain-text logs instead of MCAP.
+**What this means for the build** *(inferred)*: the fleet dataset schema v0.1 ([telemetry](cloud-platform-telemetry.md) §8) must be agreed with the device teammate in M0 and frozen tonight (build plan K14).
+**History:** proposed and approved Sat Nov 7 (round-2 lock-down).
+
+**What was approved:**
 - incident windows and episodes as LeRobotDataset v3.0, one small dataset per incident, tarred;
 - log windows as MCAP;
 - agent traces as JSONL from the agent's session export;
@@ -391,4 +401,16 @@ Details in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integrat
 - filesystem blobs with a budget that never deletes evidence.
 
 Details in [`cloud-platform-telemetry.md`](cloud-platform-telemetry.md).
-**Decision:** _pending._
+
+### D21. Code patches in held overlays (was Q1) ✅
+**Question:** The on-device agent can patch code (D5), but the batch job only locks in rule, parameter and harness changes. What happens to a held overlay that includes a code patch?
+**Decision:** **A coding agent drafts it.** The batch job hands the code patch and its incident to a coding agent. The agent writes a clean change, runs the tests, and submits the result as a candidate. The candidate then goes through the same replay → canary → promote gate (D6) (Kent, Sat Nov 7).
+**Options not chosen:** flag and skip; lock the raw patch in as-is; forbid code patches on the device in v0.
+**What this means for the build** *(inferred)*:
+- The batch job gains a third path besides the rules/params merge and the harness skill: `code_patch → coding agent → candidate with a new code_rev`.
+- **The device needs a way to fetch code by version.** Proposal: treat code like harness packages, as a versioned tarball in the registry served by the platform (`GET /v1/code/{rev}/package` + sha256). The device then needs no git credentials. This has to be agreed with the device teammate and added to contracts v0.1.
+- The coding agent needs the device code (`device/`) and its tests, and runs in a sandbox (a container, not the API process). Which agent and LLM: see Q2.
+- **Pending:** where this sits in the build order (D21a).
+- Keeps PRD principle 7 intact: the agent writes *code changes* that the gate tests; it still never edits the manifest, which the deterministic merge produces.
+
+**History:** decided Sat Nov 7 (round-2 lock-down).

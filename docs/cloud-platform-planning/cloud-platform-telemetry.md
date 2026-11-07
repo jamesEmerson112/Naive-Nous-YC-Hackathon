@@ -1,6 +1,6 @@
 # Cloud platform: telemetry and datasets
 
-- **Status:** researched Sat Nov 7. The design is proposed and pending decision **D20** ([decision log](cloud-platform-decisions.md)).
+- **Status:** researched and approved Sat Nov 7 (**D20**, [decision log](cloud-platform-decisions.md)).
 - **Already decided:** robot telemetry is a first-class, general-purpose asset (D16).
 - **Payloads and routes:** [`cloud-platform-apis.md`](cloud-platform-apis.md) §2.8 and §3.7.
 - **Marking:** facts cite a source with its version and date (checked 2026-11-07). *(inferred)* marks our own reasoning.
