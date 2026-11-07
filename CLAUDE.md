@@ -65,23 +65,25 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 1:48 PM PST_
+_Last updated: Sat Nov 7, 2:05 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; the LLM that operates the arm runs on RunPod. The on-site arm looks like an SO-101 (LeRobot) leader/follower pair. Draft diagrams are in `docs/robotic-arm.html` (not committed yet).
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; the LLM that operates the arm runs on RunPod. Kent is adding Romulus, a self-healing and fleet layer on top (see Notes from the team). Draft diagrams are in `docs/robotic-arm.html` (not committed yet).
 
 **Recently done:**
+- Kent pushed the Romulus notes: arm, fleet and company heal loops; the LLM only proposes reversible actions and stays out of the control loop; a hero demo; version pins (LeRobot v0.7.0, MuJoCo 4.0.0)
 - Identified the on-site arm from a photo: most likely an SO-101 follower (red) with its leader arm (white), 6 Feetech STS3215 servos; in LeRobot set `robot_type` to `so101_follower`
 - Robotic-arm diagrams: who manages the arms, how logs reach people, and the RunPod model layer
 - Read the HIL-SERL paper (arXiv 2410.21845): resets are scripted or done by a person; it doesn't learn its own resets
-- Status refresh moved from a per-session timer to the saved task `naive-nous-team-status-sync`
 
 **Open questions:**
-- RunPod: serverless or an always-on pod for the overnight run? Which tool-calling model, and does it need to read images?
+- RunPod: Kent's notes lean serverless with an image-reading model, since the LLM is outside the control loop. Which model, and is that decided?
 - How the bench and the board connect: the bench pulls cards (proposed), or the bench is exposed through a tunnel?
 - AgentMail and Monid MCP auth (bearer token?); can one company win the Main track and a sponsor track?
 - SO-100 or SO-101? Check the leader arm's servo labels or ask the organizers
 
 **Recent commits (all authors):**
+- `d0ac517` Sat 14:05 · Kent Gang · Add Romulus self-healing/fleet notes to CLAUDE.md
+- `4abbebd` Sat 13:48 · jamesEmerson112 · Update team status in CLAUDE.md
 - `0452ada` Sat 13:27 · jamesEmerson112 · Update team status in CLAUDE.md
 - `fe9f5b0` Sat 13:16 · jamesEmerson112 · Add shared CLAUDE.md with auto-updated team status
 - `a2fa81d` Sat 13:12 · jamesEmerson112 · Add hackathon scenarios, sponsor wiring guide, and on-site updates
