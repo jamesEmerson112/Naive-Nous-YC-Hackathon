@@ -84,7 +84,7 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
 | SO-101 arm | White leader and red follower, 6 Feetech STS3215 servos each. In LeRobot, `robot_type` is `so101_follower` | Pi, through a USB serial servo-bus adapter | `CLAUDE.md` team status |
 | HC-SR04 ultrasonic | Runs on 5V; range 2–400 cm; trigger and echo pins. ECHO needs a voltage divider down to 3.3V (gpiozero suggests 330 Ω / 470 Ω) | Pi GPIO | *(team)*; https://cdn.sparkfun.com/datasheets/Sensors/Proximity/HCSR04.pdf; https://gpiozero.readthedocs.io/en/stable/api_input.html |
 | USB camera module | HBV-W20217 V22, HD 720p, 72° lens. Check its formats with `v4l2-ctl --list-formats-ext` | Pi USB | *(team)* |
-| STM32 Nucleo-F042K6 | STM32F042K6: Cortex-M0, 32 KB flash, 6 KB RAM. The on-board ST-LINK gives SWD flashing and a virtual COM port (USART2, 115200 8N1). The LED is on PB3 | USB (the ST-LINK) | `firmware/stm32f042k6-hello/` on the `firmware` branch |
+| STM32 Nucleo-F042K6 | STM32F042K6: Cortex-M0, 32 KB flash, 6 KB RAM. The on-board ST-LINK gives SWD flashing and a virtual COM port (USART2, 115200 8N1). The LED is on PB3 | The Pi, over USB: the ST-LINK's serial port for data, SWD for flashing *(team)* | `firmware/stm32f042k6-hello/` on the `firmware` branch |
 | Jetson AGX Xavier | 64 GB, Volta GPU (sm_72), JetPack 5.x era. Planned as a bigger local model server. Not set up | Local network (planned) | *(team)*; §13 |
 | Dev laptop | MacBook Air M5, 24 GB | — | *(team)* |
 
@@ -103,7 +103,7 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
 
   Pin this version, since it has breaking changes (Romulus notes).
 - **LeRobot on the Pi** (`docs/so101-research.md`):
-  - It needs Python 3.12 or newer (`uv sync --locked --extra feetech`). Raspberry Pi OS Bookworm ships 3.11 *(general knowledge)*.
+  - It needs Python 3.12 or newer (`uv sync --locked --extra feetech`). Raspberry Pi OS Bookworm ships 3.11 *(general knowledge)*. That's not a blocker: `uv python install 3.12` adds a newer Python without touching the system one. *(team)*
   - `SO101Follower` imports torch. A torch-free path is still an open PR (https://github.com/huggingface/lerobot/pull/4693).
   - Telemetry comes from `robot.bus.sync_read(<register>, normalize=False)`, with `present_position`, `present_speed`, `present_load`, `present_temperature`, `status` and `moving` confirmed.
   - Servo alarm bits never raise an exception, and `sync_write` drops packets silently, so a watchdog has to poll.
@@ -193,14 +193,12 @@ Pick by running both on the benchmark. *(team: "make the harness better for it, 
   - A loop of about 100 lines whose only tool is bash, so there's no tool-call format for a small model to get wrong.
   - The prompts live in YAML, and it runs local models through litellm (`docs/models/local_models.md`).
   - For unknown models, set `cost_tracking: ignore_errors`.
-- **Hermes** (the cloud's likely pick, D4): it needs a model with at least a 64K context window (`docs/so101-research.md`, citing https://hermes-agent.nousresearch.com/docs/integrations/providers). That's heavy for a model small enough for a Pi 5. *(inferred)*
+- **Not the cloud's harness.** The device and the cloud each have their own model and harness. The device runs a small local model with a small harness; the cloud side runs a big model with its own. *(team)* For reference, Hermes needs a model with at least a 64K context window (`docs/so101-research.md`, citing https://hermes-agent.nousresearch.com/docs/integrations/providers).
 
 ### 8.6 Guardrails
 - Snapshot before every fix, and roll back automatically if the checks fail. *(team)*
 - The arm stays parked with torque off while healing. *(team)*
-- **What the healer may patch isn't settled** (§17):
-  - The device-side discussion said anything, with no permission limits. *(team)*
-  - The cloud decision log says patches go in a self-reverting overlay, and the safety layer (e-stop, speed and torque limits) and the visor can't be patched (D5a).
+- **The healer may patch everything on the device,** including the safety layer (e-stop, speed and torque limits) and the visor. Every patch still goes in a self-reverting overlay, behind a snapshot and automatic rollback. *(team)*; D5a, as updated on Nov 7
 - The LLM never sits in the real-time control or safety loop. (Romulus notes)
 - Each kind of action earns autonomy (suggest, then approve, then automatic) and loses it after a bad fix (Romulus notes). The cloud's batch job skips that ladder: it starts at automatic, with the canary as the safety net (D6).
 - The one human control is the kill switch, which freezes all rollouts and pins every device to its last good version (D11).
@@ -213,9 +211,9 @@ Pick by running both on the benchmark. *(team: "make the harness better for it, 
 - **D0, thesis:** the agent fixes; the batch locks it in. The on-device agent handles new faults. The cloud's batch job turns each verified fix into firmware (a fixed rule that needs no LLM next time), and fixes that nearly worked become new harness skills.
 - **D1, user:** us, the arm company, as a single tenant.
 - **D2, scope:** narrow. The cloud is the cloud half of the self-healing loop; "general purpose" is dropped, so the PRD objective needs rewriting.
-- **D3, what "firmware" means:** a versioned manifest for the Python control stack: code revision, rules and parameters, and the policy model version. Real microcontroller firmware was an option the cloud didn't choose (see §17).
-- **D4, harness:** the device side picks the framework, and the cloud stores it as a versioned folder it doesn't parse.
-- **D5 and D5a, patches on the device:** allowed, as a local overlay on top of the assigned version. The overlay reverts itself if health fails or the fault comes back. The safety layer and the visor can't be patched.
+- **D3, what "firmware" means to the cloud:** a versioned manifest for the Python control stack: code revision, rules and parameters, and the policy model version. This is a cloud-level release. It's separate from the device-level C firmware that the healer fixes and reflashes on the STM32. *(team)*
+- **D4, harness:** the device side picks the framework, and the cloud stores it as a versioned folder it doesn't parse. The device harness (small model) and the cloud's own harness (big model) are two different things. *(team)*
+- **D5 and D5a, patches on the device:** allowed, as a local overlay on top of the assigned version. The overlay reverts itself if health fails or the fault comes back. The healer may patch everything, including the safety layer and the visor (D5a, changed on Nov 7 *(team)*).
 - **D6, gate:** replay, then one canary device, then automatic promotion or automatic rollback. No human approves a version.
 - **D7, validating on the device:** check the hash, install, run a health check, roll back on failure. No signing in v0.
 - **D8, cloud down:** keep running the last good version plus any overlay, and queue reports on disk. The device is never bricked.
@@ -278,7 +276,13 @@ Pick by running both on the benchmark. *(team: "make the harness better for it, 
 - **Offline:** keep running the last good version plus any overlay, queue reports on disk, and send them when the link returns (D8). The device keeps the last good version on disk, so it can roll back without the cloud (D7).
 - **Our additions to propose** *(inferred)*:
   - Send the audit JSON (§8.3) with check-ins or incidents.
-  - Add a field for the STM32 build ID if the C firmware stays in the demo (§17).
+  - Report the STM32's build ID in check-ins, since the device reflashes its own C firmware.
+- **What the cloud build plan asks of the device side** (`docs/cloud-platform-planning/cloud-platform-build-plan.md`):
+  - agreement on contracts v0.1, including the frozen dataset schema
+  - a first real check-in
+  - one real incident with an overlay and recordings
+
+  Its target times are 5:15 PM Sat, 9:30 PM Sat and 9:00 AM Sun.
 
 ## 11. The user
 
@@ -373,19 +377,22 @@ Positioning *(inferred)*: existing tools either need a cloud connection to a big
 - **Power:** the Pi 5's supply and the servo supply voltage (§5).
 - **Safety:** the arm must stay parked while code changes, and rollback must work before any live demo. *(inferred)*
 - **Physical triggers vary** (a hand, a tap), so keep scripted injections as a backup. *(inferred)*
-- **The device and cloud plans don't match yet.** They disagree on what "firmware" means and on code patches, and the demo depends on both (§17).
+- **Code patches.** The cloud's v0 batch job skips overlays that contain a code patch, and the demo's fixes are code patches. To tackle later. *(team)*
 
 ## 17. Open questions
 
-**Where the device and cloud plans need to agree**
-1. **What "firmware" means.** The cloud's manifest covers the Python control stack and chose against microcontroller firmware (D3). But iteration 2 of the demo fixes and reflashes C firmware on the STM32 (§7). Should the manifest get an entry for the STM32 build, or do C fixes stay local code patches?
-2. **Code patches.** v0's batch job skips overlays that contain a `code_patch` (v0 plan §7.3), and the demo faults D1 and F1–F11 are all code patches. Options:
+**Settled on Nov 7** *(team)*
+- "Firmware" means two things: the cloud's versioned release (D3), and the STM32's C firmware, which the healer fixes and reflashes on the device.
+- There are two models and two harnesses: a small model with a small harness on the device, and a big model with its own harness in the cloud.
+- The healer may patch everything, including the safety layer and the visor (D5a, updated).
+- An old Python on the Pi isn't a blocker; install a newer one with uv.
+
+**Where the device and cloud plans still need to agree**
+1. **Code patches** (later). v0's batch job skips overlays that contain a `code_patch` (v0 plan §7.3), and the demo faults D1 and F1–F11 are all code patches. Options:
    - express D1 as a rule the batch job can merge
    - give the batch job a coding agent
    - show code fixes as heals that stay local
-3. **The harness framework.** The cloud calls Hermes likely but doesn't assume it (D4). The device-side candidates are pi and mini-swe-agent (§8.5). Whichever wins sets `knowledge_dir`.
-4. **What the healer may patch:** everything (the device-side discussion), or everything except the safety layer and the visor (D5a)?
-5. **The cloud's questions for the device side** (v0 plan §11):
+2. **The cloud's questions for the device side** (v0 plan §11):
    - Can the rule evaluator be one shared function, `evaluate(rules, signals)`, so replay works?
    - What does the health check test?
    - How long must an overlay survive to count as held?
@@ -393,7 +400,7 @@ Positioning *(inferred)*: existing tools either need a cloud connection to a big
    - Which sim or fake devices act as the canary?
 
 **Other open questions**
-1. What does the STM32 do in the loop, and how does it talk to the Pi (UART over the ST-LINK port at 115200)?
+1. What does the STM32 do in the loop? It talks to the Pi over its USB serial port. *(team)*
 2. What does the arm do in the demo? (being designed)
 3. Which agent harness and which model run on the Pi 5? (being tested)
 4. How do we reach the user beyond the dashboard? (§11)
@@ -413,7 +420,8 @@ Positioning *(inferred)*: existing tools either need a cloud connection to a big
 | Skill | Instructions for one family of faults, in the harness's `skills/` folder (the cloud's `knowledge_dir`) |
 | Overlay | A local patch on top of the version the cloud assigned. It reverts itself if health fails or the fault comes back (D5a) |
 | Visor | The device-side layer that pulls, checks, installs and rolls back versions (D7) |
-| Manifest | The cloud's "firmware" version: code revision, rules, parameters, policy model (D3) |
+| Manifest | The cloud-level "firmware" release: code revision, rules, parameters, policy model (D3). Not the STM32's C firmware |
+| Device firmware | The C program on the STM32. The healer fixes and reflashes it on the device |
 | Canary | The one device a new version runs on before the whole fleet gets it (D6) |
 | Kill switch | The one human control: freeze rollouts, pin every device to its last good version (D11) |
 | Work order | A hardware fix handed to a Naïve agent as a board card (D12) |

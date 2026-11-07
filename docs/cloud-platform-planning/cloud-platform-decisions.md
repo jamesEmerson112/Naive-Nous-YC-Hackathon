@@ -19,7 +19,7 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 | D3 | What "firmware" means | Versioned bundle: code version + rules/params + policy model version | ✅ |
 | D4 | What the "harness" is | Device-side teammate picks the framework; the platform stores it as an unparsed versioned folder | ✅ |
 | D5 | How much the on-device agent can do alone | Can patch code or rules on the device, then report the patch to the cloud | ✅ |
-| D5a | What limits on-device patches | Local overlay on top of the assigned version; reverts itself if health fails or the fault returns; safety layer and visor can't be patched | ✅ |
+| D5a | What limits on-device patches | Local overlay on top of the assigned version; reverts itself if health fails or the fault returns; the healer may patch everything, including the safety layer and the visor | ✅ |
 | D6 | What checks a batch-built version | Replay, then a canary device, then automatic promotion (or automatic rollback); no human gate | ✅ |
 | D7 | What the device's "validate" means | Hash check, install, health check, roll back on failure; a new version replaces any overlay | ✅ |
 | D8 | What happens when the cloud is down | Keep running the last good version (plus overlay); queue reports on disk; never bricked | ✅ |
@@ -109,9 +109,9 @@ Example shape (field names not final):
 **What this means for the build** *(inferred)*:
 - The registry stores a harness version as a folder or tarball with a hash and metadata. It doesn't parse what's inside.
 - For the batch job to update the harness, we still need one agreed place for learned knowledge, for example a `skills/` or `runbooks/` folder of markdown files. Settle this with the device-side owner (D14).
-- Hermes is the likely choice, since the team plan has Hermes on the bench (see `CLAUDE.md`), but it isn't assumed.
+- Not Hermes: the device runs a small local model with its own small harness (being tested: pi and mini-swe-agent). The cloud side's big model and its harness are separate.
 
-**History:** decided Sat Nov 7 (Kent).
+**History:** decided Sat Nov 7 (Kent). Sat Nov 7: the device side (Ishaan) clarified that the embedded agent is a small-model harness, not Hermes. This line used to say Hermes was the likely choice.
 
 ## Principles
 
@@ -133,7 +133,7 @@ Example shape (field names not final):
 **Decision:** **Patches go in a local overlay and revert themselves.**
 - A patch is applied as a local layer on top of the assigned version. The assigned version itself is never edited in place.
 - If the health check fails or the fault comes back, the overlay is dropped automatically and the device goes back to the assigned version.
-- The safety layer (e-stop, speed and torque limits) and the visor itself can't be patched.
+- The healer may patch everything on the device, including the safety layer (e-stop, speed and torque limits) and the visor. Every patch still goes in the self-reverting overlay.
 
 **Options not chosen:** only rules and parameters patchable on the device; anything except safety, edited in place with no automatic revert; no limits in v0.
 **What this means for the build** *(inferred)*:
@@ -142,7 +142,7 @@ Example shape (field names not final):
 - The overlay is the unit the batch job learns from: overlays that held up become candidates for new firmware (D0).
 - This brings back most of the safety lost in D5. A bad patch can only last until its next health check.
 
-**History:** decided Sat Nov 7 (Kent).
+**History:** decided Sat Nov 7 (Kent). Changed Sat Nov 7 (Ishaan, device side): the healer may patch everything, including the safety layer and the visor, which were previously off limits.
 
 ### D6. What checks a batch-built version ✅
 **Question:** What has to pass before a firmware or harness version built by the batch job reaches a device?

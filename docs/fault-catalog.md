@@ -17,7 +17,7 @@ Every failure we plan to plant, test or demo. Use it to write faults into the fi
   - `make check` reads the build ID back over SWD, which proves the chip runs the new build.
 
   Source: `firmware/stm32f042k6-hello/` on the `firmware` branch.
-- **Not decided:** what the STM32 does in the robot's loop (read the sensor? compute arm targets?). Part A2 assumes the control math lives in the firmware. *(inferred)*
+- **The STM32 talks to the Pi over its USB serial port.** *(team)* What it does in the robot's loop isn't decided (read the sensor? compute arm targets?). Part A2 assumes the control math lives in the firmware. *(inferred)*
 
 ## How to read an entry
 
