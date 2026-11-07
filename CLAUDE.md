@@ -41,7 +41,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 3:37 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 3:50 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
 
 **The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
 - **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
@@ -74,9 +74,10 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 - **Venue Wi-Fi sinks robot demos.** Bring a router, an Ethernet cable and a recorded backup ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)).
 
 **Kent's status (branch `main`, all in `docs/cloud-platform-planning/`):**
-- **Now:** finishing the cloud-platform build plan (`cloud-platform-build-plan.md`): the hero loop F2→F3→F4 comes first, then the overnight run F10, which has to launch by about 12:30 AM, then Naïve F6, telemetry F7 and the dataset F8. The code freeze is Sun 10 AM.
-- **Just pushed:** the build plan, `cloud-platform-naive-integration.md` (pending D19), `cloud-platform-telemetry.md` (pending D20), an expanded `cloud-platform-apis.md`, plus `cloud-platform-architecture.md` and `cloud-platform-flows.md` (the progress tracker).
-- **Waiting on decisions:** D15 (v0 plan), D19 (Naïve integration, including D19b on what happens when spend goes over the cap) and D20 (telemetry). D14 still needs a teammate to own the device side; Kent owns the cloud and the contracts ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
+- **Now:** planning is finished and Kent is starting to write the cloud-platform code. First is M0 (scaffold, contracts v0.1 for the device teammate, one real Naïve card, one real LLM call), due by 5:15 PM. The overnight run launches at 12:30 AM and the code freeze is Sun 10 AM ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §2).
+- **Decisions locked:** D15 (v0 plan, approved in principle; v2), D17 and D18 (Docker Compose, **Postgres 17**, FastAPI, Jinja + htmx; *not* SQLite), D20 (telemetry: LeRobot v3 incident windows, MCAP logs, JSONL agent traces), and D21 (a coding agent turns code patches from held overlays into candidates that go through the gate).
+- **Just pushed:** a reading-order guide at `docs/cloud-platform-planning/README.md`, v0 plan v2, the Naïve company setup notes at `docs/naive/company-setup.md`, and the decision log updates above.
+- **Still open:** D19 (Naïve integration), D19b (what happens when spend goes over the cap) and D21a (when the coding agent gets built). Ishaan's change to D5a lets the healer patch the safety layer and the visor, which needs Kent's review ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
 <!-- romulus-sync:end -->
 
 ## Team status
