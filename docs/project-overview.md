@@ -9,14 +9,14 @@ Everything we know about the project, in one place. This is a living doc, so upd
   - Repo files appear in backticks, and URLs are inline.
 - **Companion docs:**
   - [fault-catalog.md](fault-catalog.md): every fault we plan to plant, test or demo.
-  - `docs/cloud-platform-planning/`: the cloud PRD and the API outline.
+  - `docs/cloud-platform-planning/`: the cloud PRD, the API outline, the cloud decision log (`cloud-platform-decisions.md`, D0–D15), and the v0 build plan with the device contracts (`cloud-platform-v0-plan.md`, proposed).
   - [hackathons.md](hackathons.md) and [sponsors.md](sponsors.md): event rules and sponsors.
 
 ## TL;DR
 
 - **The problem.** Robots in places without internet can't be reached over SSH. When their software breaks, they stay broken, and the failure data is lost. *(team)*
 - **The fix.** A local model and an agent harness on the robot's own computer notice the failure, diagnose it from logs, and write the fix in Python or C firmware. Then they rebuild or reflash, verify, and roll back if the fix fails. *(team)*
-- **The cloud.** When the robot gets a connection, Naïve agents in the cloud collect its incidents and send back a better healing harness. There's no model training during the hackathon. *(team)*
+- **The cloud.** When the robot gets a connection, it reports every incident and fix to the cloud. The cloud works on the idea that "the agent fixes; the batch locks it in". Fixes that hold become new firmware and harness versions; each is checked by replay and on one canary device, then shipped to the whole fleet. There's no model training during the hackathon. *(team)*; decision D0 in `docs/cloud-platform-planning/cloud-platform-decisions.md`
 - **The demo hardware.** An SO-101 arm, a Raspberry Pi 5, an HC-SR04 ultrasonic sensor, a USB camera, and an STM32 board for C firmware. *(team)*, `firmware` branch
 - **The event.** The Naïve Autonomous Company Hackathon. Hacking ends Sun Nov 8 at 11 AM PST, and judges focus on "how much of the company runs without you" (`docs/hackathons.md`).
 
@@ -66,7 +66,7 @@ flowchart LR
 |---|---|---|
 | 1. Robot | SO-101 arm, with the ultrasonic sensor and the camera | On the bench *(team)* |
 | 2. Edge computer | The Pi 5 runs the robot app, the healer agent and the local model. The STM32 runs the C firmware. Later, the Xavier serves a bigger model on the local network | The Pi runs everything for now; the Xavier isn't set up *(team)* |
-| 3. Cloud | Naïve agents collect incidents, engineer new harness versions, and run the business side | Planned (`docs/cloud-platform-planning/`) |
+| 3. Cloud | Collects incidents; turns fixes that hold into new firmware and harness versions; ships them through replay and a canary; hands hardware faults to Naïve agents as work orders | Decisions D0–D14 made; v0 build plan proposed, not approved (`docs/cloud-platform-planning/`) |
 | 4. User | Whoever owns and operates the robot | How we talk to them is undecided *(team)* |
 
 Other parts of the team plan, from the team status in `CLAUDE.md`:
@@ -136,13 +136,13 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
 
 ### 8.1 The healing loop
 1. **Detect** a problem with the health checks (§8.2).
-2. **Snapshot** the code, the config and the firmware build, so the fix can be undone. *(team)*
+2. **Snapshot** the code, the config and the firmware build, so the fix can be undone. *(team)* The cloud decision log puts each patch in a local *overlay* on top of the version the cloud assigned, and the overlay reverts itself if health fails or the fault comes back (D5a).
 3. **Park** the arm in a safe pose with torque off. *(team)*
 4. **Collect evidence:** log tails, telemetry, a stack dump of a stuck process (`py-spy dump`), the serial log, and the audit (§8.3). *(inferred)*
 5. **Diagnose and write the fix:** the agent plus the local model. It may touch anything on the device. *(team)*
 6. **Apply:** restart the app, or rebuild and reflash the firmware. *(team)*
 7. **Verify:** health checks and the audit. If they fail, roll back to the snapshot automatically. *(team)*
-8. **Record** the incident (what broke, the evidence, the fix, the result) in a local outbox that waits for the cloud. *(inferred)*
+8. **Record** the incident (what broke, the evidence, the fix, the result) in a local outbox that waits for the cloud. The report format is in §5.3 of the v0 plan, and the overlay's diff goes with it (D5, D8).
 
 Long heals are fine, because the robot is parked and the process is autonomous. *(team)* The LLM is never part of the real-time control or safety loop; it acts only while the arm is parked (Romulus design rule; *(team)*).
 
@@ -170,9 +170,10 @@ It has three jobs: the known-good baseline, the before-and-after check for every
 
 ### 8.4 The healing harness
 - **What it is:** everything around the model that decides how it heals: instructions, tools, playbooks, checks and policy. The cloud engineers new versions and sends them to the device. No model is retrained. *(team)*
-- **Proposed layout:** a versioned folder, shipped as one bundle. *(inferred)*
+- **Proposed layout:** a versioned folder, shipped as one `.tar.gz`. The cloud reads nothing in it except `harness.json` (D4; §5.2 of the v0 plan). *(inferred, except where cited)*
+  - `harness.json` at the root, e.g. `{"version": 5, "framework": "…", "knowledge_dir": "skills/"}` (v0 plan §5.2).
   - `prompt.md`: the rules. Snapshot first, park before touching the arm, verify after, never raise torque or speed limits, and park and report on hardware faults.
-  - `playbooks/`: one per fault family (serial, camera, GPIO, Python environment, firmware build and flash, disk and memory). The cloud adds new ones from fleet incidents.
+  - `skills/`: one markdown file per fault family (serial, camera, GPIO, Python environment, firmware build and flash, disk and memory). This is the cloud's `knowledge_dir`: its batch job adds new skills here from fleet incidents (v0 plan §5.2).
   - `tools/`: collect logs, audit, park, stack dump, list devices, build and flash firmware, restore calibration, roll back.
   - `checks/`: the tier 1–3 health checks.
   - `policy.yaml`: per-user settings for which fixes run automatically and which need approval, plus limits and the notification channel.
@@ -189,13 +190,32 @@ Pick by running both on the benchmark. *(team: "make the harness better for it, 
 ### 8.6 Guardrails
 - Snapshot before every fix, and roll back automatically if the checks fail. *(team)*
 - The arm stays parked with torque off while healing. *(team)*
-- The healer may touch anything on the device; there are no permission limits for now. *(team)*
+- **What the healer may patch isn't settled** (§17):
+  - The device-side discussion said anything, with no permission limits. *(team)*
+  - The cloud decision log says patches go in a self-reverting overlay, and the safety layer (e-stop, speed and torque limits) and the visor can't be patched (D5a).
 - The LLM never sits in the real-time control or safety loop. (Romulus notes)
-- Each kind of action earns autonomy (suggest, then approve, then automatic) and loses it after a bad fix. (Romulus notes)
+- Each kind of action earns autonomy (suggest, then approve, then automatic) and loses it after a bad fix (Romulus notes). The cloud's batch job skips that ladder: it starts at automatic, with the canary as the safety net (D6).
+- The one human control is the kill switch, which freezes all rollouts and pins every device to its last good version (D11).
 - Hardware faults get parked and reported, and code stays untouched. *(inferred)*
 - Constrained output: llama-server can force JSON that matches a schema, or a grammar (https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md). *(inferred: useful for small models)*
 
 ## 9. The cloud layer
+
+### 9.0 Decisions so far (`docs/cloud-platform-planning/cloud-platform-decisions.md`)
+- **D0, thesis:** the agent fixes; the batch locks it in. The on-device agent handles new faults. The cloud's batch job turns each verified fix into firmware (a fixed rule that needs no LLM next time), and fixes that nearly worked become new harness skills.
+- **D1, user:** us, the arm company, as a single tenant.
+- **D2, scope:** narrow. The cloud is the cloud half of the self-healing loop; "general purpose" is dropped, so the PRD objective needs rewriting.
+- **D3, what "firmware" means:** a versioned manifest for the Python control stack: code revision, rules and parameters, and the policy model version. Real microcontroller firmware was an option the cloud didn't choose (see §17).
+- **D4, harness:** the device side picks the framework, and the cloud stores it as a versioned folder it doesn't parse.
+- **D5 and D5a, patches on the device:** allowed, as a local overlay on top of the assigned version. The overlay reverts itself if health fails or the fault comes back. The safety layer and the visor can't be patched.
+- **D6, gate:** replay, then one canary device, then automatic promotion or automatic rollback. No human approves a version.
+- **D7, validating on the device:** check the hash, install, run a health check, roll back on failure. No signing in v0.
+- **D8, cloud down:** keep running the last good version plus any overlay, and queue reports on disk. The device is never bricked.
+- **D9 and D10, legibility:** every step records a readable "why", and the one screen that has to work is the incident timeline.
+- **D11, humans:** only the kill switch. Promotion, parts orders and technician booking are automatic, with spend caps in Naïve's policy file.
+- **D12, parts and technicians:** the platform posts a work order as a Naïve board card, and a Naïve agent places the call through Mobilerun.
+- **D13, out of v0:** digital twins and ERP, billing per heal, a trust ledger, and policy model retraining.
+- **D14 and D15:** a teammate owns the device side and the cloud owns the contracts. The v0 build plan (`cloud-platform-v0-plan.md`) is proposed, not yet approved.
 
 ### 9.1 What it does (PRD, `docs/cloud-platform-planning/cloud-platform-prd.md`)
 - **Objective:** a general-purpose platform for managing the software and operations of robotic systems.
@@ -234,21 +254,31 @@ Pick by running both on the benchmark. *(team: "make the harness better for it, 
 - **Files:** org-wide storage, up to 5 GiB per file. (https://usenaive.ai/docs/capabilities/files.md)
 - **Budgets:** every agent needs one, and the roster holds at most 20 agents. (Naïve vetta README on npm: https://www.npmjs.com/package/@usenaive-sdk/vetta)
 
-## 10. The device–cloud link (proposed, not confirmed)
+## 10. The device–cloud contract (draft)
 
-- **Known:** the device is mostly offline and sometimes connects. The cloud must be able to send it updates. The team still has to define the contract. *(team)*
-- **Default proposal:** while it's online, the device calls the cloud. It uploads its incident bundles and latest audit, then downloads any harness bundle waiting for it. To the user, that looks like a push. *(team: proposed, not confirmed)*
-- **Why the device pulls:** Naïve sandboxes have no general way in to a device (§9.4), and devices usually sit behind NAT. *(inferred)*
-- **Details** *(inferred)*:
-  - An offline outbox in SQLite, with idempotent uploads.
-  - Signed, versioned bundles: check the hash, swap atomically, and keep the previous version for rollback.
-  - Viam uses the same capture-then-sync pattern (https://docs.viam.com/data-ai/capture-data/advanced/how-sync-works).
-- **Endpoint sketch** *(inferred)*: `POST /devices/{id}/incidents`, `POST /devices/{id}/audits`, `GET /devices/{id}/harness?have=<version>`.
+§5 of the cloud v0 plan (`cloud-platform-v0-plan.md`) drafts the contracts. They stay drafts until the device side agrees.
+- **The device always pulls,** over plain HTTP on the bench network. The cloud never calls the device (v0 plan §7.2). This matches the team's earlier default *(team)*, and Naïve sandboxes have no general way in to a device anyway (§9.4).
+- **Check-in, every ~10 s:** `POST /v1/devices/{id}/checkin` with the running versions, the overlay, health and metrics. The reply carries the assigned versions, `drop_overlay` and `frozen`.
+- **Incident report:** `POST /v1/devices/{id}/incidents`, one per fault, resolved or not. Its id is made on the device, so resending a report is harmless. It carries:
+  - the agent's reasoning and actions
+  - the overlay diff, including any `code_patch`
+  - the outcome and the suspected cause
+  - the recorded signals for replay
+  - log lines
+- **Overlay status:** `POST /v1/devices/{id}/overlays/{overlay_id}` with `held` or `reverted`.
+- **Pull and install:** `GET /v1/firmware/{version}` returns the manifest and its sha256, and `GET /v1/harness/{version}/package` returns the tarball with an `X-Sha256` header. Then `POST /v1/devices/{id}/installs` reports the result: `installed`, `rolled_back` or `hash_mismatch`.
+- **Offline:** keep running the last good version plus any overlay, queue reports on disk, and send them when the link returns (D8). The device keeps the last good version on disk, so it can roll back without the cloud (D7).
+- **Our additions to propose** *(inferred)*:
+  - Send the audit JSON (§8.3) with check-ins or incidents.
+  - Add a field for the STM32 build ID if the C firmware stays in the demo (§17).
 
 ## 11. The user
 
-- **Who:** the person who owns or operates the robots ("manager of robot systems" in the PRD).
+- **Who:** for v0, us: the arm company, as a single tenant (D1). Longer term, the PRD's "manager of robot systems".
 - **How we reach them:** undecided. *(team)*
+- **What v0 gives them:**
+  - The incident timeline, with the kill switch at the top (D10, D11).
+  - Hardware faults become work orders, which a Naïve agent phones in through Mobilerun (D12).
 - **Options:**
   - Incident emails through AgentMail.
   - Phone calls through Mobilerun to order parts or book technicians (PRD).
@@ -335,20 +365,36 @@ Positioning *(inferred)*: existing tools either need a cloud connection to a big
 - **Power:** the Pi 5's supply and the servo supply voltage (§5).
 - **Safety:** the arm must stay parked while code changes, and rollback must work before any live demo. *(inferred)*
 - **Physical triggers vary** (a hand, a tap), so keep scripted injections as a backup. *(inferred)*
+- **The device and cloud plans don't match yet.** They disagree on what "firmware" means and on code patches, and the demo depends on both (§17).
 
 ## 17. Open questions
 
+**Where the device and cloud plans need to agree**
+1. **What "firmware" means.** The cloud's manifest covers the Python control stack and chose against microcontroller firmware (D3). But iteration 2 of the demo fixes and reflashes C firmware on the STM32 (§7). Should the manifest get an entry for the STM32 build, or do C fixes stay local code patches?
+2. **Code patches.** v0's batch job skips overlays that contain a `code_patch` (v0 plan §7.3), and the demo faults D1 and F1–F11 are all code patches. Options:
+   - express D1 as a rule the batch job can merge
+   - give the batch job a coding agent
+   - show code fixes as heals that stay local
+3. **The harness framework.** The cloud calls Hermes likely but doesn't assume it (D4). The device-side candidates are pi and mini-swe-agent (§8.5). Whichever wins sets `knowledge_dir`.
+4. **What the healer may patch:** everything (the device-side discussion), or everything except the safety layer and the visor (D5a)?
+5. **The cloud's questions for the device side** (v0 plan §11):
+   - Can the rule evaluator be one shared function, `evaluate(rules, signals)`, so replay works?
+   - What does the health check test?
+   - How long must an overlay survive to count as held?
+   - What marks a fault as hardware?
+   - Which sim or fake devices act as the canary?
+
+**Other open questions**
 1. What does the STM32 do in the loop, and how does it talk to the Pi (UART over the ST-LINK port at 115200)?
 2. What does the arm do in the demo? (being designed)
 3. Which agent harness and which model run on the Pi 5? (being tested)
-4. What exactly is the device–cloud contract? (§10)
-5. Who is the user, and how do they hear from us? (§11)
-6. When does the Xavier come online, and does it host the model?
-7. **For Naïve:** is there any inbound trigger besides email or SMS? Do Computers get GPUs? Can files get public URLs?
-8. **For the organizers:** can one company win both Main and a sponsor track?
-9. Which model runs the cloud diagnosis on RunPod? (team status)
-10. Do the AgentMail and Monid MCP servers accept a bearer token? (team status)
-11. Which Raspberry Pi OS version is on the Pi, and which formats does the camera support?
+4. How do we reach the user beyond the dashboard? (§11)
+5. When does the Xavier come online, and does it host the model?
+6. **For Naïve:** is there any inbound trigger besides email or SMS? Do Computers get GPUs? Can files get public URLs?
+7. **For the organizers:** can one company win both Main and a sponsor track?
+8. Which model runs the cloud diagnosis on RunPod, and which LLM runs the batch job? (team status; v0 plan §11)
+9. Do the AgentMail and Monid MCP servers accept a bearer token? (team status)
+10. Which Raspberry Pi OS version is on the Pi, and which formats does the camera support?
 
 ## 18. Glossary
 
@@ -356,7 +402,13 @@ Positioning *(inferred)*: existing tools either need a cloud connection to a big
 |---|---|
 | Healer | The agent and local model on the edge computer that detect, diagnose, fix and verify |
 | Harness | Everything around the model: prompt, tools, playbooks, checks, policy. Versioned and improved by the cloud |
-| Playbook | Instructions for one family of faults |
+| Skill | Instructions for one family of faults, in the harness's `skills/` folder (the cloud's `knowledge_dir`) |
+| Overlay | A local patch on top of the version the cloud assigned. It reverts itself if health fails or the fault comes back (D5a) |
+| Visor | The device-side layer that pulls, checks, installs and rolls back versions (D7) |
+| Manifest | The cloud's "firmware" version: code revision, rules, parameters, policy model (D3) |
+| Canary | The one device a new version runs on before the whole fleet gets it (D6) |
+| Kill switch | The one human control: freeze rollouts, pin every device to its last good version (D11) |
+| Work order | A hardware fix handed to a Naïve agent as a board card (D12) |
 | Tier 1 / 2 / 3 | Crash or error / hang or stuck loop / wrong behavior |
 | Park | Move the arm to a safe pose and turn torque off |
 | Incident | The record of one failure: evidence, fix, result |
