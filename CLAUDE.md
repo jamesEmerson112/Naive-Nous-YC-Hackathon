@@ -65,15 +65,15 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 2:18 PM PST_
+_Last updated: Sat Nov 7, 2:28 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is adding Romulus, a self-healing and fleet layer (see Notes from the team). James is working on better arm control using NVIDIA simulation and is comparing RunPod GPU types. Draft diagrams are in `docs/robotic-arm.html` (not committed yet; being reworked for readability).
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is adding Romulus, a self-healing and fleet layer, and is planning it as a general cloud platform for robot fleets (`docs/cloud-platform-planning/`). James is working on better arm control using NVIDIA simulation and is comparing RunPod GPU types. Draft diagrams are in `docs/robotic-arm.html` (not committed yet; being reworked for readability).
 
 **Recently done:**
+- Kent pushed the first cloud-platform PRD and API outline (`docs/cloud-platform-planning/`): CI/CD for firmware and the self-healing agent, edge logs pushed to the cloud for batch analysis, a fleet dashboard, and Mobilerun calls to order parts or book technicians
 - Confirmed the on-site arm is an SO-101 (red follower plus white leader, 6 Feetech STS3215 servos); in LeRobot set `robot_type` to `so101_follower`
 - Kent pushed the Romulus notes: arm, fleet and company heal loops; the LLM only proposes reversible actions and stays out of the control loop; a hero demo; version pins (LeRobot v0.7.0, MuJoCo 4.0.0)
 - Robotic-arm diagrams: who manages the arms, how logs reach people, and the RunPod model layer
-- Read the HIL-SERL paper (arXiv 2410.21845): resets are scripted or done by a person; it doesn't learn its own resets
 
 **Open questions:**
 - RunPod: Kent's notes lean serverless with an image-reading model, since the LLM is outside the control loop. Which model, and is that decided?
@@ -82,6 +82,8 @@ _Last updated: Sat Nov 7, 2:18 PM PST_
 - AgentMail and Monid MCP auth (bearer token?); can one company win the Main track and a sponsor track?
 
 **Recent commits (all authors):**
+- `8f534c3` Sat 14:23 · Kent Gang · cloud platform prd/apis and setup for more planning
+- `973c496` Sat 14:19 · jamesEmerson112 · Update team status in CLAUDE.md
 - `ad66060` Sat 14:06 · jamesEmerson112 · Update team status in CLAUDE.md
 - `d0ac517` Sat 14:05 · Kent Gang · Add Romulus self-healing/fleet notes to CLAUDE.md
 - `4abbebd` Sat 13:48 · jamesEmerson112 · Update team status in CLAUDE.md
