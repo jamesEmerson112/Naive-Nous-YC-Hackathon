@@ -26,6 +26,43 @@ Prep and build work for two hackathons running at the same time:
 ## Notes from the team
 _Add anything others should know here (who is doing what, decisions, blockers)._
 
+### Romulus: self-healing + fleet layer for the arm company (Kent)
+<!-- romulus-sync:start -->
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 2:15 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+
+**The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
+- **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
+- **Fleet:** canary rollout and automatic rollback across many arms.
+- **Company:** every verified heal is also a billing event, an incident email and a training example *(inferred)*.
+
+**Why it matters for judging:** nobody closes the loop yet.
+- Formant F3 only *recommends* fixes ([BusinessWire](https://www.businesswire.com/news/home/20250630008190/en/Formant-F3-Brings-Generative-AI-and-Agentic-Reasoning-to-Robot-Ops)).
+- Alloy raised $8M in Aug 2026 to *diagnose* robot-fleet failures ([AI Insider](https://theaiinsider.tech/2026/08/13/alloy-robotics-raises-8m-in-new-funding-to-help-engineers-debug-robot-fleets-with-ai-agents/)).
+- AI incident response for software reached $1B valuations twice: Resolve ([TechCrunch](https://techcrunch.com/2026/02/04/ai-sre-resolve-ai-confirms-125m-raise-unicorn-valuation/)) and Traversal ([Dealroom](https://dealroom.co/news/169321-traversal-raises-120m-at-1b-valuation-to-automate-incident-response/)).
+- Main-track pitch: "PagerDuty with hands" *(inferred)*.
+
+**Design rules worth sharing:**
+- The RunPod/Hermes LLM never sits in the arm's control or safety loop. Fast deterministic reflexes run on the bench. The LLM only *proposes* typed, reversible actions (`rollback(model, rev)`, `set_mode(safe)`, `restart(proc)`), and a checker approves them *(inferred)*.
+- Each type of action earns autonomy (suggest → approve → auto) and loses it after a bad fix. Showing that demotion live is what builds judges' trust *(inferred)*.
+- Get the company loop live tonight so it runs overnight unattended. A morning count of agent vs human actions answers "how much runs without you" *(inferred)*.
+
+**Hero demo:**
+1. A judge covers the camera, or we push a bad policy to the arm.
+2. The bench detects it and goes to a safe pose or rolls back automatically.
+3. The Fleet Doctor agent writes a root cause.
+4. AgentMail sends the incident report.
+5. If the fault is hardware, Mobilerun phones in a parts order. That's a sponsor-track fit *(inferred)*.
+
+**Answers to the open questions below (from Kent's research):**
+- **Pin versions.** LeRobot v0.7.0 (Nov 5) has breaking changes, and MuJoCo 4.0.0 shipped Nov 6 ([LeRobot release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
+- **Sim twins of the arm:** MuJoCo Menagerie ships `robotstudio_so101` and runs natively on Macs ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
+- **Zero-shot "did the task succeed?" from video:** Robometer-4B in LeRobot. It wants a GPU, so it fits on RunPod ([docs](https://github.com/huggingface/lerobot/blob/main/docs/source/robometer.mdx)).
+- **RunPod:** with the LLM outside the control loop, diagnosis isn't latency-critical, so serverless is probably fine. The model should read images, because camera frames are the best evidence *(inferred)*.
+- **Venue Wi-Fi sinks robot demos.** Bring a router, an Ethernet cable and a recorded backup ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)).
+
+**In progress (Kent, local, not pushed):** the cloud-platform PRD draft at `docs/cloud-platform-prd.md`.
+<!-- romulus-sync:end -->
+
 ## Team status
 <!-- team-status:start -->
 _Last updated: Sat Nov 7, 1:48 PM PST_
