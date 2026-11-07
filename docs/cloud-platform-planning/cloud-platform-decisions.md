@@ -15,7 +15,7 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 |---|---|---|---|
 | D0 | Core thesis | The agent fixes; the batch locks it in as firmware and skills | ✅ |
 | D1 | Who the user is | Us (the arm company), single tenant | ✅ |
-| D2 | How broad the objective is | Narrow everywhere: the cloud half of the self-healing loop; "general purpose" dropped | ✅ |
+| D2 | How broad the objective is | Narrow everywhere: the cloud half of the self-healing loop; "general purpose" dropped. *Refined by D16: narrow loop, general data* | ✅ |
 | D3 | What "firmware" means | Versioned bundle: code version + rules/params + policy model version | ✅ |
 | D4 | What the "harness" is | Device-side teammate picks the framework; the platform stores it as an unparsed versioned folder | ✅ |
 | D5 | How much the on-device agent can do alone | Can patch code or rules on the device, then report the patch to the cloud | ✅ |
@@ -25,11 +25,17 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 | D8 | What happens when the cloud is down | Keep running the last good version (plus overlay); queue reports on disk; never bricked | ✅ |
 | D9 | Which value comes first | Legible, never magical: every step has a readable "why" and links back to what caused it | ✅ |
 | D10 | The one screen that has to work | Incident timeline: each incident opens into its full story through to a locked-in version or a work order | ✅ |
-| D11 | Where a human stays in the loop | Only the kill switch (freeze rollouts, pin last good); spend, technician booking and harness promotion are automatic | ✅ |
-| D12 | Who runs the parts and technician agents | Naïve: the platform posts work orders as Naïve board cards; a Naïve agent calls through Mobilerun; caps live in Naïve's policy file | ✅ |
+| D11 | Where a human stays in the loop | Only the kill switch (freeze rollouts, pin last good); spend, technician booking and harness promotion are automatic. *Caps enforced in our code* | ✅ |
+| D12 | Who runs the parts and technician agents | Naïve: the platform posts work orders as Naïve board cards; a Naïve agent calls through Mobilerun. *Corrected: caps live in our code, not Naïve policy* | ✅ |
 | D13 | What's out of scope for v0 | Cut: digital twins/ERP, billing per heal, trust ledger, policy model retraining | ✅ |
 | D14 | Who builds the device side | A teammate (TBD) owns the device side; Kent owns the cloud and the contracts | ✅ |
-| D15 | The v0 build plan | Proposed in [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md); not yet approved | ⏳ |
+| D15 | The v0 build plan | Approved in principle; v2 in [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md) | ✅ |
+| D16 | Role of robot telemetry | A first-class, general-purpose asset: synced, curated, versioned datasets for models, harnesses and firmware | ✅ |
+| D17 | Runtime | Local Docker containers; Python + FastAPI | ✅ |
+| D18 | Architecture details | Proposed in [`cloud-platform-architecture.md`](cloud-platform-architecture.md) | ⏳ |
+| D19 | Naïve integration design | Proposed in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md) | ⏳ |
+| D19b | What happens over the spend cap | (a) block and wait for a person *(recommended)* · (b) gated agent with `ask` | ⏳ |
+| D20 | Telemetry formats and capture policy | Proposed in [`cloud-platform-telemetry.md`](cloud-platform-telemetry.md) | ⏳ |
 
 ---
 
@@ -73,7 +79,9 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 - The PRD objective needs rewriting to match.
 - Consistent with "go narrow and deep" and "not another dashboard" in `~/git2/docs/VISION.md`.
 
-**History:** decided Sat Nov 7 (Kent).
+**History:**
+- Decided Sat Nov 7 (Kent).
+- **Refined by D16 (round 2):** the *loop* stays narrow, but the *data* it produces is deliberately general-purpose. "Narrow loop, general data" (PRD principle 2).
 
 ### D3. What "firmware" means ✅
 **Question:** What is the deployable "firmware" artifact, physically? (The SO-101's STS3215 servos run Feetech's own firmware.)
@@ -242,10 +250,12 @@ INCIDENTS
 **What this means for the build** *(inferred)*:
 - The kill switch has to be obvious, tested, and recorded every time it's used. It's the one human control, so it must work on stage.
 - Harness versions go through the same replay and canary as firmware.
-- No human approves spending, so limits have to live outside the LLM: a hard spend cap and an order-rate limit, in code or in Naïve's policy file. That's the Project Vend lesson in `~/git2/docs/VISION.md`. Even with no approval step, an agent shouldn't be able to order 50 servos. Settle the exact caps in D12.
+- No human approves spending, so limits have to live outside the LLM: a hard spend cap and an order-rate limit. That's the Project Vend lesson in `~/git2/docs/VISION.md`. Even with no approval step, an agent shouldn't be able to order 50 servos. **The caps live in our code** (see History).
 - This gives a strong autonomy-ledger number for judging: one human control, and every use of it is recorded.
 
-**History:** decided Sat Nov 7 (Kent).
+**History:**
+- Decided Sat Nov 7 (Kent).
+- **Correction (round 2, research):** the first version said caps could live "in code or in Naïve's policy file". Naïve has no policy that can cap spend: its policy is allow, ask or deny per tool ([Naïve integration](cloud-platform-naive-integration.md) §3.4, §8). The caps move into our code (`ORDER_MAX_USD`, `ORDERS_PER_DAY_MAX`, `ORDERS_PER_ROBOT_DAY_MAX`). What happens over a cap is D19b; option (a) keeps this decision intact.
 
 ## Scope and boundaries
 
@@ -255,18 +265,19 @@ INCIDENTS
 1. The platform raises a work order, for example "replace servo 3 on arm-1".
 2. It posts the work order as a card on the Naïve board.
 3. A Naïve agent with the Mobilerun MCP makes the call.
-4. Spend caps live in Naïve's policy file.
+4. ~~Spend caps live in Naïve's policy file.~~ Spend caps live in our code (see History).
 5. The dashboard shows the work order's status.
 
 **Options not chosen:** the platform runs its own agents and calls Mobilerun directly; the platform's agent decides and Naïve only carries out the call.
 **What this means for the build** *(inferred)*:
 - The platform doesn't orchestrate agents. It creates work orders and tracks their status, which avoids building a second agent system next to the mandatory one.
 - The platform needs to create Naïve board cards (through the Naïve API or SDK) and read their status back. Confirm the exact calls in `docs/naive/terminology.md` and the raw docs.
-- The D11 spend cap goes in Naïve's policy file, which agents can't edit (`docs/naive/terminology.md`, "Inference, cost and policy").
 - Sponsor fit: Mobilerun ("the robot phones in a parts order"). AgentMail could send the incident report from the same card.
 - A work order is created when an overlay reverts itself and the fault looks like hardware (see the D10 sketch). The rule for "looks like hardware" is still open.
 
-**History:** decided Sat Nov 7 (Kent).
+**History:**
+- Decided Sat Nov 7 (Kent).
+- **Correction (round 2, research):** spend caps can't live in Naïve's policy and move into our code (D11 History). The integration design is outbound only: cards are posted with an `Idempotency-Key`, status comes back by polling, and the crew is declared in `naive/naive.config.json`. It's proposed as D19 in [Naïve integration](cloud-platform-naive-integration.md). The core decision, that Naïve runs the agents, stands.
 
 ### D13. What's out of scope for v0 ✅
 **Question:** What's cut from the first build?
@@ -300,6 +311,84 @@ INCIDENTS
 
 **History:** decided Sat Nov 7 (Kent).
 
-### D15. The v0 build plan ⏳
+### D15. The v0 build plan ✅
 **Question:** Does the proposed local v0 build match the plan?
-**Decision:** _pending._ The proposal is written up in [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md): contracts first, then registry, device API, batch job, gate and kill switch, work orders, and the incident timeline, plus a test client that acts like a device. Its open questions are in §11.
+**Decision:** **Approved in principle.** Kent: "This plan looks great", followed by a round of refinement. [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md) v2 carries that refinement: telemetry and datasets, Docker/FastAPI, and the Naïve research. The build order is in [`cloud-platform-build-plan.md`](cloud-platform-build-plan.md).
+
+**History:**
+- Proposed Sat Nov 7.
+- Approved in principle Sat Nov 7 (Kent), with round-2 refinements (D16–D20).
+
+---
+
+## Round 2: telemetry, runtime, integration (Sat Nov 7, ~3:30 PM)
+
+From Kent's round-2 feedback: reconcile with the PRD; lean more on telemetry and datasets; make Naïve integration robust; plan the build and its risks; set the code architecture, run in Docker, Python/FastAPI.
+
+### D16. Telemetry and datasets are a first-class asset ✅
+**Question:** What role does robot telemetry play in the platform?
+**Decision:** **A first-class, general-purpose asset.** Traces, sensor data, software logs and agent sessions from the robots are synced to the platform. They become curated, versioned datasets for training models, improving harnesses and developing firmware, beyond healing (Kent, round 2).
+
+**What this means for the build** *(inferred)*:
+- New PRD stories US6 (sync), US7 (datasets) and US9 (regression replay); new requirements R4 and R9.
+- The regression corpus links the data to the gate: every past incident becomes a replay case.
+- Priority stays below the hero loop: incident evidence is P0, episodes and datasets are P1, the LeRobot export is P2 (build plan §1, §6).
+- Refines D2: narrow loop, general data.
+
+**History:** decided Sat Nov 7 (Kent, round-2 feedback).
+
+### D17. Runtime: local Docker, Python and FastAPI ✅
+**Question:** How does the platform run, and in what?
+**Decision:** **Locally, in Docker containers, with Python and FastAPI as the main frameworks** (Kent, round 2).
+**What this means for the build:** see [`cloud-platform-architecture.md`](cloud-platform-architecture.md). Postgres replaces the SQLite in the v1 plan, because two containers write at the same time (D18).
+**History:** decided Sat Nov 7 (Kent, round-2 feedback).
+
+### D18. Architecture details ⏳
+**Question:** Approve the proposed architecture?
+**Proposal:**
+- one image for `api` and `worker`;
+- Postgres 17;
+- a uv workspace with a shared `romulus-contracts` package;
+- a pure `domain/` core;
+- adapters with fakes, and fake modes as the defaults;
+- a filesystem blob store;
+- Jinja + htmx pages.
+
+Details in [`cloud-platform-architecture.md`](cloud-platform-architecture.md).
+**Decision:** _pending._
+
+### D19. Naïve integration design ⏳
+**Question:** Approve the proposed Naïve integration?
+**Proposal:**
+- outbound only;
+- self-contained cards with an `Idempotency-Key`;
+- status by polling;
+- spend caps in our code;
+- `fleet-ops` declared in `naive/naive.config.json` on the `pi` harness;
+- the Mobilerun bearer in the vault, bound to fleet-ops;
+- `actor_class` on every event for the autonomy ledger.
+
+Details in [`cloud-platform-naive-integration.md`](cloud-platform-naive-integration.md).
+**Decision:** _pending._
+
+### D19b. What happens over the spend cap ⏳
+**Question:** When a work order is over a spend cap, what happens?
+**Options:**
+- **(a) recommended, keeps D11:** it isn't posted; it shows as `blocked_over_cap` and waits for a person.
+- **(b)** It's routed to `fleet-ops-gated`, whose Mobilerun tool is set to `ask`, so a person approves it inside Naïve. This adds a second human control.
+
+**Decision:** _pending._
+
+### D20. Telemetry formats and capture policy ⏳
+**Question:** Approve the proposed formats and capture policy?
+**Proposal:**
+- incident windows and episodes as LeRobotDataset v3.0, one small dataset per incident, tarred;
+- log windows as MCAP;
+- agent traces as JSONL from the agent's session export;
+- metrics as rows;
+- every incident uploads its evidence (P0), and normal episodes are sampled (P1);
+- fleet dataset schema v0.1 frozen tonight;
+- filesystem blobs with a budget that never deletes evidence.
+
+Details in [`cloud-platform-telemetry.md`](cloud-platform-telemetry.md).
+**Decision:** _pending._

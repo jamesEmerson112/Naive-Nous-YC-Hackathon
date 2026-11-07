@@ -62,7 +62,7 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 - Sending the same report again returns `200` with the same incident and creates no duplicate.
 - A report that arrives late is placed by `occurred_at`.
 
-**Demo beat:** step 1 of the demo (v0 plan §9).
+**Demo beat:** step 1 of the demo (v0 plan §8).
 
 ## F3. Lock-in → fleet (P0, US2, R5, R6)
 
@@ -170,7 +170,7 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 
 ## F10. Overnight unattended run (P0, R12)
 
-1. Set `CANARY_WINDOW_S=1200`, `BATCH_INTERVAL_S=3600` and `NAIVE_MODE` (live if it's stable, otherwise fake).
+1. Set `CANARY_WINDOW_S=1200` and `BATCH_INTERVAL_S=3600`. Set `NAIVE_MODE=fake`, or keep it live only if `parts.yaml` points at a teammate's phone and the daily order cap is set. **Never** let the chaos loop call a real business (build plan K13).
 2. Run `make sim` with the chaos schedule:
    - a fault every ~10 minutes, spread across the devices;
    - about 1 in 5 held overlays are bad (F4);

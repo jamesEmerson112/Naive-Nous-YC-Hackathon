@@ -79,7 +79,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 - [ ] `adapters/blobstore.py` (`FsBlobStore`, content-addressed)
 - [ ] Recording routes: metadata, then blob upload with sha256 check (APIs §3.7)
 - [ ] `domain/labels.py` automatic labels; evidence links in the story
-- [ ] Fake device uploads an incident window, a log window and an agent trace. These are small synthetic files in the real formats: a tiny LeRobot v3 tar, an MCAP file and a JSONL file ([telemetry](cloud-platform-telemetry.md) §2)
+- [ ] Fake device uploads an incident window, a log window and an agent trace. These are small synthetic files: a real MCAP file (written with the `mcap` library), a JSONL trace, and a *placeholder* tar labeled `lerobot_v3_tar`. Real LeRobot datasets come from the arm, because generating them needs the heavy `lerobot` package ([telemetry](cloud-platform-telemetry.md) §2)
 - [ ] `metric_samples` written on every check-in (P1, one insert)
 - [ ] Flow test F7
 

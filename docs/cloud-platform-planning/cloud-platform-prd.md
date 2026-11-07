@@ -63,7 +63,7 @@ Status: **v0** = in the hackathon build · **later** = after the hackathon · **
 | **R1** | **Version registry.** Create, read and retire firmware manifests (D3) and harness packages (D4). Versions are immutable. Track the assigned, running and last-good versions for each device. Each device has a `device_class` that defines which arms count as "comparable". | US1, US2 | P0 |
 | **R2** | **Device sync contract.** Check-in (heartbeat and health), pull the assigned version, hash check, install result, and rollback on failure (D7). The visor on the device is the teammate's to build; the contract is ours. | US1, US8 | P0 |
 | **R3** | **Incident reporting.** Every fault is reported, resolved or not, with the overlay diff, the agent's reasoning, the actions taken and the outcome. Reports are idempotent and may arrive late (D8). | US3, US6 | P0 |
-| **R4** | **Telemetry sync.** Recordings (task episodes, incident windows, log chunks, agent traces) are uploaded as content-addressed blobs, stored on the device and forwarded when the cloud is reachable, and indexed with their version, overlay and incident links. | US6, US8 | P0 for incident evidence; P1 for all episodes |
+| **R4** | **Telemetry sync.** Recordings (incident windows, log windows, agent traces, task episodes) are uploaded as content-addressed blobs, stored on the device and forwarded when the cloud is reachable, and indexed with their version, overlay and incident links. | US6, US8 | P0 for incident evidence; P1 for all episodes |
 | **R5** | **Batch lock-in.** Held overlays become candidate firmware and harness versions. The merge is deterministic; an LLM writes the "why" and a harness skill. | US2 | P0 |
 | **R6** | **Gate.** Replay against the regression corpus, then a canary, then automatic promotion to all devices in the class, or automatic rollback (D6). | US2, US9 | P0 (replay against all past incidents is P1) |
 | **R7** | **Kill switch.** Freeze rollouts and pin every device to its last good version. Every use is recorded (D11). | US4 | P0 |
@@ -105,10 +105,10 @@ Status: **v0** = in the hackathon build · **later** = after the hackathon · **
 |---|---|---|---|---|
 | US1 | R1, R2 | §4, §7.1–7.2 | F1 | M0–M1 |
 | US2 | R1, R5, R6 | §7.3–7.4 | F3, F4 | M3 |
-| US3 | R3, R10 | §4, §7.6 | F2 | M1–M2 |
+| US3 | R3, R10 | §4, §6 | F2 | M1–M2 |
 | US3a | R8 | §7.5, [Naïve integration](cloud-platform-naive-integration.md) | F6 | M5 |
 | US4 | R7 | §7.4 | F5 | M3 |
-| US6 | R3, R4 | §7.7, [telemetry](cloud-platform-telemetry.md) | F7 | M4 |
+| US6 | R3, R4 | §7.6, [telemetry](cloud-platform-telemetry.md) | F7 | M4 |
 | US7 | R9 | [telemetry](cloud-platform-telemetry.md) §5–6 | F8 | M6 |
 | US8 | R2, R4 | §7.2 | F9 | M7 |
 | US9 | R6, R9 | §7.4 | F8 | M6 |

@@ -142,9 +142,10 @@ The state lives in Postgres: candidate status, `fleet_state.batch_requested`, wo
 | `BLOB_DIR` | `/data/blobs` | Root of the filesystem blob store |
 | `BLOB_BUDGET_GB` | `20` | Disk cap for episode blobs (incident evidence is never auto-deleted) |
 | `NAIVE_MODE` | `fake` | `fake` logs cards locally; `live` calls the Naïve API |
-| `NAIVE_API_KEY`, `NAIVE_BASE_URL`, `NAIVE_BOARD_ID`, `NAIVE_OPS_AGENT` | — | See the Naïve integration doc |
+| `NAIVE_API_KEY`, `NAIVE_BASE_URL` (`https://api.vetta.sh/v1`), `NAIVE_VERSION` (`2026-09-30`), `NAIVE_BOARD_ID` (the CEO's `agt_` id), `NAIVE_OPS_AGENT` (`fleet-ops`) | — | See the Naïve integration doc |
+| `ORDER_MAX_USD`, `ORDERS_PER_DAY_MAX`, `ORDERS_PER_ROBOT_DAY_MAX` | `50`, `3`, `1` | Spend caps, enforced in our code before a card is posted (Naïve integration §3.4) |
 | `LLM_MODE` | `fake` | `fake` returns templated text; `live` calls the provider |
-| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` | — | Open question K2 (Claude API or the team's RunPod model) |
+| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY` | — | Open question Q2 in v0 plan §9 (Claude API or the team's RunPod model) |
 | `CANARY_WINDOW_S` | `120` | 1200 for the overnight run |
 | `BATCH_INTERVAL_S` | `120` | 3600 for the overnight run |
 
@@ -162,7 +163,10 @@ Pinned in `uv.lock` at M0. Adding a library means adding a row here.
 | Pages | Jinja2, htmx (one vendored JS file) |
 | Tests | pytest, pytest-asyncio (only if needed) |
 | Lint and format | ruff |
-| Data export (M6) | pyarrow (parquet); the `lerobot` package only for LeRobotDataset export, and only if time allows (P2) |
+| Logs and diagnostics files | `mcap` (the fake device writes MCAP; the cloud only stores it in v0) |
+| Data export (M6) | pyarrow (sidecar parquet). **`lerobot==0.7.0`** only for the P2 LeRobot export, as an optional extra (`cloud[lerobot]`), because it pulls in torch and would bloat the main image |
+| Blob store | Plain filesystem, `data/blobs/sha256/ab/cd/<hash>`. Garage (single-node) if we need S3 later. **No `minio/minio`**: the community edition is archived ([telemetry](cloud-platform-telemetry.md) §7) |
+| Naïve | REST with httpx (`https://api.vetta.sh/v1`, `Vetta-Version: 2026-09-30`). There's no Python SDK ([Naïve integration](cloud-platform-naive-integration.md) §4) |
 
 **Schema changes:** `create_all()` on startup until the overnight run starts (M7). After that, changes must be additive (new tables or nullable columns, applied by hand with `ALTER`), so the overnight data survives. Bring in Alembic only if a destructive change becomes unavoidable.
 
