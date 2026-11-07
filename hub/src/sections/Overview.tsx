@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { OFFICE_VS_ROOM, PYRAMID, PYRAMID_SRC } from "../content/infra";
 import { JOURNEY, JOURNEY_FAIL, JOURNEY_NOTES } from "../content/journey";
+import { PLAIN } from "../content/plain";
 import { LayerChip, More, Section, Sources } from "../ui";
 import { DevOpsLoop, Icon, JourneyPlayer, Ranked, SystemLoop } from "../viz";
 
@@ -8,6 +9,17 @@ export function Glance() {
   return (
     <Section id="glance" title="The whole thing" sub="Tap a box. Dots are data moving.">
       <SystemLoop />
+      <div className="plain" aria-label="Words in one line">
+        {PLAIN.map((p) => (
+          <div key={p.term} className={`plain-card l-${p.layer}`}>
+            <span className="plain-icon">
+              <Icon name={p.icon} />
+            </span>
+            <b>{p.term}</b>
+            <span className="small muted">{p.line}</span>
+          </div>
+        ))}
+      </div>
       <h3>Demo features, by priority</h3>
       <Ranked
         label="Demo features by priority, highest first"

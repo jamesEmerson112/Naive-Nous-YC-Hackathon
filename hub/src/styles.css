@@ -477,6 +477,56 @@ svg.mini { display: block; width: 100%; height: auto; }
 .rank-flag { display: inline-flex; gap: 5px; align-items: center; margin-top: 4px; padding: 3px 8px; border-radius: var(--radius); background: var(--risk-soft); border: 1px solid color-mix(in srgb, var(--risk) 45%, transparent); color: var(--ink); font-size: var(--fs-xs); }
 .rank-flag .icon { color: var(--risk); flex: none; }
 
+/* ---------- Diagram focus and zoom panel ---------- */
+.edge.hot { stroke: var(--ink); stroke-width: 2.6; }
+.edge.dim { opacity: 0.25; }
+.packet.dim { opacity: 0.2; }
+.edge-label.hot { fill: var(--ink); }
+.edge-label.dim { opacity: 0.3; }
+.zoom { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--l); border-radius: var(--radius); background: var(--panel); animation: fadeIn 0.3s ease-out; }
+.zoom-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.zoom-head .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--l); }
+.zoom-title { font: 700 var(--fs-lg)/1.2 var(--font-display); }
+.zoom-head a { margin-left: auto; font-size: var(--fs-sm); }
+.zoom-plain { max-width: var(--prose); }
+.zoom-cols { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+.zoom-cols > div, .zoom-links { display: grid; gap: 6px; align-content: start; }
+.linkchip { cursor: pointer; font-family: var(--font-body); }
+.linkchip:hover { border-color: var(--ink); }
+.linkchip:focus-visible { outline: 2px solid var(--l); outline-offset: 2px; }
+
+/* ---------- Schedule, needs, flows, streams ---------- */
+.sched { display: grid; gap: 6px; }
+.sched-bar { position: relative; height: 34px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
+.sb { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; border-right: 2px solid var(--bg); background: color-mix(in srgb, var(--heal) 30%, var(--panel)); font: 600 var(--fs-xs)/1 var(--font-mono); overflow: hidden; white-space: nowrap; }
+.sb.night { background: repeating-linear-gradient(135deg, var(--panel) 0 8px, var(--panel-2) 8px 16px); color: var(--muted); }
+.sb.done { opacity: 0.5; }
+.sched-now { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+.sched-now span { position: absolute; top: 2px; left: 4px; font: 600 10px/1 var(--font-mono); }
+.sched-scale { display: flex; justify-content: space-between; gap: 8px; font: 500 var(--fs-xs)/1.2 var(--font-mono); color: var(--muted); }
+.sched-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); font-size: var(--fs-sm); }
+.sched-list li + li { margin-top: 0; }
+.sched-list li.done { opacity: 0.55; text-decoration: line-through; }
+.needs { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
+.need { display: grid; gap: 2px; align-content: start; padding: 10px 12px; border: 1px solid var(--line); border-top: 3px solid var(--risk); border-radius: var(--radius); background: var(--panel); }
+.need-by { font: 700 var(--fs-sm)/1 var(--font-mono); color: var(--risk); }
+.flows { display: flex; flex-wrap: wrap; gap: 5px; }
+.flow { font-size: var(--fs-xs); padding: 4px 8px; border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--panel-2); }
+.flow.P0 { border-color: color-mix(in srgb, var(--heal) 55%, transparent); background: var(--heal-soft); }
+.flow b { font-family: var(--font-mono); }
+.demo-order { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: var(--fs-sm); }
+.do-step { display: inline-flex; gap: 6px; align-items: baseline; }
+.streams { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
+.stream { display: grid; gap: 3px; align-content: start; padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--edge); border-radius: var(--radius); background: var(--panel); }
+.stream code { background: none; padding: 0; font-weight: 600; }
+
+/* ---------- Plain words ---------- */
+.plain { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+.plain-card { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 2px; align-items: center; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--l); border-radius: var(--radius); }
+.plain-icon { color: var(--l); display: inline-flex; }
+.plain-card b { font-family: var(--font-display); }
+.plain-card .small { grid-column: 1 / -1; }
+
 /* ---------- Bench hardware ---------- */
 .hw { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); }
 .hw-card { display: grid; gap: 4px; align-content: start; justify-items: start; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--l); border-radius: var(--radius); }
@@ -649,3 +699,17 @@ svg.mini { display: block; width: 100%; height: auto; }
   .open-list li { grid-template-columns: auto minmax(0, 1fr); }
   .open-list .who { grid-column: 2; text-align: left; }
 }
+
+/* ---------- Owners on the diagram ---------- */
+.badge circle { fill: var(--panel); stroke: var(--l); stroke-width: 1.5; }
+.badge text { fill: var(--ink); font: 700 11px var(--font-mono); }
+.badge.unknown circle { stroke: var(--muted); stroke-dasharray: 3 2; }
+.badge.unknown text { fill: var(--muted); }
+.node.proposed rect { stroke-dasharray: 7 4; fill: color-mix(in srgb, var(--ls) 45%, transparent); }
+.owners-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.owners-row .eyebrow { margin-right: 4px; }
+.owner-chip { cursor: pointer; font-family: var(--font-body); background: var(--ls); border-color: color-mix(in srgb, var(--l) 40%, transparent); }
+.owner-chip .dot { background: var(--l); }
+.gap-chip { cursor: pointer; font-family: var(--font-mono); border-style: dashed; background: transparent; color: var(--muted); }
+.gap-chip:hover, .owner-chip:hover { border-color: var(--ink); color: var(--ink); }
+.owner-chip:focus-visible, .gap-chip:focus-visible { outline: 2px solid var(--naive); outline-offset: 2px; }

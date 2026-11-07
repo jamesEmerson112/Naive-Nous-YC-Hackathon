@@ -1,21 +1,38 @@
 import { Fragment, useState } from "react";
 import { CATALOG, COMPONENTS, DEVICE_LOOP, HEAL_SRC, HEAL_TERMS, HEALTH_TIERS, type Component } from "../content/heal";
-import { DECISIONS, HOOKS, MILESTONES, ROMULUS_OPEN, ROMULUS_SRC, V0_LOOP, V0_SIDE, V0_STACK } from "../content/romulus";
-import { API, PLUGIN_WIRING, TELEMETRY } from "../content/proposal";
+import {
+  API_META,
+  DECISIONS,
+  DEMO_ORDER,
+  DEVICE_API,
+  FLOWS,
+  HOOKS,
+  NAIVE_LIMITS,
+  NEEDS,
+  ROMULUS_OPEN,
+  ROMULUS_SRC,
+  SCHEDULE,
+  STREAMS,
+  V0_LOOP,
+  V0_NETWORK,
+  V0_SIDE,
+  V0_STACK,
+  WORK_ORDER_FLOW,
+} from "../content/romulus";
 import { More, Section, Sources, StatusChip, Table } from "../ui";
-import { Icon, Steps } from "../viz";
+import { Icon, Schedule, Steps } from "../viz";
 
 function Catalog() {
   const [comp, setComp] = useState<Component | "all">("all");
   const list = comp === "all" ? CATALOG : CATALOG.filter((f) => f.comp === comp);
   const [selId, setSelId] = useState(CATALOG[0].id);
   const f = CATALOG.find((x) => x.id === selId) ?? CATALOG[0];
-  const steps: [string, string, string?][] = [
-    ["Plant it", f.plant || "—"],
-    ["Spot it", f.detect],
-    ["Fix it", f.fix],
-    ["Check it", f.verify || "—"],
-    ["Call a person", f.human || "not needed", f.human ? "human" : ""],
+  const steps: [string, string, boolean][] = [
+    ["Plant it", f.plant || "—", false],
+    ["Spot it", f.detect, false],
+    ["Fix it", f.fix, false],
+    ["Check it", f.verify || "—", false],
+    ["Call a person", f.human || "not needed", Boolean(f.human)],
   ];
   return (
     <div className="catalog">
@@ -39,14 +56,14 @@ function Catalog() {
         ))}
       </div>
       <div key={f.id} className="fault-flow five" aria-live="polite">
-        {steps.map(([k, v, cls], i) => (
+        {steps.map(([k, v, human], i) => (
           <Fragment key={k}>
             {i > 0 ? (
               <span className="ff-arrow" aria-hidden="true">
                 →
               </span>
             ) : null}
-            <div className={cls === "human" ? "ff-human" : undefined}>
+            <div className={human ? "ff-human" : undefined}>
               <span className="eyebrow">{k}</span>
               <span>{v}</span>
             </div>
@@ -59,9 +76,8 @@ function Catalog() {
 
 export function Interfaces() {
   const decided = DECISIONS.filter((d) => d.status === "decided").length;
-  const totalHours = 10.5;
   return (
-    <Section id="interfaces" title="Self-healing" layer="heal" owner="Ishaan's overview · Kent's v0" status="tentative" sub="The device heals first; the cloud locks good fixes in. Tap a fault to see how it's planted, caught and fixed.">
+    <Section id="interfaces" title="Self-healing" layer="heal" owner="Ishaan's overview · Kent's Romulus" status="tentative" sub="The device heals first; Romulus locks good fixes in. Tap a fault to see how it's planted, caught and fixed.">
       <h3>On the device</h3>
       <Steps label="Device heal loop" layer="edge" items={DEVICE_LOOP} />
       <ul className="chips" aria-label="Health tiers">
@@ -74,7 +90,7 @@ export function Interfaces() {
         ))}
       </ul>
 
-      <h3>In the cloud: Romulus v0</h3>
+      <h3>In Romulus</h3>
       <Steps label="Romulus v0 loop" layer="heal" items={V0_LOOP} />
       <div className="side3">
         {V0_SIDE.map((s) => (
@@ -86,16 +102,60 @@ export function Interfaces() {
         ))}
       </div>
 
+      <h3>Hardware fault → phone order</h3>
+      <Steps label="Work-order flow" layer="naive" items={WORK_ORDER_FLOW} />
+      <More title="Naïve limits Kent found" hint={`${NAIVE_LIMITS.length} notes`}>
+        <ul className="small">
+          {NAIVE_LIMITS.map((l) => (
+            <li key={l}>{l}</li>
+          ))}
+        </ul>
+      </More>
+
       <h3>Fault catalog</h3>
       <Catalog />
       <Sources items={HEAL_SRC} />
 
+      <h3>Kent's build plan</h3>
+      <Schedule blocks={SCHEDULE} from="2026-11-08T00:15:00Z" to="2026-11-08T19:00:00Z" />
+      <div className="needs" aria-label="What Kent needs, by when">
+        {NEEDS.map((n) => (
+          <div key={n.what} className="need">
+            <span className="need-by">{n.by}</span>
+            <b>{n.what}</b>
+            <span className="small muted">{n.from}</span>
+          </div>
+        ))}
+      </div>
+
       <div className="grid-2">
+        <div className="panel">
+          <div className="head">
+            <h4>Flows F1–F10</h4>
+            <span className="small muted">P0 must work · P1 next</span>
+          </div>
+          <div className="flows">
+            {FLOWS.map((f) => (
+              <span key={f.id} className={`flow ${f.p}`}>
+                <b>{f.id}</b> {f.name}
+              </span>
+            ))}
+          </div>
+          <p className="eyebrow">Demo order</p>
+          <div className="demo-order">
+            {DEMO_ORDER.map((d, i) => (
+              <span key={d.title} className="do-step">
+                {i > 0 ? <span className="ff-arrow">→</span> : null}
+                <b>{d.title}</b> <span className="muted small">{d.sub}</span>
+              </span>
+            ))}
+          </div>
+        </div>
         <div className="panel">
           <div className="head">
             <h4>Decision log</h4>
             <span className="small muted">
-              {decided} decided · D14 open · D15 pending
+              {decided} decided · D14 open · D15 D19 D20 pending
             </span>
           </div>
           <div className="decisions">
@@ -115,33 +175,17 @@ export function Interfaces() {
             </ul>
           </More>
         </div>
-        <div className="panel">
-          <div className="head">
-            <h4>Kent's build plan</h4>
-            <span className="small muted">~{totalHours} h · M0–M6</span>
+      </div>
+
+      <h3>What the arm sends</h3>
+      <div className="streams">
+        {STREAMS.map((s) => (
+          <div key={s.name} className="stream">
+            <code>{s.name}</code>
+            <span className="small">{s.what}</span>
+            <span className="cost">{s.size}</span>
           </div>
-          <div className="msbar" role="img" aria-label="Milestones M0 to M6 by hours">
-            {MILESTONES.map((m) => (
-              <span key={m.id} className="ms" style={{ flexGrow: parseFloat(m.hours.replace(/[^0-9.]/g, "")) }} title={`${m.id} · ${m.title} · ${m.hours}`}>
-                {m.id}
-              </span>
-            ))}
-          </div>
-          <ul className="small ms-list">
-            {MILESTONES.map((m) => (
-              <li key={m.id}>
-                <b>{m.id}</b> {m.title} <span className="muted">{m.hours}</span>
-              </li>
-            ))}
-          </ul>
-          <ul className="chips">
-            {V0_STACK.map((s) => (
-              <li key={s}>
-                <span className="chip">{s}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        ))}
       </div>
 
       <div className="hooks">
@@ -160,6 +204,24 @@ export function Interfaces() {
       </div>
 
       <div className="grid-2">
+        <More title="Device API (contract v0.1)" hint={`${DEVICE_API.length} device endpoints`}>
+          <p className="small muted">{API_META}</p>
+          <Table caption="Device API" head={["", "Path", "Does"]} rows={DEVICE_API.map((a) => [<code key="m">{a[0]}</code>, <code key="p">{a[1]}</code>, a[2]])} />
+        </More>
+        <More title="How Romulus is wired" hint="network + stack">
+          <ul className="small">
+            {V0_NETWORK.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+          <ul className="chips">
+            {V0_STACK.map((s) => (
+              <li key={s}>
+                <span className="chip">{s}</span>
+              </li>
+            ))}
+          </ul>
+        </More>
         <More title="Kent's open questions" hint={`${ROMULUS_OPEN.length} items`}>
           <ul className="small">
             {ROMULUS_OPEN.map((q) => (
@@ -176,14 +238,6 @@ export function Interfaces() {
               </div>
             ))}
           </dl>
-        </More>
-        <More title="Our earlier arm-host draft" hint="superseded by the device side + Kent's API">
-          <Table caption="Arm host API (draft)" head={["Endpoint", "Hermes tool", "Does"]} rows={API.map((a) => [<code key="e">{a[0]}</code>, <code key="t">{a[1]}</code>, a[2]])} />
-          <ul className="small">
-            {[...TELEMETRY, ...PLUGIN_WIRING].map((t) => (
-              <li key={t}>{t}</li>
-            ))}
-          </ul>
         </More>
       </div>
       <Sources items={ROMULUS_SRC} />

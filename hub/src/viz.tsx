@@ -176,78 +176,135 @@ export function Timeline({ events }: { events: { at: string; label: string; when
 }
 
 /* ---------- System loop: the whole company in one animated picture ---------- */
-type NodeId = "naive" | "board" | "romulus" | "hermes" | "armhost" | "so101" | "models" | "sim";
+type NodeId = "naive" | "board" | "models" | "sim" | "hermes" | "romulus" | "pi" | "so101";
 
-const NODES: { id: NodeId; x: number; y: number; title: string; sub: string; layer: Layer; line: string; href: string }[] = [
-  { id: "naive", x: 40, y: 60, title: "Naïve", sub: "company agents", layer: "naive", line: "Runs the company: orders, board, inbox, payments, budgets. Its SDK is required.", href: "#hosts" },
-  { id: "board", x: 400, y: 60, title: "Board", sub: "one card per arm job", layer: "naive", line: "Where the company and the bench meet. The bench pulls the next card (proposed).", href: "#infra" },
-  { id: "romulus", x: 760, y: 60, title: "Romulus", sub: "incidents → versions · Kent", layer: "heal", line: "Kent's v0: incidents in, held fixes locked into versions, replay and one canary, then auto promote or rollback. A kill switch is the only human control.", href: "#interfaces" },
-  { id: "hermes", x: 400, y: 240, title: "Hermes", sub: "bench agent + arm plugin", layer: "hermes", line: "Takes a card, decides each step, calls arm tools. A guard hook checks every call.", href: "#hosts" },
-  { id: "armhost", x: 400, y: 420, title: "Pi 5", sub: "app · healer · visor", layer: "edge", line: "The edge computer: robot app, a healer agent with a local model, and the visor that installs versions. Owner TBD (D14).", href: "#interfaces" },
-  { id: "so101", x: 40, y: 420, title: "SO-101", sub: "servos · camera · sonar", layer: "edge", line: "The red follower arm, a USB camera, an HC-SR04 ultrasonic sensor, an STM32 board and a physical e-stop.", href: "#lanes" },
-  { id: "models", x: 760, y: 240, title: "Models", sub: "vLLM · OpenAI", layer: "compute", line: "The model Hermes calls, served on a RunPod GPU, plus OpenAI for comparison.", href: "#ours" },
-  { id: "sim", x: 760, y: 420, title: "NVIDIA sim", sub: "Isaac · LeIsaac · training", layer: "sim", line: "Tests every new policy before the arm runs it, and drills faults safely.", href: "#ours" },
+interface LoopNode {
+  id: NodeId;
+  x: number;
+  y: number;
+  title: string;
+  sub: string;
+  layer: Layer;
+  href: string;
+  owner: string;
+  /** Owner initials drawn on the box; "?" means nobody owns it yet (a gap). */
+  who: string[];
+  proposed?: boolean;
+  plain: string;
+  a: { h: string; items: string[] };
+  b: { h: string; items: string[] };
+}
+
+const NW = 180;
+const NH = 66;
+
+const NODES: LoopNode[] = [
+  {
+    id: "naive", x: 30, y: 62, who: ["?"],  title: "Naïve", sub: "the office", layer: "naive", href: "#hosts", owner: "host platform · business lane open",
+    plain: "A hosted platform where AI agents run the company. Naïve provides the infrastructure the agents live on; we write the agents. Both notes are right. It never touches the arm.",
+    a: { h: "Naïve gives us", items: ["agent runtime (micro-VMs)", "Board", "persona inbox + phone", "vault for secrets", "apps + database", "CRM", "budgets + approvals", "audit log"] },
+    b: { h: "We build on it", items: ["agent configs: planner, ops", "fleet-ops work-order agent", "customer intake", "Stripe store"] },
+  },
+  {
+    id: "board", x: 300, y: 62, who: ["?"],  title: "Board", sub: "shared to-do list", layer: "naive", href: "#infra", owner: "part of Naïve",
+    plain: "Naïve's shared to-do list, like Trello. Each job is a card that moves todo → doing → blocked → done.",
+    a: { h: "Cards come from", items: ["Naïve agents: arm jobs", "Romulus: work orders"] },
+    b: { h: "Cards go to", items: ["Hermes on the bench: arm jobs", "fleet-ops agent: work orders"] },
+  },
+  {
+    id: "models", x: 560, y: 62, who: ["?"],  title: "Models", sub: "RunPod · OpenAI", layer: "compute", href: "#ours", owner: "machine room",
+    plain: "The LLMs the bench and Romulus call: open models on rented RunPod GPUs, or an API.",
+    a: { h: "Options", items: ["Qwen3-VL-8B on vLLM (RunPod)", "OpenAI ($100 credits)", "Claude API (Kent's batch)"] },
+    b: { h: "Needs", items: ["≥ 64K context for Hermes", "reads images", "tool calling", "an endpoint by 5:15 PM"] },
+  },
+  {
+    id: "sim", x: 790, y: 62, who: ["J", "C"], proposed: true,  title: "NVIDIA sim", sub: "RunPod · canary", layer: "sim", href: "#ours", owner: "James + Claude · proposed, not started",
+    plain: "A simulated arm on a RunPod GPU. It can be Romulus's canary: new versions run here before the real arm gets them.",
+    a: { h: "Tools", items: ["Isaac Sim 5.1 + Isaac Lab", "LeIsaac SO-101 tasks", "MuJoCo + Menagerie"] },
+    b: { h: "Our use", items: ["canary device sim-2", "fault drills", "VLA vs LLM benchmark"] },
+  },
+  {
+    id: "hermes", x: 300, y: 252, who: ["?"],  title: "Hermes", sub: "the hands", layer: "hermes", href: "#hosts", owner: "bench control lane (open)",
+    plain: "Nous Research's agent, running at the bench. It pulls the next card and works the arm through our plugin.",
+    a: { h: "Hermes gives us", items: ["agent loop", "plugins + tools", "pre_tool_call guard", "cron every 60 s", "gateway → phone", "any model endpoint"] },
+    b: { h: "We build on it", items: ["arm plugin", "guard rules", "card-pulling job", "alerts"] },
+  },
+  {
+    id: "romulus", x: 790, y: 330, who: ["K"],  title: "Romulus", sub: "Kent's laptop", layer: "heal", href: "#interfaces", owner: "Kent",
+    plain: "Kent's back office for the arm's health, on his laptop on the bench network. It logs incidents, turns fixes into versions, tests them on the sim canary, and rolls out or back.",
+    a: { h: "What it does", items: ["incident timeline", "version registry", "batch lock-in", "replay + canary", "kill switch", "work-order cards"] },
+    b: { h: "Built with", items: ["FastAPI :8000", "worker", "Postgres 17", "Docker Compose", "outbound calls only"] },
+  },
+  {
+    id: "pi", x: 300, y: 432, who: ["?"],  title: "Pi 5", sub: "app · healer · visor", layer: "edge", href: "#interfaces", owner: "device side: TBD (D14)",
+    plain: "The computer next to the arm. It runs the robot app, a healer agent with a small local model, and the visor that installs new versions.",
+    a: { h: "Runs", items: ["robot app (Python)", "healer + llama.cpp", "visor: check in, pull, install", "LeRobot 0.7", "incident outbox"] },
+    b: { h: "Talks to Romulus", items: ["check-in every ~10 s", "incidents + recordings", "pulls firmware + harness"] },
+  },
+  {
+    id: "so101", x: 30, y: 432, who: ["O"],  title: "SO-101", sub: "the metal", layer: "edge", href: "#lanes", owner: "Olir: STM32 firmware",
+    plain: "The physical arm and its sensors on the bench.",
+    a: { h: "Hardware", items: ["6× STS3215 servos", "USB camera 720p", "HC-SR04 ultrasonic", "STM32 Nucleo-F042K6", "e-stop"] },
+    b: { h: "STM32 firmware (Olir)", items: ["LED + boot banner", "1 s heartbeat", "build ID via make check"] },
+  },
 ];
 
-const EDGES: { id: string; d: string; label: string; lx: number; ly: number; dur: number; anchor?: "start" | "middle" | "end"; rotate?: boolean }[] = [
-  { id: "jobs", d: "M240 95 H400", label: "jobs", lx: 320, ly: 86, dur: 2.2 },
-  { id: "pull", d: "M500 130 V240", label: "card pull", lx: 510, ly: 190, dur: 2.2, anchor: "start" },
-  { id: "calls", d: "M500 310 V420", label: "tool calls", lx: 510, ly: 370, dur: 2.2, anchor: "start" },
-  { id: "goals", d: "M400 448 H240", label: "joint goals", lx: 320, ly: 440, dur: 2.2 },
-  { id: "health", d: "M240 470 H400", label: "temp · load", lx: 320, ly: 490, dur: 2.6 },
-  { id: "tlm", d: "M600 445 H655 V125 Q655 110 670 110 H760", label: "incidents", lx: 668, ly: 300, dur: 3.2, rotate: true },
-  { id: "incident", d: "M860 60 V40 Q860 28 848 28 H152 Q140 28 140 40 V60", label: "work orders → parts call", lx: 500, ly: 22, dur: 4.2 },
-  { id: "ask", d: "M600 262 H760", label: "model calls", lx: 712, ly: 254, dur: 1.8 },
-  { id: "answer", d: "M760 290 H600", label: "", lx: 0, ly: 0, dur: 1.8 },
-  { id: "policy", d: "M760 455 H600", label: "policy ✓", lx: 712, ly: 447, dur: 2.6 },
+const EDGES: { id: string; from: NodeId; to: NodeId; d: string; label: string; lx: number; ly: number; dur: number; anchor?: "start" | "middle" | "end" }[] = [
+  { id: "jobs", from: "naive", to: "board", d: "M210 84 H300", label: "jobs", lx: 255, ly: 76, dur: 2.2 },
+  { id: "wo", from: "board", to: "naive", d: "M300 108 H210", label: "work orders", lx: 255, ly: 124, dur: 2.6 },
+  { id: "pull", from: "hermes", to: "board", d: "M390 252 V128", label: "pulls cards", lx: 398, ly: 214, dur: 2.2, anchor: "start" },
+  { id: "ask", from: "hermes", to: "models", d: "M480 270 H620 Q650 270 650 240 V128", label: "model calls", lx: 560, ly: 262, dur: 2.0 },
+  { id: "calls", from: "hermes", to: "pi", d: "M390 318 V432", label: "tool calls", lx: 398, ly: 380, dur: 2.2, anchor: "start" },
+  { id: "goals", from: "pi", to: "so101", d: "M300 456 H210", label: "goals", lx: 255, ly: 448, dur: 2.2 },
+  { id: "health", from: "so101", to: "pi", d: "M210 480 H300", label: "health", lx: 255, ly: 500, dur: 2.6 },
+  { id: "checkin", from: "pi", to: "romulus", d: "M480 452 H700 Q720 452 720 432 V372 Q720 352 740 352 H790", label: "check-in · incidents", lx: 600, ly: 444, dur: 2.8 },
+  { id: "versions", from: "romulus", to: "pi", d: "M790 380 H760 Q745 380 745 395 V470 Q745 484 730 484 H480", label: "versions (pulled)", lx: 600, ly: 500, dur: 3.0 },
+  { id: "cards", from: "romulus", to: "board", d: "M840 330 V196 Q840 180 824 180 H436 Q420 180 420 164 V128", label: "work-order cards", lx: 640, ly: 172, dur: 3.4 },
+  { id: "canary", from: "sim", to: "romulus", d: "M900 128 V330", label: "canary", lx: 908, ly: 240, dur: 2.4, anchor: "start" },
 ];
 
 export function SystemLoop() {
   const reduced = useReducedMotion();
-  const [sel, setSel] = useState<NodeId>("hermes");
+  const [sel, setSel] = useState<NodeId>("naive");
   const node = NODES.find((n) => n.id === sel)!;
+  const title = (id: NodeId) => NODES.find((n) => n.id === id)!.title;
+  const links = EDGES.filter((e) => e.from === sel || e.to === sel);
   return (
     <div className="loop-wrap">
       <div className="loop-scroll">
-        <svg className="loop" viewBox="0 0 1000 540" role="group" aria-label="How the system fits together. Select a box to read one line about it.">
+        <svg className="loop" viewBox="0 0 1000 540" role="group" aria-label="How the system fits together. Select a box to see what it does and what it talks to.">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0 0 10 5 0 10Z" className="arrowhead" />
             </marker>
           </defs>
           <rect className="band" x="10" y="10" width="980" height="150" rx="10" />
-          <rect className="band" x="10" y="190" width="630" height="340" rx="10" />
-          <rect className="band band-gpu" x="670" y="190" width="320" height="340" rx="10" />
-          <text className="band-label" x="24" y="52">cloud</text>
-          <text className="band-label" x="24" y="214">bench</text>
-          <text className="band-label" x="684" y="214">RunPod GPUs</text>
+          <rect className="band" x="10" y="200" width="980" height="330" rx="10" />
+          <text className="band-label" x="24" y="38">cloud · only gets called</text>
+          <text className="band-label" x="24" y="226">bench network · travel router</text>
 
-          {EDGES.map((e) => (
-            <g key={e.id}>
-              <path className="edge" d={e.d} markerEnd="url(#arrow)" />
-              {!reduced ? (
-                <circle r="4.5" className="packet">
-                  <animateMotion dur={`${e.dur}s`} repeatCount="indefinite" path={e.d} />
-                </circle>
-              ) : null}
-              {e.label ? (
-                <text
-                  className="edge-label"
-                  x={e.lx}
-                  y={e.ly}
-                  textAnchor={e.anchor ?? "middle"}
-                  transform={e.rotate ? `rotate(-90 ${e.lx} ${e.ly})` : undefined}
-                >
+          {EDGES.map((e) => {
+            const on = e.from === sel || e.to === sel;
+            const cls = on ? "hot" : "dim";
+            return (
+              <g key={e.id}>
+                <path className={`edge ${cls}`} d={e.d} markerEnd="url(#arrow)" />
+                {!reduced ? (
+                  <circle r="4.5" className={`packet ${cls}`}>
+                    <animateMotion dur={`${e.dur}s`} repeatCount="indefinite" path={e.d} />
+                  </circle>
+                ) : null}
+                <text className={`edge-label ${cls}`} x={e.lx} y={e.ly} textAnchor={e.anchor ?? "middle"}>
                   {e.label}
                 </text>
-              ) : null}
-            </g>
-          ))}
+              </g>
+            );
+          })}
 
           {NODES.map((n) => (
             <g
               key={n.id}
-              className={`node l-${n.layer}${sel === n.id ? " on" : ""}`}
+              className={`node l-${n.layer}${sel === n.id ? " on" : ""}${n.proposed ? " proposed" : ""}`}
               role="button"
               tabIndex={0}
               aria-pressed={sel === n.id}
@@ -260,22 +317,83 @@ export function SystemLoop() {
                 }
               }}
             >
-              <rect x={n.x} y={n.y} width="200" height="70" rx="8" />
-              <text className="node-title" x={n.x + 16} y={n.y + 30}>
+              <rect x={n.x} y={n.y} width={NW} height={NH} rx="8" />
+              {n.who.map((w, i) => (
+                <g key={w} className={`badge${w === "?" ? " unknown" : ""}`}>
+                  <circle cx={n.x + NW - 16 - i * 22} cy={n.y + 18} r="10" />
+                  <text x={n.x + NW - 16 - i * 22} y={n.y + 22} textAnchor="middle">
+                    {w}
+                  </text>
+                </g>
+              ))}
+              <text className="node-title" x={n.x + 14} y={n.y + 28}>
                 {n.title}
               </text>
-              <text className="node-sub" x={n.x + 16} y={n.y + 52}>
+              <text className="node-sub" x={n.x + 14} y={n.y + 50}>
                 {n.sub}
               </text>
             </g>
           ))}
         </svg>
       </div>
-      <div className={`loop-info l-${node.layer}`} aria-live="polite">
-        <span className="dot" aria-hidden="true" />
-        <b>{node.title}</b>
-        <span>{node.line}</span>
-        <a href={node.href}>More ↓</a>
+
+      <div className="owners-row" aria-label="Who owns which box">
+        <span className="eyebrow">Owners</span>
+        {NODES.filter((n) => !n.who.includes("?")).map((n) => (
+          <button key={n.id} type="button" className={`chip owner-chip l-${n.layer}`} onClick={() => setSel(n.id)}>
+            <span className="dot" aria-hidden="true" />
+            {n.title}: {n.owner}
+          </button>
+        ))}
+        <span className="chip">Ishaan: overview + fault catalog (spans boxes)</span>
+      </div>
+      <div className="owners-row gaps" aria-label="Boxes nobody owns yet">
+        <span className="eyebrow">Gaps · nobody yet</span>
+        {NODES.filter((n) => n.who.includes("?")).map((n) => (
+          <button key={n.id} type="button" className="chip gap-chip" onClick={() => setSel(n.id)}>
+            ? {n.title}
+          </button>
+        ))}
+      </div>
+
+      <div key={node.id} className={`zoom l-${node.layer}`} aria-live="polite">
+        <div className="zoom-head">
+          <span className="dot" aria-hidden="true" />
+          <b className="zoom-title">{node.title}</b>
+          <span className="chip">{node.owner}</span>
+          <a href={node.href}>More ↓</a>
+        </div>
+        <p className="zoom-plain">{node.plain}</p>
+        <div className="zoom-cols">
+          {[node.a, node.b].map((col) => (
+            <div key={col.h}>
+              <span className="eyebrow">{col.h}</span>
+              <ul className="chips">
+                {col.items.map((it) => (
+                  <li key={it}>
+                    <span className="chip">{it}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div className="zoom-links">
+          <span className="eyebrow">Talks to · tap to jump</span>
+          <ul className="chips">
+            {links.map((e) => {
+              const out = e.from === sel;
+              const other = out ? e.to : e.from;
+              return (
+                <li key={e.id}>
+                  <button type="button" className="chip linkchip" onClick={() => setSel(other)}>
+                    {out ? "→" : "←"} {title(other)} · {e.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </div>
     </div>
   );
@@ -396,13 +514,13 @@ export function Bridge() {
       <path className="edge solid" d={toNaive} markerEnd="url(#arrow4)" />
       <path className="edge solid" d={toPod} markerEnd="url(#arrow4)" />
       <path className="edge tunnel" d="M360 104 V166" markerEnd="url(#arrow4)" />
-      <text className="edge-label" x="196" y="148" textAnchor="middle">out: pull cards</text>
+      <text className="edge-label" x="196" y="148" textAnchor="middle">out: cards (poll)</text>
       <text className="edge-label" x="526" y="148" textAnchor="middle">out: model calls</text>
-      <text className="edge-label" x="372" y="140" textAnchor="start">or a tunnel in</text>
+      <text className="edge-label" x="372" y="140" textAnchor="start">no tunnel in v0</text>
       <g className="box l-hermes">
         <rect x="245" y="168" width="230" height="64" rx="8" />
         <text x="360" y="194" textAnchor="middle">Bench</text>
-        <text x="360" y="216" textAnchor="middle" className="tiny">Hermes + arm host · the hands</text>
+        <text x="360" y="216" textAnchor="middle" className="tiny">Pi · Hermes · Romulus</text>
       </g>
       {!reduced ? (
         <>
@@ -518,6 +636,53 @@ export function JourneyPlayer({ ok, fail }: { ok: { who: string; title: string; 
         <b>{hop.who}</b>
         <span>{hop.line}</span>
       </div>
+    </div>
+  );
+}
+
+/* ---------- Schedule: time blocks on a real clock, with a live "now" line ---------- */
+export function Schedule({ blocks, from, to }: { blocks: { id: string; what: string; from: string; to: string; flows?: string }[]; from: string; to: string }) {
+  const now = useNow();
+  const t0 = Date.parse(from);
+  const t1 = Date.parse(to);
+  const pct = (t: number) => Math.min(100, Math.max(0, ((t - t0) / (t1 - t0)) * 100));
+  const fmt = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
+  return (
+    <div className="sched">
+      <div className="sched-bar" role="img" aria-label={`Build plan from ${fmt(from)} to ${fmt(to)}: ${blocks.map((b) => `${b.id} ${b.what}`).join("; ")}`}>
+        {blocks.map((b) => {
+          const left = pct(Date.parse(b.from));
+          const width = pct(Date.parse(b.to)) - left;
+          const done = Date.parse(b.to) <= now;
+          return (
+            <span
+              key={b.id}
+              className={`sb${b.id === "ON" ? " night" : ""}${done ? " done" : ""}`}
+              style={{ left: `${left}%`, width: `${width}%` }}
+              title={`${b.id} · ${b.what} · ${fmt(b.from)}–${fmt(b.to)}`}
+            >
+              {width > 3.5 ? b.id : ""}
+            </span>
+          );
+        })}
+        {now > t0 && now < t1 ? (
+          <span className="sched-now" style={{ left: `${pct(now)}%` }}>
+            <span>now</span>
+          </span>
+        ) : null}
+      </div>
+      <div className="sched-scale">
+        <span>Sat {fmt(from)}</span>
+        <span>overnight run</span>
+        <span>Sun {fmt(to)} · hacking ends</span>
+      </div>
+      <ol className="sched-list">
+        {blocks.map((b) => (
+          <li key={b.id} className={Date.parse(b.to) <= now ? "done" : ""}>
+            <b>{b.id}</b> <span className="mono small muted">{fmt(b.from)}</span> {b.what} {b.flows ? <span className="chip">{b.flows}</span> : null}
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

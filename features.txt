@@ -1,14 +1,17 @@
 FEATURES: who is on what
 Claim a line by adding "<--- Name". Move done lines to FINISHED.
-Started Sat Nov 7, 3:45 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 3:50 PM PST from CLAUDE.md, commits and docs/.
 
 BUSINESS (Naive)
+Naive API key for Romulus (by 5:15 PM)
+fleet-ops agent: work orders (by 11:30 PM)
+Mobilerun bearer in Naive vault
+Parts catalogue (parts.yaml)
 Naive company agents setup
 Order intake (inbox or form)
 Planner creates arm job cards
 Stripe payment for jobs
 Daily digest and budgets
-Naive agent calls via Mobilerun
 AgentMail incident email
 
 BENCH CONTROL (Hermes)
@@ -19,6 +22,7 @@ Gateway phone alerts
 Hermes plugin catalog submission
 
 DEVICE (Pi 5, STM32)
+Device side owner (D14)
 Pi app: hold object
 Ultrasonic distance reading
 One serial-port owner (arm host)
@@ -26,19 +30,22 @@ Healer agent on the Pi
 Health checks, tiers 1-3
 Snapshot and park on fault
 Overlay patches with self-revert
-Visor: pull, install, roll back
+Visor: check in, pull, install
+Incident + recording outbox
 Local model on the Pi
 STM32 firmware control loop             <--- Olir
 STM32 to Pi link
 
-ROMULUS CLOUD
-Device contracts (M0)                   <--- Kent
-Registry and device API (M1)            <--- Kent
+ROMULUS (Kent's laptop, bench LAN)
+Scaffold, contracts, spikes (M0)        <--- Kent
+Walking skeleton F1+F2 (M1)             <--- Kent
 Incident timeline page (M2)             <--- Kent
-Batch job: overlay to version (M3)      <--- Kent
-Replay, canary, kill switch (M4)        <--- Kent
-Work orders to Naive cards (M5)         <--- Kent
-Overnight unattended run (M6)           <--- Kent
+Batch, gate, kill switch (M3)           <--- Kent
+Telemetry ingest F7 (M4)                <--- Kent
+Work orders to Naive F6 (M5)            <--- Kent
+Overnight launch F10 (M7)               <--- Kent
+Datasets and exports F8 (M6)            <--- Kent
+Batch LLM endpoint (by 5:15 PM)
 
 DEMO AND FAULTS
 Plant demo faults D1-D3
@@ -49,22 +56,24 @@ Demo script and rehearsal
 Backup demo video
 
 SIM AND CONTROL
-Bench to cloud API bridge               <--- James
-NVIDIA sim on RunPod                    <--- James
-Sim canary device for Romulus           <--- James
-VLA vs LLM control benchmark            <--- James
+Bench to cloud API bridge
+NVIDIA sim on RunPod
+Sim canary device for Romulus
+VLA vs LLM control benchmark
 Self-reset retry loop
 VLA policy (if training allowed)
 
 HUB AND DOCS
-Stack hub refresh                       <--- James
+Stack hub: put it all together         <--- James
 
 FINISHED
 Team status sync in CLAUDE.md           <--- James
 SO-101 research notes                   <--- James
 Stack hub artifact v1                   <--- James
+Stack hub refresh, features.txt         <--- James
 Cloud platform PRD and APIs             <--- Kent
 Romulus v0 plan and decisions           <--- Kent
+Build plan, Naive, telemetry docs       <--- Kent
 Project overview                        <--- Ishaan
 Fault catalog                           <--- Ishaan
 STM32 firmware boilerplate              <--- Olir

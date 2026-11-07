@@ -96,7 +96,7 @@ export const HARDWARE: { name: string; icon: IconName; layer: Layer; role: strin
   { name: "SO-101 arm", icon: "arm", layer: "edge", role: "6× STS3215 servos, LeRobot 0.7" },
   { name: "HC-SR04 ultrasonic", icon: "loop", layer: "edge", role: "2–400 cm; its reading drives the arm" },
   { name: "USB camera · 720p", icon: "eye", layer: "edge", role: "evidence for faults" },
-  { name: "STM32 Nucleo-F042K6", icon: "gpu", layer: "edge", role: "bare-metal C; role in the loop TBD", note: "Olir" },
+  { name: "STM32 Nucleo-F042K6", icon: "gpu", layer: "edge", role: "sanity firmware: LED, boot banner, 1 s heartbeat, build ID via make check", note: "Olir · firmware branch" },
   { name: "Jetson AGX Xavier", icon: "cube", layer: "compute", role: "bigger local model, later", note: "not set up" },
 ];
 export const HARDWARE_NOTE = "Also on the bench: a 5 V / 5 A supply for the Pi, a matching servo supply, and a router with Ethernet as the Wi-Fi backup.";

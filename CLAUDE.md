@@ -10,6 +10,9 @@ Prep and build work for two hackathons running at the same time:
 - **Hermes Agent Plugin Hackathon** (Nous Research, online). Entries are due **Wed Nov 11, 5 PM EST**.
 
 ## Where things are
+- `features.txt`: the feature tracker. One short line per feature; claim one by adding `<--- YourName`, and move it to FINISHED when done. Check it before you start anything.
+- `hub/`: source of the "Arm Company Stack Map" artifact (visual map of the stack, team lanes, faults, tools). Content is in `hub/src/content/*.ts`; `npm run build` writes `hub/dist/artifact.html`.
+- `docs/so101-research.md`: LeRobot 0.7 on the SO-101, NVIDIA sim on RunPod, resets, edge devices, models, with sources
 - `docs/project-overview.md`: everything about the self-healing robot project (problem, layers, hardware, healing loop, cloud, demo, open questions); a living doc
 - `docs/fault-catalog.md`: every fault to plant, test or demo, with how to plant, detect, fix and verify each one (Pi app, arm, camera, ultrasonic, STM32 firmware)
 - `docs/hackathons.md`: rules, schedule, prize tracks, credits
@@ -24,6 +27,7 @@ Prep and build work for two hackathons running at the same time:
 - No Claude or other AI co-author lines in commits.
 - Run `git pull --rebase origin main` before you push. Never force-push `main`.
 - Don't hand-edit between the `team-status` markers below; the next refresh overwrites it. Put notes for the team in **Notes from the team** instead.
+- Before starting a feature, look in `features.txt`. If nobody has it, claim it with `<--- YourName` and push; if someone does, talk to them first.
 
 ## Notes from the team
 _Add anything others should know here (who is doing what, decisions, blockers)._

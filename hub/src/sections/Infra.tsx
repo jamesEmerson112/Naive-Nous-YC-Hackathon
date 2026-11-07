@@ -50,7 +50,7 @@ export function Infra() {
           <StatusChip s="open" />
         </div>
         <Bridge />
-        <p className="small muted">Neither cloud can reach the arm. The bench connects out, or a tunnel lets them in. We build it with pure APIs.</p>
+        <p className="small muted">Neither cloud can reach the arm, so everything on the bench calls out: the Pi checks in with Romulus every ~10 s over the bench network, Romulus polls Naïve cards every ~15 s, and Hermes calls the models. Nothing calls in, so v0 needs no tunnel (Kent's architecture).</p>
       </div>
       <div>
         <div className="beside">

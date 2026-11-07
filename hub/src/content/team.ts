@@ -9,9 +9,9 @@ export interface Person {
 }
 
 export const PEOPLE: Person[] = [
-  { who: "James", initial: "J", layer: "sim", doing: "This map, SO-101 research, sim + control", synced: "3:22 PM" },
+  { who: "James", initial: "J", layer: "sim", doing: "Putting it all together: this map, research; sim + control next", synced: "3:50 PM" },
   { who: "Kent", initial: "K", layer: "heal", doing: "Romulus: cloud half of the heal loop; v0 plan + decisions D0–D15", synced: "3:16 PM" },
-  { who: "Olir", initial: "O", layer: "edge", doing: "STM32F042K6 firmware boilerplate (firmware branch)", synced: "3:11 PM" },
+  { who: "Olir", initial: "O", layer: "edge", doing: "STM32 sanity firmware: LED, banner, heartbeat, build-ID check (firmware branch)", synced: "3:11 PM" },
   { who: "Ishaan", initial: "I", layer: "heal", doing: "Project overview + fault catalog", synced: "3:26 PM" },
   { who: "Andre", initial: "A", layer: "neutral", doing: "no status yet", synced: "—" },
 ];
@@ -74,16 +74,16 @@ export const LANES: Lane[] = [
     owner: "Kent",
     status: "tentative",
     pills: ["incident timeline", "replay + canary", "kill switch"],
-    sunday: ["M0–M6 (~10.5 h): contracts, registry, timeline, batch job, gate, work orders, overnight run."],
+    sunday: ["M0–M7 from 4:15 PM: contracts, skeleton, timeline, gate, telemetry, work orders, overnight launch by 12:30 AM.", "Code freeze Sun 10 AM; rehearse ×3."],
     stretch: ["Fleet grid and version pipeline screens"],
-    needs: ["A device speaking the contracts", "A canary device", "A batch LLM (Claude API or RunPod)"],
+    needs: ["Device contracts by 5:15 PM", "Naïve API key by 5:15 PM", "LLM endpoint by 5:15 PM", "fleet-ops agent by 11:30 PM"],
     overlaps: "The canary device can be our NVIDIA sim.",
   },
   {
     name: "Sim + control",
     layer: "sim",
     who: ["J", "C"],
-    owner: "James + Claude",
+    owner: "James + Claude · not started; after the map",
     status: "proposed",
     pills: ["API bridge", "canary device", "benchmark"],
     sunday: ["Bench ↔ cloud bridge with plain APIs.", "NVIDIA sim as Romulus's canary device.", "Control benchmark: VLA vs LLM."],
