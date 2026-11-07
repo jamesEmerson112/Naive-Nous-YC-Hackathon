@@ -76,9 +76,9 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 2:48 PM PST_
+_Last updated: Sat Nov 7, 2:58 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is adding Romulus, a self-healing and fleet layer, and is planning it as a general cloud platform for robot fleets (`docs/cloud-platform-planning/`). James is researching the tech stack (Naïve SDK, Hermes harness, RunPod rather than a local setup) and turning the infrastructure diagrams into a shared artifact page instead of rewriting `docs/robotic-arm.html` (still uncommitted). Olir started a `firmware` branch on GitHub (placeholder `firmware/readme.txt` so far).
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is adding Romulus, a self-healing and fleet layer, and is planning it as a general cloud platform for robot fleets (`docs/cloud-platform-planning/`). James is building the shared tech-stack artifact page (Naïve SDK, Hermes harness, RunPod rather than a local setup) with source links into the Naïve and Hermes docs, and is now adding a tech-stack pyramid and switching it to dark mode; `docs/robotic-arm.html` is still uncommitted. Olir started a `firmware` branch on GitHub (placeholder `firmware/readme.txt` so far).
 
 **Recently done:**
 - James asked everyone (Ishaan, Olir, Andre) to set up their own 10-minute status sync, each editing only their own `<name>-sync` block under **Notes from the team**; a ready-to-paste prompt is there
@@ -93,6 +93,7 @@ _Last updated: Sat Nov 7, 2:48 PM PST_
 - AgentMail and Monid MCP auth (bearer token?); can one company win the Main track and a sponsor track?
 
 **Recent commits (all authors):**
+- `7d192ef` Sat 14:49 · jamesEmerson112 · Update team status in CLAUDE.md
 - `1762eb7` Sat 14:45 · jamesEmerson112 · Ask teammates to set up a 10-minute status sync in CLAUDE.md
 - `357d2c3` Sat 14:38 · jamesEmerson112 · Update team status in CLAUDE.md
 - `3141647` Sat 14:28 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -102,7 +103,6 @@ _Last updated: Sat Nov 7, 2:48 PM PST_
 - `d0ac517` Sat 14:05 · Kent Gang · Add Romulus self-healing/fleet notes to CLAUDE.md
 - `4abbebd` Sat 13:48 · jamesEmerson112 · Update team status in CLAUDE.md
 - `0452ada` Sat 13:27 · jamesEmerson112 · Update team status in CLAUDE.md
-- `fe9f5b0` Sat 13:16 · jamesEmerson112 · Add shared CLAUDE.md with auto-updated team status
 
 **Branches on GitHub:** `main`, `firmware` (Olir)
 <!-- team-status:end -->
