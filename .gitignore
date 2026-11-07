@@ -1,0 +1,4 @@
+# Stack hub (React artifact source in hub/)
+hub/node_modules/
+hub/dist/
+.DS_Store
