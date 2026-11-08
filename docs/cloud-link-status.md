@@ -117,7 +117,7 @@ which drives Naïve's `pi` agent through the `naive` CLI to compare it with Herm
 
 | UI | What it is |
 |---|---|
-| Romulus cloud: `http://localhost:8000/` on the laptop | The only UI for the cloud. `/` timeline, fleet, kill switch; `/incidents/<id>` one incident's story with evidence downloads; `/data` recordings, labels, datasets, exports |
+| Romulus cloud: `http://localhost:8000/` on the laptop | The only UI for the cloud. `/` timeline, fleet, kill switch, and agent runs tied to no incident; `/incidents/<id>` one incident's story with its agent run and evidence downloads; `/agent-runs/<device>/<run>` one run on its own; `/data` recordings, labels, datasets, exports |
 | Naïve's own web app | Where work-order cards and the `fleet-ops` agent would show up once live *(inferred: not checked)*. This is where judges would see Naïve agents work |
 | `prototypes/naive-console` (James) | Local page, pi vs Hermes on one conversation, plus fault-lab results. A tool for choosing the arm's agent loop, not product |
 | Heal-test console, `firmware/harness/view.py` | Terminal on the Pi: the agent live, and replays of past runs |
@@ -126,13 +126,18 @@ which drives Naïve's `pi` agent through the `naive` CLI to compare it with Herm
 James's session plans a "product screen" (team status); nothing is built yet.
 
 ### What an incident page shows, and what it doesn't
-- Shows: the summary, time, suspected cause, how it was resolved; the agent step ("The agent on pod-1
-  did: fw_rollback … It resolved it with fw_rollback; suspected cause: software"), with the agent's
-  notes as "Why" when it wrote any; the log window and agent trace as JSONL downloads.
-- Doesn't show: the model's thinking or conversation (stays in `firmware/harness/runs/<run>/`), read-only
-  tool calls (only in the trace download), or anything about the arm.
-- The "recording …" links in the bottom Evidence list open JSON metadata; the file itself is at
-  `/v1/recordings/<id>/blob`.
+_Updated Nov 8, ~5 AM, after `5ac13d7` added agent run reports (APIs doc §3.11)._
+- Shows: the summary, time, suspected cause, how it was resolved, and a card for the heal-agent run
+  that worked on it: whether it left the pod fixed and what that rests on (the bench's own check when
+  there is one), steps, time, flashes, arm checks, tokens; requests for a person; every firmware image
+  it touched with its flash checks; a write-up (problem, investigation, what it noticed, actions,
+  result); the agent's own final report; and every step with the model's thinking. Then the timeline
+  (with `agent.*` events) and the log window and agent trace as JSONL downloads.
+- Doesn't show: the model's full conversation (the raw JSON link on the run card has everything the
+  bridge sent; the rest stays in `firmware/harness/runs/<run>/`).
+- `--sim` rehearsals have no incident. They're listed on `/` under "Agent runs with no incident" and
+  open on `/agent-runs/pod-1/<run>`.
+- In each Evidence row, "Download" gets the file and "details" opens its JSON metadata.
 
 ---
 
