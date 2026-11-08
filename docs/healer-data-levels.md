@@ -11,6 +11,19 @@ The healer reads the same data at three levels. Each level only takes over what 
 | 2 | A time-series model (ChatTS-14B) asked whether a trace looks wrong | One Runpod GPU, on demand | Script written, never run |
 | 3 | A model trained on labeled traces from the fault factory plus bench recordings | CPU for a small classifier; Runpod only for a fine-tune | Data generator done; no model yet |
 
+## James's decisions (Sun ~3 AM)
+- **Worker and manager:**
+  - A small local language model (the worker) watches the logs all the time. When something goes wrong, it tells the manager.
+  - The manager is the Hermes harness, run by Naïve: possibly several agents with different jobs.
+  - The manager works out the fix and sends it back; the worker starts it.
+  - The worker carries out only allowlisted, reversible actions, and plain code checks the plan first *(inferred: keeps the no-LLM-in-the-control-loop rule)*.
+- **The manager's model:** ChatGPT 6 "sol" at default reasoning.
+- **Two categories of bugs:**
+  1. Everything the healer handles today: sensor, pod firmware, joints and software faults.
+  2. **A wrong action:** the arm did the wrong thing (missed the grasp, wrong place, bumped something). The system reverses the action, then the LLM corrects the command and re-runs it.
+- **Hardware for the worker:** whatever is available. Benchmark on CPU in the cloud container and on Runpod GPUs, and pick for a laptop-class machine.
+- **Runpod budget:** up to $10 tonight, every pod capped and terminated.
+
 ## Level 1: rules (done)
 - **Rules:** `us_frozen`, `us_stuck`, `us_scale`, `us_offset`, `us_noisy`, `us_missing_echo` and `joint_stall` (`prototypes/arm-sim/README.md`).
 - **Score** (fault factory, 1,000 runs, `prototypes/arm-sim/MORNING.md`):
@@ -44,7 +57,7 @@ The healer reads the same data at three levels. Each level only takes over what 
 |---|---|---|---|
 | L2: ChatTS-14B test | RTX A6000 48 GB | ≤ 2 | ≤ $1.20 (community $0.33/h, secure $0.59/h) |
 | L3b: optional LoRA of a 4B model | RTX A6000 48 GB | ≤ 2 | ≤ $1.20 |
-| Reserve | | | ≈ $13 |
+| Worker-model benchmark (decided Sun 3 AM) | 48 GB cards at ≤ $0.79/h | capped | ≤ $10 in total tonight |
 
 - **Prices:** the Stack Map's Runpod table (`hub/src/content/proposal.ts`, `PODS`).
 - **No Isaac Sim on this budget:** MuJoCo already covers the sim.
