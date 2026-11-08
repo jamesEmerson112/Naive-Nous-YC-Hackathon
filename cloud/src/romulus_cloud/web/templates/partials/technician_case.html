@@ -17,14 +17,14 @@
 {% set p = v.part %}
 {% set e = v.email %}
 
-{% macro recorded_tag() %}{% if recorded %}<span class="tc-rec-tag" title="{{ v.badge }}">{{ 'replay' if v.mode == 'replay' else 'fake' }}</span>{% endif %}{% endmacro %}
+{% macro recorded_tag() %}{% if recorded %}<span class="tc-rec-tag" title="{{ v.badge }}">{{ 'recorded session' if v.mode == 'replay' else 'fake' }}</span>{% endif %}{% endmacro %}
 
 {% macro verdict_block() %}
 <section class="tc-verdict{% if working %} is-working{% elif ended_bad and not v.verdict %} is-bad{% endif %}" aria-live="polite">
   <p class="tc-kicker">Verdict{{ recorded_tag() }}
     {% if v.confidence %}<span class="chip">{{ v.confidence }} confidence</span>{% endif %}
     {% if v.joint %}<span class="chip mono">{{ v.joint }}</span>{% endif %}
-    {% if v.part_needed == 'spare' %}<span class="chip">spare part staged</span>{% elif v.part_needed == 'yes' %}<span class="chip">part needed</span>{% elif v.part_needed == 'no' %}<span class="chip">no part needed</span>{% endif %}
+    {% if p and p.staged %}<span class="chip chip-good">✓ {{ 'spare part' if v.part_needed == 'spare' else 'part' }} staged</span>{% elif v.part_needed == 'spare' %}<span class="chip">spare suggested</span>{% elif v.part_needed == 'yes' %}<span class="chip">part needed</span>{% elif v.part_needed == 'no' %}<span class="chip">no part needed</span>{% endif %}
   </p>
   {% if v.verdict %}
   <h1 class="tc-verdict-text">“{{ v.verdict }}”</h1>
@@ -49,7 +49,8 @@
       <p class="tc-part-title">{{ p.title }}</p>
       <p class="tc-part-vendor">{{ p.vendor_label }} · {{ p.origin_host }}{% if p.qty %} · qty {{ p.qty }}{% endif %}</p>
     </div>
-    {% if p.total_usd %}<p class="tc-price">${{ p.total_usd }}{% if p.qty and p.qty > 1 and p.unit_usd %}<small>${{ p.unit_usd }} × {{ p.qty }}</small>{% endif %}</p>{% endif %}
+    {% if p.total_usd %}<p class="tc-price">${{ p.total_usd }}{% if p.qty and p.qty > 1 and p.unit_usd %}<small>${{ p.unit_usd }} × {{ p.qty }}</small>{% endif %}</p>
+    {% else %}<p class="tc-price tc-price-none">no price<small>not checked yet</small></p>{% endif %}
   </div>
   <ul class="tc-checks" aria-label="Gate checks">
     {% for c in (p.checks or []) %}
@@ -64,10 +65,10 @@
   {% elif v.can_approve or v.can_deny %}
   <div class="tc-actions">
     {% if v.can_approve %}
-    <button type="button" class="tc-btn tc-approve" data-tech-action="approve" data-url="{{ v.resolve_url }}" data-cart="{{ p.cart_url or '' }}" data-partial="{{ v.partial_url }}" data-what="{{ p.title }} ({{ p.vendor_label }}, ${{ p.total_usd }})">{{ 'Approve & open cart' if p.cart_url else 'Approve' }}</button>
+    <button type="button" class="tc-btn tc-approve" data-tech-action="approve" data-url="{{ v.resolve_url }}" data-cart="{{ p.cart_url or '' }}" data-partial="{{ v.partial_url }}" data-what="{{ p.title }} ({{ p.vendor_label }}{% if p.total_usd %}, ${{ p.total_usd }}{% endif %})">{{ 'Approve & open cart' if p.cart_url else 'Approve' }}</button>
     {% endif %}
     {% if v.can_deny %}
-    <button type="button" class="tc-btn tc-deny" data-tech-action="deny" data-url="{{ v.resolve_url }}" data-partial="{{ v.partial_url }}" data-what="{{ p.title }} ({{ p.vendor_label }}, ${{ p.total_usd }})">Deny</button>
+    <button type="button" class="tc-btn tc-deny" data-tech-action="deny" data-url="{{ v.resolve_url }}" data-partial="{{ v.partial_url }}" data-what="{{ p.title }} ({{ p.vendor_label }}{% if p.total_usd %}, ${{ p.total_usd }}{% endif %})">Deny</button>
     {% endif %}
   </div>
   <p class="tc-fine">{% if p.cart_url %}Opens the {{ p.vendor_label }} cart in a new tab; nothing is bought until a person checks out. {% endif %}Recorded as <b data-tech-by>operator</b> · <button type="button" class="tc-linkbtn" data-tech-rename>change name</button></p>
@@ -95,12 +96,14 @@
 {% if e %}
 <section class="tc-card tc-email is-{{ e.status }}">
   <svg class="tc-envelope" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.5 6.5 12 13l8.5-6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-  <p class="tc-kicker">{% if e.status == 'sent' %}Technician emailed{% elif e.status == 'sending' %}<span class="pulse" aria-hidden="true"></span>Emailing the technician{% elif e.status == 'failed' %}✕ Email failed{% else %}Email skipped{% endif %}{{ recorded_tag() }}</p>
-  <p class="tc-email-to">to <b>{{ e.to or 'no address set' }}</b>{% if e.sent_at_label and e.status == 'sent' %} · sent {{ e.sent_at_label }}{% endif %}</p>
-  {% if e.subject %}<p class="tc-subject">“{{ e.subject }}”</p>{% endif %}
+  {% set sent = e.status == 'sent' %}
+  {% set unsent = e.status not in ('sent', 'sending') %}
+  <p class="tc-kicker">{% if sent %}<span class="chip chip-good">✓ sent</span> Technician emailed{% elif e.status == 'sending' %}<span class="pulse" aria-hidden="true"></span>Emailing the technician{% elif e.status == 'failed' %}✕ Email failed{% else %}– Email not sent{% endif %}{{ recorded_tag() }}</p>
+  <p class="tc-email-to">to <b>{{ e.to or 'no address set' }}</b>{% if sent and e.sent_at_label %} · sent {{ e.sent_at_label }}{% elif unsent %} · not sent{% endif %}</p>
+  {% if e.subject %}<p class="tc-subject">{% if not sent %}<span class="tc-draft">draft</span> {% endif %}“{{ e.subject }}”</p>{% endif %}
   {% if e.from_label %}<p class="tc-from">From: {{ e.from_label }}</p>{% endif %}
-  {% if e.via %}<p class="tc-via">{{ e.via }}</p>{% endif %}
-  {% if e.error %}<p class="tc-blocked">{{ e.error }}</p>{% endif %}
+  {% if e.via %}<p class="tc-via{% if unsent %} tc-via-strong{% endif %}">{{ e.via }}</p>{% endif %}
+  {% if e.error %}<p class="{{ 'tc-blocked' if e.status == 'failed' else 'tc-note' }}">{{ e.error }}</p>{% endif %}
 </section>
 {% elif working %}
 <section class="tc-card tc-email is-pending" aria-label="Technician email, not sent yet">
@@ -134,7 +137,7 @@
 </section>
 {% endmacro %}
 
-<div id="tech-case" class="tc tc-{{ v.status }}{% if recorded %} is-recorded-page{% endif %}"{% if v.poll %} hx-get="{{ v.partial_url }}" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
+<div id="tech-case" class="tc tc-{{ v.status }}"{% if v.poll %} hx-get="{{ v.partial_url }}" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
 
   <section class="tc-head{% if recorded %} is-recorded{% endif %}">
     <div class="tc-head-l">
@@ -151,7 +154,7 @@
 
   <ol class="tc-stages" aria-label="Story">
     {% for s in stages %}
-    <li class="st-{{ s.state }}"><span class="tc-st-mark" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state == 'denied' %}✕{% endif %}</span><span class="tc-st-label">{{ s.label }}</span>{% if s.state == 'active' %}<span class="tc-st-now">now</span>{% endif %}<span class="sr-only"> ({{ s.state }})</span></li>
+    <li class="st-{{ s.state }}"><span class="tc-st-mark" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state in ('denied', 'failed') %}✕{% elif s.state == 'skipped' %}–{% endif %}</span>{% set is_email = 'email' in (s.label or '') %}<span class="tc-st-label">{% if is_email and s.state == 'skipped' %}email not sent{% elif is_email and s.state == 'failed' %}email failed{% else %}{{ s.label }}{% endif %}</span>{% if s.state == 'active' %}<span class="tc-st-now">now</span>{% elif s.state in ('skipped', 'failed') and not is_email %}<span class="tc-st-off">{{ s.state }}</span>{% endif %}<span class="sr-only"> ({{ s.state }})</span></li>
     {% endfor %}
   </ol>
 
@@ -192,7 +195,7 @@
           <div><dt>Part</dt><dd>{{ p.title }}</dd></div>
           <div><dt>Vendor</dt><dd>{{ p.vendor_label }} · <span class="mono">{{ p.origin_host }}</span></dd></div>
           <div><dt>Variant</dt><dd class="mono">{{ p.variant_id }}</dd></div>
-          <div><dt>Price</dt><dd>{% if p.unit_usd %}${{ p.unit_usd }} × {{ p.qty }} = {% endif %}${{ p.total_usd }}</dd></div>
+          <div><dt>Price</dt><dd>{% if p.total_usd %}{% if p.unit_usd %}${{ p.unit_usd }} × {{ p.qty }} = {% endif %}${{ p.total_usd }}{% elif p.unit_usd %}${{ p.unit_usd }} each{% else %}<span class="muted">{{ p.blocked_reason or 'not checked yet' }}</span>{% endif %}</dd></div>
           {% for c in (p.checks or []) %}<div><dt>{{ c.label }}</dt><dd class="check {{ 'ok' if c.ok else 'no' }}">{{ '✓ passed' if c.ok else '✕ failed' }}{% if c.detail %} · {{ c.detail }}{% endif %}</dd></div>{% endfor %}
           {% if p.cart_url %}<div><dt>Cart</dt><dd><a class="mono tc-wrap" href="{{ p.cart_url }}" target="_blank" rel="noopener noreferrer">{{ p.cart_url }}</a></dd></div>{% endif %}
           {% if p.why %}<div><dt>Why</dt><dd>{{ p.why }}</dd></div>{% endif %}
@@ -231,5 +234,4 @@
     </p>
   </section>
 
-  {% if recorded %}<p class="tc-rec-fixed" role="note">● {{ v.badge }}</p>{% endif %}
 </div>
