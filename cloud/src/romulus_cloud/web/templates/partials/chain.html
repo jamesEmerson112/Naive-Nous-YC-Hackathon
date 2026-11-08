@@ -1,2 +1,5 @@
-{# One incident's chain: readable labels, each with its raw event kind in a tooltip. Needs `links`. #}
-{% for label, kind in links %}{% if not loop.first %} → {% endif %}<span class="link" title="{{ kind }}">{{ label }}</span>{% endfor %}
+{# One incident's chain: readable labels (long ids shortened), each with its raw event kind,
+   and the full label when shortened, in a tooltip. Needs `links`; `sep` is optional (" → ",
+   or " · " beside a mini heal line). #}
+{% set sep = sep | default(" → ") %}
+{% for label, kind in links %}{% set short = label | shortid %}{% if not loop.first %}{{ sep }}{% endif %}<span class="link" title="{{ kind }}{% if short != label %} · {{ label }}{% endif %}">{{ short }}</span>{% endfor %}

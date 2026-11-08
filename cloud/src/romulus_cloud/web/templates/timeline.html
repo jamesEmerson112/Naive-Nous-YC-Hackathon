@@ -1,17 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Romulus · incidents{% endblock %}
+{% block title %}Romulus · fleet{% endblock %}
 {% block content %}
 <div id="overview" hx-get="/partials/overview" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
   {% include "partials/overview.html" %}
 </div>
 <section aria-labelledby="fleet-h">
-  <h2 id="fleet-h" class="section-h">Fleet</h2>
+  <h2 id="fleet-h" class="section-h">Fleet <span class="muted">{{ fleet.devices | length }} arm{{ 's' if fleet.devices | length != 1 }}</span></h2>
   <div id="fleet" hx-get="/partials/fleet" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
     {% include "partials/fleet.html" %}
   </div>
 </section>
 <section aria-labelledby="inc-h">
-  <h1 id="inc-h" class="section-h">Incidents <span class="muted">newest first</span></h1>
+  <h2 id="inc-h" class="section-h">Incidents <span class="muted">newest first</span></h2>
   <div id="incidents" hx-get="/partials/incidents" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
     {% include "partials/incidents.html" %}
   </div>
