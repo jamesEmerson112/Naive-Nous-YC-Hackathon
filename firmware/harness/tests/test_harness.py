@@ -156,9 +156,11 @@ def test_kickoff_is_neutral():
                                 "opened": 1.0, "last_seen": 2.0}])
     assert text.startswith("podd opened these incidents:") and "acc_gravity" in text and '"opened"' not in text
     assert "v1.5" not in text and "scenario" not in text.lower()
+    assert agent.kickoff_text([]).startswith("podd reports no open incidents")
 
 
-def test_claude_driver_request_and_response_shape(monkeypatch):
+def fake_claude(monkeypatch, content):
+    """A ClaudeDriver whose stream returns one message with this content; `sent` gets the request."""
     pytest.importorskip("anthropic")
     from anthropic.types.beta import BetaMessage
     sent = {}
@@ -179,14 +181,19 @@ def test_claude_driver_request_and_response_shape(monkeypatch):
                 "stop_reason": "tool_use", "stop_sequence": None,
                 "usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 80,
                           "cache_creation_input_tokens": 0},
-                "content": [{"type": "thinking", "thinking": "check triage first", "signature": "sig"},
-                            {"type": "text", "text": "Looking."},
-                            {"type": "tool_use", "id": "tu_1", "name": "triage", "input": {}}]})
+                "content": content})
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     d = agent.ClaudeDriver()
     monkeypatch.setattr(d.client.beta.messages, "stream", lambda **kw: FakeStream(**kw))
     d.start("SYS", TOOLS[:3], "go")
+    return d, sent
+
+
+def test_claude_driver_request_and_response_shape(monkeypatch):
+    d, sent = fake_claude(monkeypatch, [{"type": "thinking", "thinking": "check triage first", "signature": "sig"},
+                                        {"type": "text", "text": "Looking."},
+                                        {"type": "tool_use", "id": "tu_1", "name": "triage", "input": {}}])
     t = d.step()
     assert t.calls == [("tu_1", "triage", {})] and t.thinking == "check triage first" and t.text == "Looking."
     assert t.usage["cache_read_input_tokens"] == 80
@@ -198,6 +205,20 @@ def test_claude_driver_request_and_response_shape(monkeypatch):
     assert d.messages[1]["content"][0].type == "thinking"            # history appended unchanged
     assert d.messages[2]["content"][0]["tool_use_id"] == "tu_1"
     assert str(agent.ClaudeDriver(base_url="http://kent.local:8000").client.base_url).startswith("http://kent.local:8000")
+
+
+def test_claude_driver_drops_declined_blocks_before_a_fallback(monkeypatch):
+    fallback = {"type": "fallback", "from": {"model": "claude-opus-5-5"}, "to": {"model": "claude-opus-5"},
+                "trigger": {"type": "refusal", "category": None}}
+    d, _ = fake_claude(monkeypatch, [{"type": "thinking", "thinking": "declined", "signature": "s0"},
+                                     {"type": "tool_use", "id": "tu_0", "name": "status", "input": {}},
+                                     {"type": "text", "text": "partial"}, fallback,
+                                     {"type": "thinking", "thinking": "continue", "signature": "s1"},
+                                     {"type": "tool_use", "id": "tu_1", "name": "triage", "input": {}}])
+    t = d.step()
+    assert t.calls == [("tu_1", "triage", {})] and t.thinking == "continue"
+    assert [b.type for b in d.messages[1]["content"]] == ["text", "fallback", "thinking", "tool_use"]
+    assert t.raw["fallback"] and t.raw["dropped_before_fallback"] == 2
 
 
 def test_ollama_driver_round_trip():

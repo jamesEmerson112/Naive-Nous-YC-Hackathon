@@ -3,6 +3,8 @@
 The agent loop and scenario evaluation that [`../docs/HARNESS.md`](../docs/HARNESS.md) asks for (sections 4–9),
 on top of Olir's `heal` tools. Nothing under `healer/`, `pod/` or `demo/` is changed.
 
+**Running it on the bench or benchmarking it:** start with [`HANDOFF.md`](HANDOFF.md), the runbook and current state.
+
 | File | What it does |
 |---|---|
 | `agent.py` | The loop: system prompt from `system_info`, tools from `healer/tools.json` in file order, risk gate, one tool call at a time, transcripts. `run` handles the open incidents once; `watch` wakes on new ones (10 s debounce). |
@@ -10,11 +12,12 @@ on top of Olir's `heal` tools. Nothing under `healer/`, `pod/` or `demo/` is cha
 | `tests/test_harness.py` | Offline tests: fake bench, scripted model, fake Ollama server, scorer cases. |
 
 ## Drivers
+- **`ollama`** (the default): a local model, `qwen3.5:4b` with thinking on by default, 32k context, stdlib
+  only. `--tools core` offers 23 of the 38 tools: every tool the briefing names, plus the source, build and
+  flash tools (about 2.3k tokens of schemas instead of 3.4k; the briefing adds 2.5k).
 - **`claude`**: the online fallback, `claude-opus-5-5` through the Anthropic API, effort `high`, summarized
   thinking, server-side refusal fallback (`fallbacks="default"`), automatic prompt caching, append-only
-  history. Needs `ANTHROPIC_API_KEY`.
-- **`ollama`**: a local model, `qwen3.5:4b` with thinking on by default, 32k context. `--tools core` offers 17 of
-  the 38 tools (about 1.8k tokens of schemas instead of 3.4k; the briefing adds 2.6k).
+  history. Needs the `anthropic` package and `ANTHROPIC_API_KEY`.
 
 **Online fallback through Romulus (demo).** On the demo the Pi only calls out to Kent's server (`CLOUD_URL`).
 `--base-url` points the `claude` driver at any Messages-compatible endpoint, so a passthrough on that server
@@ -76,4 +79,4 @@ release.
 - Scenarios 03 and 06 use operator fault injection, which leaves traces the agent can see (the `inject`
   command's response line, the `inject=` field in boot lines and `health`). A physical trigger avoids that.
 - Scenario 04 is left out: it wedges the probe's USB serial bridge (HARNESS.md 9, issue 1).
-- The Ollama model runs wherever `--ollama-url` points (default: the machine running the harness), not on the Pi.
+- The Ollama model runs wherever `--ollama-url` points (default: the machine running the harness).

@@ -34,10 +34,13 @@ ALLOWED_RISKS = {"read", "runtime", "code", "notify"}   # HARNESS 5: notify is "
 DEBOUNCE_S = 10               # HARNESS 7: one fault often opens several incidents within ~5 s
 
 # A smaller tool set for small local models: the full 38 schemas plus the briefing are about 6k tokens.
+# It holds every tool the briefing (SYSTEM.md) tells the agent to use, plus the source, build and flash
+# tools; a small model calls what the briefing names, and a tool that isn't offered wastes a turn.
 # system_info is left out because its text is already the system prompt.
-CORE_TOOLS = ["status", "triage", "telemetry_stats", "events", "pod_cmd", "link_baud_scan", "chip_clock",
-              "fw_symbolize", "src_read", "src_search", "src_diff", "src_edit", "src_commit", "fw_build",
-              "fw_flash", "notify_human", "note"]
+CORE_TOOLS = ["status", "triage", "incidents", "telemetry_stats", "telemetry_recent", "events", "pod_cmd",
+              "link_baud_scan", "link_set_baud", "chip_status", "chip_clock", "fw_symbolize", "fw_images",
+              "src_read", "src_search", "src_diff", "src_edit", "src_commit", "fw_build", "fw_flash",
+              "fw_rollback", "notify_human", "note"]
 
 OPERATING_RULES = """
 
@@ -139,6 +142,8 @@ def open_incidents(bench):
 
 def kickoff_text(incidents):
     """HARNESS 7: what woke the agent, written neutrally, without naming the scenario."""
+    if not incidents:
+        return "podd reports no open incidents. Check the pod's health, fix what can be fixed, and report."
     rows = [json.dumps({k: i.get(k) for k in ("kind", "severity", "summary", "first_evidence")}) for i in incidents]
     return ("podd opened these incidents:\n" + "\n".join(rows) +
             "\nInvestigate, fix what can be fixed, and report.")
@@ -301,12 +306,17 @@ class ClaudeDriver:
     def step(self):
         with self.client.beta.messages.stream(messages=self.messages, **self.params) as stream:
             resp = stream.get_final_message()
-        self.messages.append({"role": "assistant", "content": resp.content})     # unchanged, thinking included
+        # After a mid-output refusal fallback, the declining model's thinking and tool_use blocks before the
+        # last `fallback` block are not part of the conversation: they stay out of the history and those calls
+        # don't run. Its text, the fallback block and everything after it are kept (claude-api reference).
+        cut = max((i for i, b in enumerate(resp.content) if b.type == "fallback"), default=-1)
+        content = [b for i, b in enumerate(resp.content) if i >= cut or b.type in ("text", "fallback")]
+        self.messages.append({"role": "assistant", "content": content})     # otherwise unchanged, thinking included
         u = resp.usage
         return Turn(
-            text="\n".join(b.text for b in resp.content if b.type == "text"),
-            thinking="\n".join(b.thinking for b in resp.content if b.type == "thinking" and b.thinking),
-            calls=[(b.id, b.name, b.input) for b in resp.content if b.type == "tool_use"],
+            text="\n".join(b.text for b in content if b.type == "text"),
+            thinking="\n".join(b.thinking for b in content if b.type == "thinking" and b.thinking),
+            calls=[(b.id, b.name, b.input) for b in content if b.type == "tool_use"],
             stop=resp.stop_reason,
             usage={"input_tokens": u.input_tokens, "output_tokens": u.output_tokens,
                    "cache_read_input_tokens": u.cache_read_input_tokens or 0,
@@ -314,7 +324,7 @@ class ClaudeDriver:
             raw={"model": resp.model, "id": resp.id,
                  "stop_details": (resp.stop_details.model_dump(mode="json")
                                   if getattr(resp, "stop_details", None) else None),
-                 "fallback": any(b.type == "fallback" for b in resp.content)})
+                 "fallback": cut >= 0, "dropped_before_fallback": len(resp.content) - len(content)})
 
     def add_results(self, results):
         self.messages.append({"role": "user", "content": [            # all results in ONE message
@@ -491,10 +501,14 @@ def run_dir(label):
 def watch(bench, a):
     """HARNESS 7 triggering: wake on a new warn/critical incident, debounce, then run once. Incidents
     open when a run starts or ends count as handled, so a run doesn't wake the next one."""
-    handled = set()
+    handled, down = set(), None
     print("watching %s for incidents (Ctrl-C to stop)" % (bench.target or "local bench"), flush=True)
     while True:
-        new = [i for i in open_incidents(bench) if i.get("severity") in ("warn", "critical") and i["id"] not in handled]
+        r = bench.heal_json("incidents")
+        if r.get("podd") != down:              # without podd there are no incidents to wake on; say so once
+            down = r.get("podd")
+            print("podd unreachable: %s" % down if down else "podd reachable", flush=True)
+        new = [i for i in r.get("open", []) if i.get("severity") in ("warn", "critical") and i["id"] not in handled]
         if new:
             time.sleep(DEBOUNCE_S)
             incidents = open_incidents(bench)
@@ -510,7 +524,7 @@ def watch(bench, a):
 
 def add_agent_args(p):
     p.add_argument("--target", help="user@host:/path/to/firmware on the bench (default: this checkout)")
-    p.add_argument("--driver", choices=["claude", "ollama"], default="claude")
+    p.add_argument("--driver", choices=["claude", "ollama"], default="ollama")
     p.add_argument("--model", help="default: claude-opus-5-5 or qwen3.5:4b")
     p.add_argument("--effort", default="high", help="Claude effort (low, medium, high, xhigh, max)")
     p.add_argument("--base-url", help="Messages API endpoint for the claude driver, e.g. a passthrough on the "
