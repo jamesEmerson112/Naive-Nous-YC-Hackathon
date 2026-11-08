@@ -7,16 +7,17 @@ actor is then `human:<by>`.
 
 import re
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from romulus_cloud.api.deps import BlobStoreDep, SessionDep
+from romulus_cloud.api.deps import BlobStoreDep, SessionDep, SettingsDep
 from romulus_cloud.errors import ApiError
+from romulus_cloud.ids import utcnow
 from romulus_cloud.models import CodeVersion, FirmwareVersion, HarnessVersion
-from romulus_cloud.services import devices, incidents, registry, telemetry
+from romulus_cloud.services import devices, incidents, registry, telemetry, workorders
 from romulus_contracts import SHA256_HEADER
 
 router = APIRouter(prefix="/v1", tags=["ops"])
@@ -214,6 +215,42 @@ def list_incidents(
 def incident_story(incident_id: str, session: SessionDep) -> dict:
     incident, story = incidents.story(session, incident_id)
     return {**incidents.view(incident), **story.to_dict()}
+
+
+# --- work orders (M5, D19b) ------------------------------------------------------------------
+
+
+class Resolve(BaseModel):
+    action: Literal["approve", "deny"]
+    by: Annotated[str, Field(min_length=1)]
+    why: Annotated[str, Field(min_length=1)]
+
+
+@router.get("/work-orders")
+def list_work_orders(
+    session: SessionDep,
+    settings: SettingsDep,
+    status: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict]:
+    rows = workorders.list_orders(session, status=status, limit=limit, fleet_id=settings.fleet_id)
+    return [workorders.view(o) for o in rows]
+
+
+@router.get("/work-orders/{order_id}")
+def get_work_order(order_id: str, session: SessionDep) -> dict:
+    order = workorders.get_order(session, order_id)
+    return {**workorders.view(order), "events": workorders.history(session, order_id)}
+
+
+@router.post("/work-orders/{order_id}/resolve")
+def resolve_work_order(order_id: str, body: Resolve, session: SessionDep) -> dict:
+    """A person approves (re-queue, or accept the card's outcome) or denies (close) an
+    order that waits for one (D19b). The event's actor is `human:<by>`."""
+    by = body.by.strip() or "operator"
+    order = workorders.resolve(session, order_id, body.action, by, body.why.strip(), utcnow())
+    session.commit()
+    return workorders.view(order)
 
 
 # --- fleet (kill switch, D11) ----------------------------------------------------------------

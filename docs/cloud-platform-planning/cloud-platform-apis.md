@@ -221,7 +221,8 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 | Route | Purpose |
 |---|---|
 | `POST /v1/fleet/freeze`, `POST /v1/fleet/unfreeze` | Kill switch (D11). Body `{"by": "kent", "reason": "…"}` |
-| `GET /v1/work-orders`, `GET /v1/work-orders/{id}` | Work orders and their Naïve card status |
+| `GET /v1/work-orders?status=`, `GET /v1/work-orders/{id}` | Work orders and their Naïve card status; the single read adds the order's events |
+| `POST /v1/work-orders/{id}/resolve` | A person resolves an order waiting for one (D19b). Body `{"action": "approve" \| "deny", "by": "kent", "why": "…"}`. `approve` re-queues an order with no card (posted with the same `Idempotency-Key`) or accepts a card that came back `needs_human`/`stopped` as `done`; `deny` closes it as `denied`. `409` if it is closed or not waiting |
 | `GET /v1/digest?since=` | Counts for the morning digest |
 | `GET /v1/events?since=&ref=` | The raw event log |
 
@@ -246,7 +247,7 @@ Every event has `actor`, `kind`, `refs` and `why` (v0 plan §4).
 | Batch and gate (events for overlays and candidates whose diff touches safety-layer or visor paths carry `touches_safety: true` in `refs`; D5a, K17) | `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.awaiting_canary` |
 | Coding agent (D21) | `coder.started`, `coder.drafted`, `coder.tests_passed`, `coder.tests_failed`, `code.version_created` |
 | Fleet | `fleet.frozen`, `fleet.unfrozen` |
-| Work orders | `workorder.created`, `workorder.card_posted`, `workorder.status_changed` |
+| Work orders (each carries `refs.work_order`, `refs.incident` and `refs.status`; changes add `refs.from`/`refs.to`) | `workorder.created`, `workorder.card_posted`, `workorder.status_changed`, `workorder.post_retried` (a retryable Naïve error; the order stays `pending`) |
 | Data | `recording.received`, `recording.blob_stored`, `recording.linked` (an incident arrived after its recording), `label.changed`, `dataset.snapshotted`, `export.built` |
 
 ## 6. Where your v1 list went

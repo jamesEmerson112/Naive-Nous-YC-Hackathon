@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from romulus_cloud import db
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
+from romulus_cloud.services import workorders
 from romulus_cloud.settings import get_settings
 
 
@@ -29,6 +30,12 @@ class Step:
 
 
 STEPS: list[Step] = []
+
+# M5: hardware incidents → work orders (every tick); post and poll Naïve cards (every 15 s).
+STEPS += [
+    Step("workorders.triage_new", workorders.triage_new),
+    Step("workorders.sync", workorders.sync, every_s=15),
+]
 
 
 def run_tick(

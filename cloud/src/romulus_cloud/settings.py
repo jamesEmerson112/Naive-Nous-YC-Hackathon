@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     order_max_usd: float = 50
     orders_per_day_max: int = 3
     orders_per_robot_day_max: int = 1
+    # The day the per-day caps count in (an IANA zone name). UTC unless set.
+    fleet_timezone: str = "UTC"
+
+    # What the work-order card says (M5, naive-integration §3.3). The phone fleet-ops calls
+    # comes from here, never from parts.yaml, and must be a teammate's phone, never a
+    # business (K13). Live mode refuses to post while it is still the placeholder.
+    work_order_phone: str = "TEAMMATE_PHONE"
+    work_order_deliver_to: str = "Romulus bench (set WORK_ORDER_DELIVER_TO)"
 
     # Batch-job LLM (D22): one OpenAI-compatible client for both live providers
     llm_mode: Literal["fake", "live"] = "fake"

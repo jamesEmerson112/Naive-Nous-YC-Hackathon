@@ -26,7 +26,7 @@ defaults:
 parts:
   - id: sts3215-servo
     name: "Feetech STS3215 servo (12 V)"
-    fault_kinds: [gripper_stall, servo_missing, servo_overload, servo_voltage_error]
+    fault_kinds: [gripper_stall, servo_missing, servo_absent, servo_overload, servo_voltage_error]
     typical_usd: 18
     max_usd: 40
 
