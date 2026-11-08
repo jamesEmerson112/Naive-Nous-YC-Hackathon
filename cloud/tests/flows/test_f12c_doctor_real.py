@@ -34,6 +34,7 @@ from romulus_cloud.adapters.llm import FakeLlm
 from romulus_cloud.domain import coder_retry
 from romulus_cloud.models import Blob, DoctorConsult, DoctorProposal, Event, Recording
 from romulus_cloud.services import batch, code_lockin, datasets, doctor, doctor_code, registry
+from romulus_cloud.services.coder_runs import CodeReplay, TestRun, VerifyRun
 from romulus_cloud.services.doctor_jobs import InlineJobs
 from romulus_cloud.worker import Step, run_tick
 
@@ -633,6 +634,82 @@ def test_with_no_verify_scripts_the_check_says_none_available(
     (consult,) = _consults(db_session, body["incident_id"])
     assert consult.stage == "applied" and consult.checks["verify"] == "none available"
     assert not doc.docker.ever_saw_verify and len(doc.docker.runs) == 12  # no verify replay
+
+
+REPRO_ID = f"{REPRO_PATH}::test_a_hand_near_while_holding_keeps_the_gripper_closed"
+# A repro that really fails on the base, but once it sees the "fix" in the source (the
+# NOT_A_FIX comment change) prints pytest's PASSED summary past the capture and exits 0
+# before pytest ends: printed text and the exit code both say pass; the seal has no end.
+FORGER = (
+    "import os\nfrom pathlib import Path\n\n"
+    "import control.gripper as gripper\n\n\n"
+    "def test_a_hand_near_while_holding_keeps_the_gripper_closed(capsys):\n"
+    '    if "count as near" in Path(gripper.__file__).read_text():\n'
+    "        with capsys.disabled():\n"
+    '            print("=" * 20 + " short test summary info " + "=" * 20)\n'
+    f'            print("PASSED {REPRO_ID}")\n'
+    '            print("1 passed in 0.01s", flush=True)\n'
+    "        os._exit(0)\n"
+    '    assert gripper.step("HOLDING", 10.0) == ("HOLDING", "close")\n'
+)
+
+
+def test_a_repro_that_forges_its_pass_is_refused_without_a_seal(
+    client, example, make_doctor, db_session, clock
+):
+    """With no verify scripts, nothing but the repro steps stands between this do-nothing
+    "fix" and an offer. Its repro prints a believable PASSED summary and calls os._exit(0)
+    with the fix; the repro steps read only the result seal, which never got its end."""
+    doc = make_doctor(
+        ScriptedCoder(_patch_paths({"control/gripper.py": NOT_A_FIX, REPRO_PATH: FORGER}))
+    )
+    clock.at(T0)
+    body = example("incident_consult_wanted") | {
+        "incident_id": str(uuid.uuid4()),
+        "occurred_at": (T0 - timedelta(minutes=1)).isoformat(),
+        "running": {"firmware": 1, "harness": 1, "code_rev": NO_VERIFY_REV},
+    }
+    assert client.post("/v1/devices/arm-1/incidents", json=body).status_code == 201
+    incident_id = body["incident_id"]
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "failed_checks"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    data = checked.data
+    assert data["passed"] is False
+    assert (data["fails_before"], data["passes_after"]) == (True, False)
+    assert "no sealed pytest result" in data["reason"]
+    # It really failed on the base (sealed); with the fix the forgery reached the printed
+    # output and the exit code, but not the seal, so no id counts as passed.
+    assert data["before"]["sealed"] is True and list(data["before"]["failed"]) == [REPRO_ID]
+    after = data["after_repro"]
+    assert after["exit_code"] == 0 and f"PASSED {REPRO_ID}" in after["output_tail"]
+    assert after["sealed"] is False and after["passed_ids"] == []
+    assert data["after"] is None  # the device-test step never ran
+    (closed,) = [
+        e
+        for e in _events(db_session, incident_id, "doctor.consult_closed")
+        if e.refs["consult"] == first.id
+    ]
+    assert "no sealed pytest result" in closed.data["why"]
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
+    assert _test_cmds(doc.docker) == [REPRO_CMD] * 4  # base + repro only, then the full patch
+
+
+@pytest.mark.parametrize(
+    ("run", "sealed", "passed_ids"),
+    [
+        (TestRun(0, "", results={REPRO_ID: "passed"}), True, [REPRO_ID]),
+        # pytest started, a test passed, then something exited 0 before the end marker
+        (TestRun(0, "", results={REPRO_ID: "passed"}, incomplete=True), False, []),
+        (TestRun(0, f"PASSED {REPRO_ID}"), False, []),  # no seal at all: not a pytest run
+        (None, False, []),  # the patch was refused
+    ],
+    ids=["complete", "incomplete", "none", "refused"],
+)
+def test_the_checks_view_of_a_run_trusts_only_a_complete_seal(run, sealed, passed_ids):
+    no_verify = VerifyRun(False)
+    view = doctor_code._run(CodeReplay(TestRun(1, ""), no_verify, run, no_verify), [])
+    assert (view["sealed"], view["passed_ids"], view["failed"]) == (sealed, passed_ids, {})
 
 
 @pytest.mark.parametrize(

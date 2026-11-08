@@ -288,6 +288,7 @@ def _run(exit_code=1, **changes):
         "tests_passed": exit_code == 0,
         "passed": exit_code == 0,
         "tests_summary": "1 failed in 0.1s" if exit_code else "5 passed in 0.2s",
+        "sealed": True,
         "failed": {REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')"}
         if exit_code
         else {},
@@ -365,6 +366,33 @@ def test_a_repro_that_doesnt_prove_the_fault_fails_the_check(before, why):
     v = rules.check_verdict(before, _run(0), _run(0), REPRO_PATH)
     assert v["passed"] is False and v["fails_before"] is False and v["passes_after"] is False
     assert why in v["reason"]
+
+
+# The forger: the repro test prints a fake summary and calls os._exit(0) before pytest ends.
+UNSEALED = {"sealed": False, "tests_summary": "1 passed in 0.01s"}
+
+
+@pytest.mark.parametrize("sealed", [False, None, "yes", 1])  # only True counts
+def test_a_repro_without_a_sealed_result_never_proves_the_fault(sealed):
+    before = _run(1, sealed=sealed)
+    if sealed is None:
+        del before["sealed"]
+    ids, why = rules.repro_failures(before, REPRO_PATH)
+    assert ids == [] and why.startswith(rules.NO_SEAL)
+    v = rules.check_verdict(before, _run(0), _run(0), REPRO_PATH, verify=VERIFY_OK)
+    assert v["passed"] is False and v["fails_before"] is False
+    assert rules.NO_SEAL in v["reason"]
+
+
+def test_a_repro_without_a_sealed_result_never_passes_with_the_fix():
+    """Exit 0 and PASSED ids that came from printed text: no seal, no pass."""
+    after_repro = _run(0, **UNSEALED)
+    why = rules.repro_passes(after_repro, [REPRO_ID])
+    assert why == f"with the fix, the repro test has {rules.NO_SEAL} (exit 0, 1 passed in 0.01s)"
+    v = rules.check_verdict(_run(1), after_repro, _run(0), REPRO_PATH, verify=VERIFY_OK)
+    assert v["passed"] is False and v["fails_before"] is True and v["passes_after"] is False
+    assert v["reason"] == why
+    assert rules.repro_passes(_run(0, sealed="true"), [REPRO_ID]).startswith("with the fix")
 
 
 def test_only_behavioural_failures_in_the_repro_file_count():
@@ -573,8 +601,13 @@ def test_pytest_results_reads_the_short_summary():
             "tests/test_x.py::test_y": "",
         },
         "errors": ["tests/test_z.py::test_w"],
+        "reasons": {
+            REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')",
+            "tests/test_x.py::test_y": "",
+            "tests/test_z.py::test_w": "fixture 'nope' not found",
+        },
     }
-    assert rules.pytest_results("") == {"passed": [], "failed": {}, "errors": []}
+    assert rules.pytest_results("") == {"passed": [], "failed": {}, "errors": [], "reasons": {}}
 
 
 def test_pytest_results_reads_only_the_block_after_the_last_header():
@@ -595,6 +628,7 @@ def test_pytest_results_reads_only_the_block_after_the_last_header():
         "passed": [],
         "failed": {REPRO_ID: "ImportError: cannot import na..."},
         "errors": [],
+        "reasons": {REPRO_ID: "ImportError: cannot import na..."},
     }
     # A fake header printed *before* the real one changes nothing; no header, no results.
     assert rules.pytest_results(f"{header}\nFAILED fake::x\n{output}")["failed"] == {

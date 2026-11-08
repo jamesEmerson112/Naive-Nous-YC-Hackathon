@@ -103,6 +103,7 @@ OUTPUT_KEYS = (
     "exit_code",
     "timed_out",
     "tests_summary",
+    "sealed",
     "failed",
     "passed_ids",
     "output_tail",
