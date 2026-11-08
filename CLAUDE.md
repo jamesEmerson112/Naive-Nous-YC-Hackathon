@@ -64,11 +64,11 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 10:10 PM 
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sat Nov 7, 9:12 PM PST._
-- **Now:** the pod healer agent loop and blind eval (HARNESS.md) on `ishaan/pod-agent-loop`: `firmware/harness/agent.py` with Claude and Ollama drivers, a risk gate and `--base-url` so the demo fallback can go through Kent's server; 12 tests pass (`6915ac8`, `90dbe6e`, session "Build the pod healer agent loop and blind eval", 20:55). No PR yet. The Jetson link is paused: no USB data or LAN path as of 20:10 (session "Identify the connected Jetson").
-- **Just finished:** device code (B1), healer harness h1-h3 and benchmark merged as #31 (`6c3b006`); claimed the pod healer agent loop in `features.txt` (`023f30d`). Earlier: benchmark results and model pick, qwen3.5:4b with thinking on, h3 (`835c4f0`).
-- **Blocked on:** bench runs for the pod loop need SSH to the pod, Olir's OK and an API key (session recap). The Jetson link (no USB data, no LAN). Still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), per Kent's block.
-- **Branch and files:** `ishaan/pod-agent-loop` in worktree `naive-pod-loop` (`firmware/harness/agent.py`, `evaluate.py`, tests, README). Main checkout on `main`, clean, 11 behind origin.
+_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sat Nov 7, 10:15 PM PST._
+- **Now:** pod healer loop handed to Olir's session for bench runs (`firmware/harness/HANDOFF.md`, `8d9a30b`); session "Build the pod healer agent loop and blind eval" stood down at 21:47 with no bench run. Not on the bench yet. The Jetson link is still paused (no USB data or LAN path, session "Identify the connected Jetson").
+- **Just finished:** pod healer agent loop and blind eval merged as #41 (`4ee3517`): `agent.py` with Claude and Ollama drivers and a risk gate, `evaluate.py`, tests, README, HANDOFF.md (`72f53c8`); pointed Olir's session to the handoff in CLAUDE.md (`8d9a30b`). Earlier: device code and healer harness #31 (`6c3b006`).
+- **Blocked on:** bench runs wait on Olir (SSH to the pod, API key, per the session recap). Still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), per Kent's block.
+- **Branch and files:** main checkout on `main` at `8d9a30b`, clean, up to date. `ishaan/pod-agent-loop` (worktree `naive-pod-loop`) is merged.
 <!-- ishaan-sync:end -->
 
 **Pod healer agent loop, for Olir's session:** running or benchmarking it on the bench (`firmware/harness/`, merged as #41)? Start with [`firmware/harness/HANDOFF.md`](firmware/harness/HANDOFF.md): bench steps, what's verified, what to report.
