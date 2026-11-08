@@ -17,9 +17,9 @@ export const PEOPLE: Person[] = [
     who: "Kent",
     initial: "K",
     layer: "heal",
-    doing: "Four PRs open (#25–#28): M8b wires the coding agent into batch and gate; the edge bridge brings Olir's pod healer into Romulus (D29); Fleet Doctor contracts and foundation. Next: the first live Naïve card, then the overnight launch (~12:30 AM).",
-    landed: "23 PRs merged: Romulus M0–M7 and M8a (#1–#19), the build-status docs (#21), Fleet Doctor plan and decisions D23–D28 (#22, #23), the STM32 toolchain in the sandbox (#24, closes B8). Flows F1–F8 and F10 pass on fake devices. B4 cleared: the team key reaches the Naïve proxy.",
-    synced: "8:10 PM · his block",
+    doing: "Three PRs open: M8b wires the coding agent into batch and gate (#28); the edge bridge brings Olir's pod healer into Romulus (#25, D29); the Fleet Doctor foundation (#27). Next: the first live Naïve card, then the overnight launch (~12:30 AM).",
+    landed: "24 PRs merged: Romulus M0–M7 and M8a (#1–#19), the build-status docs (#21), Fleet Doctor plan, decisions D23–D28 and contracts (#22, #23, #26), the STM32 toolchain in the sandbox (#24, closes B8). Flows F1–F8 and F10 pass on fake devices. B4 cleared: the team key reaches the Naïve proxy.",
+    synced: "8:20 PM · his block",
   },
   {
     who: "Olir",
@@ -67,7 +67,6 @@ export interface OffMain {
 export const OFF_MAIN: OffMain[] = [
   { who: "Kent", where: "cloud/m8b-wiring", what: "M8b: the coding agent wired into batch and gate (F11)", state: "PR #28 open", href: `${REPO}/pull/28` },
   { who: "Kent", where: "edge/bridge", what: "Edge bridge: Olir's pod healer reports to Romulus with no device changes (D29)", state: "PR #25 open", href: `${REPO}/pull/25` },
-  { who: "Kent", where: "doctor/contracts", what: "Fleet Doctor contracts: ask, advice, proposal, proposal result", state: "PR #26 open", href: `${REPO}/pull/26` },
   { who: "Kent", where: "doctor/foundation", what: "Fleet Doctor foundation: settings, tables, domain rules, stubs (doctor_mode=off)", state: "PR #27 open", href: `${REPO}/pull/27` },
   { who: "Kent", where: "cloud/m8-coder-wip", what: "M8 WIP: toy device, code replay, an F11 draft", state: "marked \"not for merge\"; the toy device and replay landed in #19 (inferred)" },
   { who: "Olir", where: "firmware, demo", what: "Nothing: both branches end at ded518a, which is in main", state: "merged as #20" },
@@ -149,7 +148,7 @@ export const LANES: Lane[] = [
     pills: ["incident timeline", "replay + canary", "Fleet Doctor"],
     sunday: [
       "Merged: M0–M7 and M8a (#1–#19). 82 flow tests pass; F1–F8 and F10 work on fake devices.",
-      "In review: M8b (#28), the edge bridge from podd to the cloud (#25, D29), Fleet Doctor contracts and foundation behind doctor_mode=off (#26, #27). B8 closed: the STM32 toolchain merged (#24).",
+      "In review: M8b (#28), the edge bridge from podd to the cloud (#25, D29), the Fleet Doctor foundation behind doctor_mode=off (#27). Merged: B8's STM32 toolchain (#24) and the Fleet Doctor contracts (#26).",
       "Next: the first live Naïve card, the overnight launch (~12:30 AM), then code freeze Sun 10 AM.",
     ],
     stretch: ["Fleet Doctor L1 advise and L2 consult (off by default)", "Fleet Doctor L3 live sessions (D27, deferred)"],

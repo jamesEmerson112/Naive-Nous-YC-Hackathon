@@ -234,7 +234,7 @@ const NODES: LoopNode[] = [
     b: { h: "We build on it", items: ["arm plugin", "guard rules", "card-pulling job", "alerts"] },
   },
   {
-    id: "romulus", x: 790, y: 330,  title: "Romulus", sub: "Kent's laptop", layer: "heal", href: "#interfaces", owner: "Kent: M0–M8a and B8 merged · 4 PRs open (M8b, edge bridge, Fleet Doctor)",
+    id: "romulus", x: 790, y: 330,  title: "Romulus", sub: "Kent's laptop", layer: "heal", href: "#interfaces", owner: "Kent: M0–M8a and B8 merged · 3 PRs open (M8b, edge bridge, Fleet Doctor)",
     plain: "Kent's back office for the arm's health: Docker on his laptop, on the bench network. It never watches the arm itself. The Pi's healer, with the local model, fixes faults first and checks in every ~10 s with incidents and recordings. Romulus turns good fixes into versions, tests them on a sim canary, rolls out or back, and calls out to Naïve for board cards and its model proxy (gpt-oss-120b).",
     a: { h: "What it does", items: ["incident timeline", "version registry", "batch lock-in", "replay + canary", "kill switch", "work-order cards", "coding agent (M8a)", "Fleet Doctor (off)"] },
     b: { h: "Built with", items: ["FastAPI :8000", "worker", "Postgres 17", "Docker Compose", "outbound calls only"] },
