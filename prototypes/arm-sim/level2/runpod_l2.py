@@ -20,13 +20,14 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 API = "https://rest.runpod.io/v1"
 HERE = Path(__file__).resolve().parent
 STATE = HERE / "results" / "pod.json"
-GPUS = ["NVIDIA RTX A6000", "NVIDIA A40", "NVIDIA L40S", "NVIDIA RTX 6000 Ada Generation"]   # 48 GB cards
+GPUS = ["NVIDIA RTX A6000", "NVIDIA A40", "NVIDIA L40S", "NVIDIA RTX 6000 Ada Generation"]   # 48 GB, cheapest first
 IMAGE = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04"
 
 START = r"""
@@ -36,7 +37,10 @@ echo "$CHATTS_B64" | base64 -d > chatts_test.py
 (cd /workspace/out && nohup python -m http.server 8000 > /dev/null 2>&1 &)
 export HF_HOME=/workspace/hf HF_HUB_ENABLE_HF_TRANSFER=1
 echo "START $(date -u +%H:%M:%S)" > out/status.txt
-timeout 7200 bash -c 'pip install -q "transformers==4.52.4" accelerate hf_transfer > out/pip.log 2>&1 \
+# transformers 4.52 refuses torch.load on torch < 2.6 (CVE-2025-32434), and ChatTS ships .bin weights:
+# torch 2.6 for CUDA 12.4 (the image's driver) first. Attempt 1 failed on exactly this.
+timeout 7200 bash -c 'pip install -q "torch==2.6.0" --index-url https://download.pytorch.org/whl/cu124 > out/pip.log 2>&1 \
+  && pip install -q "transformers==4.52.4" accelerate hf_transfer >> out/pip.log 2>&1 \
   && python chatts_test.py > out/chatts.log 2>&1; echo "EXIT $?" >> out/chatts.log'
 cp -f /workspace/chatts_results.jsonl out/ 2>/dev/null
 nvidia-smi > out/nvidia-smi.txt 2>&1
@@ -54,8 +58,11 @@ def api(method, path, body=None):
     req = urllib.request.Request(API + path, method=method, data=json.dumps(body).encode() if body else None,
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                                           "User-Agent": "armsim-level2/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        text = r.read().decode()
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            text = r.read().decode()
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(f"Runpod {method} {path}: HTTP {exc.code}: {exc.read().decode(errors='replace')[:600]}")
     return json.loads(text) if text.strip() else {}
 
 

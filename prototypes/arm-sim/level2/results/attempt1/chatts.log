@@ -1,0 +1,33 @@
+A new version of the following files was downloaded from https://huggingface.co/bytedance-research/ChatTS-14B:
+- configuration_qwen2.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+You are using a model of type chatts to instantiate a model of type qwen2. This is not supported for all configurations of models and can yield errors.
+A new version of the following files was downloaded from https://huggingface.co/bytedance-research/ChatTS-14B:
+- modeling_qwen2.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/workspace/chatts_test.py", line 63, in <module>
+    main()
+  File "/workspace/chatts_test.py", line 37, in main
+    model = AutoModelForCausalLM.from_pretrained(hf, trust_remote_code=True, device_map="auto", torch_dtype=torch.float16)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/dist-packages/transformers/models/auto/auto_factory.py", line 564, in from_pretrained
+    return model_class.from_pretrained(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/dist-packages/transformers/modeling_utils.py", line 309, in _wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/dist-packages/transformers/modeling_utils.py", line 4574, in from_pretrained
+    ) = cls._load_pretrained_model(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/dist-packages/transformers/modeling_utils.py", line 5020, in _load_pretrained_model
+    state_dict = load_state_dict(
+                 ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/dist-packages/transformers/modeling_utils.py", line 554, in load_state_dict
+    check_torch_load_is_safe()
+  File "/usr/local/lib/python3.11/dist-packages/transformers/utils/import_utils.py", line 1417, in check_torch_load_is_safe
+    raise ValueError(
+ValueError: Due to a serious vulnerability issue in `torch.load`, even with `weights_only=True`, we now require users to upgrade torch to at least v2.6 in order to use the function. This version restriction does not apply when loading files with safetensors.
+See the vulnerability report here https://nvd.nist.gov/vuln/detail/CVE-2025-32434
+EXIT 1

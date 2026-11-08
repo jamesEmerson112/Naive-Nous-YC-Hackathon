@@ -185,6 +185,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 .twin.alarm { border-color: rgba(var(--bad-rgb), 0.55); box-shadow: inset 0 0 0 1px rgba(var(--bad-rgb), 0.25), 0 0 60px rgba(var(--bad-rgb), 0.18); }
 .twin.healing { border-color: rgba(var(--warn-rgb), 0.5); box-shadow: 0 0 50px rgba(var(--warn-rgb), 0.12); }
 .twinbody { position: relative; flex: 1; min-height: 0; }
+.twin.stale #cv, .twin.stale .hud { opacity: 0.4; filter: grayscale(0.85); transition: opacity .6s, filter .6s; }
 #cv { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 #cv.drag { cursor: grabbing; }
 .vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .6s; background: radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(var(--bad-rgb), 0.38) 100%); }
@@ -609,6 +610,7 @@ function renderTwinHud(mode) {
   const twin = $("twin");
   twin.classList.toggle("alarm", mode.cls === "bad" || mode.cls === "person");
   twin.classList.toggle("healing", mode.cls === "warn");
+  twin.classList.toggle("stale", !!(A && !A.error && A.stale));
   const live = $("live");
   live.classList.toggle("dead", !arm || arm.stale);
   setHTML(live, `<i></i><span>${!arm ? "no snapshot" : arm.stale ? "stale " + ago(arm.age_s) : "live · " + (arm.arm === "real" ? "real arm" : "MuJoCo")}</span>`);
@@ -777,7 +779,8 @@ function renderPod() {
   if (!pod) return setHTML($("pod"), `<div class="offline"><div class="big">No pod link</div>This arm host runs without podd (start it with <code>--pod sim</code>).</div>`);
   const img = IMAGES[pod.image] || (pod.image ? [pod.image, "", ""] : ["real pod", "", "build from the pod itself"]);
   const healing = pod.healer_busy;
-  let html = `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd ${pod.podd_up ? "ok" : "bad"}"></span>${pod.podd_up ? "running" : "down"}</span></div>`;
+  let html = arm.stale ? `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd"></span>unknown · last seen ${esc(ago(arm.age_s))} ago</span></div>`
+    : `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd ${pod.podd_up ? "ok" : "bad"}"></span>${pod.podd_up ? "running" : "down"}</span></div>`;
   html += `<div class="fw ${healing ? "warn" : img[1]}"><div class="k">Firmware</div><div class="v">${esc(healing ? "rolling back…" : img[0])}</div><div class="s">${esc(healing ? "pod healer flashing the known-good image" : img[2])}</div></div>`;
   const incs = pod.incidents || [];
   const crit = incs.some((i) => i.severity === "critical");
