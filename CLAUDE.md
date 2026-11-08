@@ -95,15 +95,15 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 4:18 PM PST_
+_Last updated: Sat Nov 7, 4:28 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is building M0 (scaffold, contracts v0.1, one real Naïve card, one real LLM call), due 5:15 PM. Ishaan is tuning the device-side healer harness in `edge/` (local, uncommitted). James's next step is the bench prototype.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is coding M0 (contracts v0.1, `make up` serving `/healthz`, one real Naïve card, one real LLM call), due 5:15 PM. Ishaan is tuning the device-side healer harness in `edge/` (local, uncommitted). James has claimed the bench Hermes install and its OpenAI key, is signed in to the Romulus org on the Naïve CLI, and is starting a Naïve hello world.
 
 **Recently done:**
-- James added `docs/naive-vs-runpod-setup.md`: Naïve hosts agents on its own fixed harnesses (`pi`, `vetta`, `claude_code`, `hermes`) with no custom image, so the Hermes that drives the arm runs on the bench and calls Naïve over API or MCP; GPUs stay on RunPod (4:16 PM)
-- James's hub now has a Features view read from `features.txt`, with black boxes for features nobody is working on; also added `docs/hermes-harness-gaps.md` (4:10 PM)
+- Kent merged PR #1 (`8eb532f`): a uv workspace skeleton with `packages/contracts` (`romulus-contracts`, shared with the device side), `cloud/` (`romulus-cloud`) and `tools/fake_device/`, pinned to Python 3.12. Kent's code now goes in through PRs from `cloud/*` branches (4:21 PM)
+- James claimed "Hermes install on the bench" and "OpenAI key for bench Hermes" in `features.txt`, and signed in to the Romulus org on the Naïve CLI; the agent and model lists both return (4:26 PM)
+- James added `docs/naive-vs-runpod-setup.md`: Naïve hosts agents on its own fixed harnesses (`pi`, `vetta`, `claude_code`, `hermes`) with no custom image, so the bench Hermes calls Naïve over API or MCP; GPUs stay on RunPod (4:16 PM)
 - Ishaan's Mac test bed works: the oracle healer passes 6/6 tasks and a do-nothing healer 0/6; granite4.1:3b on Ollama ran end to end but failed S1 and D2 (4:12 PM)
-- Kent confirmed Ishaan's D5a change: the healer may patch the safety layer and visor behind the same gate, with a `touches_safety` flag; risk logged as K17 (4:06 PM)
 
 **Open questions:**
 - Kent is blocked on: device code and tests in `device/` (B1), the code-package and `code_patch` formats (B2, B3), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4)
@@ -112,16 +112,16 @@ _Last updated: Sat Nov 7, 4:18 PM PST_
 - What does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `a88ef75` Sat 16:27 · Kent Gang · Update Kent status in CLAUDE.md
+- `7576f53` Sat 16:26 · jamesEmerson112 · Claim the bench Hermes key and install lines in features.txt
+- `8eb532f` Sat 16:21 · kgang · Add uv workspace skeleton for the Romulus cloud platform (#1)
+- `f7d3a9e` Sat 16:18 · jamesEmerson112 · Update team status in CLAUDE.md
 - `6869c8d` Sat 16:16 · jamesEmerson112 · Add note on why Naive does not set up like RunPod
 - `33d4cf4` Sat 16:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `1a58412` Sat 16:10 · jamesEmerson112 · Hub: Features inside view read from features.txt; black boxes for not worked on
 - `f61d966` Sat 16:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `41dc22d` Sat 16:07 · Kent Gang · Update Kent status in CLAUDE.md
 - `0b459ee` Sat 16:06 · Kent Gang · cloud platform planning updates
-- `e59093f` Sat 16:04 · Ishaan Ranjan · Claim the device side owner line in features.txt
-- `cd54c16` Sat 16:03 · Ishaan Ranjan · Claim the device test-bed lines in features.txt
-- `37bc048` Sat 15:58 · jamesEmerson112 · Update team status in CLAUDE.md
-- `e8f196f` Sat 15:58 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 
 **Branches on GitHub:** `main`, `firmware` (Olir)
 <!-- team-status:end -->
