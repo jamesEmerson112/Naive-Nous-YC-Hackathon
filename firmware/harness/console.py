@@ -234,6 +234,27 @@ def _kv(row, skip=("ts", "type")):
     return " ".join("%s=%s" % (k, v) for k, v in row.items() if k not in skip)
 
 
+def _motion_lines(r):
+    """A motion report (arm/arm_status.py) in a few lines: gate, reflex, playback vs plan."""
+    out = []
+    g = r.get("start_gate") or {}
+    if g:
+        out.append("gate: %s" % g.get("message"))
+    x = r.get("obstacle_reflex") or {}
+    if x.get("ran"):
+        out.append(("byellow", "reflex: %s swings, %s direction changes, base %s° (home %s°)%s" % (
+            x.get("swings"), x.get("direction_changes"), x.get("base_measured_range_deg"), x.get("base_home_deg"),
+            ", cleared" if x.get("cleared") else ", never cleared")))
+    pb = r.get("playback") or {}
+    if pb.get("frames_planned"):
+        style = "bgreen" if pb.get("complete") else "bred"
+        out.append((style, "playback: %s of %s frames" % (pb.get("frames_played"), pb.get("frames_planned"))))
+        cov = pb.get("range_coverage") or {}
+        if cov:
+            out.append("range reached: " + "  ".join("%s %s" % (j, v) for j, v in cov.items()))
+    return out
+
+
 def summarize(name, obj, text, max_lines=14):
     """A few readable lines for one tool result."""
     if not isinstance(obj, dict):
@@ -301,11 +322,18 @@ def summarize(name, obj, text, max_lines=14):
             obj.get("uptime_ratio_to_real_time"))]
         if obj.get("image"):
             out.append("registry: %s %s" % (obj["image"].get("version"), obj["image"].get("status")))
-    elif name == "arm_test":
+    elif name == "arm_run":
         passed = obj.get("passed")
         out = [("bgreen" if passed else "bred", "%s · exit %s · %s" % (
-            "ARM JOB PASSED" if passed else "ARM JOB DID NOT RUN", obj.get("exit"), obj.get("verdict")))]
-        out += [("gray", ln) for ln in (obj.get("log") or "").strip().splitlines()[-8:]]
+            "ARM JOB OK" if passed else "ARM JOB FAILED", obj.get("exit"), obj.get("verdict")))]
+        out += _motion_lines(obj.get("motion_report") or {})
+        log = [ln for ln in (obj.get("log") or "").splitlines() if ln.startswith(("reflex:", "ultrasonic:", "REFLEX", "arm:"))]
+        out += [("gray", ln) for ln in log[-6:]]
+    elif name == "arm_report":
+        out = ["run %s · exit %s · %s" % (obj.get("run_id"), obj.get("exit"), obj.get("verdict"))] + _motion_lines(obj)
+    elif name == "arm_state":
+        js = obj.get("joints") or {}
+        out = ["  ".join("%s %s°%s" % (j, v.get("position"), "" if v.get("torque_on") else " (limp)") for j, v in js.items())]
     elif name in ("note", "notify_human"):
         rec = obj.get("recorded") or {}
         out = [("green", "recorded") ] + ([_short(rec.get("summary"), 140)] if rec.get("summary") else [])

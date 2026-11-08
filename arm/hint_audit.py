@@ -39,7 +39,8 @@ CALLS = [("status", {}), ("triage", {}), ("incidents", {"include_resolved": True
          ("events", {"minutes": 600, "limit": 500}), ("chip_status", {}), ("fw_images", {}), ("src_log", {}),
          ("src_diff", {"rev_a": "v1.0"}), ("src_diff", {"rev_a": "v1.0", "rev_b": "HEAD"}),
          ("src_read", {"path": "src/hcsr04.c"}), ("src_search", {"pattern": "dist_mm|343"}),
-         ("pod_cmd", {"command": "help"}), ("pod_cmd", {"command": "info"}), ("pod_cmd", {"command": "health"})]
+         ("pod_cmd", {"command": "help"}), ("pod_cmd", {"command": "info"}), ("pod_cmd", {"command": "health"}),
+         ("arm_state", {}), ("arm_report", {})]
 
 
 def lines_of(source, text):
@@ -58,9 +59,13 @@ def main():
     p.add_argument("--no-deploy", action="store_true", help="don't deploy v1.7; audit the bench as it is")
     p.add_argument("--minutes", type=float, default=0, help="with --no-deploy: how far back the blind window reaches")
     p.add_argument("--keep", action="store_true", help="leave v1.7 on the pod afterwards")
+    p.add_argument("--no-arm", action="store_true", help="don't run the arm's job on the real arm (gate only)")
     a = p.parse_args()
     bench = agent.Bench()
-    arm = agent.ArmConfig()
+    import heal_test
+    port = None if a.no_arm else heal_test.find_arm_port()
+    arm = agent.ArmConfig(port=port)
+    print("arm: %s" % arm.describe())
     if a.no_deploy:
         t = time.time() - a.minutes * 60
         since, since_iso, t0 = t, time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t)), t
@@ -76,9 +81,9 @@ def main():
     seen = []
     try:
         seen += lines_of("system prompt", agent.system_prompt(bench, agent.FLASH_CAP, arm))
-        for t in agent.load_tools(bench, "arm", extra=[agent.ARM_TOOL]):
+        for t in agent.load_tools(bench, "arm", extra=agent.ARM_HARNESS_TOOLS):
             seen += lines_of("tool definition %s" % t["name"], t["description"] + " " + json.dumps(t["input_schema"]))
-        job = agent.run_arm(bench, arm)
+        job = agent.run_arm(bench, arm)                 # the operator's job: with an arm, the reflex swings it
         seen += lines_of("kickoff", agent.arm_kickoff(job, agent.open_incidents(bench)))
         for name, args in CALLS:
             sent = blind.args(name, args)

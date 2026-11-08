@@ -18,8 +18,49 @@ REPO = Path(__file__).resolve().parents[2]
 for p in (REPO / "arm", REPO / "firmware" / "harness", REPO / "firmware" / "healer"):
     sys.path.insert(0, str(p))
 
+import arm_status  # noqa: E402
 import safe_replay  # noqa: E402
 from healer import detect  # noqa: E402
+
+REST = [18.0, -108.0, 95.3, -101.7, 12.9, 1.3]       # the real arm's folded pose (arm_status.py state, Nov 7)
+JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+
+class FakeClock:
+    """Simulated time for safe_replay: sleep() advances it, so an 8 s reflex or a 13 s wave takes no wall time."""
+
+    def __init__(self):
+        self.t = time.time()
+
+    def time(self):
+        return self.t
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += max(0.0, s)
+
+
+class FakeArm:
+    """Follows every command exactly. history keeps every commanded pose, in order."""
+
+    def __init__(self, pose=None):
+        self.pose = list(pose or REST)
+        self.moves = 0
+        self.history = []
+
+    def get_observation(self):
+        return {j + ".pos": v for j, v in zip(JOINTS, self.pose)}
+
+    def send_action(self, action):
+        self.pose = [float(action[j + ".pos"]) for j in JOINTS]
+        self.moves += 1
+        self.history.append(list(self.pose))
+        return action
+
+    def disconnect(self):
+        pass
 
 BAD_DIR = REPO / "firmware" / "demo" / "bad-images" / "07-us-dist-16bit"
 GOOD, BAD = {"crc": "BAADB704", "version": "v1.0", "status": "known-good"}, {"crc": "A12774C3", "version": "v1.7",
@@ -51,8 +92,10 @@ class FakeSensor:
 class SimPod:
     target, timeout = "sim", 180
 
-    def __init__(self, firmware="v1.7", distance_mm=900, seed=7):
+    def __init__(self, firmware="v1.7", distance_mm=900, seed=7, runs_dir=None):
         self.firmware, self.distance_mm = firmware, distance_mm
+        self.arm = FakeArm()                               # used when a command names an --arm-port
+        self.runs_dir = runs_dir
         self.workspace = firmware                          # a rollback flashes; it doesn't touch the source
         self.rng = random.Random(seed)
         self.deployments, self.notes, self.notified, self.calls, self.ops = [], [], [], [], []
@@ -160,19 +203,43 @@ class SimPod:
         return ""
 
     def sh(self, cmd, timeout=None):
-        """Only the arm's job is expected here: run safe_replay.main() on this pod's samples."""
+        """The arm's commands: safe_replay.py (the job) and arm_status.py (state, report, list), run in-process
+        on this pod's samples and the simulated arm."""
+        if "arm/arm_status.py" in cmd:
+            return self._status(shlex.split(cmd.split("arm/arm_status.py", 1)[1]))
         assert "arm/safe_replay.py" in cmd, cmd
         argv = shlex.split(cmd.split("arm/safe_replay.py", 1)[1])
-        out, saved = io.StringIO(), (safe_replay.Ultrasonic, safe_replay.time, sys.argv)
+        if self.runs_dir and "--runs-dir" not in argv:
+            argv += ["--runs-dir", str(self.runs_dir)]
+        out = io.StringIO()
+        saved = (safe_replay.Ultrasonic, safe_replay.time, safe_replay.connect_arm, sys.argv)
+        clock = FakeClock()
         safe_replay.Ultrasonic = lambda port=None: FakeSensor(self.d_rows(16))
-        safe_replay.time = types.SimpleNamespace(sleep=lambda s: None, time=time.time, monotonic=time.monotonic)
+        safe_replay.time = types.SimpleNamespace(sleep=clock.sleep, time=clock.time, monotonic=clock.monotonic,
+                                                 localtime=time.localtime, strftime=time.strftime)
+        safe_replay.connect_arm = lambda port, robot_id, max_step, units: self.arm
         sys.argv = ["safe_replay.py"] + argv
         try:
             with contextlib.redirect_stdout(out):
                 code = safe_replay.main()
         finally:
-            safe_replay.Ultrasonic, safe_replay.time, sys.argv = saved
+            safe_replay.Ultrasonic, safe_replay.time, safe_replay.connect_arm, sys.argv = saved
         return code, out.getvalue(), "", 0.1
+
+    def _status(self, argv):
+        a = dict(zip(argv[1::2], argv[2::2])) if len(argv) > 1 else {}
+        runs = Path(a.get("--runs-dir") or self.runs_dir or arm_status.runs_dir())
+        if argv[0] == "state":
+            out = {"ok": True, "robot_id": "simulated", "port": a.get("--arm-port"),
+                   "joints": {j: {"position": round(v, 1), "torque_on": False} for j, v in zip(JOINTS, self.arm.pose)}}
+        elif argv[0] == "report":
+            try:
+                out = arm_status.summarize(arm_status.load_run(runs, a.get("--run")))
+            except SystemExit as e:
+                return 1, str(e), "", 0.01
+        else:
+            out = {"runs": [json.loads(f.read_text()).get("run_id") for f in sorted(runs.glob("*.json"))]}
+        return 0, json.dumps(out), "", 0.01
 
     def scenario(self, *words):
         self.ops.append(words)

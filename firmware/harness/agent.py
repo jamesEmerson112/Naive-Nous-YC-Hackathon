@@ -7,7 +7,7 @@ harness runs on another machine), and lands in a transcript together with the ga
 
   agent.py run   --target pi@host:/path/to/firmware --driver claude   # one run on the open incidents
   agent.py watch --target pi@host:/path/to/firmware --driver ollama   # wake on new warn/critical incidents
-  agent.py run   --tools arm --ollama-url http://192.168.50.1:11434    # the arm task: offers arm_test too
+  agent.py run   --tools arm --ollama-url http://192.168.50.1:11434    # the arm task: arm_run, arm_state, arm_report
 
 The run streams live to the terminal (--view): the model's thinking and text as it generates them, each
 tool call with the gate's decision, and a summary of each result. view.py replays a saved transcript.
@@ -17,6 +17,7 @@ thinking on is the team's pick for the device). Runs land in harness/runs/<time>
 """
 import argparse
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -46,34 +47,50 @@ CORE_TOOLS = ["status", "triage", "incidents", "telemetry_stats", "telemetry_rec
               "src_read", "src_search", "src_diff", "src_edit", "src_commit", "fw_build", "fw_flash",
               "fw_rollback", "notify_human", "note"]
 
-ARM_CAP = 4                   # arm_test runs allowed per run (each one may move the real arm)
+ARM_CAP = 4                   # arm_run calls allowed per run (each one may move the real arm)
 
-# The arm task's tool set: observe, read the release history and source, flash, notify, and run the arm's
-# job. No source editing or builds: in this task a firmware fault is fixed by restoring the known-good image.
+# The arm task's tool set: observe, read the release history and source, flash, notify, and the arm tools
+# below. No source editing or builds: in this task a firmware fault is fixed by restoring the known-good image.
 ARM_TOOLS = ["status", "triage", "incidents", "telemetry_stats", "telemetry_recent", "events", "pod_cmd",
              "chip_status", "fw_images", "src_log", "src_read", "src_search", "src_diff", "fw_flash",
              "fw_rollback", "notify_human", "note"]
 
-# A harness tool: implemented here (run_arm), not in healer/, because the arm isn't part of the pod. It runs
-# arm/safe_replay.py on the bench exactly as an operator would.
-ARM_TOOL = {
-    "name": "arm_test", "risk": "arm",
-    "description": ("Run the robot arm's job the way the robot runs it. Its start gate reads the pod's ultrasonic "
-                    "distance (D lines) for 1.5 s and refuses to move if any sample is closer than the limit "
-                    "(200 mm) or the sensor reports no_echo/busy. If the gate passes, the arm plays its recorded "
-                    "motion (when no arm is attached, the job ends after the gate). Returns passed, the exit code "
-                    "(0 ran, 2 refused to start, 3 stopped mid-motion), and the job's log with the last distance "
-                    "samples it saw."),
-    "input_schema": {"type": "object", "properties": {}, "required": []},
-}
+# Harness tools: implemented here (run_arm, arm_state, arm_report), not in healer/, because the arm isn't part
+# of the pod. They run arm/safe_replay.py and arm/arm_status.py on the bench exactly as an operator would.
+_NO_ARGS = {"type": "object", "properties": {}, "required": []}
+ARM_HARNESS_TOOLS = [
+    {"name": "arm_run", "risk": "arm", "input_schema": _NO_ARGS,
+     "description": ("Launch the robot arm's job and wait for it to finish (about 25 s with the arm attached). The "
+                     "job: a start gate reads the pod's ultrasonic distance for 1.5 s. If anything reads closer than "
+                     "the limit (200 mm), the arm's obstacle reflex swings its base back and forth, away from it, "
+                     "and waits for the way to clear (up to 8 s; exit 4 if it never clears). If the sensor is "
+                     "untrustworthy (no_echo/busy) it refuses to start (exit 2). Once clear, the arm plays its "
+                     "recorded motion and returns to its start pose (exit 0). Returns passed, the exit code, the "
+                     "job's log, and its motion report (as arm_report).")},
+    {"name": "arm_state", "risk": "read", "input_schema": _NO_ARGS,
+     "description": ("Read the robot arm's joints now, straight from its servo bus: position (degrees; gripper "
+                     "0-100 % open), whether torque is on, load and temperature. Doesn't move the arm or change "
+                     "torque.")},
+    {"name": "arm_report", "risk": "read",
+     "input_schema": {"type": "object", "properties": {"run_id": {"type": "string", "description":
+                                                                  "a job's run id; default: the latest job"}},
+                      "required": []},
+     "description": ("The motion report of one of the arm's jobs (default: the latest): exit code and verdict, the "
+                     "start gate's verdict and distance samples, the obstacle reflex (swings, direction changes, the "
+                     "base's measured range), and the playback: frames played against frames planned, and per "
+                     "joint the commanded range, the measured range the arm actually reached, range_coverage (the "
+                     "share of the commanded range reached; 1.0 = all of it) and the median tracking error. Also "
+                     "the motion file's own frame count and joint ranges.")},
+]
 
 ARM_RULES = """
 ## The robot arm (this run)
-- An SO-101 robot arm depends on this pod. Before it moves, its start gate (the arm_test tool) reads the pod's ultrasonic distance for 1.5 s and refuses to start if any sample is closer than {min_mm} mm, or the sensor reports no_echo/busy. A wrong distance either blocks the arm or lets it hit someone.
+- An SO-101 robot arm depends on this pod. Its job (arm_run) starts with a gate on the pod's ultrasonic distance: if anything reads closer than {min_mm} mm, the arm's obstacle reflex swings its base back and forth to get away from it and waits for the way to clear; if the sensor is untrustworthy, the job refuses to start. A wrong distance either keeps the arm from working, makes it move when it shouldn't, or lets it hit someone.
+- arm_state shows the arm's joints now. arm_report shows what a job did, against the motion it was supposed to play.
 - If something really is in front of the sensor, or a wire is off, that is a person's job: notify_human with precise instructions, and don't flash.
 - If the pod's firmware is at fault, restore service first: flash the known-good image (fw_rollback). In this run that is the fix; a person will repair the release afterwards.
-- You don't have to explain the exact defect before you roll back. Telemetry that contradicts physics, plus a release since known-good that changed the code producing the wrong value, is enough: roll back, confirm with arm_test, then explain what you can and say what is still unclear.
-- After a fix, run arm_test again. You are done only when arm_test passes. Say in your report whether it passed.
+- You don't have to explain the exact defect before you roll back. Telemetry that contradicts physics, plus a release since known-good that changed the code producing the wrong value, is enough: roll back, then explain what you can and say what is still unclear.
+- After a fix, launch the arm's job yourself with arm_run and check its motion report: the job must exit 0 without the reflex, play every planned frame, and reach the commanded range on every joint. You are done only when you have checked that the expected movement happened. Say in your report what you checked, with the numbers.
 """
 
 OPERATING_RULES = """
@@ -152,40 +169,77 @@ class Bench:
 
 @dataclass
 class ArmConfig:
-    """How arm_test runs arm/safe_replay.py on the bench. port None: no arm attached, so the job stops after
-    the start gate (--check-only). With a port it moves the real arm, so python must have LeRobot."""
+    """How the arm tools run arm/safe_replay.py and arm/arm_status.py on the bench. port None: no arm attached,
+    so a job stops after the start gate (--check-only) and arm_state has nothing to read. With a port, jobs move
+    the real arm, so they run with LeRobot's python (default ~/lerobot-venv/bin/python)."""
     port: str = None
     python: str = None
+    robot_id: str = None                    # default: safe_replay.py picks the saved calibration
     min_mm: int = 200
+    on_blocked: str = "reflex"              # what the job does when the gate sees something close
+    runs_dir: str = None                    # default: arm/runs/
     extra: str = ""                         # more safe_replay.py flags, e.g. "--speed 0.5"
     timeout: int = 240
 
+    def _py(self, lerobot):
+        py = self.python if (self.python and lerobot) else ("~/lerobot-venv/bin/python" if lerobot else "python3")
+        return py if py.startswith("~/") else shlex.quote(py)      # leave ~ for the bench's shell to expand
+
+    def _shared(self):
+        return (["--robot-id", self.robot_id] if self.robot_id else []) + \
+               (["--runs-dir", self.runs_dir] if self.runs_dir else [])
+
     def command(self):
-        py = self.python or ("~/lerobot-venv/bin/python" if self.port else "python3")
-        py = py if py.startswith("~/") else shlex.quote(py)      # leave ~ for the bench's shell to expand
-        args = ["arm/safe_replay.py", "--min-mm", str(self.min_mm)]
-        args += ["--arm-port", self.port] if self.port else ["--check-only"]
-        return "cd .. && %s -u %s %s" % (py, " ".join(shlex.quote(a) for a in args), self.extra)
+        """The arm's job."""
+        args = ["arm/safe_replay.py", "--min-mm", str(self.min_mm), "--on-blocked", self.on_blocked]
+        args += (["--arm-port", self.port] if self.port else ["--check-only"]) + self._shared()
+        return "cd .. && %s -u %s %s" % (self._py(bool(self.port)), " ".join(shlex.quote(a) for a in args), self.extra)
+
+    def status_command(self, what, run_id=None):
+        args = ["arm/arm_status.py", what] + (["--arm-port", self.port] if what == "state" and self.port else [])
+        args += (["--run", run_id] if run_id else []) + self._shared()
+        if what != "state":                 # report and list only read JSON files
+            args = [a for a in args if a not in ("--robot-id", self.robot_id)]
+        return "cd .. && %s %s" % (self._py(what == "state"), " ".join(shlex.quote(a) for a in args))
 
     def describe(self):
         return ("moves the real arm on %s" % self.port) if self.port else "start gate only (no arm attached)"
 
 
-ARM_VERDICT = {0: "the job ran", 2: "refused to start", 3: "stopped mid-motion"}
+ARM_VERDICT = {0: "the job ran", 2: "refused to start", 3: "stopped mid-motion", 4: "obstacle reflex gave up"}
 
 
-def run_arm(bench, arm):
-    """Run the arm's job once. Returns the arm_test result dict."""
+def _json_out(code, out, err):
+    try:
+        return json.loads(out)
+    except ValueError:
+        return {"ok": False, "error": "exit %s: %s" % (code, (err or out).strip()[-800:])}
+
+
+def arm_report(bench, arm, args=None):
+    code, out, err, _ = bench.sh(arm.status_command("report", (args or {}).get("run_id")), timeout=60)
+    return _json_out(code, out, err)
+
+
+def arm_state(bench, arm, args=None):
+    if not arm.port:
+        return {"ok": False, "error": "no arm attached in this run (start gate only)"}
+    code, out, err, _ = bench.sh(arm.status_command("state"), timeout=60)
+    return _json_out(code, out, err)
+
+
+def run_arm(bench, arm, args=None):
+    """Run the arm's job once and return its log and motion report."""
     code, out, err, secs = bench.sh(arm.command(), timeout=arm.timeout)
-    log = (out + ("\n" + err if err.strip() else "")).strip()
-    verdict = ARM_VERDICT.get(code, "error (exit %s)" % code)
-    if code == 0 and not arm.port:
-        verdict = "start gate passed (no arm attached, so no motion)"
-    return {"passed": code == 0, "exit": code, "verdict": verdict, "mode": arm.describe(),
-            "log": clip_tail(log, 4000)[0], "seconds": round(secs, 1)}
+    log = "\n".join(ln for ln in (out + "\n" + err).splitlines() if ln.strip()).strip()
+    m = re.search(r"run record: \S*?([\w-]+)\.json", log)
+    report = arm_report(bench, arm, {"run_id": m.group(1)}) if m else None
+    verdict = (report or {}).get("verdict") or ARM_VERDICT.get(code, "error (exit %s)" % code)
+    return {"passed": code == 0, "exit": code, "verdict": verdict, "mode": arm.describe(), "seconds": round(secs, 1),
+            "log": clip_tail(log, 3000)[0], "motion_report": report}
 
 
-HARNESS_TOOLS = {"arm_test": run_arm}
+HARNESS_TOOLS = {"arm_run": run_arm, "arm_state": arm_state, "arm_report": arm_report}
 
 
 # ----------------------------------------------------------------------------------------- tools
@@ -218,10 +272,10 @@ def arm_kickoff(job, incidents):
     """What woke the agent in the arm task: the arm's job failed. Neutral: the job's own log, podd's open
     incidents, nothing about the cause."""
     rows = [json.dumps({k: i.get(k) for k in ("kind", "severity", "summary", "first_evidence")}) for i in incidents]
-    return ("The robot arm's job did not run (exit %s: %s). Its log:\n%s\n\n" % (job.get("exit"), job.get("verdict"),
+    return ("The robot arm's job did not go as expected (exit %s: %s). Its log:\n%s\n\n" % (job.get("exit"), job.get("verdict"),
                                                                              job.get("log", "").strip()) +
             ("podd has these open incidents:\n" + "\n".join(rows) if rows else "podd has no open incidents.") +
-            "\n\nFind out why, restore service if you can, and confirm with arm_test.")
+            "\n\nFind out why, restore service if you can, and confirm that the arm moves as expected.")
 
 
 def open_incidents(bench):
@@ -242,7 +296,7 @@ def run_tool(bench, name, args, arm=None):
     if name in HARNESS_TOOLS:
         t0 = time.time()
         try:
-            obj = HARNESS_TOOLS[name](bench, arm)
+            obj = HARNESS_TOOLS[name](bench, arm, args)
             return obj, json.dumps(obj, ensure_ascii=False), False, time.time() - t0
         except Exception as e:                  # the tool broke, not the arm's job: an error result
             obj = {"ok": False, "error": "harness: %s: %s" % (type(e).__name__, e)}
@@ -279,6 +333,8 @@ def isolation_violation(name, args):
     for key in ("rev", "rev_a", "rev_b"):       # a leading '-' would be read by git as an option
         if str(args.get(key) or "").startswith("-"):
             return "%s must be a revision, not an option" % key
+    if name == "arm_report" and args.get("run_id") and not re.fullmatch(r"[\w-]{1,64}", str(args["run_id"])):
+        return "run_id must be a run id like 20261107-235046-085"
     p = args.get("path")
     if p and (str(p).startswith(("/", "~")) or ".." in PurePosixPath(str(p)).parts):
         return "paths must stay inside the firmware workspace"
@@ -312,7 +368,7 @@ class Gate:
             return "allow", "flash %d of %d" % (self.flashes, self.flash_cap), None
         if risk == "arm":
             if self.arm_runs >= self.arm_cap:
-                return "deny", "the arm_test budget for this run is used up (%d)" % self.arm_cap, "forbidden"
+                return "deny", "the arm_run budget for this run is used up (%d)" % self.arm_cap, "forbidden"
             self.arm_runs += 1
             return "allow", "arm run %d of %d" % (self.arm_runs, self.arm_cap), None
         if risk in ALLOWED_RISKS:
@@ -563,12 +619,12 @@ def run_agent(bench, driver, out_dir, *, tools="all", kickoff=None, max_turns=60
               flash_cap=FLASH_CAP, max_result_chars=MAX_RESULT_CHARS, blind=None, label="", ui=None, arm=None,
               arm_cap=ARM_CAP, budget_notice=True):
     """One agent run. Returns a summary dict; transcript.jsonl and report.md go to out_dir.
-    ui: a console.Console for the live view. arm: an ArmConfig to offer the arm_test tool."""
+    ui: a console.Console for the live view. arm: an ArmConfig to offer the arm tools."""
     ui = ui or NullUI()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     log = Transcript(out_dir / "transcript.jsonl")
-    offered = load_tools(bench, tools, extra=[ARM_TOOL] if arm else ())
+    offered = load_tools(bench, tools, extra=ARM_HARNESS_TOOLS if arm else ())
     system = system_prompt(bench, flash_cap, arm)
     if kickoff is None:
         kickoff = kickoff_text(open_incidents(bench))
@@ -705,22 +761,23 @@ def add_agent_args(p):
     p.add_argument("--effort", default="high", help="Claude effort (low, medium, high, xhigh, max)")
     p.add_argument("--base-url", help="Messages API endpoint for the claude driver, e.g. a passthrough on the "
                                       "Romulus server (default: ANTHROPIC_BASE_URL or the Anthropic API)")
-    p.add_argument("--tools", default="all", help="all, core (%d tools for small models), arm (%d tools plus arm_test), or a comma list" % (len(CORE_TOOLS), len(ARM_TOOLS)))
+    p.add_argument("--tools", default="all", help="all, core (%d tools for small models), arm (%d tools plus the arm tools), or a comma list" % (len(CORE_TOOLS), len(ARM_TOOLS)))
     p.add_argument("--ollama-url", default="http://localhost:11434")
     p.add_argument("--num-ctx", type=int, default=32768, help="Ollama context window")
     p.add_argument("--max-turns", type=int, default=60)
     p.add_argument("--time-limit", type=int, default=1500, help="seconds per run")
     p.add_argument("--flash-cap", type=int, default=FLASH_CAP)
     p.add_argument("--max-result-chars", type=int, default=MAX_RESULT_CHARS)
-    g = p.add_argument_group("the robot arm (offers the arm_test tool)")
-    g.add_argument("--arm", action="store_true", help="offer arm_test: runs arm/safe_replay.py's start gate "
+    g = p.add_argument_group("the robot arm (offers arm_run, arm_state and arm_report)")
+    g.add_argument("--arm", action="store_true", help="offer the arm tools: arm_run runs arm/safe_replay.py's start gate "
                                                       "(no motion unless --arm-port is given)")
-    g.add_argument("--arm-port", help="servo bus adapter (/dev/serial/by-id/...): arm_test moves the real arm")
+    g.add_argument("--arm-port", help="servo bus adapter (/dev/serial/by-id/...): arm_run moves the real arm")
     g.add_argument("--arm-python", help="python for arm/safe_replay.py (default: python3, or ~/lerobot-venv/bin/python "
                                         "with --arm-port)")
     g.add_argument("--arm-args", default="", help="more safe_replay.py flags, e.g. '--speed 0.5'")
     g.add_argument("--min-mm", type=int, default=200, help="the arm's start-gate distance limit")
-    g.add_argument("--arm-cap", type=int, default=ARM_CAP, help="arm_test runs allowed per run")
+    g.add_argument("--arm-cap", type=int, default=ARM_CAP, help="arm_run calls allowed per run")
+    g.add_argument("--robot-id", help="the arm's calibration name (default: the saved one)")
     p.add_argument("--blind-minutes", type=float,
                    help="hide every record older than this many minutes (earlier runs' notes, fixes, notifications), "
                         "as evaluation runs do; set it to just cover the current fault")
@@ -735,7 +792,7 @@ def add_agent_args(p):
 def make_arm(a):
     if not (a.arm or a.arm_port or a.tools == "arm"):
         return None
-    return ArmConfig(port=a.arm_port, python=a.arm_python, min_mm=a.min_mm, extra=a.arm_args)
+    return ArmConfig(port=a.arm_port, python=a.arm_python, min_mm=a.min_mm, extra=a.arm_args, robot_id=a.robot_id)
 
 
 def make_blind(a, bench):

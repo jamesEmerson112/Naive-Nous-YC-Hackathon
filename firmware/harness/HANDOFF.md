@@ -30,10 +30,14 @@ reference for flags, the gate, blind mode and scoring. This file holds the runbo
 - **Hint-free rerun passed (11:22 PM PST):** three hints were removed (triage hypothesis text, the commit
   message, a code comment), and `arm/hint_audit.py` finds 0 leaks. The agent rolled back on turn 5 and its
   `arm_test` passed on turn 6. Restart podd after any `detect.py` change: triage runs inside podd.
+- **Arm-motion scenario passed on the bench (Sun Nov 8, 12:05 AM PST, `20261108-000512-arm07-ollama`):** all 11 checks. On v1.7 the
+  arm's obstacle reflex flailed (11 swings, 9 direction changes). The agent rolled back on turn 3, launched the
+  job itself on turn 4, and the arm played all 663 frames (range coverage 0.97–0.99 on every joint).
 - **Still not verified:** steps 4–5 (not run tonight; the sensor that blocked `evaluate.py` now works). Also
   unverified: the real arm motion (`--arm-port`, no arm on USB), the SSH `--target` path and the `claude` driver.
 - **Changed for the arm scenario (see `README.md`, "The arm task"):** the live view (`console.py`,
-  `view.py`), Ollama streaming, the `arm_test` harness tool, `--tools arm`, the arm rules, the turn-budget
+  `view.py`), Ollama streaming, the arm harness tools (`arm_run`, `arm_state`, `arm_report`; first `arm_test`),
+  `--tools arm`, the arm rules, the turn-budget
   notice, the `us_mismatch` triage rule (restart podd after pulling, so it loads), and bad release v1.7.
 
 ## Steps (on the Pi, in `firmware/harness`)

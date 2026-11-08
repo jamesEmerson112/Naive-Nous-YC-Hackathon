@@ -18,9 +18,11 @@ pod (STM32 + HC-SR04) --"D mm=.. st=.."--> Pi --(podd socket, or the probe's ser
 | `live_replay.py` | same, but watches the sensor for the whole run and holds the arm if anything comes within `--min-mm` (`safe_replay.py --live-check`) |
 | `wave.json` | **default motion.** A wave recorded on this arm by hand (kinesthetic, 2026-11-07): 663 frames at 50 fps (13.2 s), in degrees |
 | `motions/svla_so101_pickplace_ep0.json` | episode 0 of [lerobot/svla_so101_pickplace](https://huggingface.co/datasets/lerobot/svla_so101_pickplace): 303 frames at 30 fps (10 s), pick-and-place from the folded rest pose and back |
-| `heal_test.py` | **self-healing bench test**: a bad pod firmware blocks the arm, the healer agent fixes it, the arm runs (below) |
+| `heal_test.py` | **self-healing bench test**: a bad pod firmware makes the arm flail, the healer agent fixes it, runs the job itself and checks the motion (below) |
+| `arm_status.py` | the arm's live joint state (read straight from the servo bus, torque untouched) and a report of what a job did vs its plan; the agent's `arm_state` / `arm_report` tools |
 | `hint_audit.py` | captures everything the agent would read on v1.7 (prompt, tools, kickoff, every read tool through blind mode) and flags anything that gives the answer away |
-| `tests/` | offline tests for that loop: the bad image's C math, the triage rule, the gate, the agent loop (`simpod.py` is the simulated pod) |
+| `tests/` | offline tests for that loop: the bad image's C math, the triage rule, the gate, the reflex's safety limits, the agent loop (`simpod.py`: simulated pod and arm) |
+| `runs/` | (gitignored) one JSON record per job: gate samples, phases, reflex swings, commanded and measured joint positions |
 | `extract_motion.py` | regenerates that file (play it with `--motion arm/motions/svla_so101_pickplace_ep0.json`), or pulls another episode/dataset (`--episode 7`, `--repo ...`) |
 
 ## Setup (done once on this Pi)
@@ -105,53 +107,85 @@ Otherwise it opens the probe's serial port directly. Don't run both that and `ma
   The arm must not be in the cone in its rest pose, or it blocks its own start. Moving into the cone
   mid-motion only matters with `--live-check`.
 
-## Self-healing test: bad pod firmware → agent fixes it → arm runs
-`heal_test.py` plants a firmware fault that makes the ultrasonic report something close at all times, lets
-the pod healer agent (qwen3.5:4b, live on screen) find it with the `heal` tools, and checks on the bench that
-the agent flashed the known-good image and that the arm's job runs again.
+## Self-healing test: bad pod firmware → the arm flails → the agent fixes it and proves the arm works
+`heal_test.py` plants a firmware fault that makes the ultrasonic report something close at all times. The arm's
+obstacle reflex reacts, so the arm visibly flails. Then the pod healer agent (qwen3.5:4b, live on screen) works
+out what's wrong with the `heal` tools, restores the known-good firmware, launches the arm's job itself and
+checks the recorded motion before it reports. The test then checks all of it on the bench.
 
 **The fault:** pod release v1.7 (`firmware/demo/bad-images/07-us-dist-16bit`). One misplaced `uint16_t` cast
-in the HC-SR04 distance math wraps every distance into 0–32 mm, so the gate always says `object at ~15 mm`.
-The echo time stays correct, so the pod's own telemetry contradicts itself, and podd's `us_mismatch` rule
-(`firmware/healer/healer/detect.py`) flags that without any model. Details: `firmware/docs/DEMO.md` §7.
+in the HC-SR04 distance math wraps every distance into 0–32 mm. The echo time stays correct, so the pod's own
+telemetry contradicts itself, and podd's `us_mismatch` rule (`firmware/healer/healer/detect.py`) flags that
+without any model. Details: `firmware/docs/DEMO.md` §7.
 
-**What the agent gets** (`firmware/harness/agent.py`, `--tools arm`): the observe tools, `src_log`/`src_diff`/
-`src_read`/`src_search`, `fw_flash`/`fw_rollback` (3 per run), `notify_human`, `note`, and `arm_test`, which runs
-this folder's `safe_replay.py` on the bench (gate only, or the real motion with `--arm-port`; 4 per run). No
-shell, no source editing, and no access to `demo/`, `pod/` or this test. It's woken by the arm's failure log
-and podd's incidents.
+**What the arm does about it:** the job runs `safe_replay.py --on-blocked reflex`. When the start gate sees
+something within 200 mm, the obstacle reflex tries to get away from it while it waits for the way to clear.
+The base swings away, alternating sides, with quick twitches mixed in, while the wrist rolls and the gripper
+flinches. The noisy fake readings drive the swing sizes and pauses, so the motion is irregular. After 8 s it
+gives up, returns to its start pose and exits 4. Limits, enforced in code whatever the flags say:
+- **Base:** ±20° by default, never more than ±25°; 55°/s by default, never more than 60°/s.
+- **Wrist roll:** ±20° at most 90°/s.
+- **Gripper:** opens at most 25%.
+- **Shoulder, elbow and wrist flex:** hold the folded pose.
+
+On good firmware the gate passes and the arm plays its wave.
+
+**What the agent gets** (`firmware/harness/agent.py`, `--tools arm`):
+- **Pod tools:** the observe tools, `src_log`/`src_diff`/`src_read`/`src_search`, `fw_flash`/`fw_rollback` (3 per
+  run), `notify_human` and `note`.
+- **`arm_run`:** launches the job (4 per run) and returns its log and motion report.
+- **`arm_state`:** the arm's joints now (positions, torque, load, temperature).
+- **`arm_report`:** what any job did against its plan: frames played, each joint's commanded vs measured range
+  (`range_coverage`), reflex swings.
+- **Not available:** a shell, source editing, and access to `demo/`, `pod/` or this test.
+- **Rules:** restore service, then run the job itself and check that every frame played, there was no reflex,
+  and every joint reached its commanded range, before reporting with the numbers.
 
 ### Run it (on the Pi, from the repo root)
-Before you start: the HC-SR04 points at open space (nothing within 200 mm), `server/start.sh` runs on the
-laptop, and podd runs:
-```bash
-pgrep -f healer/bin/podd || (cd firmware && nohup healer/bin/podd > healer/var/logs/podd.out 2>&1 &)   # once
-python3 server/pi_check.py                                  # the model answers through the relay
-python3 arm/heal_test.py                                    # the test: gate only, the arm doesn't move
-```
-With the arm connected and calibrated, so the agent's `arm_test` plays the wave:
-```bash
-python3 arm/heal_test.py --arm-port /dev/serial/by-id/<adapter> --arm-args "--speed 0.5"
-```
-Useful flags: `--runs 3` (repeat), `--view brief` (shorter thinking) or `--view off`, `--keep` (leave the pod
-as the agent left it), `--sim` (real model against the simulated pod in `tests/simpod.py`: a rehearsal when
-the bench is busy; proves nothing about the bench).
+Before you start:
+- The HC-SR04 points at open space (nothing within 200 mm).
+- The arm is folded in its rest pose with room to swing ±25° at the base.
+- `server/start.sh` runs on the laptop.
+- podd runs.
 
-The test prints five stages: (1) reset to v1.0, and the gate must pass; (2) deploy v1.7, podd must open
-`us_mismatch` and the gate must refuse; (3) the agent, streaming its thinking, each tool call with the gate's
-decision, and each result; (4) checks made on the bench, not taken from the agent's words: known-good is
-running (over SWD), the agent's own flash verified it, its `arm_test` after the flash passed, a fresh gate
-run passes, triage is clean, and it named the root cause; (5) reset. Exit 0 = every check passed.
-
-**Verify it yourself, independently of the test:**
 ```bash
-cd firmware
-demo/scenario start 07                                      # plant the fault
-python3 ../arm/safe_replay.py --check-only                  # REFUSES: object at ~15 mm; samples show us≈5000+ but mm<33
-healer/bin/heal triage                                      # critical us_mismatch
-cd harness && python3 agent.py run --tools arm --blind-since-deploy --ollama-url http://192.168.50.1:11434   # the agent, live
-cd .. && healer/bin/heal chip_status                        # known-good build running
-python3 ../arm/safe_replay.py --check-only                  # passes now
+pgrep -f "python3 healer/bin/podd" >/dev/null || (cd firmware && setsid nohup python3 healer/bin/podd > healer/var/logs/podd.out 2>&1 < /dev/null &)
+python3 server/pi_check.py                  # the model answers through the relay
+python3 arm/heal_test.py                    # the whole scenario; finds the arm on USB by itself
+```
+Useful flags:
+- `--view brief` shortens the thinking; `--view off` hides it.
+- `--runs 3` repeats the scenario.
+- `--keep` leaves the pod as the agent left it.
+- `--no-arm` checks the gate only and moves nothing.
+- `--arm-args "--speed 0.5"` plays the wave at half speed.
+- `--sim` runs the real model against the simulated pod and arm in `tests/simpod.py`: a rehearsal that proves
+  nothing about the bench.
+
+The test runs five stages:
+1. **Reset to v1.0.** The gate must pass (checked without moving).
+2. **Deploy v1.7.** podd must open `us_mismatch`, and the operator's job must make the arm flail and give up
+   (exit 4).
+3. **The agent.** Its thinking streams, then each tool call with the harness's decision and a summary of each
+   result. You see the rollback, then `ARM JOB OK`, `playback: 663 of 663 frames` and the range reached per
+   joint.
+4. **Checks on the bench**, not taken from the agent's words:
+   - the agent's flash verified known-good;
+   - the agent ran the job after that;
+   - that job's recorded motion matches the plan;
+   - a fresh gate run passes and triage is clean;
+   - the agent named the root cause and reported the motion it checked.
+5. **Reset.**
+
+Exit 0 means every check passed.
+
+**Step by step, if you'd rather drive each stage yourself** (from `firmware/`):
+```bash
+ARM=$(ls /dev/serial/by-id/*1a86* | head -1)
+demo/scenario start 07                                                    # plant the bad firmware
+~/lerobot-venv/bin/python ../arm/safe_replay.py --arm-port $ARM --on-blocked reflex   # the arm flails, exit 4
+cd harness && python3 agent.py run --tools arm --arm-port $ARM --blind-since-deploy --ollama-url http://192.168.50.1:11434
+cd .. && python3 ../arm/arm_status.py report                              # what the agent's job did
 demo/scenario reset
 ```
 Replay any run later: `python3 firmware/harness/view.py` (newest) or `view.py firmware/harness/runs/<dir>`.
@@ -174,7 +208,14 @@ name...) outside the firmware source; exit 0 means no leaks. What keeps it clean
 ```bash
 ~/lerobot-venv/bin/python -m pytest arm/tests -q
 ```
-They compile the v1.0 and v1.7 distance lines with gcc and check every echo value, run podd's rules and the
-real gate code on simulated samples, drive the real agent loop with a scripted model through a good fix, a
-wrong diagnosis and the arm-run cap, render the live view and its replay, and run `heal_test.py`'s full
-sequence on the simulated pod, including the abort when the sensor is really blocked.
+What they cover:
+- The v1.0 and v1.7 distance lines, compiled with gcc, checked at every echo value.
+- podd's rules and the real gate code on simulated samples.
+- The reflex's limits on the simulated arm: held joints, swing and speed caps under any flags, back home,
+  irregular motion, a real obstacle that clears.
+- The motion report.
+- The real agent loop, driven by a scripted model through a good fix, a wrong diagnosis, a job run before the
+  fix, and the arm-run cap.
+- The live view and its replay.
+- `heal_test.py`'s full sequence on the simulated pod and arm, including the abort when the sensor is really
+  blocked.

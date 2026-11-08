@@ -53,17 +53,27 @@ Every `agent.py run` and `watch` streams to the terminal (`--view full`, the def
 lines of each thinking block, `off` hides thinking, `none` prints only the JSON summary). For each turn it
 shows the thinking (`┊`) and text (`▌`) as Ollama generates them, then each call (`▶ name args [risk]`, or
 `REFUSED by the harness: why`) and its result (`◀ seconds summary`): triage findings by severity, diffs in
-colour, flash verification, `arm_test` verdicts. The transcript holds everything, so `view.py` can replay
+colour, flash verification, arm jobs with their motion (reflex swings, frames played, range reached per joint). The transcript holds everything, so `view.py` can replay
 any run the same way.
 
 ## The arm task (`--tools arm`)
 The robot arm depends on the pod's ultrasonic distance. `--tools arm` offers 17 `heal` tools (observe, read
-the source and history, flash, notify; no edits or builds) plus `arm_test`, a harness tool that runs
-`arm/safe_replay.py` on the bench: the start gate only (`--check-only`), or the real motion with
-`--arm-port`. It's capped at `--arm-cap` runs (default 4). The system prompt gains the arm rules
-(`ARM_RULES`): a real obstruction goes to a person, a firmware fault gets `fw_rollback` to known-good, and
-the run is done only when `arm_test` passes. `arm/heal_test.py` is the scenario test (bad release v1.7 →
-`us_mismatch` → rollback → arm runs) and scores from the bench; see `arm/README.md`.
+the source and history, flash, notify; no edits or builds) plus three harness tools that run `arm/` scripts on
+the bench:
+- **`arm_run`** launches the arm's job (`safe_replay.py --on-blocked reflex`): only the start gate without
+  `--arm-port`, the real motion with it. It returns the log and motion report and is capped at `--arm-cap`
+  runs (default 4).
+- **`arm_state`** reads the joints from the servo bus without touching torque.
+- **`arm_report`** reports what a job did against its plan.
+
+The system prompt gains the arm rules (`ARM_RULES`):
+- a real obstruction goes to a person;
+- a firmware fault gets `fw_rollback` to known-good;
+- after a fix, the agent launches the job itself and checks the motion report (exit 0, no reflex, every frame
+  played, every joint at its commanded range) before reporting.
+
+`arm/heal_test.py` is the scenario test: bad release v1.7 → the arm flails → `us_mismatch` → rollback → the
+agent's own job plays the wave. It scores from the bench; see `arm/README.md`.
 
 All runs also get one turn-budget notice, appended to a tool result and marked `[harness: ...]`, when a
 quarter of the turns are left (in `agent.py`, `budget_notice`).

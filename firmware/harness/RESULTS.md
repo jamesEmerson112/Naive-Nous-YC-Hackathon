@@ -18,6 +18,20 @@ Report format from [`HANDOFF.md`](HANDOFF.md). One row per run. The raw runs sta
   doesn't show the bench works. The one bench run stopped at stage 1 because the HC-SR04 gets no echo
   (wiring, see HANDOFF).
 
+## Bench, arm moving: passed (Sun Nov 8, 12:05 AM PST)
+`20261108-000512-arm07-ollama`: the real pod and the real SO-101. On v1.7 the operator's job runs the obstacle reflex: the arm flails
+for 8 s and gives up (exit 4). The agent gets `arm_run`, `arm_state` and `arm_report`, and its rules say to
+launch the job itself after the fix and check the motion. Hint-free setup, v2 harness. **All 11 checks
+passed.**
+
+| | |
+|---|---|
+| Fault, on the arm | 11 swings, 9 direction changes, base -3.1° to 34.6° around 15.8°, never cleared, exit 4 |
+| Timeline | `status`, `fw_images`; **`fw_rollback`, verified (turn 3, +46 s)**; **`arm_run`: exit 0, 663 of 663 frames, coverage 0.97–0.99 on every joint (turn 4, +72 s)**; then `src_diff`, `src_read`, `note` with the root cause; report (turn 12) |
+| Totals | 12 turns, 10 tool calls (8 read, 1 flash, 1 arm), 1 refused (`src_commit`, not in the arm tool set), 0 errors, 141 s |
+| Root cause | named the `(uint16_t)` cast on line 122 of `hcsr04.c`. It put the truncated value at 29,993 where it is 31,617 (752,513 mod 65,536), though it got ~15 mm right |
+| Checked on the bench | the agent's job is re-read from its run record: every frame played, no reflex, lowest coverage gripper 0.97 |
+
 ## Bench, hint-free: passed (Sat Nov 7, 11:22 PM PST)
 `20261107-232214-arm07-ollama`: all 9 checks, after three hints were removed. `arm/hint_audit.py` found 0
 leaks on this setup. The hints that were there before:
