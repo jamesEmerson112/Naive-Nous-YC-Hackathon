@@ -37,7 +37,7 @@
   <p class="tc-kicker tc-verdict-meta">
     {%- if v.confidence %}<span class="pill chip-info">Verdict · {{ v.confidence }} confidence</span>{% endif %}
     {%- if v.joint %}<span class="pill chip-info mono">{{ v.joint }}</span>{% endif %}
-    {%- if p and p.staged %}<span class="pill chip-good">✓ {{ 'spare part' if v.part_needed == 'spare' else 'part' }} staged</span>{% elif v.part_needed == 'spare' %}<span class="pill chip-info">spare suggested</span>{% elif v.part_needed == 'yes' %}<span class="pill chip-info">part needed</span>{% elif v.part_needed == 'no' %}<span class="pill chip-info">no part needed</span>{% endif %}
+    {%- if p and p.staged %}<span class="pill chip-good">{{ icon('check') }}{{ 'spare part' if v.part_needed == 'spare' else 'part' }} staged</span>{% elif v.part_needed == 'spare' %}<span class="pill chip-info">spare suggested</span>{% elif v.part_needed == 'yes' %}<span class="pill chip-info">part needed</span>{% elif v.part_needed == 'no' %}<span class="pill chip-info">no part needed</span>{% endif %}
     {{- recorded_tag() -}}
   </p>
 </section>
@@ -99,7 +99,7 @@
 {% set unsent = e.status not in ('sent', 'sending') %}
 <section class="tc-card tc-email is-{{ e.status }}" aria-label="Technician email">
   <div class="tc-email-top">
-    <p class="tc-kicker">{% if sent %}<span class="pill chip-good">{{ icon('check') }}Technician emailed{% if e.sent_at_label %} · {{ e.sent_at_label }}{% endif %}</span>{% elif e.status == 'sending' %}<span class="pill chip-wait">Emailing the technician</span>{% elif e.status == 'failed' %}<span class="pill chip-bad">✕ Email failed</span>{% else %}<span class="pill chip-info">Email not sent</span>{% endif %}{{ recorded_tag() }}</p>
+    <p class="tc-kicker">{% if sent %}<span class="pill chip-good">{{ icon('check') }}Technician emailed{% if e.sent_at_label %} · {{ e.sent_at_label }}{% endif %}</span>{% elif e.status == 'sending' %}<span class="pill chip-wait">Emailing the technician</span>{% elif e.status == 'failed' %}<span class="pill chip-bad">{{ icon('x') }}Email failed</span>{% else %}<span class="pill chip-info">Email not sent</span>{% endif %}{{ recorded_tag() }}</p>
     <span class="tc-envelope">{{ icon('mail') }}</span>
   </div>
   {% if e.subject %}<h2 class="tc-subject">{% if not sent %}<span class="tc-draft">draft</span> {% endif %}{{ e.subject }}</h2>{% endif %}

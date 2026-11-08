@@ -130,12 +130,12 @@ def test_failed_email_and_failed_stage():
     v["email"].update(status="failed", error="Naïve outbound mail answered 501")
     html = partial(v)
     assert '<li class="st-failed">' in html and "email failed" in html
-    assert "✕ Email failed" in html and "✓ sent" not in html
+    assert '#i-x"/></svg>Email failed' in html and "✓ sent" not in html
 
 
 def test_staged_chip_only_when_the_gate_staged_the_part():
     v = sample("waiting")
-    assert "✓ spare part staged" in partial(v)
+    assert '#i-check"/></svg>spare part staged' in partial(v)
     v["part"]["staged"] = False
     html = partial(v)
     assert "spare part staged" not in html and "spare suggested" in html
