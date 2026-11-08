@@ -1,0 +1,95 @@
+"""F4: bad candidate → rollback (flows doc F4), both bad-candidate modes of the fake arm.
+
+- `bad`: the canary's post-install health check fails, it rolls back on its own and
+  reports `rolled_back`.
+- `bad-late`: the install passes, then the canary checks in `failing` and repeats the
+  fault. Its `last_good` is already the bad candidate (installed == assigned), which is why
+  the gate restores the canary's *previous assignment*, not `last_good`.
+"""
+
+from datetime import timedelta
+
+import pytest
+
+from fake_device.scenarios import SCENARIOS
+
+S = timedelta(seconds=1)
+
+
+def _devices(client):
+    return {d["id"]: d for d in client.get("/v1/devices").json()}
+
+
+@pytest.mark.parametrize(
+    ("scenario", "reason"),
+    [
+        ("bad", "canary install rolled_back"),
+        ("bad-late", "canary repeated camera_occluded"),
+    ],
+)
+def test_f4_bad_candidate_is_rolled_back_on_the_canary(
+    scenario, reason, client, arms, tick_arms, work, now, count_events
+):
+    tick_arms(now)
+    tick_arms(now + 10 * S)
+    # A held overlay from the canary itself, in bad-candidate mode.
+    for i, step in enumerate(SCENARIOS[scenario](arms["sim-2"], 0)):
+        step.run(now + (20 + i) * S)
+    tick_arms(now + 30 * S)
+
+    # 1. The batch makes firmware v2 (and harness v2); replay passes; v2 goes to the canary.
+    work(now + 40 * S)
+    work(now + 41 * S)
+    cands = {c["type"]: c for c in client.get("/v1/candidates").json()}
+    fw = client.get(f"/v1/candidates/{cands['firmware']['id']}").json()
+    assert fw["status"] == "canary" and fw["replay"]["passed"]
+    assert fw["canary_prev_version"] == 1
+
+    # 2. The canary installs it and fails.
+    installs = tick_arms(now + 50 * S)["sim-2"]
+    if scenario == "bad":
+        assert ("firmware", 2, "rolled_back") in installs
+    else:
+        assert ("firmware", 2, "installed") in installs
+        assert _devices(client)["sim-2"]["last_good"]["firmware"] == 2  # the trap
+        tick_arms(now + 60 * S)  # checks in failing
+    work(now + 70 * S)
+
+    # 3. Rolled back: the canary is assigned what it had before, with the reason shown.
+    fw = client.get(f"/v1/candidates/{cands['firmware']['id']}").json()
+    assert fw["status"] == "rolled_back"
+    rolled = [e for e in fw["events"] if e["kind"] == "candidate.rolled_back"]
+    assert len(rolled) == 1 and reason in rolled[0]["why"]
+    assert "sim-2 is assigned firmware 1 again" in rolled[0]["why"]
+    # The harness from the same overlay goes with it.
+    hv = client.get(f"/v1/candidates/{cands['harness']['id']}").json()
+    assert hv["status"] == "rolled_back"
+    assert "firmware v2 from the same overlay was rolled back" in hv["why"] or any(
+        "firmware v2 from the same overlay was rolled back" in e["why"] for e in hv["events"]
+    )
+
+    devs = _devices(client)
+    assert devs["sim-2"]["assigned"] == {"firmware": 1, "harness": 1}
+    # No non-canary device was ever assigned v2.
+    for other in ("sim-1", "sim-3", "arm-1"):
+        assert devs[other]["assigned"] == {"firmware": 1, "harness": 1}
+    assert count_events("candidate.promoted") == 0
+
+    # The canary goes back to its last good version and stays there.
+    tick_arms(now + 80 * S)
+    tick_arms(now + 90 * S)
+    sim2 = _devices(client)["sim-2"]
+    assert sim2["running"]["firmware"] == sim2["last_good"]["firmware"] == 1
+    assert sim2["running"]["harness"] == 1
+    for t in (100, 300):
+        work(now + t * S)
+    assert _devices(client)["sim-2"]["assigned"] == {"firmware": 1, "harness": 1}
+
+    # The story of the original incident ends in the rollback, with its reason.
+    first = min(
+        (i for i in client.get("/v1/incidents").json() if i["device_id"] == "sim-2"),
+        key=lambda i: i["occurred_at"],
+    )
+    story = client.get(f"/v1/incidents/{first['incident_id']}/story").json()
+    assert story["chain"].endswith("→ canary sim-2 → rolled back"), story["chain"]
+    assert reason in [s for s in story["steps"] if s["kind"] == "candidate.rolled_back"][0]["why"]
