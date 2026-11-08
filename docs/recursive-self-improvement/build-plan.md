@@ -1,6 +1,6 @@
 # Fleet learning: build plan (v2, Sun Nov 8, 9:00 → 10:00 AM freeze, then after 1 PM)
 
-_**Superseded by what was built** (see the README's *What's built* and [`runbook.md`](runbook.md)): everything through T0 plus the T1 Skills mirror landed before 10:20 AM. Fact 2 below was wrong: Kent's `tech` stack mounts from `.claude/worktrees/tech-demo`, not the main checkout, so `cloud/src` merges to main were safe._
+_**Superseded by what was built** (see the README's *What's built* and [`runbook.md`](runbook.md)): everything through T0 plus the T1 Skills mirror landed by 10:10 AM. Fact 2 below was wrong: Kent's `tech` stack mounts from `.claude/worktrees/tech-demo`, not the main checkout, so `cloud/src` merges to main were safe._
 
 _Times are PST. Hacking stops at 11:00 (`docs/hackathons.md:39`); the team freezes code at 10:00 to rehearse. v2 follows the execution review ([`review.md`](review.md)). The Naïve Technician was rehearsed at 8:44 and is merged (#65–#72), so Kent is free from about 9:00._
 

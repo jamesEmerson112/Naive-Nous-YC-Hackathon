@@ -71,7 +71,7 @@ The rest is the existing vocabulary: candidate, gate, canary, version (`docs/clo
 - The judges score "how much of the company runs without you" (`docs/hackathons.md:12`). The table above *is* that answer, with the one place a person steps in for each kind of change.
 - The team already wrote this agent's job down: the CEO board's open **INSIGHTS** card, "Batches robot and embedded-agent traces, clusters failures… ranks them by fleet impact… proposing firmware/harness changes" (read-only Naïve MCP check, 8:25 AM).
 
-## What's built (Sun Nov 8, 9:05–10:20 AM PST)
+## What's built (Sun Nov 8, 9:05–10:10 AM PST)
 Built by one coordinating Claude session with parallel sub-agents, each PR reviewed before merge. The live run and how to show it are in [`runbook.md`](runbook.md).
 
 | Piece | PR | What it does |
