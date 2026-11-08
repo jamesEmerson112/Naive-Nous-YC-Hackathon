@@ -1036,6 +1036,21 @@ LABELS.update({"review.published": lambda e: "lesson in Naïve Skills"})
 # After the gate's promote (75) and its follow-ups (76).
 STAGE.update({"review.published": 77})
 
+# Fleet learning: cluster review (docs/recursive-self-improvement/design.md §4). Its events
+# carry the first evidence run's incident, so that incident's story shows the review.
+# `review.cleared` names a kind, not an incident.
+LABELS.update(
+    {
+        "review.session_opened": lambda e: "cluster review opened",
+        "review.staged": lambda e: (
+            f"staged for {(_data(e).get('result') or {}).get('owner') or 'its owner'}"
+        ),
+        "review.accepted": lambda e: "skill accepted",
+        "review.rejected": lambda e: "review rejected",
+    }
+)
+NOT_IN_CHAINS = NOT_IN_CHAINS | {"review.cleared"}
+
 # Statuses a person has to act on. Nothing the Fleet Doctor does covers them up; a later
 # non-Doctor step (the work order moving on, an unfreeze) still can.
 NEEDS_PERSON: frozenset[tuple[str, str]] = frozenset(

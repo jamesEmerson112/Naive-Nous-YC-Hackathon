@@ -37,6 +37,8 @@ from romulus_cloud.services import (
     datasets,
     doctor,
     gate,
+    review,
+    review_publish,
     runs,
     technician,
     telemetry,
@@ -100,14 +102,32 @@ STEPS += [
 
 def learning_tick(session: Session, now: datetime) -> object:
     """Fleet learning (docs/recursive-self-improvement/design.md §9): keep the standing
-    `fleet-runs` dataset snapshotted and exported (plain code, no model)."""
+    `fleet-runs` dataset snapshotted and exported (plain code, no model); with
+    LEARNING_MODE=fixture|live, then one cluster-review step (design §4, `services/review.py`:
+    open, poll or settle one Naïve session, within its caps; D25, draft D31)."""
     settings = get_settings()
     if settings.learning_mode == "off":
         return None
     done = runs.ensure_standing_dataset(session, now, settings)
-    # Hook: LEARNING_MODE=fixture|live runs one cluster review here (design §4, lane C:
-    # `services/review.py`), after the dataset, within the Doctor's caps (D25, draft D31).
-    return done
+    if settings.learning_mode not in review.MODES:
+        return done
+    # Cluster review, then T1 (mirror promoted review skills to Naïve Skills): each under its
+    # own savepoint, so an error rolls back only its own writes, never the dataset step.
+    out: dict[str, object] = {"dataset": done}
+    try:
+        with session.begin_nested():
+            out["review"] = review.tick(session, now, settings=settings)
+    except Exception as exc:  # noqa: BLE001 - logged; retried next tick
+        log_line("learning.review_failed", level="error", error=repr(exc))
+    if review_publish.enabled(settings):
+        try:
+            with session.begin_nested():
+                out["published"] = review_publish.publish_promoted(
+                    session, now, settings, review_publish.publisher(settings)
+                )
+        except Exception as exc:  # noqa: BLE001 - logged; retried next tick
+            log_line("learning.publish_failed", level="error", error=repr(exc))
+    return out
 
 
 # Fleet learning: the standing dataset every 30 s. `steps_for` leaves it out while

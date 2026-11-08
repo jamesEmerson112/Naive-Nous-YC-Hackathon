@@ -552,3 +552,26 @@ def test_end_to_end_from_the_trigger():
     )
     assert do_check(RULE, cf, probes=[PROBE]).outcome == "staged"
     assert do_check(SKILL, cf, probes=[PROBE]).outcome == "accepted"
+
+
+# --- review nits -----------------------------------------------------------------------------
+
+
+def test_check_4_probe_from_the_future():
+    future = {**PROBE, "generated_at": (NOW + timedelta(hours=2)).isoformat()}
+    r = do_check(RULE, probes=[future])
+    assert r.outcome == "rejected" and "in the future" in r.failures[0]
+    skewed = {**PROBE, "generated_at": (NOW + timedelta(minutes=2)).isoformat()}
+    assert do_check(RULE, probes=[skewed]).outcome == "staged"  # within the clock skew
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_confidence_is_rejected(bad):
+    r = do_check(with_(SKILL, "confidence", bad))
+    assert r.outcome == "rejected" and "finite" in r.failures[0]
+
+
+def test_a_skill_slug_naming_a_safety_path_is_staged():
+    r = do_check(with_(SKILL, "proposal.slug", "safety-reset"))
+    assert r.outcome == "staged" and r.touches_safety
+    assert do_check(with_(SKILL, "proposal.slug", "supervisor-reset")).outcome == "accepted"

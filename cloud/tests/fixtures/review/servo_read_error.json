@@ -1,0 +1,36 @@
+{
+ "note": "Hand-written model output for the servo_read_error skill beat (no live session was recorded for this kind). It plays back through FixtureNaive like a recording.",
+ "captured_at": null,
+ "request": {},
+ "session": {
+  "id": "ses_fixture_servo_read_error",
+  "object": "session",
+  "status": "idle",
+  "stop_reason": "end_turn",
+  "consumed_micro_usd": 0,
+  "metadata": {},
+  "created_at": "2026-11-08T17:20:00.000Z",
+  "ended_at": null,
+  "structured_output": {
+   "gap": "failed_heal",
+   "title": "Restore the retry around flaky servo reads",
+   "pattern": "One flaky Present_Position read crashes the arm loop; raising an unread config value failed on sim-1, restoring the retry passed on sim-3.",
+   "evidence": [
+    "run:sim-1/learn-d3-qwen-watch",
+    "run:sim-3/learn-d3-opus-arm-heal"
+   ],
+   "applies_to": [
+    "so101"
+   ],
+   "proposal": {
+    "kind": "skill",
+    "slug": "servo-read-retry",
+    "markdown": "# Servo read error: restore the retry\n\nWhen one flaky `Present_Position` read crashes the arm's job, the fix that held (sim-3, bench check passed) restored the retry around that read. Raising a config value that nothing reads (sim-1) did not.\n\n1. Reproduce: run the arm job and look for one failed `Present_Position` read just before the crash.\n2. Find that servo read in the control loop and check whether a retry wraps it.\n3. Restore a bounded retry around that one read (3 tries, short backoff) and log each retry.\n4. Verify with the bench check, not by watching one run: the job must survive injected flaky reads.\n5. Don't raise `read_retries` in robot/config.toml unless the code reads it.\n"
+   },
+   "confidence": 0.75
+  }
+ },
+ "events": [],
+ "duration_s": null,
+ "cost_usd": null
+}

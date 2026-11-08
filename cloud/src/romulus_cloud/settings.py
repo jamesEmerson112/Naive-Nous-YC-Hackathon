@@ -254,6 +254,16 @@ class Settings(BaseSettings):
     # A card on NAIVE_BOARD_ID (the CEO's board) to comment on per published lesson; None = none.
     review_insights_card: str | None = None
 
+    # Cluster review (design §4, §9; draft D31), run by `learning.tick` when LEARNING_MODE is
+    # fixture or live. The Naïve agent (`fleet-doctor`), the budget per session, at most this
+    # many sessions an hour, and how long a rejected kind cools down (or until a newer run of
+    # it arrives). In fixture mode REVIEW_FIXTURE, when set, replays for every case; unset,
+    # each kind replays cloud/tests/fixtures/review/<kind>.json if there is one.
+    naive_review_agent: str | None = None
+    review_budget_usd: float = 0.50
+    review_max_sessions_per_hour: int = 2
+    review_cooldown_s: int = 900
+
 
 @lru_cache
 def get_settings() -> Settings:
