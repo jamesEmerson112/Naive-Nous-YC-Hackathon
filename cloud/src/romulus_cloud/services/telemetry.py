@@ -5,27 +5,48 @@ and `format` are open strings and nothing is parsed. Blobs are content-addressed
 recordings with the same sha256 share one blob. Recording events carry `recording` and,
 when known, `incident` in their refs, so the incident's story shows them as evidence.
 An incident may arrive before or after its recordings; `link_incident` catches up.
-Incident evidence is never deleted here (the disk budget is M7). Nothing here commits.
+`enforce_budget` (a worker step, M7) deletes the oldest unlabeled episode blobs once the
+store is over `BLOB_BUDGET_GB`; incident evidence is never deleted. Nothing here commits.
 """
 
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
-from romulus_cloud.adapters.blobstore import BlobNotFound, BlobStore, BlobTooLarge, BlobWriter
+from romulus_cloud.adapters.blobstore import (
+    BlobNotFound,
+    BlobStore,
+    BlobTooLarge,
+    BlobWriter,
+    build_blobstore,
+)
 from romulus_cloud.domain.labels import auto_labels, split_label
 from romulus_cloud.errors import ApiError
-from romulus_cloud.models import Blob, Incident, Label, Overlay, Recording, WorkOrder
+from romulus_cloud.log import log_line
+from romulus_cloud.models import (
+    Blob,
+    DatasetVersion,
+    Incident,
+    Label,
+    Overlay,
+    Recording,
+    WorkOrder,
+)
 from romulus_cloud.services.devices import get_device
+from romulus_cloud.settings import Settings, get_settings
 from romulus_contracts import IncidentReport, RecordingMeta
 
 RECEIVED = "recording.received"
 BLOB_STORED = "recording.blob_stored"
 LINKED = "recording.linked"
+PRUNED = "recording.blobs_pruned"
+
+GB = 1024**3
+"""`BLOB_BUDGET_GB` counts binary gigabytes."""
 
 
 def download_path(recording_id: str) -> str:
@@ -237,7 +258,7 @@ def receive(
         "automation",
         RECEIVED,
         _refs(rec),
-        f"{device_id} sent a {rec.kind} recording ({rec.format}, {_size(rec.size_bytes)}) "
+        f"{device_id} sent a {rec.kind} recording ({rec.format}, {size_text(rec.size_bytes)}) "
         f"for {whose}; {then}.",
         data={
             "evidence": evidence(rec, stored),
@@ -262,7 +283,7 @@ def too_large(max_bytes: int) -> ApiError:
     return ApiError(
         413,
         "blob_too_large",
-        f"Recordings are capped at {_size(max_bytes)} (RECORDING_MAX_BYTES); nothing was "
+        f"Recordings are capped at {size_text(max_bytes)} (RECORDING_MAX_BYTES); nothing was "
         "stored. Split the window or lower the camera resolution.",
     )
 
@@ -326,7 +347,7 @@ def store_blob(
         "automation",
         BLOB_STORED,
         _refs(rec),
-        f"The {rec.kind} bytes from {rec.device_id} ({_size(writer.size)}) matched their "
+        f"The {rec.kind} bytes from {rec.device_id} ({size_text(writer.size)}) matched their "
         f"sha256 and are {how}; they can be downloaded.",
         data={
             "evidence": evidence(rec, True),
@@ -395,7 +416,118 @@ def link_incident(session: Session, incident: Incident, now: datetime) -> int:
     return changed
 
 
-def _size(n: int | None) -> str:
+# --- disk budget (telemetry §7, build plan K8) ---------------------------------------------
+
+
+def _curated(session: Session, recording_ids: list[str]) -> bool:
+    """Whether any of these recordings carries a current label that isn't automatic
+    (a person's, an agent's or the device's): those are kept."""
+    rows = session.scalars(
+        select(Label)
+        .where(Label.target_type == "recording", Label.target_id.in_(recording_ids))
+        .order_by(Label.id)
+    )
+    current: dict[tuple[str, str, str | None], str] = {}
+    for row in rows:
+        key = (row.target_id, row.key, row.value)
+        if row.removed:
+            current.pop(key, None)
+        else:
+            current[key] = row.source
+    return any(source != "auto" for source in current.values())
+
+
+def _prunable(session: Session, sha256: str) -> bool:
+    """A blob may go only if every recording using it is an episode with no incident,
+    no curated label and no dataset snapshot."""
+    users = list(session.scalars(select(Recording).where(Recording.sha256 == sha256)))
+    if not users or any(r.kind != "episode" or r.incident_id for r in users):
+        return False
+    ids = [r.id for r in users]
+    if _curated(session, ids):
+        return False
+    in_snapshot = select(DatasetVersion.dataset_id).where(
+        or_(*(DatasetVersion.recording_ids.contains([rid]) for rid in ids))
+    )
+    return session.scalar(in_snapshot.limit(1)) is None
+
+
+def enforce_budget(
+    session: Session,
+    now: datetime,
+    settings: Settings | None = None,
+    store: BlobStore | None = None,
+) -> int:
+    """Worker step (every 10 min): while the blob store is over `BLOB_BUDGET_GB`, delete
+    the oldest unlabeled `episode` blobs. Never incident evidence, labeled recordings,
+    snapshot members or packages. One event per batch; returns how many blobs went."""
+    settings = settings or get_settings()
+    store = store or build_blobstore(settings.blob_dir)
+    budget = int(settings.blob_budget_gb * GB)
+    total = int(session.scalar(select(func.coalesce(func.sum(Blob.size_bytes), 0))) or 0)
+    if total <= budget:
+        return 0
+    before = total
+    oldest = session.execute(
+        select(Recording.id, Blob)
+        .join(Blob, Blob.sha256 == Recording.sha256)
+        .where(Recording.kind == "episode", Recording.incident_id.is_(None))
+        .order_by(Recording.received_at, Recording.id)
+    ).all()
+    deleted: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for recording_id, blob in oldest:
+        if total <= budget:
+            break
+        if blob.sha256 in seen:
+            continue
+        seen.add(blob.sha256)
+        if not _prunable(session, blob.sha256):
+            continue
+        deleted.append(
+            {"recording": recording_id, "sha256": blob.sha256, "size_bytes": blob.size_bytes}
+        )
+        total -= blob.size_bytes
+        session.delete(blob)
+    if not deleted:
+        log_line(
+            "telemetry.over_budget",
+            level="warning",
+            blob_bytes=total,
+            budget_bytes=budget,
+            note="nothing deletable: only incident evidence, labeled or snapshot blobs left",
+        )
+        return 0
+    session.flush()
+    still = (
+        ""
+        if total <= budget
+        else f" It is still {size_text(total - budget)} over: the rest is incident evidence, "
+        "labeled recordings or snapshots, which are never deleted."
+    )
+    events.record(
+        session,
+        "automation:telemetry",
+        "automation",
+        PRUNED,
+        {},
+        f"The blob store was {size_text(before)}, over its {settings.blob_budget_gb:g} GB budget, "
+        f"so the {len(deleted)} oldest unlabeled episode blob(s) ({size_text(before - total)}) "
+        f"were deleted; their metadata stays.{still}",
+        data={
+            "deleted": deleted,
+            "blob_bytes_before": before,
+            "blob_bytes_after": total,
+            "budget_bytes": budget,
+        },
+        ts=now,
+    )
+    for item in deleted:  # files last, after the rows and the event are in the transaction
+        store.delete(item["sha256"])
+    return len(deleted)
+
+
+def size_text(n: int | None) -> str:
     if n is None:
         return "size unknown"
     for unit, scale in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
