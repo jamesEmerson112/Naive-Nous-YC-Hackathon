@@ -41,7 +41,7 @@ How it works, one card at a time (there is one arm):
      healer tools do (a stuck sensor: restart it; a sensor-pod fault: wait for the pod's own healer and
      the host's check; a stalled joint or anything else: a checked retry at home), then retries that
      step once; at most 2 heals a job. Then `RESULT:` and done with a note, or `BLOCKED:` and blocked.
-   - hermes: `hermes chat --oneshot -t so101_arm,mcp-naive_board -q <prompt naming the board and card>`.
+   - hermes: `hermes chat --oneshot -t so101_arm,mcp-naive_board,vision -q <prompt naming the board, card and camera>`.
      Hermes reads the card through its naive_board MCP and does the same with the so101_arm tools. Its
      output goes into the event log line by line and into runs/commander/<card>.log.
 5. The card is read back (with retries): if it isn't done and has no `BLOCKED:` comment from this run, the
@@ -96,17 +96,23 @@ CLAIM_TAG = re.compile(r"\(claim (clm-[0-9a-f]+) on arm (.+?)\)\s*$")
 # firmware (bad image 07 opens us_offset, then podd's us_mismatch), so give podd a moment first.
 MAYBE_POD_KINDS = ("us_offset", "us_scale", "us_residual")
 
-HERMES = ["hermes", "chat", "--oneshot", "-t", "so101_arm,mcp-naive_board", "-q"]   # stories.py COMMANDER's call
+HERMES = ["hermes", "chat", "--oneshot", "-t", "so101_arm,mcp-naive_board,vision", "-q"]
+# The arm's eye: the bench camera's latest frame (ffmpeg rewrites it about once a second).
+CAMERA = os.environ.get("ARMSIM_CAMERA", "/tmp/armcam/latest.jpg")
 PROMPT = (
     "You are the arm commander for our robot-arm company. Your job is card {card} on the Naïve board {board}; "
     "other cards on that board are not yours, so leave them alone. Read card {card} and its comments, then do "
-    "the job it describes with the so101_arm tools. Rules: only the arm_* skills move the arm. Use the healer "
+    "the job it describes with the so101_arm tools. The arm's camera: just before the job and again just after "
+    "it, look at the image file {camera} with your vision tool and note in one line what you see (the arm, the "
+    "bag of chips, the box). It's a report only: never skip or stop the job over it, and if the image can't be "
+    "read, note 'no camera'. Rules: only the arm_* skills move the arm. Use the healer "
     "tools only after a skill reports an incident or a tool call is blocked: call arm_status, fix the cause, and "
     "retry that step once. A stuck or frozen distance: arm_restart_sensor. A sensor-pod fault (arm_status lists "
     "pod incidents): the pod's own healer fixes it within a minute, so call arm_status every few seconds until "
     "the arm's incidents are empty, and use arm_check only once the pod's incidents are gone. Anything else: "
-    "arm_check. When the job is done, add a comment on card {card} starting 'RESULT:' that says what you did and "
-    "any fault you healed, then move card {card} to done with a one-sentence note. If you can't finish, comment "
+    "arm_check. When the job is done, add a comment on card {card} starting 'RESULT:' that says what you did, "
+    "what the camera showed before and after, and any fault you healed, then move card {card} to done with a "
+    "one-sentence note. If you can't finish, comment "
     "'BLOCKED:' on card {card} with the reason.")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
@@ -544,7 +550,7 @@ class HermesExecutor:
         ctx = {"card": card["id"], "order": job["order"], "job": job["job"], "exec": self.name}
         self.log_dir.mkdir(parents=True, exist_ok=True)
         log = self.log_dir / f"{card['id']}.log"
-        argv = [*self.argv, PROMPT.format(board=self.board.id, card=card["id"])]
+        argv = [*self.argv, PROMPT.format(board=self.board.id, card=card["id"], camera=CAMERA)]
         self.emit("commander", "job_started", f"Hermes takes card {card['id']} (its output: {log})", **ctx, log=str(log))
         t0 = time.time()
         try:
