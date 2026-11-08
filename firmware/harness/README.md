@@ -72,8 +72,15 @@ The system prompt gains the arm rules (`ARM_RULES`):
 - after a fix, the agent launches the job itself and checks the motion report (exit 0, no reflex, every frame
   played, every joint at its commanded range) before reporting.
 
-`arm/heal_test.py` is the scenario test: bad release v1.7 → the arm flails → `us_mismatch` → rollback → the
-agent's own job plays the wave. It scores from the bench; see `arm/README.md`.
+`arm/heal_test.py` is the scenario test. The steps:
+1. Bad release v1.8 is deployed, dormant.
+2. The arm loops; a hand comes near the ultrasonic and leaves, and the reading sticks.
+3. The arm flails, and podd opens `us_mismatch`.
+4. The agent rolls back, and its own job plays the wave.
+5. Three more loops prove the fix.
+
+It scores from the bench; see `arm/README.md`. The kickoff for that run also carries one line from the operator
+(`agent.arm_kickoff(..., note=)`).
 
 All runs also get one turn-budget notice, appended to a tool result and marked `[harness: ...]`, when a
 quarter of the turns are left (in `agent.py`, `budget_notice`).
