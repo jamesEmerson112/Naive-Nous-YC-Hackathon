@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from romulus_cloud import events
 from romulus_cloud.api.deps import SessionDep, SettingsDep
@@ -61,20 +62,19 @@ def page_tone(status: tuple[str, str]) -> str:
     return "you" if (words, tone) in YOU_STATUSES else tone
 
 
-_ID = re.compile(r"^([a-z]{2,5}_)([A-Za-z0-9]+)$")
+# A prefixed id (`wo_`, `tc_`, `ses_`, `cand_`, …) anywhere in the text, tail over 10 characters.
+_ID = re.compile(r"\b([a-z]{2,5}_)([A-Za-z0-9]{6})[A-Za-z0-9]{5,}\b")
 
 
 def shortid(value: Any) -> str:
-    """`wo_3d7cd6464e2e4980a69acd0a3e031264` -> `wo_3d7cd6…`: a prefixed id with a tail over
-    10 characters keeps the prefix and 6 characters. Anything else passes through. Put the
-    full id in a `title` wherever this is shown."""
+    """Shorten every long prefixed id in the text: `wo_3d7cd6464e2e4980a69acd0a3e031264` ->
+    `wo_3d7cd6…`, also inside a sentence ("case tc_a0177e9cb12f… opened" -> "case
+    tc_a0177e… opened"). Ids with a tail of 10 characters or fewer, and text with no id,
+    pass through. Put the full text in a `title` wherever this is shown."""
     if value is None:
         return ""
-    text = str(value)
-    m = _ID.match(text)
-    if m and len(m.group(2)) > 10:
-        return f"{m.group(1)}{m.group(2)[:6]}…"
-    return text
+    out = _ID.sub(r"\1\2…", str(value))
+    return Markup(out) if isinstance(value, Markup) else out
 
 
 def kindword(value: Any) -> str:

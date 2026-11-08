@@ -52,6 +52,14 @@ def test_every_other_status_keeps_its_tone(status):
         ("sim-1 stalled", "sim-1 stalled"),
         ("", ""),
         (None, ""),
+        (
+            "Naïve technician case tc_a0177e9cb12f4ee394b91511f851a872 opened for work order "
+            "wo_3d7cd6464e2e4980a69acd0a3e031264 (needs human)",
+            "Naïve technician case tc_a0177e… opened for work order wo_3d7cd6… (needs human)",
+        ),
+        ("work order wo_3d7c… (needs human)", "work order wo_3d7c… (needs human)"),
+        ("joint_stall → work order wo_046dca67f832486aa7ae", "joint_stall → work order wo_046dca…"),
+        ("see /technician/tc_b0dcb097068542c7840769a89b9e1e1e", "see /technician/tc_b0dcb0…"),
     ],
 )
 def test_shortid(value, out):
@@ -71,6 +79,11 @@ def test_shortid(value, out):
 )
 def test_kindword(value, out):
     assert kindword(value) == out
+
+
+def test_shortid_keeps_escaping():
+    tpl = templates.env.from_string("{{ t | shortid }}")
+    assert tpl.render(t="<b> wo_3d7cd6464e2e4980a6") == "&lt;b&gt; wo_3d7cd6…"
 
 
 def test_the_filters_are_registered_for_every_template():
