@@ -442,7 +442,7 @@ def plan(history, before, after, close=None):
         row = {k: h.get(k) for k in ("try", "probe", "go", "probe_check", "recording", "pan_offset", "speed",
                                      "squeeze_pct", "grasped", "holding_s",
                                      "widest_hold", "peak_grip_load_nm", "arrived", "eye", "debug", "bag_estimate",
-                                     "jaws_cell", "edge_cell")}
+                                     "jaws_cell", "edge_cell", "carried", "regrab", "grab_checks")}
         if h.get("close_at") or h.get("open_at"):
             row.update(gripper_closed_at=h.get("close_at"), gripper_opened_at=h.get("open_at"), points="measured")
         else:
@@ -480,6 +480,11 @@ def plan(history, before, after, close=None):
          "The grip: tries with squeeze_pct 99 squeezed the gripper to 99% closed while grasping. Tries without it "
          "squeezed as recorded: wave to 99%, recording_2 only to ~69% and recording_3 to ~80%, so a short hold with "
          "those two may have been too loose a grip rather than a wrong grasp point. "
+         "Tries with regrab: after the grab the arm held still a few cm up and checked the grip; each attempt's "
+         "gripper_pos is how far the jaws stayed open under a closed command (about 2 = closed on nothing, 8 or more = "
+         "something between them), astra is your own yes/no on the bag being held by its edge, and later attempts were "
+         "re-grabs with the base nudged by `nudge` degrees; carried true means it went on to the box, false means no "
+         "attempt held and it backed out. A spot where every attempt reads about 2 is empty: aim elsewhere. "
          "Tries with probe true did not grasp: the arm stopped with the jaws open at the closing point "
          "(gripper_closed_at is where the open jaws were), you checked the camera, and probe_check says where the "
          "jaws were relative to the bag's edge (go false = not straddling it, so the full motion was skipped). "
