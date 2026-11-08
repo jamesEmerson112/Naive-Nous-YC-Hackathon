@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from romulus_cloud.adapters.coder import DEFAULT_TEST_CMD, Sandbox, SandboxRun, ScratchRepo
+from romulus_cloud.services.coder_runs import test_run_of
 
 
 def run_package_tests(
@@ -34,7 +35,7 @@ def describe(run: SandboxRun) -> tuple[bool, str]:
     if run.result is None:
         why = "timed out" if run.proc.timed_out else f"exited {run.proc.returncode}"
         return False, f"the coder container {why} without a result:\n{run.proc.stderr[-2000:]}"
-    passed = tests.get("exit_code") == 0 and not tests.get("timed_out")
+    passed = test_run_of(run).passed  # the replay's verdict: exit 0 and the sealed results
     state = "timed out" if tests.get("timed_out") else f"exit {tests.get('exit_code')}"
     report = f"$ {tests.get('cmd')}  ({state}, --network none)\n{tests.get('output', '')}"
     return passed, report.rstrip() + "\n"

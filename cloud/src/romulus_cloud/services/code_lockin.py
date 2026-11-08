@@ -263,7 +263,9 @@ def to_replay_result(replay: CodeReplay, rev: str, secrets: Iterable[str]) -> g.
         return g.ReplayResult(True, why, (g.CaseResult(f"code {rev}", True, summary),))
     patched = replay.patched
     outputs = [patched.output if patched else "", (replay.patched_verify or _NO).output]
-    failing = failing_tests(*outputs)
+    # The seal's ids first (the verify process runs outside the work dir, so its printed
+    # paths are not the ids); printed FAILED lines only name tests when nothing was sealed.
+    failing = list(dict.fromkeys(replay.failing_ids())) or failing_tests(*outputs)
     named = f"; failing: {', '.join(failing)}" if failing else ""
     why = f"code replay failed on code {rev}: {summary}{named}"
     cases = tuple(g.CaseResult(t, False, "failed in the replay") for t in failing)
