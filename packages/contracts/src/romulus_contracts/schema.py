@@ -18,6 +18,7 @@ from romulus_contracts.doctor import DoctorAdvice, DoctorAsk, Proposal, Proposal
 from romulus_contracts.incident import IncidentAccepted, IncidentReport, OverlayStatus
 from romulus_contracts.manifest import FirmwareManifest, FirmwareResponse, HarnessMeta
 from romulus_contracts.telemetry import RecordingAccepted, RecordingMeta
+from romulus_contracts.tools import ToolCall, ToolResult, ToolSpec
 from romulus_contracts.version import CONTRACT_VERSION
 
 MODELS: dict[str, type[BaseModel]] = {
@@ -40,6 +41,10 @@ MODELS: dict[str, type[BaseModel]] = {
     # artifacts the device pulls
     "FirmwareManifest": FirmwareManifest,
     "HarnessMeta": HarnessMeta,
+    # L3 device tools: draft, D27 deferred, not wired to any route
+    "ToolSpec": ToolSpec,
+    "ToolCall": ToolCall,
+    "ToolResult": ToolResult,
 }
 
 

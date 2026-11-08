@@ -202,6 +202,7 @@ admit ─┬─ declined | blocked_over_cap (daily $ cap)
   - **Read:** logs, audit, frame, stack dump, list devices, read a file, run health checks, run tests on a scratch copy.
   - **Act:** apply an overlay, park or set mode, roll back, build and flash. Each needs an extra grant and passes the device's own policy.
   - **No raw shell.** mini-swe-agent's bash is never exposed remotely; typed tools, not prompts, set the limits ([`research.md`](research.md) §5).
+  - **Draft catalog:** `romulus_contracts.tools` (`TOOL_CATALOG`, typed params and returns; not wired, D27).
 - **Channel.**
   1. The check-in offers a lease.
   2. The device accepts only when it's parked and not frozen.
