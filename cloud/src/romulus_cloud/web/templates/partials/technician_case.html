@@ -49,12 +49,11 @@
   <div class="tc-part-main">
     <div class="tc-part-name">
       <h2 class="tc-part-title">{{ p.title }}</h2>
-      <p class="tc-part-vendor">{{ 'Replacement part' if v.part_needed == 'yes' else 'Spare part' }} · {{ p.vendor_label }} · {{ p.origin_host }}{% if p.qty %} · qty {{ p.qty }}{% endif %}</p>
+      <p class="tc-part-vendor">{{ 'Replacement part' if v.part_needed == 'yes' else 'Spare part' }} · {{ p.vendor_label }} · {{ p.origin_host }}{% if p.qty %} · qty {{ p.qty }}{% endif %}{% if not p.staged and not p.blocked_reason %} <span class="pill chip-bad">{{ icon('x') }}not staged</span>{% endif %}{% if recorded %} {{ recorded_tag() }}{% endif %}</p>
     </div>
     {% if p.total_usd %}<p class="tc-price">${{ p.total_usd }}{% if p.qty and p.qty > 1 and p.unit_usd %}<small>${{ p.unit_usd }} × {{ p.qty }}</small>{% endif %}</p>
     {% else %}<p class="tc-price tc-price-none">no price<small>not checked yet</small></p>{% endif %}
   </div>
-  {% if recorded or not p.staged %}<p class="tc-kicker">{% if not p.staged %}<span class="pill chip-bad">{{ icon('x') }}not staged</span>{% endif %}{{ recorded_tag() }}</p>{% endif %}
   <ul class="tc-checks" aria-label="Gate checks">
     {% for c in (p.checks or []) %}
     <li class="{{ 'ok' if c.ok else 'no' }}" {% if c.detail %}title="{{ c.detail }}"{% endif %}><span class="tc-tick" aria-hidden="true">{{ icon('check' if c.ok else 'x') }}</span>{{ c.label }}<span class="sr-only">: {{ 'passed' if c.ok else 'failed' }}{% if c.detail %}, {{ c.detail }}{% endif %}</span></li>
