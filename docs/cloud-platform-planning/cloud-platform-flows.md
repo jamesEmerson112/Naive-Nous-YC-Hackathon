@@ -17,17 +17,19 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 
 | Flow | Priority | Milestone | Test | Fake | Real / live | Notes |
 |---|---|---|---|---|---|---|
-| **F1** Version sync | P0 | M1 | `test_f1_version_sync.py` | ⬜ | ⬜ | |
-| **F2** Incident → story | P0 | M1–M2 | `test_f2_incident_story.py` | ⬜ | ⬜ | |
-| **F3** Lock-in → fleet | P0 | M3 | `test_f3_lock_in.py` | ⬜ | ⬜ | Hero demo beat 2 |
-| **F4** Bad candidate → rollback | P0 | M3 | `test_f4_rollback.py` | ⬜ | ⬜ | Hero demo beat 3 |
-| **F5** Kill switch | P0 | M3 | `test_f5_kill_switch.py` | ⬜ | ⬜ | |
-| **F6** Hardware → work order → Naïve | P0 | M5 | `test_f6_work_order.py` | ⬜ | ⬜ | Mobilerun sponsor track |
-| **F7** Telemetry sync | P0 | M4 | `test_f7_telemetry.py` | ⬜ | ⬜ | |
-| **F8** Dataset snapshot and export | P1 | M6 | `test_f8_datasets.py` | ⬜ | ⬜ | Uses overnight data |
-| **F9** Offline backfill | P1 | M7 | `test_f9_offline.py` | ⬜ | ⬜ | |
-| **F10** Overnight unattended run | P0 | M7 | manual + `make digest` | ⬜ | ⬜ | Starts by ~12:30 AM |
-| **F11** Code patch → coding agent → candidate | P1 (first) | M8 | `test_f11_coding_agent.py` | ⬜ | ⬜ | Starts when blockers B1–B7 clear (build plan §3, M8) |
+| **F1** Version sync | P0 | M1 | `test_f1_version_sync.py`, `test_f1_device_kind.py` | 🟩 | ⬜ | Built in #8; unknown devices register as `unknown`, never `real` (#17). Real arm ⭐ pending the device side (B1, I0) |
+| **F2** Incident → story | P0 | M1–M2 | `test_f2_incident_story.py`, `test_f2_timeline_page.py` | 🟩 | ⬜ | #8 (story API), #9 (timeline page), readable chain labels #17. Real arm ⭐ pending the device side |
+| **F3** Lock-in → fleet | P0 | M3 | `test_f3_lock_in.py` | 🟩 | ⬜ | Hero demo beat 2. #7 (pure gate), #12 (batch, gate, worker), #18 (edge cases). Real arm ⭐ pending the device side |
+| **F4** Bad candidate → rollback | P0 | M3 | `test_f4_rollback.py`, `test_f4_corpus_regression.py` | 🟩 | ⬜ | Hero demo beat 3. #12; corpus replay fails a candidate only on a regression (#18). Gate invariants: `test_gate_invariants.py` |
+| **F5** Kill switch | P0 | M3 | `test_f5_kill_switch.py` | 🟩 | ⬜ | #12; unfreeze restores the frozen assignments (#18) |
+| **F6** Hardware → work order → Naïve | P0 | M5 | `test_f6_work_order.py` | 🟩 | ⬜ | Mobilerun sponsor track. #11, #15. Live: no card created yet (pending Kent's go-ahead; [Naïve integration](cloud-platform-naive-integration.md) §5); no `fleet-ops` agent yet |
+| **F7** Telemetry sync | P0 | M4 | `test_f7_telemetry.py` | 🟩 | ⬜ | #10. Fake device uploads synthetic recordings; real LeRobot windows come from the arm |
+| **F8** Dataset snapshot and export | P1 | M6 | `test_f8_datasets.py` | 🟩 | ⬜ | #14; corpus → gate wired in #18. `lerobot` export cut (422, P2). Uses overnight data once it exists |
+| **F9** Offline backfill | P1 | M7 | (inside `test_f10_overnight.py`) | 🟨 | ⬜ | No separate `test_f9_offline.py`. The F10 test unplugs arms' links and checks every outbox drains with no dead letters (#16); stopping the `api` container isn't tested *(inferred)* |
+| **F10** Overnight unattended run | P0 | M7 | `test_f10_overnight.py` + `make digest` | 🟩 | ⬜ | #16: 2 h simulated night in ~4 s; runbook `cloud/OVERNIGHT.md`. The real run (launch ~12:30 AM, go/no-go, `demo-overnight` tag) is Kent's call and hasn't started |
+| **F11** Code patch → coding agent → candidate | P1 (first) | M8 | `test_f11_coding_agent.py` (not yet merged) | 🟨 | ⬜ | In progress: #19 (M8a sandbox + `LocalAgent`) open, M8b (wire the coder into batch and gate) pending. #12 already passes code patches through to `awaiting_canary`. Blockers: build plan §3, M8 |
+
+**Last run:** Sat Nov 7, ~7:35 PM PST, `main` at `52f4e40`: `uv run pytest cloud/tests/flows -v` → **82 passed** (14 files, including `test_interop_fake_device.py`). 🟩 means passing with fake devices and fake adapters; no row is ⭐ yet, because the real arm and live Naïve haven't run a flow.
 
 **Shared setup:** `make seed` creates firmware v1, harness v1, `arm-1` (real, normal), `sim-1` (normal), `sim-2` (canary) and `sim-3` (normal), all in `device_class = so101`.
 

@@ -159,6 +159,21 @@ The morning digest counts each class. The Naïve audit log covers only control-p
 
 Write down: the board id, the agent name, how long until the agent started, and whether `Idempotency-Key` started the agent immediately.
 
+### 5.1 Spike results (Sat Nov 7, ~4:45 PM PST)
+
+Source: the orchestrator's spike notes, recorded during M0 with the team's Naïve key.
+
+| Step | Result |
+|---|---|
+| `GET /v1/me` | `200`. Org **Romulus** (`org_re7d4swgnqf6npz1804z9q107v`), mode `live`. Scopes listed: `agents:read/write`, `sessions:read/write`. No board or proxy scope is listed, yet both board reads and the proxy work with this key |
+| Company board | CEO agent `agt_j2jy5qp878yhfhqwpxd200ay12` → board `brd_v2zcnyzc559hv8awzc4hqvgcsm`. Reading cards works (an existing card, "Romulus agent specs…", came back) |
+| Agents | Only `hello-world` (James's test agent) and `CEO`. **No `fleet-ops` agent yet** (§3.6) |
+| Models | `GET /v1/models` works. `GET /v1/proxy/openai/v1/models` returns `404`: the proxy has no models route, so pick model ids from `/v1/models` |
+| Proxy chat completions | `200` with this key, without a `Vetta-Version` header. `openai/gpt-oss-120b`: ~1.8 s, good answers, so `LLM_MODEL=openai/gpt-oss-120b`. GLM-5.2 returned empty content, and ling-tiny returned cut-off text: their reasoning used up the tokens |
+| Card create + `Idempotency-Key` (steps 3–5) | **Not done: pending Kent's go-ahead.** Agent pickup time and whether the key starts the agent at once are still unknown |
+
+**So the batch LLM isn't blocked.** The proxy works with the team key today; earlier notes that tied the LLM to blocker B4 or to a missing `proxy:write` key are out of date. `LLM_MODE=live`, `LLM_PROVIDER=naive_proxy` and `LLM_MODEL=openai/gpt-oss-120b` turn it on (`.env.example`). The coding agent also ran on it (build plan §3, M8, B4 🟢, #19).
+
 ## 6. Risks
 
 | Risk | Mitigation |

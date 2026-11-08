@@ -147,7 +147,7 @@ The state lives in Postgres: candidate status, `fleet_state.batch_requested`, wo
 | `NAIVE_API_KEY`, `NAIVE_BASE_URL` (`https://api.vetta.sh/v1`), `NAIVE_VERSION` (`2026-09-30`), `NAIVE_BOARD_ID` (the CEO's `agt_` id), `NAIVE_OPS_AGENT` (`fleet-ops`) | — | See the Naïve integration doc |
 | `ORDER_MAX_USD`, `ORDERS_PER_DAY_MAX`, `ORDERS_PER_ROBOT_DAY_MAX` | `50`, `3`, `1` | Spend caps, enforced in our code before a card is posted (Naïve integration §3.4) |
 | `LLM_MODE` | `fake` | `fake` returns templated text; `live` calls the provider |
-| `LLM_PROVIDER` (`fake` \| `naive_proxy` \| `runpod`), `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | `fake` | One OpenAI-compatible client for both live providers (D22). Naïve proxy: `https://api.vetta.sh/v1/proxy/openai/v1`, key with `proxy:write`. RunPod: the team's vLLM endpoint (James's lane) |
+| `LLM_PROVIDER` (`fake` \| `naive_proxy` \| `runpod`), `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` | `fake` | One OpenAI-compatible client for both live providers (D22). Naïve proxy: `https://api.vetta.sh/v1/proxy/openai/v1`; the docs say the key needs `proxy:write`, but the team key works without that scope listed ([Naïve integration](cloud-platform-naive-integration.md) §5.1). RunPod: the team's vLLM endpoint (James's lane) |
 | `CODER_PROVIDER` (`fake` \| `local_agent` \| `naive_session`), `CODER_AGENT`, `CODER_IMAGE` | `fake` | The coding agent for code patches (D21, D22). `local_agent` runs in the `coder` container against the same LLM endpoint |
 | `CANARY_WINDOW_S` | `120` | 1200 for the overnight run |
 | `BATCH_INTERVAL_S` | `120` | 3600 for the overnight run |
