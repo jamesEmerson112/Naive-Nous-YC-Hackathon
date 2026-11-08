@@ -13,8 +13,8 @@ Each `tick(now)`:
    passes when health is not `failing` and no worse than just before the install, so a
    device that was already `degraded` can still take updates. Each attempt queues an
    `InstallResult`: `installed`, `rolled_back`, `hash_mismatch`, or `invalid` (hash fine,
-   content failed validation; nothing installed). A version that failed is not retried until the cloud
-   changes the firmware assignment.
+   content failed validation; nothing installed). A version that failed is not retried
+   until the cloud changes the firmware assignment.
 4. A new firmware or code version replaces the active overlay (D7), but only once it has
    passed its health check; the drop is reported as overlay status `superseded`. On
    rollback the overlay stays.
