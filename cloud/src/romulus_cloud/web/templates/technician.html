@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block title %}Romulus · {{ v.device_id }} · Naïve technician{% endblock %}
+{% block content %}
+{# The Naïve Technician case page (design §8, demo-clip "Page requirements"). Needs `v`
+   (services.technician.view), plus `fleet` and `tz` for base.html. The body is
+   partials/technician_case.html, which polls itself every 2 s while `v.poll`. #}
+<style>
+  /* Scoped to this page (.tc-*). Built for 125–150% browser zoom on video: the verdict is
+     the largest text, and every status carries a mark or a word, never colour alone. */
+  .tc { --tc-band: linear-gradient(115deg, #2e1065 0%, #5b21b6 52%, #4338ca 100%); --tc-ok: #15803d; --tc-ok-hover: #166534; --tc-rec: #fcd34d; --tc-rec-ink: #3b2203; padding-top: 1.1rem; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* Header band: who is acting, and the three measured numbers */
+  .tc-head {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1.75rem;
+    background: var(--tc-band); color: #fff; border-radius: var(--radius); padding: 0.95rem 1.4rem;
+    box-shadow: var(--shadow-lg);
+  }
+  .tc-head.is-recorded { box-shadow: inset 0 0 0 3px var(--tc-rec), var(--shadow-lg); }
+  .tc-head-l { min-width: 0; flex: 1 1 26rem; }
+  .tc-agent { font-size: 1.45rem; font-weight: 650; letter-spacing: -0.005em; line-height: 1.25; margin: 0; }
+  .tc-naive { font-weight: 850; letter-spacing: 0.07em; text-transform: uppercase; }
+  .tc-dot-sep { opacity: 0.6; margin: 0 0.45rem 0 0; font-weight: 400; }
+  .tc-seg { white-space: nowrap; }
+  .tc-nums .tc-dot-sep { margin: 0 0.45rem; }
+  .tc-badge-live { white-space: nowrap; }
+  .tc-live-dot { display: inline-block; vertical-align: 0.12em; margin-right: 0.4rem; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: #4ade80; box-shadow: 0 0 0 0 rgba(74, 222, 128, .7); animation: tc-ping 2s infinite; }
+  .tc-badge-rec {
+    background: var(--tc-rec); color: var(--tc-rec-ink); font-size: 0.95rem; font-weight: 800; letter-spacing: 0.01em;
+    padding: 0.2rem 0.75rem; border-radius: 999px; white-space: nowrap;
+  }
+  .tc-rec-line { margin: 0.3rem 0 0.1rem; }
+  .tc-sub { color: rgba(255, 255, 255, .8); font-size: 0.95rem; margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tc-nums { margin: 0; flex: 0 0 auto; font-size: 1.25rem; font-weight: 600; white-space: nowrap; display: flex; align-items: baseline; flex-wrap: wrap; }
+  .tc-num { font-weight: 850; font-size: 1.55rem; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+  /* Story banner: James's beats, extended (healer gave up → Naïve took over → …) */
+  .tc-stages { list-style: none; margin: 1.1rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
+  .tc-stages li {
+    display: flex; align-items: center; gap: 0.5rem; min-width: 0;
+    border-top: 5px solid var(--line-strong); padding-top: 0.5rem; line-height: 1.15;
+    font-size: 1.05rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted);
+  }
+  .tc-st-label { min-width: 0; overflow-wrap: anywhere; }
+  .tc-st-mark {
+    flex: none; width: 1.35rem; height: 1.35rem; border-radius: 50%; display: grid; place-items: center;
+    font-size: 0.85rem; font-weight: 900; border: 2px dashed currentColor; opacity: 0.55; position: relative;
+  }
+  .tc-stages .st-done { border-color: var(--good); color: var(--text); }
+  .tc-stages .st-done .tc-st-mark { background: var(--good); border: 0; color: var(--surface); opacity: 1; }
+  .tc-stages .st-active { border-color: var(--accent); color: var(--accent); animation: tc-beat 2s ease-in-out infinite; }
+  .tc-stages .st-active .tc-st-mark { border: 2px solid currentColor; opacity: 1; }
+  .tc-stages .st-active .tc-st-mark::after { content: ""; position: absolute; inset: 22%; border-radius: 50%; background: currentColor; animation: tc-breathe 1s ease-in-out infinite; }
+  .tc-stages .st-denied { border-color: var(--bad); color: var(--bad); }
+  .tc-stages .st-denied .tc-st-mark { background: var(--bad); border: 0; color: var(--surface); opacity: 1; }
+  .tc-st-now { flex: none; font-size: 0.68rem; letter-spacing: 0.08em; padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--accent); color: var(--surface); }
+
+  /* Verdict: the largest text on the page (≥ 36 px at any zoom) */
+  .tc-verdict {
+    margin-top: 1.1rem; background: var(--surface); border: 1px solid var(--line); border-left: 7px solid var(--agent);
+    border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.05rem 1.5rem 1.2rem;
+  }
+  .tc-verdict.is-working { border-left-color: var(--accent); background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--surface) 70%); }
+  .tc-verdict.is-bad { border-left-color: var(--bad); background: linear-gradient(100deg, var(--bad-bg), var(--surface) 70%); }
+  .tc-kicker {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; margin: 0 0 0.35rem;
+    color: var(--muted); font-size: 0.85rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .tc-kicker .chip { text-transform: none; letter-spacing: 0; font-size: 0.85rem; }
+  .tc-kicker .pulse { margin-right: 0; }
+  .tc-kicker-note { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 0.85rem; }
+  .tc-verdict-text { font-size: max(2.25rem, min(1.25rem + 2.4vw, 3.2rem)); font-weight: 820; letter-spacing: -0.028em; line-height: 1.1; margin: 0.1rem 0 0; color: var(--text); text-wrap: balance; }
+  .tc-verdict-bad { color: var(--bad); }
+  .tc-verdict-wait { color: var(--text-2); display: flex; align-items: baseline; flex-wrap: wrap; }
+  .tc-shimmer {
+    background: linear-gradient(90deg, var(--text-2) 0%, var(--text-2) 35%, var(--accent) 50%, var(--text-2) 65%, var(--text-2) 100%);
+    background-size: 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: tc-shimmer 2s linear infinite;
+  }
+  .tc-dots { display: inline-flex; gap: 0.3rem; margin-left: 0.5rem; }
+  .tc-dots i { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent); animation: tc-dot 1s ease-in-out infinite; }
+  .tc-dots i:nth-child(2) { animation-delay: .16s; } .tc-dots i:nth-child(3) { animation-delay: .32s; }
+  .tc-why { color: var(--text-2); font-size: 1.05rem; margin-top: 0.45rem; }
+  .tc-why-bad { color: var(--bad); font-weight: 650; }
+
+  /* The two cards: the part (with the one approval) and the email */
+  .tc-cards { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 1rem; margin-top: 1rem; }
+  .tc-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1.25rem 1.1rem; position: relative; min-width: 0; }
+  .tc-card.is-pending { border: 2px dashed var(--line-strong); box-shadow: none; background: transparent; }
+  .tc-ghost { color: var(--muted) !important; }
+  .tc-part.is-staged { border-top: 5px solid var(--good); }
+  .tc-part.is-blocked { border-top: 5px solid var(--bad); }
+  .tc-part-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+  .tc-part-name { min-width: 0; }
+  .tc-part-title { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.015em; line-height: 1.2; margin: 0; }
+  .tc-part-vendor { color: var(--text-2); font-size: 1.02rem; margin-top: 0.2rem; }
+  .tc-price { margin: 0; font-size: 2.2rem; font-weight: 850; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; text-align: right; }
+  .tc-price small { display: block; font-size: 0.85rem; font-weight: 550; color: var(--muted); margin-top: 0.3rem; letter-spacing: 0; }
+  .tc-checks { list-style: none; padding: 0; margin: 0.9rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .tc-checks li {
+    display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.98rem; font-weight: 700; white-space: nowrap;
+    padding: 0.28rem 0.7rem 0.28rem 0.35rem; border-radius: 999px; border: 1px solid var(--line);
+  }
+  .tc-checks li.ok { background: var(--good-bg); color: var(--good); border-color: var(--good-line); }
+  .tc-checks li.no { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-line); }
+  .tc-tick { width: 1.4rem; height: 1.4rem; border-radius: 50%; display: grid; place-items: center; font-size: 0.85rem; font-weight: 900; color: #fff; flex: none; }
+  .tc-checks li.ok .tc-tick { background: var(--tc-ok); }
+  .tc-checks li.no .tc-tick { background: var(--bad); }
+  .tc-checks.is-ghost li { color: var(--muted); background: transparent; border-style: dashed; border-color: var(--line-strong); }
+  .tc-checks.is-ghost .tc-tick { color: var(--muted); }
+  .tc-blocked { margin-top: 0.75rem; padding: 0.55rem 0.8rem; border-radius: var(--radius-sm); background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad-line); font-weight: 650; }
+  .tc-actions { display: flex; flex-wrap: wrap; gap: 0.65rem; margin-top: 1.05rem; }
+  .tc-btn { font: inherit; font-size: 1.15rem; font-weight: 750; padding: 0.7rem 1.4rem; border-radius: 12px; cursor: pointer; border: 1px solid transparent; }
+  .tc-btn:disabled { opacity: 0.6; cursor: progress; }
+  .tc-approve { background: var(--tc-ok); color: #fff; box-shadow: 0 2px 10px color-mix(in srgb, var(--tc-ok) 35%, transparent); }
+  .tc-approve:hover:not(:disabled) { background: var(--tc-ok-hover); }
+  .tc-deny { background: transparent; color: var(--text); border-color: var(--line-strong); }
+  .tc-deny:hover:not(:disabled) { background: var(--surface-2); }
+  .tc-btn:focus-visible, .tc-linkbtn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .tc-fine { color: var(--muted); font-size: 0.86rem; margin-top: 0.55rem; }
+  .tc-linkbtn { font: inherit; background: none; border: 0; padding: 0; color: var(--link); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+  .tc-resolved { margin-top: 1rem; font-size: 1.2rem; font-weight: 750; padding: 0.6rem 0.9rem; border-radius: var(--radius-sm); }
+  .tc-resolved.is-good { background: var(--good-bg); color: var(--good); border: 1px solid var(--good-line); }
+  .tc-resolved.is-bad { background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad-line); }
+  .tc-resolved a { color: inherit; font-weight: 650; font-size: 1rem; }
+
+  .tc-email { padding-right: 4.2rem; }
+  .tc-email.is-sent { border-top: 5px solid var(--automation); }
+  .tc-email.is-failed { border-top: 5px solid var(--bad); }
+  .tc-email.is-sending { border-top: 5px solid var(--wait); }
+  .tc-envelope { position: absolute; top: 1rem; right: 1.1rem; width: 2.5rem; height: 2.5rem; color: var(--automation); opacity: 0.9; }
+  .is-pending .tc-envelope, .tc-email.is-skipped .tc-envelope { color: var(--muted); opacity: 0.5; }
+  .tc-email-to { font-size: 1.05rem; color: var(--text-2); overflow-wrap: anywhere; }
+  .tc-email-to b { color: var(--text); }
+  .tc-subject { font-size: 1.3rem; font-weight: 750; line-height: 1.3; margin-top: 0.4rem; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+  .tc-from { margin-top: 0.5rem; font-size: 0.98rem; color: var(--text-2); }
+  .tc-via { color: var(--muted); font-size: 0.88rem; margin-top: 0.15rem; }
+
+  /* Agent at work */
+  .tc-feed { margin-top: 1rem; }
+  .tc-feed.is-live { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  .tc-feed-list { list-style: none; margin: 0.2rem 0 0; padding: 0; display: flex; flex-direction: column; }
+  .tc-feed-list li { display: grid; grid-template-columns: 5.6rem 1fr; gap: 0.75rem; padding: 0.28rem 0; border-top: 1px solid var(--line); font-size: 1.02rem; color: var(--text-2); }
+  .tc-feed-list li:first-child { border-top: 0; }
+  .tc-feed-list time { font-family: var(--mono); font-size: 0.88rem; color: var(--muted); padding-top: 0.12rem; font-variant-numeric: tabular-nums; }
+  .tc-feed-list span { overflow-wrap: anywhere; }
+  .tc-feed .tc-feed-list li.is-last { color: var(--text); font-weight: 650; }
+  .tc-feed.is-live .tc-feed-list li.is-last span::after { content: ""; display: inline-block; width: 0.55em; height: 1.05em; margin-left: 0.3rem; vertical-align: -0.15em; background: var(--accent); animation: tc-caret 1s steps(1) infinite; }
+
+  /* Below the fold */
+  .tc-more { margin-top: 2.25rem; }
+  .tc-more-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  .tc-h3 { font-size: 1rem; margin: 0 0 0.6rem; }
+  .tc-h3 .muted { font-size: 0.85rem; font-weight: 500; margin-left: 0.3rem; }
+  .tc-hyps { margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.6rem; }
+  .tc-hyps .claim { font-weight: 650; }
+  .tc-hyps .how { color: var(--text-2); font-size: 0.94rem; }
+  .tc-brief-subject { font-weight: 700; }
+  .tc-brief { white-space: pre-wrap; color: var(--text-2); font-size: 0.94rem; margin-top: 0.4rem; overflow-wrap: anywhere; }
+  .tc-dl { margin: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .tc-dl div { display: grid; grid-template-columns: 8rem 1fr; gap: 0.75rem; }
+  .tc-dl dt { color: var(--muted); font-size: 0.82rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 0.12rem; }
+  .tc-dl dd { margin: 0; min-width: 0; }
+  .tc-wrap { overflow-wrap: anywhere; }
+  .tc-sources { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+  .tc-sources .muted { font-size: 0.8rem; margin-left: 0.3rem; }
+  .tc-log { margin-top: 1rem; }
+  .tc-ids { margin-top: 1rem; color: var(--muted); font-size: 0.86rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
+  .tc-studio { margin-left: auto; font-size: 0.9rem; }
+
+  /* Replay honesty: the badge stays on screen in every frame, not only in the header */
+  .tc-rec-tag { text-transform: uppercase; font-size: 0.7rem; font-weight: 850; letter-spacing: 0.06em; background: var(--tc-rec); color: var(--tc-rec-ink); padding: 0.08rem 0.45rem; border-radius: 999px; }
+  .tc-rec-fixed {
+    position: fixed; right: 1rem; bottom: 1rem; z-index: 20; margin: 0; max-width: calc(100vw - 2rem);
+    background: var(--tc-rec); color: var(--tc-rec-ink); font-weight: 800; font-size: 0.85rem;
+    padding: 0.3rem 0.8rem; border-radius: 999px; box-shadow: var(--shadow-lg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .tc.is-recorded-page { padding-bottom: 2.5rem; }
+  .tc-toast {
+    position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 30; max-width: min(36rem, calc(100vw - 2rem));
+    background: var(--text); color: var(--bg); padding: 0.6rem 1.1rem; border-radius: 12px; font-weight: 650; box-shadow: var(--shadow-lg);
+  }
+  .tc-toast.is-bad { background: var(--bad); color: #fff; }
+  .tc-toast[hidden] { display: none; }
+
+  /* Every looping animation lasts 1 s or 2 s, so the 2 s poll swap lands on a cycle boundary instead of a visible jump */
+  @keyframes tc-ping { 0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, .7); } 60% { box-shadow: 0 0 0 0.55rem rgba(74, 222, 128, 0); } 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); } }
+  @keyframes tc-beat { 50% { border-color: color-mix(in srgb, var(--accent) 30%, transparent); } }
+  @keyframes tc-breathe { 50% { transform: scale(0.55); opacity: 0.6; } }
+  @keyframes tc-shimmer { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+  @keyframes tc-dot { 0%, 100% { transform: translateY(0); opacity: 0.35; } 40% { transform: translateY(-0.3rem); opacity: 1; } }
+  @keyframes tc-caret { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .tc-live-dot, .tc-stages .st-active, .tc-stages .st-active .tc-st-mark::after, .tc-shimmer, .tc-dots i, .tc-feed.is-live .tc-feed-list li.is-last span::after { animation: none; }
+    .tc-shimmer { color: var(--text-2); background: none; }
+  }
+  @media (max-width: 62rem) { .tc-st-now { display: none; } }
+  @media (max-width: 52rem) {
+    .tc-cards, .tc-more-grid { grid-template-columns: 1fr; }
+    .tc-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tc-agent { font-size: 1.2rem; }
+    .tc-nums { white-space: normal; }
+  }
+</style>
+
+{% include "partials/technician_case.html" %}
+
+<p id="tc-toast" class="tc-toast" role="status" aria-live="polite" hidden></p>
+<script>
+// Approve / Deny on the staged part (design §8). Approve opens the cart FIRST, synchronously
+// inside the click, because browsers block a tab opened after an await; then it POSTs the
+// work order's resolve route (APIs §4, D19b: a named person and a reason) and re-renders the case.
+(() => {
+  const KEY = "romulus.operator";
+  const getBy = () => {
+    try { return (localStorage.getItem(KEY) || "").trim() || "operator"; } catch (e) { return "operator"; }
+  };
+  const showBy = () => document.querySelectorAll("[data-tech-by]").forEach((el) => { el.textContent = getBy(); });
+  const toastEl = document.getElementById("tc-toast");
+  let toastTimer = null;
+  const toast = (text, bad) => {
+    toastEl.textContent = text;
+    toastEl.className = "tc-toast" + (bad ? " is-bad" : "");
+    toastEl.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, bad ? 9000 : 4000);
+  };
+  // While a resolve is in flight, or the pointer is on the buttons, the 2 s poll must not swap
+  // the case: it would drop the click, or bring back enabled buttons (a second cart tab, a 409).
+  let busy = false, hold = false, forcing = false;
+  const onCase = (ev) => { const t = ev.detail && (ev.detail.target || ev.detail.elt); return !!t && t.id === "tech-case"; };
+  const paused = (ev) => (busy || hold) && !forcing && onCase(ev);
+  document.body.addEventListener("htmx:beforeRequest", (ev) => { if (paused(ev)) ev.preventDefault(); });
+  document.body.addEventListener("htmx:beforeSwap", (ev) => { if (paused(ev)) ev.detail.shouldSwap = false; });
+  document.addEventListener("pointerover", (ev) => { hold = !!(ev.target.closest && ev.target.closest(".tc-actions")); });
+  document.addEventListener("pointerout", (ev) => { if (!ev.relatedTarget) hold = false; });
+  const refresh = (url) => {
+    busy = false; hold = false;
+    if (!(window.htmx && url)) { location.reload(); return; }
+    forcing = true;
+    Promise.resolve(htmx.ajax("GET", url, {target: "#tech-case", swap: "outerHTML"})).finally(() => { forcing = false; });
+  };
+
+  document.addEventListener("click", async (ev) => {
+    if (ev.target.closest("[data-tech-rename]")) {
+      const name = prompt("Your name (the work order records it as human:<name>):", getBy());
+      if (name !== null && name.trim()) { try { localStorage.setItem(KEY, name.trim()); } catch (e) {} }
+      showBy();
+      return;
+    }
+    const btn = ev.target.closest("[data-tech-action]");
+    if (!btn || btn.disabled || busy) return;
+    busy = true;
+    const action = btn.dataset.techAction;
+    let blocked = false;
+    if (action === "approve" && btn.dataset.cart) {
+      const tab = window.open(btn.dataset.cart, "_blank");  // first, before any await
+      if (tab) tab.opener = null; else blocked = true;
+    }
+    if (action === "deny" && !confirm("Deny " + btn.dataset.what + "? The work order closes and no cart is staged.")) { busy = false; return; }
+    const by = getBy();
+    const why = action === "approve"
+      ? "Approved the staged spare part, " + btn.dataset.what + ", on the Technician page; the cart opened for checkout."
+      : "Denied the staged spare part, " + btn.dataset.what + ", on the Technician page.";
+    const row = btn.closest(".tc-actions");
+    (row ? row.querySelectorAll("button") : [btn]).forEach((b) => { b.disabled = true; });
+    btn.textContent = action === "approve" ? "Approving…" : "Denying…";
+    try {
+      const resp = await fetch(btn.dataset.url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({action: action, by: by, why: why}),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) toast(body.detail || body.why || ("Request failed: HTTP " + resp.status), true);
+      else if (blocked) toast("Approved by " + by + ". The browser blocked the cart tab: use “open the cart again”.", true);
+      else toast((action === "approve" ? "Approved by " : "Denied by ") + by + ".");
+    } catch (e) {
+      toast("Could not reach the server: " + e, true);
+    }
+    refresh(btn.dataset.partial);
+  });
+
+  document.body.addEventListener("htmx:afterSwap", showBy);
+  showBy();
+})();
+</script>
+{% endblock %}
