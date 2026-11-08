@@ -123,3 +123,44 @@ def test_missing_data_does_not_crash():
     for kind in ["incident.reported", "incident.agent_acted", "overlay.applied"]:
         (step,) = build_story([Ev(kind, data=None)], INC).steps
         assert step.line
+
+
+def _wo_refs(status, **extra):
+    return {"incident": INC, "device": "arm-1", "work_order": "wo_1", "status": status, **extra}
+
+
+def test_work_order_events_read_as_a_chain_and_set_the_status():
+    note = "RESULT: ordered ORDER_REF=PO-1 COST_USD=12.00"
+    moved = {"from": "posted", "to": "in_progress"}
+    evs = [
+        # Same tick, given out of order: the loop stage puts them right.
+        Ev("workorder.status_changed", refs=_wo_refs("in_progress", **moved)),
+        Ev(
+            "workorder.card_posted",
+            refs=_wo_refs("posted"),
+            data={"card_id": "crd_1", "assignee": "fleet-ops"},
+        ),
+        Ev(
+            "workorder.created",
+            refs=_wo_refs("pending"),
+            data={"part_name": "servo", "quantity": 1},
+        ),
+        Ev(
+            "workorder.status_changed",
+            ts=T0 + timedelta(seconds=30),
+            refs=_wo_refs("done", **{"from": "in_progress", "to": "done"}),
+            data={"note": note},
+        ),
+    ]
+    s = build_story(evs, INC)
+    assert s.chain == f"work order wo_1 → card posted → in_progress → done: {note}"
+    assert s.status == ("part ordered", "good")
+    assert "posted to Naïve as card crd_1, assigned to fleet-ops" in s.steps[1].line
+    assert s.steps[0].line.endswith("(1 x servo); status pending.")
+
+
+def test_a_blocked_work_order_shows_as_waiting_for_a_person():
+    s = build_story([Ev("workorder.created", refs=_wo_refs("blocked_over_cap"))], INC)
+    assert s.chain == "work order wo_1 (blocked_over_cap)"
+    assert s.status == ("blocked: over cap", "bad")
+    assert "no catalogued part" in s.steps[0].line

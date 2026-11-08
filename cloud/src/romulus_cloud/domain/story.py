@@ -5,7 +5,8 @@ plain-English line and the event's `why`. Later milestones extend a story by rec
 more events with the incident in their refs (candidate, gate, work order, evidence), and,
 if they want a nicer line or chain label than the default, by adding an entry to
 `LINES` / `LABELS` (and `STAGE` for tie order), and, if the kind changes where an
-incident stands, to `STATUS`. Nothing here needs rewriting.
+incident stands, to `STATUS`. Nothing here needs rewriting. Work-order events also carry
+`refs.status`, which picks the badge from `WORK_ORDER_STATUS` (M5).
 
 Evidence (M4): `recording.*` events carry an `evidence` dict in their data (kind, format,
 size, download link, whether the bytes are stored). Their steps carry it too, and
@@ -74,6 +75,8 @@ class Story:
         (words, tone), e.g. ("overlay held", "good"). Steps that don't move it (evidence,
         notes) are skipped."""
         for s in reversed(self.steps):
+            if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
+                return WORK_ORDER_STATUS[s.refs["status"]]
             if s.kind in STATUS:
                 return STATUS[s.kind]
         return ("no events", "info") if not self.steps else ("open", "bad")
@@ -180,6 +183,31 @@ def _linked_line(e: EventLike) -> str:
     return f"The {ev.get('kind', 'recording')} recording was linked to this incident{labels}."
 
 
+def _wo(e: EventLike) -> str:
+    return f"work order {e.refs.get('work_order')}"
+
+
+def _wo_created_line(e: EventLike) -> str:
+    d = _data(e)
+    what = f"{d.get('quantity')} x {d['part_name']}" if d.get("part_name") else "no catalogued part"
+    status = e.refs.get("status") or "pending"
+    return f"The platform opened {_wo(e)} for {_device(e)} ({what}); status {status}."
+
+
+def _wo_changed_line(e: EventLike) -> str:
+    note = _data(e).get("note")
+    said = f" Card note: {note}" if note else ""
+    return f"Work order {e.refs.get('work_order')} went from {e.refs.get('from')} to " + (
+        f"{e.refs.get('to')}.{said}"
+    )
+
+
+def _wo_changed_label(e: EventLike) -> str:
+    to = str(e.refs.get("to") or "updated")
+    note = _data(e).get("note")
+    return f"{to}: {note}" if note and to in ("done", "stopped", "needs_human") else to
+
+
 # Plain-English line per kind. Unknown kinds fall back to `_default_line`.
 LINES: dict[str, Callable[[EventLike], str]] = {
     "incident.reported": lambda e: (
@@ -196,6 +224,15 @@ LINES: dict[str, Callable[[EventLike], str]] = {
     "recording.received": _evidence_line,
     "recording.blob_stored": _stored_line,
     "recording.linked": _linked_line,
+    "workorder.created": _wo_created_line,
+    "workorder.card_posted": lambda e: (
+        f"Work order {e.refs.get('work_order')} was posted to Naïve as card "
+        f"{_data(e).get('card_id')}, assigned to {_data(e).get('assignee') or 'nobody'}."
+    ),
+    "workorder.post_retried": lambda e: f"Posting {_wo(e)} to Naïve failed; it stays queued.",
+    "workorder.post_held": lambda e: f"Posting {_wo(e)} is held: the fleet is frozen.",
+    "workorder.status_changed": _wo_changed_line,
+    "workorder.card_updated": lambda e: f"The card for {_wo(e)} changed on Naïve.",
 }
 
 # Short label per kind for the one-line chain. Unknown kinds use the kind itself.
@@ -217,6 +254,14 @@ LABELS: dict[str, Callable[[EventLike], str]] = {
         if _data(e).get("linked")
         else ""
     ),
+    "workorder.created": lambda e: (
+        _wo(e) if e.refs.get("status") in (None, "pending") else f"{_wo(e)} ({e.refs['status']})"
+    ),
+    "workorder.card_posted": lambda e: "card posted",
+    "workorder.post_retried": lambda e: "post retried",
+    "workorder.post_held": lambda e: "held: fleet frozen",
+    "workorder.status_changed": _wo_changed_label,
+    "workorder.card_updated": lambda e: "card updated",
 }
 
 # Where an incident stands after a step of this kind: (words for a badge, tone), with tone
@@ -238,6 +283,17 @@ STATUS: dict[str, tuple[str, str]] = {
     "workorder.card_posted": ("work order posted", "wait"),
     "workorder.status_changed": ("work order updated", "wait"),
 }
+# A work-order event's `refs.status` says more than its kind, so it picks the badge (M5).
+WORK_ORDER_STATUS: dict[str, tuple[str, str]] = {
+    "pending": ("work order queued", "wait"),
+    "blocked_over_cap": ("blocked: over cap", "bad"),
+    "needs_human": ("work order needs a person", "bad"),
+    "posted": ("work order posted", "wait"),
+    "in_progress": ("fleet-ops on it", "wait"),
+    "done": ("part ordered", "good"),
+    "stopped": ("order stopped", "bad"),
+    "denied": ("work order denied", "info"),
+}
 STATUS_TONES = ("good", "bad", "wait", "info")
 
 # Where a kind sits in the loop, to order events that share a timestamp (an incident,
@@ -249,6 +305,13 @@ STAGE: dict[str, int] = {
     "recording.received": 10,
     "recording.blob_stored": 11,
     "recording.linked": 12,
+    # One worker tick can open, post and update a work order at the same `now`.
+    "workorder.created": 60,
+    "workorder.post_held": 61,
+    "workorder.post_retried": 61,
+    "workorder.card_posted": 61,
+    "workorder.status_changed": 62,
+    "workorder.card_updated": 62,
 }
 _DEFAULT_STAGE = 50
 
