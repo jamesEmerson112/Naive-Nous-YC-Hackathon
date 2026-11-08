@@ -96,33 +96,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 4:08 PM PST_
+_Last updated: Sat Nov 7, 4:18 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has every cloud decision (D0–D22) locked and is starting M0 (scaffold, contracts v0.1, one real Naïve card, one real LLM call), due 5:15 PM. Ishaan is building the device-side healer test bed in `edge/` (local, uncommitted). James is adding a Features view to the stack hub driven by `features.txt` (worktree, uncommitted).
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is building M0 (scaffold, contracts v0.1, one real Naïve card, one real LLM call), due 5:15 PM. Ishaan is tuning the device-side healer harness in `edge/` (local, uncommitted). James's next step is the bench prototype.
 
 **Recently done:**
-- Kent confirmed Ishaan's D5a change: the healer may patch the safety layer and visor. Those patches go through the same gate, carry a `touches_safety` flag on the timeline, and the risk is logged as K17; the "LLM never touches the safety layer" pitch line is dropped (4:06 PM)
-- Kent made the M0 LLM spike go through the Naïve model proxy (`LLM_PROVIDER=naive_proxy`), with James's RunPod endpoint as a second test if it's up (4:06 PM)
-- Ishaan claimed the device-side owner line (D14), the Pi app, the healer agent, tier 1–3 health checks, demo faults D1–D3 and the healer benchmark in `features.txt` (4:04 PM)
-- Kent decided D19b (over-cap work orders blocked until a person resolves them) and D22 (one OpenAI-compatible LLM adapter: Naïve proxy by default, RunPod vLLM as the alternative; a swappable `Coder` in a `coder` sandbox) (3:56 PM)
+- James added `docs/naive-vs-runpod-setup.md`: Naïve hosts agents on its own fixed harnesses (`pi`, `vetta`, `claude_code`, `hermes`) with no custom image, so the Hermes that drives the arm runs on the bench and calls Naïve over API or MCP; GPUs stay on RunPod (4:16 PM)
+- James's hub now has a Features view read from `features.txt`, with black boxes for features nobody is working on; also added `docs/hermes-harness-gaps.md` (4:10 PM)
+- Ishaan's Mac test bed works: the oracle healer passes 6/6 tasks and a do-nothing healer 0/6; granite4.1:3b on Ollama ran end to end but failed S1 and D2 (4:12 PM)
+- Kent confirmed Ishaan's D5a change: the healer may patch the safety layer and visor behind the same gate, with a `touches_safety` flag; risk logged as K17 (4:06 PM)
 
 **Open questions:**
 - Kent is blocked on: device code and tests in `device/` (B1), the code-package and `code_patch` formats (B2, B3), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4)
 - Ishaan's test bed is in `edge/` but Kent's contracts expect `device/`; the two need to pick one folder *(inferred)*
-- Which small model and harness run on the Pi 5 (Ishaan is trying mini-swe-agent on Ollama), and which RunPod model ids does James's lane use?
+- Which small model and harness run on the Pi 5 (granite4.1:3b is only a first pick), and which RunPod model ids does James's lane use?
 - What does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `6869c8d` Sat 16:16 · jamesEmerson112 · Add note on why Naive does not set up like RunPod
+- `33d4cf4` Sat 16:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `1a58412` Sat 16:10 · jamesEmerson112 · Hub: Features inside view read from features.txt; black boxes for not worked on
+- `f61d966` Sat 16:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `41dc22d` Sat 16:07 · Kent Gang · Update Kent status in CLAUDE.md
 - `0b459ee` Sat 16:06 · Kent Gang · cloud platform planning updates
 - `e59093f` Sat 16:04 · Ishaan Ranjan · Claim the device side owner line in features.txt
 - `cd54c16` Sat 16:03 · Ishaan Ranjan · Claim the device test-bed lines in features.txt
 - `37bc048` Sat 15:58 · jamesEmerson112 · Update team status in CLAUDE.md
 - `e8f196f` Sat 15:58 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `199e767` Sat 15:57 · Kent Gang · Update Kent status in CLAUDE.md
-- `c8eef1a` Sat 15:56 · Kent Gang · Decide spend-cap blocking (D19b) and batch LLM and coding agent (D22); add coder sandbox
-- `821ad27` Sat 15:53 · jamesEmerson112 · Refresh hub with Kent's decisions D15-D21 and the Naive org setup
-- `7d952ed` Sat 15:52 · Kent Gang · more planning updates
 
 **Branches on GitHub:** `main`, `firmware` (Olir)
 <!-- team-status:end -->
