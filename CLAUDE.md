@@ -55,8 +55,8 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 6:10 PM P
 - **Research:** pin LeRobot v0.7.0, since it breaks the API ([release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
 - **Research:** the SO-101 sim twin is `robotstudio_so101` in MuJoCo Menagerie, and it runs on a Mac ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
 - **Research:** bring a router, Ethernet and a backup video, because venue Wi-Fi sinks demos ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)). Everything else is in [`docs/cloud-platform-planning/README.md`](docs/cloud-platform-planning/README.md).
-- **Now:** PRs #12 (M3b: batch, gate, kill switch; F3–F5) and #14 (M6: datasets, labels, exports; F8) are open. The Fleet Doctor proposal is at v2 after a red-team review ([`docs/fleet-doctor/`](docs/fleet-doctor/README.md)): a P2 add-on that stays out of safety, with live sessions deferred (D23–D27, awaiting decision).
-- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3a #7 · M4 #10 · M5 #11, #15 · triage #6 · lint #13 · decisions D0–D22 locked.
+- **Now:** PR #12 (M3b: batch, gate, kill switch; F3–F5) is the last core milestone still open before M7, the overnight launch at 12:30 AM. The Fleet Doctor proposal is at v2 after a red-team review ([`docs/fleet-doctor/`](docs/fleet-doctor/README.md)): a P2 add-on that stays out of safety, with live sessions deferred (D23–D27, awaiting decision).
+- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3a #7 · M4 #10 · M5 #11, #15 · M6 #14 · triage #6 · lint #13 · decisions D0–D22 locked.
 - **Blocked:** B4, a Naïve `proxy:write` key or RunPod endpoint. M0's live card and LLM call wait on it and are about 45 min late *(inferred)*. Also B1 (device code in the repo), B8 (STM32 toolchain; Olir's `firmware/toolkit/` may solve it *(inferred)*) and the K17 path list.
 - **Asks:** Ishaan: move `edge/` to `device/`, review contracts #3 (B2, B3), send the safety and visor paths, and co-review the Fleet Doctor (D23–D27). James: the RunPod endpoint. Owed to James: a Naïve key with Board scopes.
 <!-- romulus-sync:end -->
