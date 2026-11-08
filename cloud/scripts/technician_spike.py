@@ -437,6 +437,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
     ap.add_argument("--case-id", default=None)
+    ap.add_argument(
+        "--attach", default=None, help="poll this existing ses_… instead of creating one"
+    )
     ap.add_argument("--device-id", default="arm-1")
     ap.add_argument("--work-order", default="wo_spike")
     args = ap.parse_args(argv)
@@ -486,10 +489,33 @@ def main(argv: list[str] | None = None) -> int:
     print(f"schema: {schema_src}\ncase file: {len(body['message'])} chars, servo {variant}\n")
 
     t0 = time.monotonic()
-    try:
-        state: SessionState = naive.create_session(body, idempotency_key=case_id)
-    except NaiveError as exc:
-        print(f"create_session failed: {exc} (status={exc.status} code={exc.code})")
+    # Under load the POST can outlive the 5 s timeout; the same key + body replays the first
+    # result once it settles (409 idempotency_conflict until then), so keep retrying patiently.
+    state: SessionState | None = None
+    for attempt in range(40):
+        try:
+            if args.attach:  # a session this case already created (POST held open while queued)
+                state = naive.get_session(args.attach)
+            else:
+                state = naive.create_session(body, idempotency_key=case_id)
+            break
+        except NaiveError as exc:
+            print(
+                f"create_session attempt {attempt + 1}: {exc} (status={exc.status} code={exc.code})"
+            )
+            if not exc.retryable:
+                return 1
+            if exc.pending:  # created but the POST is held open: find it by case id
+                try:
+                    state = naive.find_session(agent_id, case_id)
+                except NaiveError as find_exc:
+                    print(f"  find_session failed: {find_exc}")
+                if state is not None:
+                    print(f"  found {state.id} by metadata.romulus_case={case_id}")
+                    break
+            time.sleep(5)
+    if state is None:
+        print("create_session never settled")
         return 1
     print(f"session {state.id} created ({state.raw.get('status')}); studio_url={state.studio_url}")
 
@@ -510,14 +536,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {_hms(ev.at)}  {line}")
         if state.state != "running":
             # one last read so the closing events (usage, idle) are in the fixture
-            for ev in naive.session_events(state.id, after_seq=last_seq):
-                events.append(ev)
-                last_seq = max(last_seq, ev.seq)
+            for attempt in range(5):
+                try:
+                    for ev in naive.session_events(state.id, after_seq=last_seq):
+                        events.append(ev)
+                        last_seq = max(last_seq, ev.seq)
+                    break
+                except NaiveError as exc:
+                    print(f"  final events read failed (attempt {attempt + 1}): {exc}")
+                    time.sleep(poll_s)
             break
         if time.monotonic() - t0 > timeout_s:
             print(f"timeout after {timeout_s:.0f} s: cancelling")
-            naive.cancel_session(state.id)
-            state = naive.get_session(state.id)
+            try:
+                naive.cancel_session(state.id)
+                state = naive.get_session(state.id)
+            except NaiveError as exc:
+                print(f"  cancel failed: {exc}")
             break
         time.sleep(poll_s)
     wall_s = time.monotonic() - t0

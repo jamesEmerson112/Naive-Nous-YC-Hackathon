@@ -55,16 +55,21 @@ class NaiveError(Exception):
         code: str | None = None,
         request_id: str | None = None,
         retry_after: float | None = None,
+        pending: bool = False,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.request_id = request_id
         self.retry_after = retry_after  # seconds, from a Retry-After header
+        # create_session only: the POST may have created the session but hasn't answered yet
+        # (client timeout, or 409 "still in flight" while the session is queued). Resend the
+        # same body and key next tick, or look it up with find_session.
+        self.pending = pending
 
     @property
     def retryable(self) -> bool:
-        if self.status is None or self.status == 429 or self.status >= 500:
+        if self.pending or self.status is None or self.status == 429 or self.status >= 500:
             return True
         return self.status == 409 and self.code in RETRYABLE_409_CODES
 
@@ -210,14 +215,43 @@ class HttpNaive:
 
     def create_session(self, body: dict[str, Any], *, idempotency_key: str) -> SessionState:
         """`POST /v1/sessions` creates and starts the run (F:28973-29030). The key is bound to
-        the exact body (F:9432-9441): resend the frozen body on retry."""
-        raw = self._request_retrying(
-            "POST",
-            "/sessions",
-            json=body,
-            headers={"Idempotency-Key": idempotency_key},
-        )
+        the exact body (F:9432-9441): resend the frozen body on retry.
+
+        No retries inside the call. Under load Naïve creates the session and holds the POST open
+        while it is `queued`, so a client timeout or a `409 idempotency_conflict` ("still in
+        flight") raises `NaiveError(code="in_flight", pending=True)`: the caller resends the same
+        body and key on its next tick, or finds the session with `find_session`."""
+        try:
+            raw = self._request(
+                "POST",
+                "/sessions",
+                json=body,
+                headers={"Idempotency-Key": idempotency_key},
+                timeout=SESSION_TIMEOUT_S,
+            )
+        except NaiveError as exc:
+            if exc.status is None or (exc.status == 409 and exc.code == "idempotency_conflict"):
+                raise NaiveError(
+                    f"Naïve session create still in flight for key {idempotency_key}: {exc}",
+                    status=exc.status,
+                    code="in_flight",
+                    request_id=exc.request_id,
+                    retry_after=exc.retry_after,
+                    pending=True,
+                ) from exc
+            raise
         return session_from_raw(raw)
+
+    def find_session(self, agent_id: str, case_id: str) -> SessionState | None:
+        """The agent's recent session whose `metadata.romulus_case == case_id`, or None
+        (`GET /v1/sessions?agent_id=…`, newest first, one page of 20)."""
+        page = self._request_retrying(
+            "GET", "/sessions", params={"agent_id": agent_id, "limit": 20}
+        )
+        for raw in page.get("data") or []:
+            if isinstance(raw, dict) and (raw.get("metadata") or {}).get("romulus_case") == case_id:
+                return session_from_raw(raw)
+        return None
 
     def get_session(self, session_id: str) -> SessionState:
         return session_from_raw(self._request_retrying("GET", f"/sessions/{session_id}"))
@@ -462,6 +496,8 @@ class SessionEvent:
 class TechnicianNaive(Protocol):
     def create_session(self, body: dict[str, Any], *, idempotency_key: str) -> SessionState: ...
 
+    def find_session(self, agent_id: str, case_id: str) -> SessionState | None: ...
+
     def get_session(self, session_id: str) -> SessionState: ...
 
     def session_events(self, session_id: str, after_seq: int = 0) -> list[SessionEvent]: ...
@@ -679,6 +715,14 @@ class FixtureNaive:
         self.requests[idempotency_key] = body
         self._started[session_id] = self.now()
         return self.get_session(session_id)
+
+    def find_session(self, agent_id: str, case_id: str) -> SessionState | None:
+        """The session created for this case (idempotency key or `metadata.romulus_case`)."""
+        for key, session_id in self._by_key.items():
+            meta = self.requests[key].get("metadata") or {}
+            if case_id in (key, meta.get("romulus_case")):
+                return self.get_session(session_id)
+        return None
 
     def get_session(self, session_id: str) -> SessionState:
         released = self._released(session_id)

@@ -124,7 +124,7 @@ def test_create_session_posts_body_with_key_and_user_agent():
     assert seen["timeout"]["read"] == 5.0
 
 
-def test_session_call_retries_429_with_same_key_then_succeeds():
+def test_email_retries_429_with_same_key_then_succeeds():
     keys, sleeps = [], []
 
     def handler(request):
@@ -135,13 +135,72 @@ def test_session_call_retries_429_with_same_key_then_succeeds():
                 headers={"Retry-After": "2"},
                 json={"error": {"code": "rate_limited", "message": "at capacity"}},
             )
-        return httpx.Response(201, json={"id": "ses_1", "status": "running"})
+        return httpx.Response(202, json={"object": "email_send", "accepted": True})
 
     naive = _http(handler)
     naive._sleep = sleeps.append
-    naive.create_session({"agent_id": "a", "message": "m"}, idempotency_key="tc_9")
-    assert keys == ["tc_9"] * 3
+    naive.send_email(
+        identity_id="i",
+        inbox_id="e",
+        to=["k@y"],
+        subject="s",
+        text="t",
+        idempotency_key="tc_9:email",
+    )
+    assert keys == ["tc_9:email"] * 3
     assert sleeps == [2.0, 2.0]
+
+
+def test_create_session_timeout_or_in_flight_is_pending_without_retrying():
+    calls = []
+
+    def timeout(request):
+        calls.append(1)
+        raise httpx.ReadTimeout("slow", request=request)
+
+    with pytest.raises(NaiveError) as exc:
+        _http(timeout).create_session({"agent_id": "a"}, idempotency_key="tc_1")
+    assert (exc.value.code, exc.value.pending, exc.value.retryable) == ("in_flight", True, True)
+    assert len(calls) == 1
+
+    def in_flight(request):
+        return httpx.Response(
+            409, json={"error": {"code": "idempotency_conflict", "message": "still in flight"}}
+        )
+
+    with pytest.raises(NaiveError) as exc:
+        _http(in_flight).create_session({"agent_id": "a"}, idempotency_key="tc_1")
+    assert exc.value.pending and exc.value.code == "in_flight" and exc.value.status == 409
+
+    def capacity(request):
+        return httpx.Response(429, json={"error": {"code": "rate_limited", "message": "busy"}})
+
+    with pytest.raises(NaiveError) as exc:
+        _http(capacity).create_session({"agent_id": "a"}, idempotency_key="tc_1")
+    assert not exc.value.pending and exc.value.retryable
+
+
+def test_find_session_matches_case_metadata():
+    seen = {}
+
+    def handler(request):
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "ses_b", "status": "queued", "metadata": {"romulus_case": "tc_2"}},
+                    {"id": "ses_a", "status": "idle", "metadata": {"romulus_case": "tc_1"}},
+                ],
+                "has_more": False,
+            },
+        )
+
+    naive = _http(handler)
+    found = naive.find_session("agt_t", "tc_1")
+    assert found.id == "ses_a" and found.state == "idle"
+    assert seen["params"] == {"agent_id": "agt_t", "limit": "20"}
+    assert naive.find_session("agt_t", "tc_9") is None
 
 
 def test_session_call_does_not_retry_400():
@@ -269,6 +328,10 @@ def test_fixture_naive_idempotency_and_new_ids():
     assert exc.value.code == "idempotency_conflict"
     b = fx.create_session({"x": 1}, idempotency_key="tc_2")
     assert b.id == f"{a.id}_r2"
+    assert fx.find_session("agt", "tc_2").id == b.id
+    assert fx.find_session("agt", "tc_3") is None
+    fx.create_session({"metadata": {"romulus_case": "tc_meta"}}, idempotency_key="other-key")
+    assert fx.find_session("agt", "tc_meta").id == f"{a.id}_r3"
 
 
 def test_fixture_naive_cancel_and_email():
