@@ -62,7 +62,17 @@ def register(ctx):
     ctx.register_tool(
         name="arm_status", toolset=TOOLSET, handler=status,
         schema=_schema("arm_status", "Read the arm: joint positions, servo status bits, grasp state, "
-                                     "open faults and the wrist distance sensor."),
+                                     "open incidents and the wrist distance sensor."),
+    )
+
+    def restart_sensor(params, **kwargs):
+        del params, kwargs
+        return json.dumps(_call("repair", action="restart_sensor"))
+
+    ctx.register_tool(
+        name="arm_restart_sensor", toolset=TOOLSET, handler=restart_sensor,
+        schema=_schema("arm_restart_sensor", "Healer repair: restart the wrist distance sensor, then verify on "
+                                             "fresh readings. Fixes a frozen or stuck distance. Never moves the arm."),
     )
 
     def guard(tool_name, args, task_id="", **kwargs):
@@ -72,9 +82,10 @@ def register(ctx):
         st = _call("status")
         if not st.get("ok"):
             return None                          # the tool itself will report the host problem
-        if st.get("faults"):
-            return {"action": "block", "message": f"The arm is held still: open fault(s) {sorted(st['faults'])}. "
-                                                  "The healer fixes the cause first; then retry."}
+        if st.get("incidents"):
+            said = "; ".join(i["summary"] for i in st["incidents"])
+            return {"action": "block", "message": f"The arm is parked: {said}. Fix the cause first "
+                                                  "(for a stuck distance, arm_restart_sensor), then retry."}
         if any(st.get("status", [])):
             return {"action": "block", "message": f"A servo reports an alarm (status bits {st['status']}); "
                                                   "park the arm and report it instead of moving."}

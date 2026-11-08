@@ -5,16 +5,24 @@ reply per line. LeRobot's SO101Follower takes seconds and ~0.9 GB to start, so t
 also wants exactly one long-lived owner of the servo bus (note, "Traps").
 
     {"op": "skill", "name": "wave"}           -> {"ok": true, "skill": "wave", "result": {...}}
-    {"op": "read"} / {"op": "distance"} / {"op": "status"} / {"op": "ping"}
-    {"op": "inject", "fault": "us_frozen"} / {"op": "clear"}
+    {"op": "read"} / {"op": "distance"} / {"op": "status"} / {"op": "incidents"} / {"op": "ping"}
+    {"op": "inject", "fault": "us_frozen"}    plant a fault (sim only)
+    {"op": "repair", "action": "restart_sensor"}  the healer's tool: fix the cause, then verify
+
+The watchdog is plain code (level 1, `level1.py`): on each distance row it checks the last few
+seconds. The first critical finding opens an incident: the sentence is spoken, motion halts, the
+arm parks, and motion stays blocked until a repair is verified.
 """
 import argparse
 import json
+import os
+import shutil
 import socket
+import subprocess
 import time
 from pathlib import Path
 
-from . import prims
+from . import level1, prims
 from .arm import JOINTS, SimArm
 from .client import socket_path
 from .record import RunRecorder
@@ -53,17 +61,68 @@ class Skills:
         return self.arm.play(self._wave)
 
     def park(self):
-        r = self.arm.goto(self.p["rest"])
-        self.arm.relax()
-        return {**r, "torque": "off"}
+        return self.arm.park(self.p["rest"])
 
     MENU = ("go_home", "reach", "grip", "release", "wave", "park")
+
+
+def speak(text, *, out=None):
+    """Say the level-1 sentence on the bench. ARMSIM_SPEAK: live (default), file, or off."""
+    mode = os.environ.get("ARMSIM_SPEAK", "live")
+    if mode == "off" or not shutil.which("say"):
+        return None
+    if mode == "file" and out:
+        subprocess.run(["say", "-o", str(out), text], check=False)
+        return str(out)
+    subprocess.Popen(["say", text])
+    return "live"
+
+
+class Watchdog:
+    """Plain code, no LLM: level-1 findings over the recent rows open incidents."""
+
+    def __init__(self, arm, rec):
+        self.arm, self.rec, self.incidents = arm, rec, []
+        arm.watchers.append(self)
+
+    def open(self):
+        return [i for i in self.incidents if i["state"] == "open"]
+
+    def __call__(self, arm):
+        if self.open():
+            return
+        crit = [f for f in level1.run({"now": arm.t, "D": list(arm.d_rows)}) if f["severity"] == "critical"]
+        if not crit:
+            return
+        f = crit[0]
+        inc = {"id": f"inc-{len(self.incidents) + 1}", "state": "open", "opened_at": round(arm.t, 2), **f}
+        inc["spoken"] = speak(f["summary"], out=RUNS / f"{self.rec.run_id}-{inc['id']}.aiff")
+        self.incidents.append(inc)
+        arm.halt_reason = f["kind"]
+        print(f"WATCHDOG {inc['id']} {f['kind']}: {f['summary']}", flush=True)
+
+    def repair(self, action):
+        """Fix the cause (sim: the planted fault), then verify on fresh rows before closing."""
+        if action != "restart_sensor":
+            return {"ok": False, "error": f"unknown repair {action!r}; known: ['restart_sensor']"}
+        self.arm.clear("us_frozen")
+        self.arm.d_rows.clear()
+        self.arm.hold(3.5)                             # fresh readings, arm still parked
+        still = level1.run({"now": self.arm.t, "D": list(self.arm.d_rows)})
+        fixed = not any(f["kind"] in ("us_frozen", "us_stuck") for f in still)
+        if fixed:
+            for inc in self.open():
+                inc.update(state="resolved", resolved_at=round(self.arm.t, 2), fix=action)
+            self.arm.halt_reason = None
+        return {"ok": True, "action": action, "verified": fixed,
+                "still": [f["summary"] for f in still], "open": [i["id"] for i in self.open()]}
 
 
 def serve(*, gif=False, view=False, realtime=False):
     rec = RunRecorder(RUNS, task="arm host session", joints=JOINTS)
     arm = SimArm(recorder=rec, start=prims.REST)
     skills = Skills(arm)
+    dog = Watchdog(arm, rec)
     if gif:
         from .render import Gif
         gif = Gif(arm, RUNS / f"{rec.run_id}.gif")
@@ -96,13 +155,25 @@ def serve(*, gif=False, view=False, realtime=False):
             name = req.get("name")
             if name not in Skills.MENU:
                 return {"ok": False, "error": f"unknown skill {name!r}; the menu is {list(Skills.MENU)}"}
-            return {"ok": True, "skill": name, "result": getattr(skills, name)(), "t": round(arm.t, 2)}
+            if dog.open() and name != "park":
+                return {"ok": False, "error": "incident open; the arm stays parked until a repair is verified",
+                        "incidents": dog.open()}
+            result = getattr(skills, name)()
+            reply = {"ok": True, "skill": name, "result": result, "t": round(arm.t, 2)}
+            if result.get("halted"):
+                reply.update(parked=skills.park(), incident=dog.open()[0] if dog.open() else None)
+            return reply
         if op == "read":
             return {"ok": True, "pos": arm.read()}
         if op == "distance":
             return {"ok": True, "row": arm.distance()}
         if op == "status":
-            return {"ok": True, "status": arm.status(), "grasp": arm.grasp_check(), "faults": arm.faults}
+            return {"ok": True, "status": arm.status(), "grasp": arm.grasp_check(),
+                    "incidents": [{k: i[k] for k in ("id", "kind", "summary")} for i in dog.open()]}
+        if op == "incidents":
+            return {"ok": True, "incidents": dog.incidents}
+        if op == "repair":
+            return dog.repair(req.get("action"))
         if op == "inject":
             return {"ok": True, "fault": arm.inject(req["fault"], **req.get("params", {}))}
         if op == "clear":

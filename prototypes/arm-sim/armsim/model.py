@@ -21,9 +21,11 @@ BLOCK_POS = (0.21, 0.0, BLOCK_HALF[2])
 BLOCK_TOP = BLOCK_POS[2] + BLOCK_HALF[2]
 
 # On the gripper body the jaws point along -Z, and `gripperframe` sits at the fingertips
-# (z = -0.098). The sensor goes 50 mm behind them, beside the fixed jaw; quat (0,1,0,0)
-# turns the site's +Z (the rangefinder's ray) to point along the approach axis.
-SENSOR_POS = (-0.026, 0.0, -0.048)
+# (z = -0.098). The sensor goes on the jaw centreline, 50 mm behind them (the note's mount);
+# quat (0,1,0,0) turns the site's +Z (the rangefinder's ray) to point along the approach axis.
+# A mount 26 mm to the side never saw a 4 cm block. With the jaws closed, the moving jaw sits in
+# the beam (reads ~7 mm), which is the real "jaw in the beam" failure, so approach with jaws open.
+SENSOR_POS = (0.012, -0.000218, -0.048)
 SENSOR_QUAT = (0.0, 1.0, 0.0, 0.0)
 SENSOR_CUTOFF_M = 4.0  # HC-SR04 range is 2-400 cm
 

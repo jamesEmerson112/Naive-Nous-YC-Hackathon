@@ -11,5 +11,6 @@ provides_tools:
   - arm_wave
   - arm_park
   - arm_status
+  - arm_restart_sensor
 provides_hooks:
   - pre_tool_call

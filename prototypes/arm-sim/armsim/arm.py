@@ -6,10 +6,15 @@ Units follow LeRobot and Andre's primitives: arm joints in degrees, gripper 0-10
 Known gap for tomorrow: the sim's zero pose isn't the real arm's calibrated zero, so poses will
 need a per-joint offset once Andre's calibration file is in hand.
 """
+from collections import deque
+
 import mujoco
 import numpy as np
 
-from .model import build
+from .model import BLOCK_HALF, BLOCK_POS, BLOCK_TOP, build
+
+# What forward kinematics can see in the scene: the block's top face (x, y, top_z, half-size).
+SCENE_OBJECTS = [(BLOCK_POS[0], BLOCK_POS[1], BLOCK_TOP, BLOCK_HALF[0])]
 
 ARM_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")
 GRIPPER = "gripper"
@@ -38,7 +43,11 @@ class SimArm:
         self.substeps = max(1, round(1.0 / fps / self.m.opt.timestep))
         self.recorder = recorder
         self.hooks = []                      # called once per control tick (GIF, viewer)
+        self.watchers = []                   # called with each new distance row (the watchdog)
         self.faults = {}                     # active planted faults, see inject()
+        self.d_rows = deque(maxlen=200)      # recent D rows with ts and pred_mm (20 s at 10 Hz)
+        self.halt_reason = None              # set by the watchdog: motion stops at the next tick
+        self._parking = False
         self.rng = np.random.default_rng(seed)
         self._qadr = np.array([self.m.joint(j).qposadr[0] for j in JOINTS])
         self._dadr = np.array([self.m.joint(j).dofadr[0] for j in JOINTS])
@@ -97,10 +106,18 @@ class SimArm:
         if self.t + 1e-9 >= self._next_d:
             self._next_d += 1.0 / POD_RATE_HZ
             row = self.distance()
+            pred = self.predicted_mm(objects=SCENE_OBJECTS)
+            row["pred_mm"] = None if pred is None else round(pred, 1)
             if self.recorder:
                 self.recorder.distance(self.t, row)
+            self.d_rows.append({"ts": self.t, **row})
+            for watch in self.watchers:
+                watch(self)
         for hook in self.hooks:
             hook(self)
+
+    def halted(self):
+        return self.halt_reason is not None and not self._parking
 
     def hold(self, seconds):
         for _ in range(max(1, round(seconds * self.fps))):
@@ -112,14 +129,23 @@ class SimArm:
         self._torque(True)
         n = max(1, round(duration * self.fps))
         for i in range(1, n + 1):
+            if self.halted():
+                return self._stop()
             self.d.ctrl[self._act] = start + (goal - start) * smooth(i / n)
             self.tick()
         return self.wait_arrived(goal, tol_deg=tol_deg, timeout=settle_timeout)
+
+    def _stop(self):
+        """Watchdog halt: hold where the arm is and say why."""
+        self.d.ctrl[self._act] = self.d.qpos[self._qadr]
+        return {"arrived": False, "halted": self.halt_reason}
 
     def wait_arrived(self, goal=None, *, tol_deg=2.0, timeout=2.0):
         goal = self.d.ctrl[self._act] if goal is None else goal
         t0 = self.t
         while True:
+            if self.halted():
+                return self._stop()
             err = np.rad2deg(np.abs(goal - self.d.qpos[self._qadr]))[:5]
             speed = np.abs(self.d.qvel[self._dadr])[:5]
             if err.max() <= tol_deg and speed.max() < 0.05:
@@ -139,10 +165,22 @@ class SimArm:
         src_fps = prim.get("fps", 50) * speed
         n = max(1, round(len(frames) / src_fps * self.fps))
         for i in range(n):
+            if self.halted():
+                return self._stop()
             k = min(len(frames) - 1, int(i * src_fps / self.fps))
             self.d.ctrl[self._act] = self.to_ctrl(frames[k])
             self.tick()
         return self.wait_arrived(timeout=1.0)
+
+    def park(self, rest):
+        """Go to the rest pose even while halted, then torque off (the watchdog's move)."""
+        self._parking = True
+        try:
+            r = self.goto(rest)
+        finally:
+            self._parking = False
+        self.relax()
+        return {**r, "torque": "off"}
 
     def relax(self):
         """Torque off. On the real arm this drops it, so park at a rest pose first."""
