@@ -26,7 +26,7 @@ from sqlalchemy import select
 from fake_device.scenarios import SCENARIOS
 from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import build_blobstore
-from romulus_cloud.adapters.coder import LocalAgent, Sandbox
+from romulus_cloud.adapters.coder import CoderError, LocalAgent, Sandbox
 from romulus_cloud.adapters.llm import FakeLlm
 from romulus_cloud.models import CodeVersion, Device, Overlay
 from romulus_cloud.services import batch, code_lockin, gate, registry
@@ -622,3 +622,66 @@ def test_f11_five_429s_in_a_row_become_sticky_with_every_reason(
     client.post("/v1/batch/run", json={"by": "kent"})
     rig.work(now + 4000 * S)  # sticky: never drafted again
     assert count_events("coder.started") == 5
+
+
+def test_f11_a_shared_draft_is_refunded_once_and_its_backoff_is_shared(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session, count_events
+):
+    """Reviewer finding 1a: sim-1 and sim-3 send the same patch, so they share one job. Its
+    0-token 429 gives back one budget slot, not two, and both wait on the job's backoff."""
+    rig = _flaky_rig(sessions, settings, clock, blips=1)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    _held(arms, "code", "sim-1", now + 21 * S)
+    rig.work(now + 40 * S)
+    assert count_events("coder.started") == 1 and len(rig.jobs.submitted) == 1  # one job
+    deferred = _deferrals(db_session, _overlay(db_session, arms, "sim-3"))
+    deferred += _deferrals(db_session, _overlay(db_session, arms, "sim-1"))
+    assert [e.data["attempt"] for e in deferred] == [1, 1]  # two overlays, one job attempt
+    assert len({e.data["job"] for e in deferred}) == 1
+    assert batch._drafts_this_hour(db_session, "default", now + 41 * S) == 0
+    # The reviewer's case: one other real draft started this hour still counts.
+    events.record(
+        db_session, "batch", "agent", "coder.started", {"device": "sim-2"}, "another draft",
+        data={"job": "other"}, ts=now + 41 * S,
+    )  # fmt: skip
+    assert batch._drafts_this_hour(db_session, "default", now + 42 * S) == 1
+
+
+def test_f11_a_later_overlay_with_the_same_patch_inherits_the_backoff(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session, count_events
+):
+    rig = _flaky_rig(sessions, settings, clock, blips=1)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    rig.work(now + 40 * S)  # the job blips: retry after now + 160 s
+    _held(arms, "code", "sim-1", now + 60 * S)  # same patch, arrives during the backoff
+    client.post("/v1/batch/run", json={"by": "kent"})
+    rig.work(now + 100 * S)
+    assert count_events("coder.started") == 1  # not resubmitted early
+    assert _overlay(db_session, arms, "sim-1").status == "held"
+    client.post("/v1/batch/run", json={"by": "kent"})
+    rig.work(now + 170 * S)  # after the backoff: one retry serves both
+    assert "code" in _cands(client)
+
+
+class _ConnectionDrops:
+    """A coder whose job dies with a connection error: no tokens count is known."""
+
+    def draft(self, patch, incident, code_rev, files=None, task=None):
+        raise CoderError("litellm.APIConnectionError: OpenAIException - Connection error.")
+
+
+def test_f11_an_unknown_token_count_is_retried_but_not_refunded(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session
+):
+    """Reviewer finding 1b: a failure with tokens unknown (None) may have spent tokens."""
+    rig = Rig(sessions, settings, clock, coder=_ConnectionDrops())
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    rig.work(now + 40 * S)
+    ov = _overlay(db_session, arms)
+    (deferred,) = _deferrals(db_session, ov)
+    assert ov.status == "held" and deferred.data["label"] == "connection or timeout"
+    assert deferred.data["no_tokens"] is False
+    assert batch._drafts_this_hour(db_session, "default", now + 41 * S) == 1

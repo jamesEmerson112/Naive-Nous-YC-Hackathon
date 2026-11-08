@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import re
 import shutil
 import tarfile
@@ -176,6 +177,39 @@ def verify_files(directory: str) -> dict[str, bytes]:
     }
 
 
+VERIFY_MANIFEST = f"{HOLDOUT_DIR}/MANIFEST.json"  # written by devicecode.verify_from_bench
+_LINEAGE_MAX = 100
+
+
+def stale_verify(session: Session, extra: Mapping[str, bytes], base: CodeVersion) -> str | None:
+    """Why CODER_VERIFY_DIR doesn't fit `base`, or None. Verify generated for a code version
+    (its MANIFEST.json's `generated_from.code_rev`) fits that version and its descendants
+    (`parent_rev` chain); anything else fails closed rather than as misleading test failures.
+    A verify dir with no manifest isn't tied to a version and always fits."""
+    raw = extra.get(VERIFY_MANIFEST)
+    if raw is None:
+        return None
+    try:
+        rev = json.loads(raw)["generated_from"]["code_rev"]
+    except (ValueError, KeyError, TypeError):
+        rev = None
+    if not isinstance(rev, str) or not rev:
+        return (
+            "stale verify: CODER_VERIFY_DIR's MANIFEST.json names no code_rev; regenerate "
+            "with `make device-verify`"
+        )
+    lineage, cv = [], base
+    while cv is not None and len(lineage) < _LINEAGE_MAX:
+        lineage.append(cv.rev)
+        cv = session.get(CodeVersion, (cv.fleet_id, cv.parent_rev)) if cv.parent_rev else None
+    if rev in lineage:
+        return None
+    return (
+        f"stale verify: CODER_VERIFY_DIR was generated from code {rev}, which is not the base "
+        f"{base.rev} or one of its ancestors; regenerate with `make device-verify`"
+    )
+
+
 def failing_tests(*outputs: str) -> list[str]:
     """Test ids pytest named as FAILED or ERROR in its short summary, in order, unique."""
     return list(dict.fromkeys(m for out in outputs for m in _FAILED.findall(out or "")))
@@ -302,6 +336,9 @@ def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayR
             extra = verify_files(settings.coder_verify_dir)
         except CoderError as exc:
             return g.ReplayResult(False, f"code replay could not start: {exc}")
+        stale = stale_verify(session, extra, parent)
+        if stale:
+            return g.ReplayResult(False, f"code replay failed: {stale}")
         base = read_package(tools.store, parent)
         has_verify = bool(extra) or any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
         if not settings.coder_test_cmd.strip() and not has_verify:

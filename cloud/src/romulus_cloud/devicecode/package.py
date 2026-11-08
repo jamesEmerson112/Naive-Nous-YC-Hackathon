@@ -49,6 +49,21 @@ def last_commit(repo: Path, folder: str = CODE_ROOT) -> str:
     return rev
 
 
+def full_sha(repo: Path, rev: str) -> str:
+    return _git(repo, "rev-parse", "--verify", f"{rev}^{{commit}}").decode().strip()
+
+
+def archive_commit(data: bytes) -> str | None:
+    """The commit a `git archive` tar was made from (its pax global header), if it says."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
+            tar.next()  # reads the global header
+            comment = tar.pax_headers.get("comment")
+    except tarfile.TarError:
+        return None
+    return comment.strip() if comment else None
+
+
 def uncommitted(repo: Path, folder: str = CODE_ROOT) -> list[str]:
     """Changed or untracked files under `folder` that a package from git leaves out."""
     out = _git(repo, "status", "--porcelain", "--", folder).decode()

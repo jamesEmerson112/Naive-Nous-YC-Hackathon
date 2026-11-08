@@ -236,6 +236,21 @@ def test_device_prefixed_safety_and_verify_paths_are_seen_without_the_prefix():
     assert summary(verify).paths == ("Verify/test_x.py",)  # is_under(.., "verify") matches
 
 
+@pytest.mark.parametrize(
+    "patch",
+    [
+        "--- /dev/null\n+++ b/./device/robot/new.py\n@@ -0,0 +1 @@\n+x\n",
+        "--- /dev/null\n+++ b/./device/safety/new.py\n@@ -0,0 +1 @@\n+x\n",
+        "--- a/./device/robot/control.py\n+++ b/./device/robot/control.py\n@@ -1 +1 @@\n-a\n+b\n",
+    ],
+)
+def test_dot_before_the_device_prefix_is_refused(patch):
+    """Reviewer finding 3: `git apply -p2` would drop `./`, not `device/` (device/device/x)."""
+    s = summary(patch)
+    assert any("`./` before device/" in p for p in s.problems)
+    assert s.rejected_paths and touches_safety(patch, [])
+
+
 def test_a_patch_mixing_both_forms_is_a_problem_and_touches_safety():
     patch = PREFIXED_D1 + "--- a/robot/app.py\n+++ b/robot/app.py\n@@ -1 +1 @@\n-a\n+b\n"
     s = summary(patch)

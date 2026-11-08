@@ -136,6 +136,15 @@ class _Collector:
         # The one place a leading `device/` is read (B3): it names the package root, so
         # `device/robot/x.py` is `robot/x.py`. Checked after `..` above, so it never escapes.
         form = "relative"
+        if PurePosixPath(norm).parts[0] == CODE_ROOT and rel.split("/", 1)[0] != CODE_ROOT:
+            # `./device/x`: `git apply -p2` would drop `./`, not `device/`, and write
+            # device/device/x. The form is decided on the raw path, before normalizing.
+            self.problems.append(
+                f"line {line_no}: path {raw!r} has `./` before {CODE_ROOT}/, so git would "
+                "not apply it where it is checked; drop the `./`"
+            )
+            self.rejected.append(raw)
+            return
         if PurePosixPath(norm).parts[0] == CODE_ROOT:
             form, norm = "prefixed", str(PurePosixPath(*PurePosixPath(norm).parts[1:]))
             if norm == ".":

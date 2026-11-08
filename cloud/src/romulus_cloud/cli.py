@@ -239,7 +239,16 @@ def _device_package(
         if not rev:
             raise PackageError("--tar needs --rev (the git short sha it was archived at)")
         data = sys.stdin.buffer.read() if tar == "-" else Path(tar).read_bytes()
-        return rev, device_package.files_from_tar(data)
+        files = device_package.files_from_tar(data)
+        commit = device_package.archive_commit(data)
+        if commit is None or not commit.startswith(rev):
+            print(
+                f"code: warning: --rev {rev} is not the commit this archive was made from "
+                f"({commit or 'unknown: not a `git archive` of a commit'}); the version is "
+                "named by what you passed",
+                file=sys.stderr,
+            )
+        return rev, files
     folder = Path(src or "device").resolve()
     repo = device_package.repo_root(folder)
     rel = folder.relative_to(repo).as_posix()
@@ -250,6 +259,13 @@ def _device_package(
         print(
             f"code: note: {len(dirty)} uncommitted change(s) under {CODE_ROOT}/ are left out "
             f"(packaged from git): {', '.join(dirty[:5])}",
+            file=sys.stderr,
+        )
+    last = device_package.last_commit(repo)
+    if rev and device_package.full_sha(repo, rev) != device_package.full_sha(repo, last):
+        print(
+            f"code: warning: --rev {rev} is not {last}, the last commit that touched "
+            f"{CODE_ROOT}/; packaging {CODE_ROOT}/ as it was at {rev}",
             file=sys.stderr,
         )
     return device_package.from_git(repo, rev)

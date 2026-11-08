@@ -46,7 +46,7 @@ from datetime import datetime, timedelta
 from functools import partial
 from typing import Any
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import distinct, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
@@ -873,51 +873,89 @@ def _coder_incident(session: Session, ov: Overlay) -> dict[str, Any]:
 
 def _drafts_this_hour(session: Session, fleet_id: str, now: datetime) -> int:
     """Coder drafts started in the last hour (from `coder.started` events, so a restart
-    doesn't reset the budget)."""
+    doesn't reset the budget), minus attempts the provider turned away with exactly 0 tokens
+    spent, counted once per job attempt (overlays sharing a draft share its job)."""
+    recent = (Event.fleet_id == fleet_id, Event.ts > now - timedelta(hours=1))
+    started = select(func.count(Event.id)).where(*recent, Event.kind == "coder.started")
+    job_attempt = Event.data["job"].astext.concat(":").concat(Event.data["attempt"].astext)
+    free = select(func.count(distinct(job_attempt))).where(
+        *recent,
+        Event.kind.in_(["overlay.deferred", "batch.error"]),
+        Event.data.contains({"reason": CODER_UNAVAILABLE, "no_tokens": True}),
+    )
+    return max((session.scalar(started) or 0) - (session.scalar(free) or 0), 0)
 
-    def count(*where) -> int:
-        stmt = select(func.count(Event.id)).where(
-            Event.fleet_id == fleet_id, Event.ts > now - timedelta(hours=1), *where
+
+@dataclass(frozen=True)
+class _Blip:
+    """A draft job's transient-failure state: its latest attempt number, when it may run
+    again (None after the last attempt), and each attempt's reason."""
+
+    attempt: int = 0
+    retry_at: datetime | None = None
+    reasons: tuple[str, ...] = ()
+
+
+def _blip_state(session: Session, fleet_id: str, key: str) -> _Blip:
+    """From events (so the backoff survives a restart), per draft key: a later overlay with
+    the same patch inherits the backoff of the job it shares."""
+    stmt = (
+        select(Event)
+        .where(
+            Event.fleet_id == fleet_id,
+            Event.kind == "overlay.deferred",
+            Event.data.contains({"reason": CODER_UNAVAILABLE, "job": key}),
         )
-        return session.scalar(stmt) or 0
-
-    # A draft the provider turned away before any token was spent doesn't use the budget.
-    free = Event.data.contains({"reason": CODER_UNAVAILABLE, "no_tokens": True})
-    started = count(Event.kind == "coder.started")
-    return max(started - count(Event.kind.in_(["overlay.deferred", "batch.error"]), free), 0)
-
-
-def _coder_attempts(session: Session, ov: Overlay) -> list[Event]:
-    """The overlay's transient coder failures so far, oldest first (from events, so the
-    backoff survives a worker restart)."""
-    refs = {"device": ov.device_id, "overlay": ov.id}
-    found = events.find(session, refs, kinds=["overlay.deferred"])
-    return [e for e in found if (e.data or {}).get("reason") == CODER_UNAVAILABLE]
+        .order_by(Event.ts, Event.id)
+    )
+    by_attempt: dict[int, Event] = {}
+    for e in session.scalars(stmt):
+        by_attempt.setdefault(int(e.data.get("attempt") or 0), e)
+    if not by_attempt:
+        return _Blip()
+    last = by_attempt[max(by_attempt)]
+    return _Blip(
+        attempt=max(by_attempt),
+        retry_at=datetime.fromisoformat(last.data["retry_at"]),
+        reasons=tuple(by_attempt[n].data.get("detail", "") for n in sorted(by_attempt)),
+    )
 
 
 def _coder_failed(
     session: Session,
     ov: Overlay,
+    key: str,
     outcome: coder_retry.CoderOutcome,
     why: str,
     now: datetime,
     result: RunResult,
+    blips: dict[str, _Blip],
 ) -> None:
-    """A failed draft: a provider blip defers the overlay with a backoff (bounded); a bad
-    draft, or the 5th blip in a row, makes it sticky `lockin_error` (BUILD §8)."""
+    """A failed draft: a provider blip defers the overlay with a backoff (bounded, per draft
+    key); a bad draft, or the 5th blip in a row, makes it sticky `lockin_error` (BUILD §8).
+    `blips` holds this run's new state per key, so overlays sharing one job record the same
+    attempt."""
     verdict = coder_retry.classify(outcome)
     if not verdict.transient:
         _mark_error(session, [ov], why, now, result)
         return
-    past = _coder_attempts(session, ov)
-    attempt = len(past) + 1
-    at = coder_retry.retry_at(attempt, now)
-    if at is None:
-        reasons = [(e.data or {}).get("detail", "") for e in past] + [why]
-        listed = "; ".join(f"attempt {i}: {r}" for i, r in enumerate(reasons, 1))
-        why = f"the coding agent was unavailable {attempt} times in a row ({listed})"
-        free = {"reason": CODER_UNAVAILABLE, "no_tokens": outcome.tokens in (0, None)}
-        _mark_error(session, [ov], why, now, result, extra=free)
+    if key not in blips:
+        past = _blip_state(session, ov.fleet_id, key)
+        attempt = past.attempt + 1
+        blips[key] = _Blip(attempt, coder_retry.retry_at(attempt, now), (*past.reasons, why))
+    blip = blips[key]
+    data = {
+        "reason": CODER_UNAVAILABLE,
+        "job": key,
+        "attempt": blip.attempt,
+        "label": verdict.label,
+        "detail": why,
+        "no_tokens": outcome.tokens == 0,  # a known zero only: None may have spent tokens
+    }
+    if blip.retry_at is None:
+        listed = "; ".join(f"attempt {i}: {r}" for i, r in enumerate(blip.reasons, 1))
+        why = f"the coding agent was unavailable {blip.attempt} times in a row ({listed})"
+        _mark_error(session, [ov], why, now, result, extra=data)
         return
     result.deferred.append((ov.device_id, ov.id))
     events.record(
@@ -927,16 +965,9 @@ def _coder_failed(
         "overlay.deferred",
         _overlay_refs(ov),
         f"Overlay {ov.id} from {ov.device_id} stays held: coder unavailable ({verdict.label}), "
-        f"retry after {at:%H:%M} UTC (attempt {attempt} of {coder_retry.MAX_TRANSIENT}). "
-        f"{why}.",
-        data={
-            "reason": CODER_UNAVAILABLE,
-            "attempt": attempt,
-            "retry_at": at.isoformat(),
-            "label": verdict.label,
-            "detail": why,
-            "no_tokens": outcome.tokens in (0, None),
-        },
+        f"retry after {blip.retry_at:%H:%M} UTC (attempt {blip.attempt} of "
+        f"{coder_retry.MAX_TRANSIENT}). {why}.",
+        data={**data, "retry_at": blip.retry_at.isoformat()},
         ts=now,
         fleet_id=ov.fleet_id,
     )
@@ -1014,13 +1045,16 @@ def _await_drafts(
       unless the failure is transient (`domain.coder_retry`: a rate limit, 5xx, timeout, or an
       agent that spent no tokens): then it stays held and is retried after a backoff of 2 min
       doubling to 30 min, and only the 5th transient failure in a row is sticky, listing every
-      attempt's reason. A zero-token retry doesn't use the hourly budget.
+      attempt's reason. The backoff belongs to the draft key, so an overlay with the same
+      patch arriving later waits too. An attempt known to have spent 0 tokens is given back
+      to the hourly budget, once per job attempt however many overlays share it.
     - With no way to run the coder here (`coder_blocker`), code overlays just stay held: the
       worker logged why once at startup.
     """
     ready: list[Overlay] = []
     drafts: dict[Key, tuple[str, str, CodeDraft]] = {}
     consumed: set[str] = set()
+    blips: dict[str, _Blip] = {}
     budget = tools.settings.coder_max_drafts_per_hour
     started = _drafts_this_hour(session, tools.settings.fleet_id, now)
     for ov in overlays:
@@ -1038,9 +1072,9 @@ def _await_drafts(
             key = doctor.key if doctor else code_lockin.draft_key(ov, cv.rev)
             status = Done(doctor) if doctor else tools.jobs.poll(key)
             if isinstance(status, Missing):  # new, or the worker restarted: (re)submit
-                attempts = _coder_attempts(session, ov)
-                if attempts and now < datetime.fromisoformat(attempts[-1].data["retry_at"]):
-                    result.deferred.append((ov.device_id, ov.id))  # its event said when
+                wait = _blip_state(session, ov.fleet_id, key).retry_at
+                if wait is not None and now < wait:  # this job's backoff, shared by its key
+                    result.deferred.append((ov.device_id, ov.id))
                     continue
                 if started >= budget:
                     result.deferred.append((ov.device_id, ov.id))
@@ -1083,7 +1117,7 @@ def _await_drafts(
         if isinstance(status, Failed):
             why = redact(f"the coding agent could not run ({status.error})", tools.secrets)
             failed = coder_retry.CoderOutcome(False, error=redact(status.error, tools.secrets))
-            _coder_failed(session, ov, failed, why, now, result)
+            _coder_failed(session, ov, key, failed, why, now, result, blips)
         elif isinstance(status, Done):
             draft = status.result
             refused = patch_refusal(draft.diff) if draft.passed else None
@@ -1096,7 +1130,7 @@ def _await_drafts(
             else:
                 summary = code_lockin.draft_summary(draft)
                 why = redact(f"the coding agent's draft did not pass: {summary}", tools.secrets)
-                _coder_failed(session, ov, _outcome(draft), why, now, result)
+                _coder_failed(session, ov, key, _outcome(draft), why, now, result, blips)
         else:  # still running: stays held, nothing written
             result.deferred.append((ov.device_id, ov.id))
     for key in consumed:  # applied below (or marked); identical patches shared it this run

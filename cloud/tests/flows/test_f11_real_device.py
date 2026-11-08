@@ -47,7 +47,8 @@ REPO = Path(__file__).resolve().parents[3]
 S = timedelta(seconds=1)
 KW = {"actor": "human:test", "actor_class": "human"}
 KEY = "sk-test-B1-SECRET"
-BASE = "dev0d1p"  # device/ with bench fault D1 planted
+CLEAN = "dev0000"  # device/ as the repo has it: what the verify is generated from
+BASE = "dev0d1p"  # device/ with bench fault D1 planted (child of CLEAN)
 B7 = "no canary device runs real device code (B7)"
 LLM = {k: os.environ.get(k, "") for k in ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY")}
 
@@ -60,7 +61,7 @@ def bench():
     return {
         "files": files,
         "planted": planted,
-        "verify": verify_from_bench.generate(REPO / "bench", files, "test"),
+        "verify": verify_from_bench.generate(REPO / "bench", files, CLEAN),
         # Ishaan's format: relative to device/, `--- a/robot/control.py`.
         "patch": code_lockin.package_diff(planted, files),
         "drop_rule": tasks.DROP_RULE,
@@ -90,10 +91,12 @@ def settings(make_settings, bench, tmp_path):
 
 @pytest.fixture
 def real_fleet(seeded, settings, bench):
-    """Code dev0d1p (device/ + D1) and firmware v2 naming it, on every device."""
+    """Code dev0000 (device/), its child dev0d1p (+ D1), and firmware v2 naming dev0d1p, on
+    every device."""
     store = build_blobstore(settings.blob_dir)
+    registry.create_code(seeded, store, registry.build_tarball(bench["files"]), rev=CLEAN, **KW)
     tarball = registry.build_tarball(bench["planted"])
-    registry.create_code(seeded, store, tarball, rev=BASE, **KW)
+    registry.create_code(seeded, store, tarball, rev=BASE, parent_rev=CLEAN, **KW)
     registry.create_firmware(seeded, FIRMWARE_V1 | {"version": 2, "code_rev": BASE}, **KW)
     for d in seeded.scalars(select(Device)):
         d.assigned_firmware = 2
@@ -160,6 +163,40 @@ def test_f11_real_device_d1_patch_reaches_awaiting_canary(
     waiting = [e for e in detail["events"] if e["kind"] == "candidate.awaiting_canary"]
     assert B7 in waiting[0]["why"]
     assert not detail["touches_safety"]
+
+
+def _oracle_coder(bench):
+    def oracle(work: Path) -> None:
+        control = work / "robot" / "control.py"
+        control.write_text(control.read_text().replace(bench["drop_rule"], ""))
+
+    sandbox = Sandbox(image="romulus-coder:test", runner=fakes.FakeDocker(agent=oracle))
+    coder = LocalAgent(base_url="http://llm.invalid/v1", model="m", api_key=KEY, sandbox=sandbox)
+    return coder, sandbox
+
+
+def test_f11_verify_from_another_code_version_fails_closed_as_stale(
+    client, arms, tick_arms, now, clock, sessions, settings, real_fleet, bench, monkeypatch,
+    tmp_path,
+):  # fmt: skip
+    """Reviewer finding 4: verify generated for code that isn't the base or its ancestor."""
+    other = tmp_path / "verify_other"
+    verify_from_bench.write(
+        other, verify_from_bench.generate(REPO / "bench", bench["files"], "zzz9999")
+    )
+    stale = settings.model_copy(update={"coder_verify_dir": str(other)})
+    coder, sandbox = _oracle_coder(bench)
+    detail = run_d1(
+        client, arms, tick_arms, now, clock, sessions, rig_steps(stale, coder, sandbox),
+        bench["patch"], monkeypatch,
+    )  # fmt: skip
+    assert detail["status"] == "rolled_back"
+    assert (
+        "stale verify: CODER_VERIFY_DIR was generated from code zzz9999"
+        in (detail["verdict"]["why"])
+    )
+    assert "regenerate with `make device-verify`" in detail["verdict"]["why"]
+    assert sandbox.runner.calls and all(c["argv"][-1] == "agent" for c in sandbox.runner.calls)
 
 
 def _docker_image(name: str) -> bool:

@@ -1,26 +1,27 @@
 """Held-out verify scripts for `device/`, generated from the healer benchmark (blocker B1).
 
-`device/` ships no `verify/`, but `bench/tasks.py` has a hidden check per planted fault. For
-a software task (D1, D2, D3, S1, S2) it reruns the healed app on a fresh copy of the canonical
-sim and requires every arm command to match the canonical app's on the task's scenario and
-on the normal and hand_close regressions, with sim/ untouched. That needs only the fake
-hardware in `device/sim` (no arm, Ollama or LLM), so it runs in the replay's offline sandbox.
-A5 (missing gripper servo) is hardware: the right move is park and report with no code change,
+`device/` ships no `verify/`, but `bench/tasks.py` plants five software faults (D1, D2, D3,
+S1, S2), each with the scenario that triggers it. Each is caught by a SPEC.md property on
+the fake hardware (no arm, Ollama or LLM), so it runs in the replay's offline sandbox. A5
+(missing gripper servo) is hardware: the right move is park and report with no code change,
 so it has nothing for a code replay to verify.
 
-`generate` writes two files for `CODER_VERIFY_DIR` (the replay copies each to verify/<path>):
-- `test_bench_verify.py`: `verify_template.py`, one test per scenario plus a sim/supervisor
-  hash check;
-- `bench_reference.json`: the canonical app's arm commands per scenario, computed here by
-  running the package's own app on its own sim, and the sim/ and supervisor/ hashes.
+The bench's own hidden check is exact-match on arm commands, which bench/README.md keeps
+for the benchmark only: it would reject a legitimate fix. This verify checks SPEC.md's
+properties instead (`verify_template.py`), on every scenario the software tasks use.
 
-The reference is the code version you generate from, so regenerate when `device/` changes.
-The exact-match check is the benchmark's, deliberately strict: a fix that changes the arm's
-behaviour on these scenarios fails it even if SPEC.md allows it (bench/README.md); the
-property tests in `device/tests` are the lenient half of the replay.
+`generate` writes, for `CODER_VERIFY_DIR` (the replay copies each to verify/<path>):
+- `test_bench_verify.py`: `verify_template.py`;
+- `bench_reference.json`: the scenarios, SPEC thresholds frozen from the package's
+  config.toml, and the package's sim/ and supervisor/ hashes;
+- `bench_monitor.py` and `bench_sim/`: frozen copies of the package's supervisor and fake
+  hardware. The verify runs only these, never the candidate's (a patch to
+  `supervisor/monitor.py` could otherwise fake the result from inside the check);
+- `MANIFEST.json`: `generated_from.code_rev`, which the gate compares with the candidate's
+  base lineage, failing closed as "stale verify" (`code_lockin.stale_verify`).
 
-`planted` applies a task's fault edits to a package, for tests and demo runs (the base a
-healer's `code_patch` fixes).
+Regenerate (`make device-verify`) when `device/` changes. `planted` applies a task's fault
+edits to a package, for tests and demo runs (the base a healer's `code_patch` fixes).
 
     uv run python -m romulus_cloud.devicecode.verify_from_bench --out data/verify/device
 """
@@ -35,6 +36,7 @@ import json
 import shutil
 import sys
 import tempfile
+import tomllib
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
@@ -43,8 +45,11 @@ from romulus_cloud.devicecode import package
 
 TEMPLATE = Path(__file__).with_name("verify_template.py")
 TEST_FILE, REFERENCE_FILE = "test_bench_verify.py", "bench_reference.json"
+MONITOR_FILE, SIM_DIR, MANIFEST_FILE = "bench_monitor.py", "bench_sim", "MANIFEST.json"
 SIM_RUNTIME = ("arm_commands.jsonl", "arm_state.json", "arm_faults.json", "__pycache__")
 APP_DIR = "robot"  # bench task edits name files in device/robot (its "device/" work area)
+POSE_TOL = 0.5  # degrees, as device/tests/test_spec.py
+LIFTED_SHARE = 0.8  # "lifted away": at least 80% of lift_max_deg, as device/tests
 
 
 @contextlib.contextmanager
@@ -102,43 +107,63 @@ def _hashes(device: Path) -> dict[str, str]:
     return out
 
 
-def _run(monitor: ModuleType, device: Path, scenario: dict) -> list[dict]:
+def spec_thresholds(device: Path, monitor: ModuleType) -> dict[str, float]:
+    """SPEC.md's numbers from the package's config.toml (what device/tests mirror by hand)."""
+    cfg = tomllib.loads((device / APP_DIR / "config.toml").read_text())
+    sensor, arm = cfg["sensor"], cfg["arm"]
+    return {
+        "near_cm": sensor["near_cm"],
+        "far_cm": sensor["far_cm"],
+        "min_cm": sensor["min_valid_cm"],
+        "max_cm": sensor["max_valid_cm"],
+        "hold_lift": arm["hold_pose"]["shoulder_lift"],
+        "lifted": LIFTED_SHARE * arm["lift_max_deg"],
+        "pose_tol": POSE_TOL,
+        "gripper_max": monitor.GRIPPER_MAX_WHILE_HOLDING,
+    }
+
+
+def _check_healthy(monitor: ModuleType, device: Path, scenario: dict) -> None:
     with tempfile.TemporaryDirectory(prefix="romulus-bench-ref-") as tmp:
         robot, sim = Path(tmp) / "robot", Path(tmp) / "sim"
         shutil.copytree(device / "robot", robot, ignore=shutil.ignore_patterns("logs", "run"))
         shutil.copytree(device / "sim", sim, ignore=shutil.ignore_patterns(*SIM_RUNTIME))
-        result = monitor.run_app(robot, sim, scenario)
-        incident = monitor.classify(result)
-        if incident is not None:
-            raise ValueError(
-                f"the canonical app fails {scenario['name']}: {incident['detail']}; "
-                "generate verify from a healthy code version"
-            )
-        return monitor._jsonl(sim / "arm_commands.jsonl")
+        incident = monitor.classify(monitor.run_app(robot, sim, scenario))
+    if incident is not None:
+        raise ValueError(
+            f"the canonical app fails {scenario['name']}: {incident['detail']}; "
+            "generate verify from a healthy code version"
+        )
 
 
 def generate(bench_dir: Path, files: Mapping[str, bytes], code_rev: str = "") -> dict[str, bytes]:
     """Verify files (paths relative to verify/) for the code package `files`."""
     tasks = load_tasks(bench_dir)
     cases = software_scenarios(tasks)
+    out: dict[str, bytes] = {TEST_FILE: TEMPLATE.read_bytes()}
     with tempfile.TemporaryDirectory(prefix="romulus-bench-verify-") as tmp:
         device = package.unpack(dict(files), Path(tmp))
-        monitor = _load("romulus_device_monitor", device / "supervisor" / "monitor.py")
+        monitor_path = device / "supervisor" / "monitor.py"
+        monitor = _load("romulus_device_monitor", monitor_path)
         for case in cases.values():
-            case["commands"] = _run(monitor, device, case["scenario"])
-        hashes = _hashes(device)
-    reference = {
-        "generated_from": {
-            "code_rev": code_rev,
-            "bench_tasks": [t.id for t in tasks.TASKS if t.cause == "software"],
-        },
-        "hashes": hashes,
-        "scenarios": cases,
-    }
-    return {
-        TEST_FILE: TEMPLATE.read_bytes(),
-        REFERENCE_FILE: (json.dumps(reference, indent=1, sort_keys=True) + "\n").encode(),
-    }
+            _check_healthy(monitor, device, case["scenario"])
+        out[MONITOR_FILE] = monitor_path.read_bytes()
+        for p in sorted((device / "sim").rglob("*")):
+            if p.is_file() and "__pycache__" not in p.parts and p.name not in SIM_RUNTIME:
+                out[f"{SIM_DIR}/{p.relative_to(device / 'sim').as_posix()}"] = p.read_bytes()
+        reference = {
+            "generated_from": {
+                "code_rev": code_rev,
+                "bench_tasks": [t.id for t in tasks.TASKS if t.cause == "software"],
+            },
+            "spec": spec_thresholds(device, monitor),
+            "hashes": _hashes(device),
+            "scenarios": cases,
+        }
+    out[REFERENCE_FILE] = (json.dumps(reference, indent=1, sort_keys=True) + "\n").encode()
+    manifest = {"generated_from": {"code_rev": code_rev, "by": "verify_from_bench"}}
+    out[MANIFEST_FILE] = (json.dumps(manifest, indent=1, sort_keys=True) + "\n").encode()
+    return out
 
 
 def planted(tasks: ModuleType, task_id: str, files: Mapping[str, bytes]) -> dict[str, bytes]:
@@ -154,9 +179,17 @@ def planted(tasks: ModuleType, task_id: str, files: Mapping[str, bytes]) -> dict
 
 
 def write(out_dir: Path, verify_files: Mapping[str, bytes]) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
+    """Replace `out_dir` with the verify files, so a stale bench_sim/ file can't linger.
+    Refuses a non-empty dir this generator didn't write (no MANIFEST.json)."""
+    if out_dir.is_dir() and any(out_dir.iterdir()):
+        first_layout = {p.name for p in out_dir.iterdir()} <= {TEST_FILE, REFERENCE_FILE}
+        if not (out_dir / MANIFEST_FILE).is_file() and not first_layout:
+            raise FileExistsError(f"{out_dir} has files this generator didn't write")
+        shutil.rmtree(out_dir)
     for name, data in verify_files.items():
-        (out_dir / name).write_bytes(data)
+        path = out_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -172,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     write(Path(args.out), verify)
     cases = json.loads(verify[REFERENCE_FILE])["scenarios"]
     print(
-        f"verify: wrote {', '.join(sorted(verify))} to {args.out} for device/ at {rev}: "
+        f"verify: wrote {len(verify)} files to {args.out} for device/ at {rev}: "
         + "; ".join(f"{n} ({', '.join(c['tasks'])})" for n, c in sorted(cases.items()))
     )
     return 0
