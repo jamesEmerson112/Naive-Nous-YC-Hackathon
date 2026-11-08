@@ -90,8 +90,12 @@ class Settings(BaseSettings):
     # Where scratch copies of the device code go ("" = the system temp dir). Docker must be
     # able to mount it (Docker Desktop shares /Users, /private, /tmp and /var/folders).
     coder_scratch_dir: str = ""
-    # Threads in the worker for slow jobs (coder drafts, code replays; services/jobs.py).
+    # Threads in the worker for slow jobs, per pool (coder drafts and code replays each have
+    # their own, so a long draft never queues a replay; services/jobs.py).
     jobs_max_workers: int = 2
+    # Coding-agent drafts started per hour, fleet-wide (identical patches share one draft).
+    # Over it, a code overlay waits `held` with the why "coder budget".
+    coder_max_drafts_per_hour: int = 6
 
     # Paths under device/ that count as the safety layer or visor (D5a, K17). A code_patch
     # touching any of them is flagged `touches_safety`. Placeholder until Ishaan's list.

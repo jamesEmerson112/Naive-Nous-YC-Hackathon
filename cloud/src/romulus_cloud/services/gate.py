@@ -734,7 +734,7 @@ def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now)
             if replay.stub and "replay" not in (c.stub_stages or []):
                 c.stub_stages = [*(c.stub_stages or []), "replay"]
             code = session.info.get(CODE_TOOLS)
-            output = code_lockin.gate_replay_output(c, code) if code and c.type == "code" else {}
+            output = code_lockin.gate_replay_applied(c, code) if code and c.type == "code" else {}
             _record(session, c, "candidate.replayed", replay.why, now, replay=c.replay, **output)
     inputs, k17 = _inputs(session, c, settings, frozen, replay)
     t = g.next_state(c.status, inputs, now)

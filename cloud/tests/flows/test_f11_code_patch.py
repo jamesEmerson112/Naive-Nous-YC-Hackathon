@@ -30,7 +30,7 @@ from romulus_cloud.adapters.coder import LocalAgent, Sandbox
 from romulus_cloud.adapters.llm import FakeLlm
 from romulus_cloud.models import CodeVersion, Device, Overlay
 from romulus_cloud.services import batch, code_lockin, gate, registry
-from romulus_cloud.services.jobs import InlineJobs, Pending, ThreadPoolJobs
+from romulus_cloud.services.jobs import InlineJobs, Missing, Pending, ThreadPoolJobs
 from romulus_cloud.services.seed import FIRMWARE_V1
 from romulus_cloud.worker import Step, run_tick
 
@@ -81,8 +81,8 @@ class Rig:
 
     def __init__(
         self, sessions, settings, clock, *, agent=None, jobs=None, coder=None, runner=None
-    ):  # noqa: E501
-        self.jobs = jobs or InlineJobs()
+    ):
+        self.jobs = jobs if jobs is not None else InlineJobs()
         self.docker = runner or fakes.FakeDocker(agent=agent)
         store = build_blobstore(settings.blob_dir)
         sandbox = Sandbox(image="romulus-coder:test", runner=self.docker)
@@ -300,10 +300,10 @@ def test_f11_the_gate_keeps_ticking_while_the_coding_agent_runs(
         assert docker.started.wait(10)
         assert set(_cands(client)) == {"firmware", "harness"}
         ov = _overlay(db_session, arms)
-        assert ov.status == "held"
+        assert ov.status == "held", ov.status_reason
         story = client.get(f"/v1/incidents/{ov.incident_id}/story").json()
-        (deferred,) = [s for s in story["steps"] if s["kind"] == "overlay.deferred"]
-        assert "while the coding agent drafts" in deferred["why"]
+        (started_step,) = [s for s in story["steps"] if s["kind"] == "coder.started"]
+        assert "stays held until the draft is done" in started_step["why"]
 
         # While the agent is stuck, the gate keeps moving the rules candidate to its canary.
         rig.work(now + 41 * S)
@@ -326,3 +326,200 @@ def test_f11_the_gate_keeps_ticking_while_the_coding_agent_runs(
     finally:
         docker.release.set()
         jobs.shutdown()
+
+
+class BlockedReplay(fakes.FakeDocker):
+    """The replay's first container hangs until the test releases it."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.started, self.release = threading.Event(), threading.Event()
+
+    def __call__(self, argv, **kw):
+        if argv[1] == "run" and argv[-1] == "verify":
+            self.started.set()
+            assert self.release.wait(30), "never released"
+        return super().__call__(argv, **kw)
+
+
+def test_f11_freeze_during_a_replay_holds_the_candidate_until_unfreeze(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock
+):
+    jobs = ThreadPoolJobs(max_workers=1)
+    docker = BlockedReplay(agent=fakes.fix_like_a_careful_engineer)
+    rig = Rig(sessions, settings, clock, jobs=jobs, runner=docker)
+    try:
+        _start(tick_arms, now)
+        _held(arms, "code", "sim-3", now + 20 * S)
+        rig.work(now + 40 * S)  # draft submitted (the agent itself is quick)
+        _wait(jobs, code_lockin.draft_key(_overlay_row(client, arms), "toy0001"))
+        rig.work(now + 41 * S)  # candidate built
+        code = _cands(client)["code"]
+        rig.work(now + 42 * S)  # replay submitted; its first container hangs
+        assert docker.started.wait(10)
+
+        started = time.monotonic()
+        assert (
+            client.post("/v1/fleet/freeze", json={"by": "kent", "why": "test"}).status_code == 200
+        )
+        rig.work(now + 43 * S)
+        assert time.monotonic() - started < 5
+        assert client.get(f"/v1/candidates/{code['id']}").json()["status"] == "frozen"
+
+        # The replay finishes while frozen: nothing moves, however many ticks.
+        docker.release.set()
+        _wait(jobs, f"coder.replay:default:{code['id']}")
+        for t in (44, 45, 46):
+            rig.work(now + t * S)
+        frozen = client.get(f"/v1/candidates/{code['id']}").json()
+        assert frozen["status"] == "frozen" and frozen["replay"] is None
+
+        # Unfreeze: it restarts from replay, uses the finished result, and waits for B7.
+        assert client.post("/v1/fleet/unfreeze", json={"reason": "done"}).status_code == 200
+        rig.work(now + 47 * S)
+        rig.work(now + 48 * S)
+        detail = client.get(f"/v1/candidates/{code['id']}").json()
+        assert detail["status"] == "awaiting_canary" and detail["replay"]["passed"]
+        assert isinstance(jobs.poll(f"coder.replay:default:{code['id']}"), Missing)  # forgotten
+    finally:
+        docker.release.set()
+        jobs.shutdown()
+
+
+def _overlay_row(client, arms, name="sim-3"):
+    """A stand-in with what `draft_key` reads (the overlay row's fleet and patch)."""
+
+    class Row:
+        fleet_id = "default"
+        code_patch = arms[name].device.overlay.code_patch
+
+    return Row()
+
+
+def add_a_verify_script(work: Path) -> None:
+    """An agent that fixes the bug but also writes into the held-out verify/ dir."""
+    fakes.fix_like_a_careful_engineer(work)
+    (work / "verify").mkdir(exist_ok=True)
+    (work / "verify" / "test_mine.py").write_text("def test_mine():\n    assert True\n")
+
+
+def test_f11_a_coder_diff_touching_verify_is_refused_before_anything_is_built(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session
+):
+    rig = Rig(sessions, settings, clock, agent=add_a_verify_script)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    rig.work(now + 40 * S)
+    assert client.get("/v1/candidates").json() == []
+    ov = _overlay(db_session, arms)
+    assert ov.status == "lockin_error"
+    assert "diff is refused" in ov.status_reason and "held-out verify/" in ov.status_reason
+    coded = db_session.scalars(select(CodeVersion).where(CodeVersion.source == "coder")).all()
+    assert coded == []
+    assert [f["version"] for f in client.get("/v1/firmware").json()] == [1, 2]
+
+
+def test_f11_touches_safety_is_computed_on_the_coders_diff(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock
+):
+    # The device's patch touches only control/; the coder's diff also adds tests/.
+    guarded = settings.model_copy(update={"safety_paths": ["tests"]})
+    rig = Rig(sessions, guarded, clock, agent=fakes.fix_like_a_careful_engineer)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    rig.work(now + 40 * S)
+    code = _cands(client)["code"]
+    assert code["touches_safety"] is True
+
+
+VARIANT = fakes.TOY_PATCH.replace("the spec says keep holding", "the spec says keep the object")
+
+
+def test_f11_identical_patches_share_one_draft_and_one_candidate(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session, count_events
+):
+    rig = Rig(sessions, settings, clock, agent=fakes.fix_like_a_careful_engineer)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    _held(arms, "code", "sim-1", now + 25 * S)
+    rig.work(now + 40 * S)
+    code = _cands(client)["code"]
+    assert {o["device_id"] for o in code["from_overlays"]} == {"sim-1", "sim-3"}
+    assert count_events("coder.started") == 1
+    assert len([k for k in rig.jobs.submitted if k.startswith("coder.draft")]) == 1
+    assert {_overlay(db_session, arms, n).status for n in ("sim-1", "sim-3")} == {"locked_in"}
+
+
+def test_f11_over_the_draft_budget_an_overlay_waits_held(
+    client,
+    arms,
+    tick_arms,
+    now,
+    settings,
+    toy_fleet,
+    sessions,
+    clock,
+    db_session,
+    count_events,
+    monkeypatch,
+):
+    one = settings.model_copy(update={"coder_max_drafts_per_hour": 1})
+    rig = Rig(sessions, one, clock, agent=fakes.fix_like_a_careful_engineer)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    monkeypatch.setattr("fake_device.scenarios.D1_CODE_PATCH", VARIANT)
+    _held(arms, "code", "sim-1", now + 25 * S)
+    rig.work(now + 40 * S)
+
+    waiting = _overlay(db_session, arms, "sim-1")
+    assert waiting.status == "held"  # not sticky
+    assert count_events("coder.started") == 1
+    reasons = events.find(db_session, {"overlay": waiting.id}, kinds=["overlay.deferred"])
+    assert len(reasons) == 1 and "coder budget" in reasons[0].why
+    for t in (200, 400):  # still over budget: no new draft, no new event
+        client.post("/v1/batch/run", json={"by": "kent"})
+        rig.work(now + t * S)
+    assert count_events("coder.started") == 1
+    assert len(events.find(db_session, {"overlay": waiting.id}, kinds=["overlay.deferred"])) == 1
+
+    # An hour later the budget frees up and it is drafted.
+    client.post("/v1/batch/run", json={"by": "kent"})
+    rig.work(now + 3700 * S)
+    assert count_events("coder.started") == 2
+    db_session.expire_all()
+    assert _overlay(db_session, arms, "sim-1").status == "locked_in"
+
+
+def test_f11_a_worker_that_cant_run_the_coder_leaves_code_overlays_held(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session, count_events
+):
+    rig = Rig(sessions, settings, clock, agent=fakes.fix_like_a_careful_engineer)
+    rig.tools.coder_blocked = code_lockin.coder_blocker(settings, docker="no-such-docker")
+    assert "make worker-host" in rig.tools.coder_blocked
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    for t in (40, 200):
+        client.post("/v1/batch/run", json={"by": "kent"})
+        rig.work(now + t * S)
+    assert _overlay(db_session, arms).status == "held"
+    assert "code" not in _cands(client)
+    assert count_events("coder.started") == 0 and count_events("batch.error") == 0
+    assert rig.jobs.submitted == [] and rig.docker.calls == []
+
+
+def test_f11_with_no_test_command_the_verify_scripts_still_replay(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock
+):
+    no_cmd = settings.model_copy(update={"coder_test_cmd": ""})
+    rig = Rig(sessions, no_cmd, clock, agent=fakes.fix_like_a_careful_engineer)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    rig.work(now + 40 * S)
+    code = _cands(client)["code"]
+    rig.work(now + 41 * S)
+    detail = client.get(f"/v1/candidates/{code['id']}").json()
+    assert detail["status"] == "awaiting_canary" and not detail["replay"]["stub"]
+    assert "tests none (CODER_TEST_CMD is empty)" in detail["replay"]["why"]
+    assert "verify 2/2 passed" in detail["replay"]["why"]
+    replay_modes = [c["argv"][-1] for c in rig.docker.calls if c["argv"][1] == "run"][1:]
+    assert replay_modes == ["verify", "verify"]

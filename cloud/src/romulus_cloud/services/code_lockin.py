@@ -3,18 +3,21 @@
 With `CODER_PROVIDER` other than `fake`, a held overlay with a `code_patch` goes like this:
 
 1. **Draft (batch).** `batch` submits `coder.draft(...)` as a job (`services/jobs.py`) keyed
-   by the overlay and the class's current code version, and leaves the overlay held. On a
+   by the class's current code version and the patch's hash (identical patches share one
+   draft), within CODER_MAX_DRAFTS_PER_HOUR, and leaves the overlay held. On a
    later run the finished draft becomes a new immutable code version (the base package with
    the coder's diff applied, `source = coder`), a firmware manifest naming it, and a code
-   candidate. A coder error or a failing draft builds nothing: the overlay is
-   `lockin_error`, sticky, with the reason. `CodeDraft.passed` only decides whether a draft
-   is worth replaying; the gate never trusts it.
+   candidate. A coder error, a failing draft or a diff touching `verify/` builds nothing:
+   the overlay is `lockin_error`, sticky, with the reason. `CodeDraft.passed` only decides
+   whether a draft is worth replaying; the gate never trusts it.
 2. **Replay (gate).** For a `source = coder` code candidate, `gate_replay` submits
    `coder_runs.replay_code_patch` (fresh containers, no network, held-out verify scripts,
    the device test command) as a job keyed by the candidate, and returns None (still
    replaying) until it finishes. A failing replay rolls the candidate back with the failing
-   tests named. Then the existing gate rules apply: with no canary running real code (B7)
-   it waits at `awaiting_canary`.
+   tests named. With no test command the verify scripts still run; with neither, the
+   replay fails (fail closed: only a pass-through candidate gets the labeled stub). Then
+   the existing gate rules apply: with no canary running real code (B7) it waits at
+   `awaiting_canary`.
 
 Job functions here take plain data (file dicts, text) and never touch the database. The
 pass-through path (`CODER_PROVIDER=fake`, the default) doesn't come here at all.
@@ -22,8 +25,10 @@ pass-through path (`CODER_PROVIDER=fake`, the default) doesn't come here at all.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
+import shutil
 import tarfile
 import tempfile
 from collections.abc import Iterable, Mapping
@@ -50,7 +55,7 @@ from romulus_cloud.services import registry
 from romulus_cloud.services.coder_runs import CodeReplay, replay_code_patch
 from romulus_cloud.services.jobs import Done, Failed, Jobs, Missing, Pending, default_jobs
 from romulus_cloud.settings import Settings
-from romulus_contracts.codepatch import CODE_ROOT
+from romulus_contracts.codepatch import CODE_ROOT, is_under
 
 SOURCE = "coder"  # code_versions.source for a version the coding agent drafted
 OUTPUT_TAIL = 4000  # characters of each test output kept in an event
@@ -58,8 +63,27 @@ _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE)
 _COUNTS = re.compile(r"\d+ (?:passed|failed|errors?|skipped)\b.*$", re.MULTILINE)
 
 
+DRAFT_POOL = "coder.draft"  # separate pools: a long draft never queues a replay behind it
+REPLAY_POOL = "coder.replay"
+
+
 def draft_key(ov: Overlay, base_rev: str) -> str:
-    return f"coder.draft:{ov.fleet_id}:{ov.device_id}:{ov.id}:{base_rev}"
+    """One draft per (code version, patch): identical patches from several arms share it."""
+    digest = hashlib.sha256((ov.code_patch or "").encode()).hexdigest()[:16]
+    return f"coder.draft:{ov.fleet_id}:{base_rev}:{digest}"
+
+
+def coder_blocker(settings: Settings, docker: str = "docker") -> str | None:
+    """Why this process can't run coder jobs at all, or None. Checked once per tick before
+    any job is submitted, so a misplaced worker waits with one clear error instead of
+    marking overlays `lockin_error`."""
+    if settings.coder_provider == "local_agent" and shutil.which(docker) is None:
+        return (
+            "CODER_PROVIDER=local_agent, but this worker has no `docker` CLI, so it can't "
+            "start the coding agent or the code replay; run the worker on the host "
+            "(`make worker-host`) or set CODER_PROVIDER=fake"
+        )
+    return None
 
 
 def replay_key(c: Candidate) -> str:
@@ -223,14 +247,16 @@ class ReplayTools:
     jobs: Jobs
     sandbox: Sandbox
     store: BlobStore
+    blocked: str | None = None  # `coder_blocker`: replays wait instead of failing
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ReplayTools:
         return cls(
             settings=settings,
-            jobs=default_jobs(settings.jobs_max_workers),
+            jobs=default_jobs(settings.jobs_max_workers, REPLAY_POOL),
             sandbox=Sandbox(image=settings.coder_image or DEFAULT_IMAGE),
             store=build_blobstore(settings.blob_dir),
+            blocked=coder_blocker(settings),
         )
 
     @property
@@ -258,11 +284,11 @@ def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayR
     if cv is None:
         return g.replay_code_stub()
     settings = tools.settings
-    if not settings.coder_test_cmd.strip():
-        return g.replay_stub("CODER_TEST_CMD is empty, so no device tests ran")
     key = replay_key(c)
     status = tools.jobs.poll(key)
     if isinstance(status, Missing):
+        if tools.blocked:
+            return None  # the worker logged why at startup; wait for a worker that can run it
         parent = session.get(CodeVersion, (c.fleet_id, cv.parent_rev)) if cv.parent_rev else None
         if parent is None:
             return g.ReplayResult(
@@ -272,10 +298,18 @@ def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayR
             extra = verify_files(settings.coder_verify_dir)
         except CoderError as exc:
             return g.ReplayResult(False, f"code replay could not start: {exc}")
+        base = read_package(tools.store, parent)
+        has_verify = bool(extra) or any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
+        if not settings.coder_test_cmd.strip() and not has_verify:
+            return g.ReplayResult(
+                False,
+                "code replay failed: nothing can check the coder's change (CODER_TEST_CMD is "
+                f"empty and code {cv.parent_rev} has no verify scripts, nor CODER_VERIFY_DIR)",
+            )
         job = partial(
             run_replay,
             tools.sandbox,
-            read_package(tools.store, parent),
+            base,
             read_package(tools.store, cv),
             test_cmd=settings.coder_test_cmd,
             verify_files=extra,
@@ -294,9 +328,12 @@ def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayR
     return to_replay_result(status.result, cv.rev, tools.secrets)
 
 
-def gate_replay_output(c: Candidate, tools: ReplayTools) -> dict[str, Any]:
-    """The finished replay's redacted outputs for the event, or {}."""
-    status = tools.jobs.poll(replay_key(c))
+def gate_replay_applied(c: Candidate, tools: ReplayTools) -> dict[str, Any]:
+    """After the gate applied a replay result: its redacted outputs for the event (or {}),
+    and the job is forgotten."""
+    key = replay_key(c)
+    status = tools.jobs.poll(key)
+    tools.jobs.forget(key)
     if isinstance(status, Done) and isinstance(status.result, CodeReplay):
         return replay_output(status.result, tools.secrets)
     return {}

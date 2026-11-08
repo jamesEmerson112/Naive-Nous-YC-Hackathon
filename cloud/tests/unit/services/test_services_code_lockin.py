@@ -117,6 +117,9 @@ class StuckJobs:
     def poll(self, key):
         return self.status if self.submitted else Missing()
 
+    def forget(self, key):
+        self.submitted = [k for k in self.submitted if k != key]
+
 
 @pytest.fixture
 def code_versions(db_session, settings):
@@ -152,10 +155,69 @@ def test_passthrough_code_keeps_the_labeled_stub(db_session, settings, code_vers
     assert not code_lockin.is_passthrough(db_session, _cand("fix0001"))
 
 
-def test_no_test_command_is_a_labeled_stub(db_session, settings, code_versions):
-    tools = _tools(settings, code_versions, StuckJobs(), coder_test_cmd=" ")
+def test_no_test_command_still_runs_the_verify_scripts(db_session, settings, code_versions):
+    jobs = InlineJobs()
+    tools = _tools(settings, code_versions, jobs, coder_test_cmd=" ")
     result = code_lockin.gate_replay(db_session, _cand("fix0001"), tools)
-    assert result.stub and "CODER_TEST_CMD is empty" in result.why
+    assert result.passed and not result.stub, result.why
+    assert "tests none (CODER_TEST_CMD is empty)" in result.why
+    assert "verify 2/2 passed" in result.why
+
+
+def test_no_test_command_and_no_verify_scripts_fails_closed(db_session, settings):
+    store = build_blobstore(settings.blob_dir)
+    bare = {k: v for k, v in fakes.toy_files().items() if "/verify/" not in k}
+    registry.create_code(db_session, store, registry.build_tarball(bare), rev="bare001", **KW)
+    fixed = registry.build_tarball(code_lockin.apply_diff(bare, fakes.TOY_PATCH))
+    registry.create_code(
+        db_session, store, fixed, rev="bfix001", source="coder", parent_rev="bare001", **KW
+    )
+    jobs = StuckJobs()
+    tools = _tools(settings, store, jobs, coder_test_cmd="")
+    result = code_lockin.gate_replay(db_session, _cand("bfix001"), tools)
+    assert not result.passed and not result.stub
+    assert "nothing can check the coder's change" in result.why
+    assert jobs.submitted == []
+
+
+def test_a_blocked_worker_waits_instead_of_submitting(db_session, settings, code_versions):
+    jobs = StuckJobs()
+    tools = _tools(settings, code_versions, jobs)
+    tools.blocked = "no docker here"
+    assert code_lockin.gate_replay(db_session, _cand("fix0001"), tools) is None
+    assert jobs.submitted == []
+
+
+def test_coder_blocker_needs_docker_only_for_local_agent(make_settings):
+    fake = make_settings()
+    assert code_lockin.coder_blocker(fake, docker="no-such-docker") is None
+    live = fake.model_copy(update={"coder_provider": "local_agent"})
+    why = code_lockin.coder_blocker(live, docker="no-such-docker")
+    assert "no `docker` CLI" in why and "make worker-host" in why
+    assert code_lockin.coder_blocker(live, docker=sys.executable) is None
+
+
+def test_applying_a_replay_forgets_the_job(db_session, settings, code_versions):
+    jobs = InlineJobs()
+    tools = _tools(settings, code_versions, jobs)
+    cand = _cand("fix0001")
+    assert code_lockin.gate_replay(db_session, cand, tools).passed
+    out = code_lockin.gate_replay_applied(cand, tools)
+    assert "replay_output" in out
+    assert isinstance(jobs.poll(code_lockin.replay_key(cand)), Missing)
+
+
+def test_draft_key_is_the_code_version_and_the_patch_hash():
+    class Ov:
+        fleet_id = "default"
+
+        def __init__(self, patch):
+            self.code_patch = patch
+
+    a, b = Ov(fakes.TOY_PATCH), Ov(fakes.TOY_PATCH)
+    assert code_lockin.draft_key(a, "toy0001") == code_lockin.draft_key(b, "toy0001")
+    assert code_lockin.draft_key(a, "toy0001") != code_lockin.draft_key(a, "toy0002")
+    assert code_lockin.draft_key(a, "r") != code_lockin.draft_key(Ov(fakes.TOY_PATCH + " "), "r")
 
 
 def test_a_running_replay_returns_none_so_the_gate_waits(db_session, settings, code_versions):
