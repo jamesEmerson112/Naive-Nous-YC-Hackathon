@@ -1166,8 +1166,10 @@ def draft_task(
 
 def pytest_results(output: str) -> dict[str, Any]:
     """The short test summary of a `pytest -rA` run: `{"passed": [id], "failed": {id:
-    reason}, "errors": [id]}`.
+    reason}, "errors": [id], "reasons": {id: reason}}` (`reasons`: FAILED and ERROR lines).
 
+    Printed text, so a test can forge it: the check takes which tests failed or passed from
+    the result seal (`services.doctor_code._run`), and from here only each failure's reason.
     Read only from the block after the **last** `short test summary info` header, up to its
     first line that isn't a summary line (the counts line). `FAILED x` / `PASSED x` lines a
     test prints earlier, or after the counts (an `atexit` print), are not results. No header,
@@ -1183,6 +1185,7 @@ def pytest_results(output: str) -> dict[str, Any]:
     passed: list[str] = []
     failed: dict[str, str] = {}
     errors: list[str] = []
+    reasons: dict[str, str] = {}
     for line in block:
         match = _RESULT_LINE.match(line)
         if not match:
@@ -1190,11 +1193,23 @@ def pytest_results(output: str) -> dict[str, Any]:
         kind, test_id, reason = match.group(1), match.group(2), match.group(3) or ""
         if kind == "PASSED":
             passed.append(test_id)
-        elif kind == "FAILED":
+            continue
+        if kind == "FAILED":
             failed.setdefault(test_id, reason)
         else:
             errors.append(test_id)
-    return {"passed": list(dict.fromkeys(passed)), "failed": failed, "errors": errors}
+        reasons.setdefault(test_id, reason)
+    return {
+        "passed": list(dict.fromkeys(passed)),
+        "failed": failed,
+        "errors": errors,
+        "reasons": reasons,
+    }
+
+
+# A repro run without the result seal's end marker: an early exit (`os._exit(0)` after
+# printing a fake summary) looks like this, so its exit code and output prove nothing.
+NO_SEAL = "no sealed pytest result: pytest didn't run to its end"
 
 
 def _in_file(test_id: str, path: str | None) -> bool:
@@ -1206,9 +1221,12 @@ def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list
     """(the ids of the repro file's tests that failed on behaviour on the base, why not when
     there are none). Proof the repro test exercises the bug:
 
+    - the run is **sealed** (`sealed` is True): the image's result seal saw pytest reach its
+      end, and `failed` holds the seal's failed ids (`services.doctor_code._run`);
     - pytest ran and exited **1** (tests failed). 0 passed, 2 is a collection error (e.g. it
       imports a name only the fix adds), 4 no such file, 5 no tests; none of those count;
-    - at least one `FAILED` test id lies in the repro file;
+    - at least one failed test id (pytest's node id, relative to the device's root, e.g.
+      `tests/test_x.py::test_a`) lies in the repro file;
     - and failed on behaviour, not only because a name the fix adds is missing (an
       `ImportError` / `ModuleNotFoundError`, or `AttributeError: module ... has no
       attribute`): a test that only imports a new flag proves nothing.
@@ -1219,6 +1237,8 @@ def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list
         return [], f"it could not be replayed ({_describe(run)})"
     if run.get("timed_out") or run.get("configured") is False:
         return [], f"it didn't run to a result ({_describe(run)})"
+    if run.get("sealed") is not True:
+        return [], f"{NO_SEAL} ({_describe(run)})"
     code = run.get("exit_code")
     if isinstance(code, bool) or code != 1:
         return [], (
@@ -1242,12 +1262,15 @@ def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list
 
 def repro_passes(run: Mapping[str, Any] | None, ids: Iterable[str]) -> str:
     """Why the repro tests that failed before don't all pass with the full patch, or "" when
-    they do: pytest exited 0 and every one of `ids` is listed `PASSED`."""
+    they do: pytest exited 0, the run is sealed, and the seal reports every one of `ids` as
+    passed (`passed_ids`). Printed `PASSED` lines never count."""
     ids = list(ids)
     if not isinstance(run, Mapping):
         return "the repro test was never run with the fix"
     if run.get("patch_error") or run.get("timed_out") or run.get("exit_code") != 0:
         return f"the repro test doesn't pass with the fix ({_describe(run)})"
+    if run.get("sealed") is not True:
+        return f"with the fix, the repro test has {NO_SEAL} ({_describe(run)})"
     passed = set(run.get("passed_ids") or [])
     missing = [i for i in ids if i not in passed]
     if missing:
