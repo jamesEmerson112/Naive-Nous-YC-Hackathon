@@ -16,7 +16,7 @@ Nothing here commits; routes and worker steps do.
 import io
 import os
 import tarfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import BlobNotFound, BlobStore
 from romulus_cloud.domain import datasets as dd
+from romulus_cloud.domain import gate
 from romulus_cloud.domain.gate import ReplayCase
 from romulus_cloud.domain.labels import split_label
 from romulus_cloud.errors import ApiError
@@ -740,7 +741,7 @@ def sync_regression_cases(session: Session, now: datetime) -> int:
 
 def regression_cases(session: Session, fleet_id: str, device_class: str) -> list[ReplayCase]:
     """Every regression case for one device class, oldest first, as `gate.replay` takes them.
-    Replay them with `domain.datasets.replay_corpus`, which treats an empty list as a pass."""
+    Replay them with `replay_corpus`, which treats an empty list as a pass."""
     stmt = (
         select(RegressionCase)
         .join(Incident, Incident.id == RegressionCase.incident_id)
@@ -764,3 +765,57 @@ def pinned_blob_shas(session: Session) -> set[str]:
     delete these (telemetry §7), or that snapshot's exports start failing."""
     ids = select(func.jsonb_array_elements_text(DatasetVersion.recording_ids))
     return set(session.scalars(select(Recording.sha256).where(Recording.id.in_(ids)).distinct()))
+
+
+def replay_corpus(
+    candidate: Mapping[str, Any],
+    cases: Iterable[gate.ReplayCase],
+    *,
+    baseline: Mapping[str, Any] | None = None,
+) -> gate.ReplayResult:
+    """Replay the regression corpus against a candidate manifest, for the gate (F8 step 4).
+    Pure (no DB); it lives here because domain modules may not import each other.
+
+    - **Empty corpus → pass** ("no regression cases yet"). `gate.replay` fails an empty
+      list because a candidate must replay its own incident; the corpus has no such rule.
+    - **Malformed rules → fail** with a sentence naming the problem, never an exception, so
+      one bad candidate can't stop the gate for the others.
+    - **Regression-only with `baseline`** (the current release's manifest): only cases the
+      baseline passes count. A case the release already fails (a fix that never held, an
+      expectation no rule can fire) is reported but can't block the candidate.
+    """
+    cases = list(cases)
+    if not cases:
+        return gate.ReplayResult(True, "regression corpus: no cases yet, so nothing can regress")
+    if not isinstance(candidate, Mapping) or not isinstance(candidate.get("rules") or {}, Mapping):
+        why = "regression corpus: candidate rules are malformed (not a map)"
+        return gate.ReplayResult(False, why)
+    try:
+        result = gate.replay(candidate, cases)
+    except Exception as exc:  # e.g. a rule whose fields have the wrong types
+        return gate.ReplayResult(False, f"regression corpus: candidate rules are malformed ({exc})")
+    if not result.cases:  # replay could not run a single case: malformed rules
+        return gate.ReplayResult(False, f"regression corpus: {result.why}")
+    counted = {c.case_id for c in cases}
+    already = ""
+    if baseline is not None:
+        try:
+            base = gate.replay(baseline, cases)
+        except Exception:
+            base = None
+        if base is not None and base.cases:
+            counted = {c.case_id for c in base.cases if c.passed}
+            n_old = len(cases) - len(counted)
+            already = f"; {n_old} already fail on the current release" if n_old else ""
+    failed = [c for c in result.cases if not c.passed and c.case_id in counted]
+    n = len(counted)
+    if not failed:
+        return gate.ReplayResult(
+            True, f"regression corpus: replayed {n} incidents; {n} pass{already}", result.cases
+        )
+    detail = "; ".join(f"{c.case_id}: {c.why}" for c in failed)
+    return gate.ReplayResult(
+        False,
+        f"regression corpus: replayed {n} incidents; {len(failed)} regress{already} ({detail})",
+        result.cases,
+    )

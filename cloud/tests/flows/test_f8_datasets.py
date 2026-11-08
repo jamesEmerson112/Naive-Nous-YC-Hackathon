@@ -230,9 +230,9 @@ def test_f8_regression_corpus(client, fleet, steps, sessions, now, db_session, c
         )
     ]
     assert datasets.regression_cases(db_session, "default", "other_arm") == []
-    assert dd.replay_corpus(FIRMWARE_V1, cases).passed
-    assert not dd.replay_corpus(FIRMWARE_V1 | {"rules": {}}, cases).passed
-    assert dd.replay_corpus(FIRMWARE_V1, []).passed  # an empty corpus regresses nothing
+    assert datasets.replay_corpus(FIRMWARE_V1, cases).passed
+    assert not datasets.replay_corpus(FIRMWARE_V1 | {"rules": {}}, cases).passed
+    assert datasets.replay_corpus(FIRMWARE_V1, []).passed  # an empty corpus regresses nothing
 
     # M7's seam: every blob a snapshot refers to is pinned.
     shas = {m["sha256"] for m, _ in fleet["files"]}

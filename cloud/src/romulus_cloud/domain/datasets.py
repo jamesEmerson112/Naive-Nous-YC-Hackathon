@@ -10,11 +10,10 @@ loads rows into the plain dicts these functions take, and writes what they retur
 - `regression_case(inc)`: the replay case one resolved incident becomes, or None.
 - `sharegpt(lines)`: an agent-trace JSONL file as Hermes-style `conversations`.
 - `redact(value)`: strip obvious secrets, home-directory paths and emails (telemetry §10).
-- `replay_corpus(candidate, cases, baseline=)`: the gate-safe corpus replay.
 - `canonical(obj)` / `jsonl(rows)`: byte-identical output for identical input, so the
   same snapshot always produces the same export file (F8).
 
-Pure: imports only the standard library and `domain.gate`; nothing reads a clock.
+Pure: imports only the standard library; nothing reads a clock.
 """
 
 import hashlib
@@ -24,8 +23,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-
-from romulus_cloud.domain.gate import ReplayCase, ReplayResult, replay
 
 PURPOSES = ("firmware", "harness", "policy")
 FORMATS = ("regression_corpus", "traces_jsonl")
@@ -192,58 +189,6 @@ def regression_case(inc: Mapping[str, Any]) -> dict[str, Any] | None:
         "signals": dict(signals),
         "expected_action": action,
     }
-
-
-def replay_corpus(
-    candidate: Mapping[str, Any],
-    cases: Iterable[ReplayCase],
-    *,
-    baseline: Mapping[str, Any] | None = None,
-) -> ReplayResult:
-    """Replay the regression corpus against a candidate manifest, for the gate (F8 step 4).
-
-    - **Empty corpus → pass** ("no regression cases yet"). `gate.replay` fails an empty
-      list because a candidate must replay its own incident; the corpus has no such rule.
-    - **Malformed rules → fail** with a sentence naming the problem, never an exception, so
-      one bad candidate can't stop the gate for the others.
-    - **Regression-only with `baseline`** (the current release's manifest): only cases the
-      baseline passes count. A case the release already fails (a fix that never held, an
-      expectation no rule can fire) is reported but can't block the candidate.
-    """
-    cases = list(cases)
-    if not cases:
-        return ReplayResult(True, "regression corpus: no cases yet, so nothing can regress")
-    if not isinstance(candidate, Mapping) or not isinstance(candidate.get("rules") or {}, Mapping):
-        return ReplayResult(False, "regression corpus: candidate rules are malformed (not a map)")
-    try:
-        result = replay(candidate, cases)
-    except Exception as exc:  # e.g. a rule whose fields have the wrong types
-        return ReplayResult(False, f"regression corpus: candidate rules are malformed ({exc})")
-    if not result.cases:  # replay could not run a single case: malformed rules
-        return ReplayResult(False, f"regression corpus: {result.why}")
-    counted = {c.case_id for c in cases}
-    already = ""
-    if baseline is not None:
-        try:
-            base = replay(baseline, cases)
-        except Exception:
-            base = None
-        if base is not None and base.cases:
-            counted = {c.case_id for c in base.cases if c.passed}
-            n_old = len(cases) - len(counted)
-            already = f"; {n_old} already fail on the current release" if n_old else ""
-    failed = [c for c in result.cases if not c.passed and c.case_id in counted]
-    n = len(counted)
-    if not failed:
-        return ReplayResult(
-            True, f"regression corpus: replayed {n} incidents; {n} pass{already}", result.cases
-        )
-    detail = "; ".join(f"{c.case_id}: {c.why}" for c in failed)
-    return ReplayResult(
-        False,
-        f"regression corpus: replayed {n} incidents; {len(failed)} regress{already} ({detail})",
-        result.cases,
-    )
 
 
 # --------------------------------------------------------------------------- traces
