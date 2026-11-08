@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sun Nov 8, 2:00 AM PST from CLAUDE.md, commits and docs/.
+Updated Sun Nov 8, 7:30 AM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -96,6 +96,7 @@ Bench board token (scoped MCP session)
 MODELS
 OpenAI key for bench Hermes             <--- James
 RunPod LLM endpoint (D22, optional)
+Worker model benchmark (workerbench)    <--- James
 
 NVIDIA SIM
 NVIDIA sim on RunPod
@@ -114,11 +115,11 @@ Gateway phone alerts
 Hermes plugin catalog submission
 pi vs Hermes comparison (Naive console)  <--- James
 Hermes compaction fix (summarizer login)
+Worker/manager healer loop (armsim/worker.py) <--- James
 
 ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
-Coder sandbox egress: LLM proxy only (B5, #46) <--- Kent
-Doctor repro reads result seal (#56)    <--- Kent
+Naive Technician: hard failure → Naive report + actions <--- Kent
 
 PI 5
 Device side owner (D14)                 <--- Ishaan
@@ -152,11 +153,14 @@ STM32 C bug demo (6 bad pod images ready, firmware/demo, 69fc292) <--- Olir
 Camera-cover hero demo
 Demo script and rehearsal
 Backup demo video
+Overnight sim soak runner (prototypes/arm-sim/SOAK.md) <--- James
+Mission Control page (prototypes/arm-sim) <--- James
 
 HUB AND DOCS
 Stack hub: put it all together          <--- James
 Hermes harness gap notes                <--- James
 Firmware API and data doc (docs/firmware-apis.md)
+Worker/manager healer design (docs/worker-manager-healer.md) <--- James
 
 SPONSORS AND CREDITS
 Credits each hacker gets (docs/hackathons.md). Add "<--- Name" once redeemed.
@@ -224,3 +228,9 @@ Romulus: Real device/ code in coder path (B1, #38) <--- Kent
 Demo and faults: Ultrasonic bad image 07 + arm heal test (agent rolls back, arm runs) <--- Olir
 SO-101: MuJoCo arm sim + fault factory (james/arm-sim) <--- James
 Romulus: Code replay hardening vs test gaming (K6, #53) <--- Kent
+Romulus: Coder sandbox egress: LLM proxy only (B5, #46) <--- Kent
+Romulus: Doctor repro reads result seal (#56)    <--- Kent
+Romulus: Gate waits for held-out verify (#58) <--- Kent
+Naive: Naive TS SDK client + read-only check (naive/) <--- Olir
+Romulus: Heal-agent run reports on the dashboard <--- Olir
+Demo and faults: Ultrasonic v1.8 near-hold image + heal test <--- Olir

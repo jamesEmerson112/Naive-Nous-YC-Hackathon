@@ -1,13 +1,22 @@
 {% if incidents %}
 <ol class="incidents">
   {% for i in incidents %}
-  <li class="incident">
+  <li class="incident tone-edge-{{ i.tone }}">
     <a href="/incidents/{{ i.id }}">
       <span class="when"><span class="day">{{ i.day }}</span> {{ i.clock }}</span>
       <span class="what">
         <span class="headline"><strong>{{ i.device }}</strong> · {{ i.kind }}
           {% if i.touches_safety %}<span class="safety">touches safety</span>{% endif %}</span>
         {% if i.summary %}<span class="summary">{{ i.summary }}</span>{% endif %}
+        {% if i.agent %}
+        <span class="agent-line">
+          <span class="chip chip-{{ i.agent.tone }}">{{ i.agent.model }}: {{ i.agent.words }}</span>
+          <span class="chip">{{ i.agent.steps }} steps</span>
+          {% if i.agent.flashed %}<span class="chip">{{ i.agent.flashed }} flash{{ 'es' if i.agent.flashed != 1 }}</span>{% endif %}
+          {% if i.agent.bad_images %}<span class="chip chip-bad">{{ i.agent.bad_images }} bad image{{ 's' if i.agent.bad_images != 1 }}</span>{% endif %}
+          {% if i.help %}<span class="chip chip-warn">{{ i.help }} help request{{ 's' if i.help != 1 }}</span>{% endif %}
+        </span>
+        {% endif %}
         {% set links = i.links %}<span class="chain">{% include "partials/chain.html" %}</span>
       </span>
       <span class="status tone-{{ i.tone }}">{{ i.status }}</span>
@@ -16,5 +25,24 @@
   {% endfor %}
 </ol>
 {% else %}
-<p class="muted">No incidents yet. When a device reports one, it appears here within a few seconds.</p>
+<p class="empty muted">No incidents yet. When a device reports one, it appears here within a few seconds.</p>
+{% endif %}
+
+{% if unlinked %}
+<h2 class="section-h">Agent runs with no incident <span class="muted">rehearsals, and runs that started with nothing open</span></h2>
+<ol class="runs-mini">
+  {% for r in unlinked %}
+  <li>
+    <a href="{{ r.url }}">
+      <span class="when"><span class="day">{{ r.day }}</span> {{ r.clock }}</span>
+      <span class="what">
+        <span class="headline"><strong>{{ r.device_id }}</strong> · agent run · {{ r.model }}{% if r.sim %} <span class="chip">simulated</span>{% endif %}</span>
+        <span class="summary">{{ r.headline }}</span>
+        <span class="agent-line"><span class="chip">{{ r.stats.steps }} steps</span>{% if r.flashed %}<span class="chip">{{ r.flashed }} flash{{ 'es' if r.flashed != 1 }}</span>{% endif %}{% if r.bad_images %}<span class="chip chip-bad">{{ r.bad_images }} bad image{{ 's' if r.bad_images != 1 }}</span>{% endif %}{% if r.help_requests %}<span class="chip chip-warn">{{ r.help_requests | length }} help request{{ 's' if r.help_requests | length != 1 }}</span>{% endif %}</span>
+      </span>
+      <span class="status tone-{{ r.tone }}">{{ r.status_words }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ol>
 {% endif %}

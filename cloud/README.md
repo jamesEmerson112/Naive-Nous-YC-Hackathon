@@ -19,7 +19,8 @@ uv run python -m fake_device --n 3 --url http://localhost:8000 --interval 3 --ho
 The last command runs three fake arms (`sim-1`…`sim-3`; `sim-2` is the canary) through every scripted scenario: a rules fix, a code patch, a bad candidate, a late bad candidate and a park. The arms keep checking in until you press Ctrl-C. If you set `API_PORT`, use that port in `--url` and in the links below. Then open:
 
 - <http://localhost:8000/>: the incident timeline, fleet and kill switch;
-- an incident from the timeline (`/incidents/{id}`): its story from fault to fleet or rollback, with evidence links;
+- an incident from the timeline (`/incidents/{id}`): its story from fault to fleet or rollback, with evidence links, and, when a device sent one (APIs §3.11), the heal-agent run that worked on it: outcome, firmware, requests for help, write-up and every step;
+- an agent run tied to no incident (`/agent-runs/{device_id}/{run_id}`, linked from the timeline), e.g. a pod `--sim` rehearsal;
 - <http://localhost:8000/data>: recordings, labels, snapshots and exports.
 
 `make sim` is different: it runs the fake fleet inside Compose with the overnight chaos schedule in real time (a fault about every 10 minutes), not the scripted scenarios. `make down` stops everything.

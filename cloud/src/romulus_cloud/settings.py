@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     coder_test_cmd: str = "python -m pytest -q"
     coder_step_limit: int = 30
     coder_time_limit_s: int = 600
+    # Output tokens per LLM call: the agent asks for this and its egress proxy caps it (B5).
+    coder_max_tokens: int = 2000
 
     @field_validator("coder_test_cmd")
     @classmethod
@@ -107,8 +109,13 @@ class Settings(BaseSettings):
     # The gate's code replay (M8b): the device tests (CODER_TEST_CMD, empty = no replay, the
     # stub) and the held-out verify scripts, in fresh containers with no network. The
     # package's own `device/verify/` always runs; CODER_VERIFY_DIR adds a host directory of
-    # more verify scripts kept off the device (each file lands at `verify/<its path>`).
+    # more verify scripts kept off the device (each file lands at `verify/<its path>`). The
+    # Fleet Doctor's sandbox check runs the same set (`doctor_code.held_out`).
     coder_verify_dir: str = ""
+    # A coder or Doctor code candidate with no held-out verify scripts waits at the gate
+    # (the in-process device tests can forge their own result seal). True lets such a replay
+    # pass on the device tests alone, with a loud "unverified" event each time. Keep false.
+    coder_allow_unverified: bool = False
     coder_replay_timeout_s: int = 300
     # Where scratch copies of the device code go ("" = the system temp dir). Docker must be
     # able to mount it (Docker Desktop shares /Users, /private, /tmp and /var/folders).
@@ -150,6 +157,11 @@ class Settings(BaseSettings):
     doctor_check: Literal["stub", "sandbox"] = "stub"
     # Offer proposals whose check is only a stub (demos and F12); the event says so.
     doctor_offer_stub_checked: bool = False
+    # Offer a sandbox-checked fix whose base has no held-out verify/ scripts. While false
+    # such a consult closes `advised`: the repro and device-test steps run in the code's own
+    # pytest process and can be forged there, so only verify decides. The check says
+    # "offered unverified" when this lets one through.
+    doctor_offer_unverified: bool = False
     # False until the K17 list replaces `safety_paths`; while false every proposal is
     # discarded with "safety paths unknown" (D25).
     safety_paths_confirmed: bool = False

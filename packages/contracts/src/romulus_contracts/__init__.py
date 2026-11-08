@@ -4,6 +4,7 @@ The authority is docs/cloud-platform-planning/cloud-platform-apis.md §2-3; thes
 must match it. Device-sent models keep unknown fields (`extra="allow"`).
 """
 
+from romulus_contracts.agentrun import AgentRunAccepted, AgentRunReport
 from romulus_contracts.codepatch import summarize_code_patch, touches_safety
 from romulus_contracts.common import SHA256_HEADER, ErrorResponse, Running
 from romulus_contracts.device import Assigned, CheckIn, CheckInResponse, InstallResult
@@ -62,6 +63,8 @@ __all__ = [
     "SUPPORTED_VERSIONS",
     "TOOL_CATALOG",
     "Agent",
+    "AgentRunAccepted",
+    "AgentRunReport",
     "Assigned",
     "CheckIn",
     "CheckInResponse",

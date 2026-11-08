@@ -28,12 +28,12 @@ Planning docs for the Romulus cloud platform: the cloud half of the arm company'
 - **Decided: D0–D22, everything.** That covers the heal loop and overlays, the healer patching anything including safety (D5a), the automatic gate with the kill switch as the only human control, Naïve for agents with caps in our code, telemetry as an asset, the coding agent for code patches (P1, tracked blockers), Naïve and RunPod for models, the architecture, and local Docker with Python and FastAPI.
 - **Waiting on Kent:** nothing blocks the code. Open items belong to the device teammate (build plan §7) and Naïve staff (Naïve integration §7).
 - **Built (Sat ~7:35 PM):** M0–M7 merged in PRs #1–#18; F1–F8 and F10 pass with fake devices (82 flow tests). M8 is built up to the canary: M8a (#19), the STM32 toolchain (#24), M8b (#28) and the real `device/` in the coder path (#38); code candidates stop at `awaiting_canary` until B7. Details: build plan §3 ("What was built") and the [flows tracker](cloud-platform-flows.md). How to run it: [`cloud/README.md`](../../cloud/README.md).
-- **Real devices:** the STM32 sensor pod reports through [`tools/edge_bridge`](../../tools/edge_bridge/README.md), which reads Olir's pod healer and needs no device-side work (D29, APIs §2.14).
+- **Real devices:** the STM32 sensor pod reports through [`tools/edge_bridge`](../../tools/edge_bridge/README.md), which reads Olir's pod healer and needs no device-side work (D29, APIs §2.14). Since Nov 8 it also sends one **agent run report** per heal-agent run (APIs §3.11, table `agent_runs`): the format real agent logs arrive in. Remaining cloud work reads agent activity from it, not from the fake arms' shapes ([`cloud/CLAUDE.md`](../../cloud/CLAUDE.md), "Real device data").
 - **Still open:** the live Naïve card (pending Kent's go-ahead), the I0 contract review with the device teammate, the overnight launch, M8 blocker B7 (a real-code canary), and the I0 acks on B2/B3.
 
 ## For a coding session
 
-Start with [`cloud-platform-architecture.md`](cloud-platform-architecture.md) §9 (rules), then take the next unchecked task in [`cloud-platform-build-plan.md`](cloud-platform-build-plan.md) §3. A task is done when its flow test passes and the flow's tracker row is updated.
+Start with [`cloud-platform-architecture.md`](cloud-platform-architecture.md) §9 (rules) and [`cloud/CLAUDE.md`](../../cloud/CLAUDE.md) (anything that touches agent activity uses `agent_runs`, APIs §3.11), then take the next unchecked task in [`cloud-platform-build-plan.md`](cloud-platform-build-plan.md) §3. A task is done when its flow test passes and the flow's tracker row is updated.
 
 ## Background (outside this folder)
 

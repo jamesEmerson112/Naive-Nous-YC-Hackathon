@@ -71,6 +71,11 @@ class PoddPaths:
     def tools_manifest(self) -> Path:
         return self.healer / "tools.json"
 
+    @property
+    def harness_runs(self) -> Path:
+        """The heal agent's run folders: `firmware/harness/runs`, next to the healer."""
+        return self.healer.parent / "harness" / "runs"
+
 
 # -- following one file ------------------------------------------------------------------
 
@@ -339,3 +344,79 @@ class PoddSocket:
         finally:
             s.close()
         return reply if isinstance(reply, dict) and reply.get("ok") else None
+
+
+# -- the heal agent's runs (firmware/harness/runs/<run>/) ------------------------------------
+
+
+@dataclass(frozen=True)
+class RunFiles:
+    """One heal-agent run folder, and how its files looked when listed."""
+
+    run_id: str
+    transcript: Path
+    score: Path
+    sig: tuple[int, int, int]
+    """(transcript size, transcript mtime_ns, score.json mtime_ns or 0): a change means
+    the report may have changed."""
+    score_mtime: float | None
+
+
+def harness_runs(runs_dir: Path, since: float) -> list[RunFiles]:
+    """Run folders with a `transcript.jsonl` written to after `since`, oldest first by name
+    (run ids start with their local start time)."""
+    out = []
+    try:
+        folders = sorted(p for p in runs_dir.iterdir() if p.is_dir())
+    except FileNotFoundError:
+        return []
+    for folder in folders:
+        transcript = folder / "transcript.jsonl"
+        try:
+            st = transcript.stat()
+        except FileNotFoundError:
+            continue
+        score = folder / "score.json"
+        try:
+            score_st = score.stat()
+        except FileNotFoundError:
+            score_st = None
+        if max(st.st_mtime, score_st.st_mtime if score_st else 0) < since:
+            continue
+        out.append(
+            RunFiles(
+                run_id=folder.name,
+                transcript=transcript,
+                score=score,
+                sig=(st.st_size, st.st_mtime_ns, score_st.st_mtime_ns if score_st else 0),
+                score_mtime=score_st.st_mtime if score_st else None,
+            )
+        )
+    return out
+
+
+def read_transcript(path: Path) -> list[dict[str, Any]]:
+    """A harness transcript's records (`{"t": …, "type": …}`), oldest first. A line still
+    being written is skipped; the next read picks it up."""
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return []
+    out = []
+    for line in data.splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict) and isinstance(rec.get("t"), int | float) and rec.get("type"):
+            out.append(rec)
+    return out
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    """A small JSON file such as `score.json`; None if it's missing or not (yet) whole."""
+    try:
+        data = json.loads(path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None

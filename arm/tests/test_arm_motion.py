@@ -1,7 +1,11 @@
 """The arm's obstacle reflex and its run record, on the simulated arm: the reflex is bounded (base only, hard
 caps on swing and speed, back home at the end), irregular on noisy readings, and lets the job continue once
 the way really clears; arm_status.py's report reads the record correctly."""
-import pytest
+import contextlib
+import io
+import sys
+import time
+import types
 
 import simpod
 from simpod import JOINTS, REST, SimPod
@@ -60,29 +64,21 @@ def test_noisy_readings_make_an_irregular_back_and_forth():
     assert len({round(t) for t in targets}) >= 4                     # not one fixed pair of angles
 
 
-def test_a_real_obstacle_that_moves_away_lets_the_job_run(monkeypatch):
-    """Good firmware, a hand in front for a moment: the reflex swings, the way clears, the wave plays."""
+def test_a_real_obstacle_that_moves_away_lets_the_job_run():
+    """Good firmware, a hand in front for a moment: the reflex swings, the way clears, the arm calmly goes back to
+    where it started and the wave plays."""
     pod = SimPod("v1.0", distance_mm=900)
-    near = SimPod("v1.0", distance_mm=120).d_rows(16)
-    far = pod.d_rows(16)
-
-    class Clearing(simpod.FakeSensor):
-        calls = 0
-
-        def samples(self, seconds):
-            Clearing.calls += 1
-            self.rows = [(t, r) for (t, _), r in zip(self.rows, near if Clearing.calls < 4 else far)]
-            return list(self.rows)
-
-    monkeypatch.setattr(simpod, "FakeSensor", Clearing)
+    pod.plan_object(0.0, 4.0, 120)                      # in front from the job's start, for 4 s
     r = agent.run_arm(pod, agent.ArmConfig(port="sim-arm"))
     rx, pb = r["motion_report"]["obstacle_reflex"], r["motion_report"]["playback"]
     assert r["exit"] == 0 and rx["ran"] and rx["cleared"] and pb["complete"]
+    first_ramp = next(i for i, p in enumerate(pod.arm.history) if abs(p[JOINTS.index("elbow_flex")] - REST[2]) > 1e-6)
+    assert all(abs(a - b) < 1e-6 for a, b in zip(pod.arm.history[first_ramp - 1], REST))   # back home before the wave
 
 
 def test_no_echo_refuses_without_moving():
     pod = SimPod("v1.0")
-    pod.d_rows = lambda n=20: [{"type": "D", "t": i, "mm": 0, "us": 0, "st": "no_echo", "ts": 0} for i in range(n)]
+    pod.echo_ok = False                                 # ECHO wire off: every ping is no_echo
     code, out, _, _ = pod.sh(JOB)
     assert code == 2 and "not trustworthy" in out and pod.arm.moves == 0
 
@@ -95,3 +91,42 @@ def test_report_compares_measured_with_commanded():
     assert rep["complete"] and rep["range_coverage"]["shoulder_pan"] == 1.0
     assert rep["range_coverage"]["elbow_flex"] < 0.9 and rep["median_tracking_error_deg"]["elbow_flex"] > 5
     assert rep["motion_file"]["frames"] == 663 and rep["motion_file"]["joint_range"]["shoulder_pan"] == [-47.4, 46.2]
+
+
+def test_connect_gives_each_servo_retries_for_torque_on():
+    """LeRobot's configure() turns torque on with one try per motor; one lost reply failed a bench run (Nov 8).
+    The wrapper gives every call the retries, and a caller's own num_retry (disconnect passes 5) still wins."""
+    calls = []
+
+    class Bus:
+        def enable_torque(self, motors=None, num_retry=0):
+            calls.append(("on", motors, num_retry))
+
+        def disable_torque(self, motors=None, num_retry=0):
+            calls.append(("off", motors, num_retry))
+
+    bus = safe_replay.with_torque_retries(Bus())
+    bus.disable_torque(None)                    # what MotorsBus.torque_disabled() calls...
+    bus.enable_torque(None)                     # ...and this is the call that timed out on the bench
+    bus.disable_torque(num_retry=7)             # an explicit num_retry is kept
+    assert calls == [("off", None, safe_replay.TORQUE_RETRIES), ("on", None, safe_replay.TORQUE_RETRIES),
+                     ("off", None, 7)]
+
+
+def test_an_unreachable_arm_stops_the_job_before_anything_moves(monkeypatch):
+    """The servo bus doesn't answer even with the retries: exit 1 with a clear message, before any motion."""
+    pod = SimPod("v1.0")
+    clock = simpod.FakeClock(pod.t)
+
+    def unreachable(*args):
+        raise ConnectionError("Failed to enable torque after 6 tries on 'shoulder_lift' (motor ID 2): timed out")
+
+    monkeypatch.setattr(safe_replay, "connect_arm", unreachable)
+    monkeypatch.setattr(safe_replay, "Ultrasonic", lambda port=None: simpod.SimSensor(pod, clock))
+    monkeypatch.setattr(safe_replay, "time", types.SimpleNamespace(
+        sleep=clock.sleep, time=clock.time, monotonic=clock.monotonic, localtime=time.localtime, strftime=time.strftime))
+    monkeypatch.setattr(sys, "argv", ["safe_replay.py", "--min-mm", "200", "--arm-port", "x", "--no-record"])
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = safe_replay.main()
+    assert code == 1 and "ARM NOT REACHABLE" in buf.getvalue() and pod.arm.moves == 0

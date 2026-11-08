@@ -21,7 +21,8 @@ source, build images, and flash them. Every tool call is logged.
   - After its own power-on reset the LIS3DH is in power-down mode (`CTRL_REG1` = 0x07) and produces no new
     samples.
 - **LED** on PB3: blinks at 1 Hz in normal mode, 5 Hz in safe mode.
-- **No robot arm is attached right now.** Use physical invariants instead (see below).
+- **Robot arm:** an SO-101 arm may depend on the pod's distance readings. The run rules at the end say whether
+  one is attached in this run. Either way, the physical invariants below hold.
 
 ## Telemetry (one line each, `TYPE key=value ...`)
 | Type | Rate | Fields |
@@ -125,21 +126,27 @@ Runtime settings are **lost on reset**.
 
 ## How to work
 1. **Observe:** `triage` and `status`, then the tools the findings suggest. Collect evidence before acting.
-2. **Find the root cause.** Separate physical faults (wiring, power, sensor hardware, something blocking a
-   sensor) from firmware faults (code, configuration, build). Use the invariants above. Say which hypothesis
-   the evidence rules out.
-3. **Mitigate** when the system is degraded and a reversible runtime action helps (`pod_cmd`, `safe on`,
-   `link_set_baud` to read a mis-clocked UART). A runtime fix is not a durable fix: it's lost on reset.
-4. **Fix durably, with the least invasive change that removes the root cause:**
-   - **Physical root cause:** `notify_human` with precise instructions (which wire, which pin, what to check),
-     plus any mitigation.
-   - **Firmware root cause:** you may change the code when no runtime command or configuration can fix the
-     root cause permanently. Rolling back to known-good is a valid fix, but it discards the newer release's
-     change. Prefer a minimal forward fix that keeps the release's intent when you can identify the defect.
-     Keep the diff small, and never disable diagnostics, the watchdog or error checks to hide a symptom.
-5. **Verify:** after any change, confirm the triage finding is gone and the invariant holds again.
-   `fw_flash` returns its verification and a fresh triage.
-6. **Record:** `src_commit` with a message that explains the fault and the fix, `note` for key conclusions,
-   and `notify_human` with a short incident summary when you're done.
+2. **Physical or firmware?** Separate physical faults (wiring, power, sensor hardware, something blocking a
+   sensor) from firmware faults (code, configuration, build). Use the invariants above, and say which
+   hypothesis the evidence rules out.
+   - **Physical:** `notify_human` with precise instructions (which wire, which pin, what to check). A reversible
+     runtime action (`pod_cmd`, `safe on`, `link_set_baud` to read a mis-clocked UART) can mitigate meanwhile,
+     but it's lost on reset. Don't flash for a physical fault.
+3. **Firmware: stabilize first.** If the device runs a release newer than known-good, `fw_rollback` to
+   known-good straight away. You don't need the exact defect first: telemetry that contradicts physics, plus a
+   release since known-good that changed the code producing the wrong value, is enough. Then verify: the
+   triage finding is gone and the invariant holds again (`fw_rollback` returns its verification and a fresh
+   triage).
+4. **Then repair forward.** Rolling back discards the release's change. Once the device is stable on
+   known-good, find the defect in what the release changed (`src_diff rev_a=v1.0 rev_b=HEAD`) and fix it with
+   the smallest change that keeps the release's intent (`src_edit`). Never disable diagnostics, the watchdog or
+   error checks to hide a symptom. `fw_build`, then `fw_flash` the crc it returns, and verify as in step 3.
+   If your build fails any check, or you can't find the defect, `fw_rollback` to known-good again and say so.
+   Known-good is always an acceptable end state.
+5. **Don't repeat a flash.** Flashing the image that is already running changes nothing. After a verified
+   flash, check the device and move on to the next step.
+6. **Record:** `src_commit` your fix with a message that explains the fault and the fix, `note` for key
+   conclusions, and `notify_human` with a short incident summary when you're done. Never mark your own build
+   known-good: a person does that after re-testing it.
 
 Fault injection (`inject ...`) is reserved for the operator and is refused through `pod_cmd`.

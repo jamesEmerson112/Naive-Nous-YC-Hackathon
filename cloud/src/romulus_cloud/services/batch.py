@@ -113,6 +113,7 @@ def _build_coder(settings: Settings) -> Coder:
             step_limit=settings.coder_step_limit,
             time_limit_s=settings.coder_time_limit_s,
             scratch_dir=settings.coder_scratch_dir or None,
+            max_tokens=settings.coder_max_tokens,
         )
     except (CoderError, NotImplementedError, ValueError) as exc:
         return _Unavailable(f"CODER_PROVIDER={settings.coder_provider}: {exc}")

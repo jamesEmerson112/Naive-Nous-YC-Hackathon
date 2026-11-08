@@ -26,7 +26,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="http://192.168.50.1:11434")
     p.add_argument("--model", default="qwen3.5:4b")
-    p.add_argument("--num-ctx", type=int, default=32768)
+    p.add_argument("--num-ctx", type=int, default=65536)   # the harness default (agent.NUM_CTX)
     a = p.parse_args()
     url = a.url.rstrip("/")
     opts = {"num_ctx": a.num_ctx}

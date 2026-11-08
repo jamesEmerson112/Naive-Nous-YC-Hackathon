@@ -198,6 +198,28 @@ class Incident(Base):
     raw: Mapped[dict[str, Any] | None] = _raw()
 
 
+class AgentRun(Base):
+    """One heal-agent run on a device (APIs §3.11): its write-up, the firmware it flashed,
+    its requests for help and whether it left the device fixed. The device sends the whole
+    report again whenever it changes; the newest by `updated_at` is kept in `report`, and
+    a `finished` run never goes back to `running`. A new table, so `create_all` adds it."""
+
+    __tablename__ = "agent_runs"
+
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), primary_key=True)
+    run_id: Mapped[str] = mapped_column(primary_key=True)  # made on the device
+    fleet_id: Mapped[str] = _fleet()
+    state: Mapped[str]  # running | finished
+    status: Mapped[str]  # working | fixed | broken | unknown
+    sim: Mapped[bool] = mapped_column(default=False)
+    incident_ids: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    started_at: Mapped[datetime] = mapped_column(index=True)
+    ended_at: Mapped[datetime | None]
+    updated_at: Mapped[datetime | None]
+    received_at: Mapped[datetime]
+    report: Mapped[dict[str, Any]]  # the newest body, verbatim
+
+
 class Overlay(Base):
     """A local patch on one device (D5a).
 

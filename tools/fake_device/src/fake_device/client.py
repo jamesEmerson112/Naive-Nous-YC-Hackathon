@@ -30,6 +30,8 @@ from pydantic import BaseModel, ValidationError
 from romulus_contracts import (
     CONTRACT_VERSION,
     SHA256_HEADER,
+    AgentRunAccepted,
+    AgentRunReport,
     CheckIn,
     CheckInResponse,
     DoctorAdvice,
@@ -171,6 +173,14 @@ class DeviceClient:
         if accepted.upload == "needed":
             self.upload_blob(str(meta.recording_id), data)
         return accepted
+
+    # 3.11
+    def put_agent_run(self, report: AgentRunReport) -> AgentRunAccepted:
+        """The whole report for one heal-agent run; idempotent, so send it again whenever it
+        changes (the cloud keeps the newest by `updated_at`)."""
+        path = f"/v1/devices/{self.device_id}/agent-runs/{report.run_id}"
+        resp = self._send("PUT", path, json=body(report))
+        return AgentRunAccepted.model_validate(resp.json())
 
     # 3.8 (Fleet Doctor L1)
     def ask_doctor(self, ask: dict[str, Any], *, timeout_s: float) -> dict[str, Any] | None:
