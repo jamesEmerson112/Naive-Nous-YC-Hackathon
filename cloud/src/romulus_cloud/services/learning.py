@@ -263,8 +263,8 @@ def duration_label(seconds: Any) -> str | None:
 
 
 def cost_label(usd: Any) -> str | None:
-    """`7¢`, `<1¢`, `$1.20`."""
-    if isinstance(usd, bool) or not isinstance(usd, int | float) or usd < 0:
+    """`7¢`, `<1¢`, `$1.20`; None for zero (a recorded session spent nothing)."""
+    if isinstance(usd, bool) or not isinstance(usd, int | float) or usd <= 0:
         return None
     if usd >= 1:
         return f"${usd:.2f}"

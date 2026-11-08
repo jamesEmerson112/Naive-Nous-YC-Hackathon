@@ -130,10 +130,10 @@ def learning_tick(session: Session, now: datetime) -> object:
     return out
 
 
-# Fleet learning: the standing dataset every 30 s. `steps_for` leaves it out while
-# LEARNING_MODE=off (the default).
+# Fleet learning every 5 s, so a review's on-screen duration is measured to within a few
+# seconds, not snapped to the tick. `steps_for` leaves it out while LEARNING_MODE=off.
 LEARNING_STEP = "learning.tick"
-STEPS.append(Step(LEARNING_STEP, learning_tick, every_s=30))
+STEPS.append(Step(LEARNING_STEP, learning_tick, every_s=5))
 
 
 def steps_for(settings: Settings) -> list[Step]:

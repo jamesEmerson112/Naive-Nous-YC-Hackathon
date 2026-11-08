@@ -97,7 +97,7 @@ def test_an_off_technician_is_not_a_step_at_all(make_settings):
 
 
 def test_learning_is_a_step_only_when_on(make_settings):
-    """LEARNING_MODE=off (the default) leaves `learning.tick` out; `data` runs it every 30 s."""
+    """LEARNING_MODE=off (the default) leaves `learning.tick` out; `data` runs it every 5 s."""
     from romulus_cloud import worker
 
     off = [s.name for s in worker.steps_for(make_settings())]
@@ -107,4 +107,4 @@ def test_learning_is_a_step_only_when_on(make_settings):
         if s.name == worker.LEARNING_STEP
     ]
     assert worker.LEARNING_STEP not in off
-    assert on.fn is worker.learning_tick and on.every_s == 30
+    assert on.fn is worker.learning_tick and on.every_s == 5
