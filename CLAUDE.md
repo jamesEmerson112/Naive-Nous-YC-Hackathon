@@ -72,15 +72,15 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 6:28 PM PST_
+_Last updated: Sat Nov 7, 6:38 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged M3b (#12, batch, gate, kill switch, worker), so only PR #16 (M7 overnight kit, F10) is open ahead of the 12:30 AM go/no-go. Ishaan is moving `edge/` into the repo as `device/`. James is picking the arm's motor layer: plan A is Whisper → Hermes picks scripted skills, with SmolVLA or Instant Policy as upgrades *(James's session)*.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged M3b (#12, batch, gate, kill switch, worker), so only PR #16 (M7 overnight kit, F10) is open ahead of the 12:30 AM go/no-go. Ishaan is moving `edge/` into the repo as `device/`. James is picking the arm's motor layer: plan A is Whisper → Hermes picks scripted skills, plus a small translator that turns arm telemetry into sentences the healer can read; SmolVLA or Instant Policy are upgrades *(James's session)*.
 
 **Recently done:**
 - Kent merged M3b (#12, `f177c68`, 6:19 PM): batch service, gate, fleet kill switch and worker, with flow tests F3 lock-in, F4 rollback, F5 kill switch and gate invariants (~3K lines in `cloud/`)
 - Ishaan picked the healer model (`835c4f0`): **qwen3.5:4b with thinking on, harness h3**, 10/12 trials and the only config to pass D1, the live demo fault (2/2); 3.3 GB, fits the Pi 5 (`docs/healer-benchmark-progress.md`)
 - James researched Instant Policy for the motor layer: weights are released but the code ships compiled, there's no training code, the licence is PolyForm Noncommercial, and it needs depth cameras (2× RealSense in the paper) *(James's session, [repo](https://github.com/vv19/instant_policy))*. Fine for a research demo, not for the business *(inferred)*
-- Kent merged M6 datasets, snapshots, exports and the regression corpus (#14, `cc175f6`)
+- James researched how an LLM can read the arm's telemetry: (1) code turns the numbers into sentences, tonight, no training ([AURA](https://www.arxiv.org/pdf/2511.03075)); (2) ChatTS-14B reads time series directly, a RunPod experiment ([paper](https://arxiv.org/abs/2412.03104)); (3) fine-tune a small model on our own logged incidents, after the hackathon ([SysDiagBench](https://arxiv.deeppaper.ai/papers/2410.09084v1)). A fixed outside camera (e.g. a taped-down laptop webcam) is the standard SmolVLA setup on the SO-101 *(James's session)*
 
 **Open questions:**
 - Kent is blocked on: device code and tests in `device/` (B1, Ishaan's move in progress), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17, also gates Fleet Doctor), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which probably also holds up M0's live Naïve card and LLM call *(inferred, Kent's block)*. Olir's `firmware/toolkit/` may be the quickest fix for B8 *(inferred)*
@@ -89,6 +89,8 @@ _Last updated: Sat Nov 7, 6:28 PM PST_
 - Hermes compaction fails because its summarizer can't load the ChatGPT (`openai-codex`) login; start `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`). Should pi drive the arm at all, and does the ultrasonic sensor go through the STM32 or Pi GPIO? Both still team calls
 
 **Recent commits (all authors):**
+- `7325210` Sat 18:29 · jamesEmerson112 · Update team status and features.txt
+- `fcd5bc2` Sat 18:28 · Kent Gang · Update Kent status in CLAUDE.md
 - `f177c68` Sat 18:19 · kgang · Romulus M3b: batch, gate, kill switch and worker (flows F3, F4, F5) (#12)
 - `0bf3fa7` Sat 18:19 · jamesEmerson112 · Update team status and features.txt
 - `ab1c379` Sat 18:18 · Kent Gang · Update Kent status in CLAUDE.md
@@ -97,8 +99,6 @@ _Last updated: Sat Nov 7, 6:28 PM PST_
 - `e4fd0b9` Sat 18:09 · jamesEmerson112 · Update team status and features.txt
 - `7354d99` Sat 18:08 · Kent Gang · Update Kent status in CLAUDE.md
 - `2330efe` Sat 18:08 · Kent Gang · Update Kent status in CLAUDE.md
-- `cc175f6` Sat 18:08 · kgang · Romulus M6: datasets, snapshots, exports, regression corpus + F8 (#14)
-- `852032e` Sat 18:07 · jamesEmerson112 · Naive console: conversation mode and memory panels for pi vs Hermes; add pi-vs-Hermes results
 
 **Branches on GitHub:** `main`, `firmware` (Olir, not merged), `cloud/m7-overnight` (Kent, PR #16 open), `cloud/m3b-batch-gate` (#12 merged, branch not yet deleted)
 <!-- team-status:end -->
