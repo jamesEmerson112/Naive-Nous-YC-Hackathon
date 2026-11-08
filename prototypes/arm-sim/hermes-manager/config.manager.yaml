@@ -1,6 +1,8 @@
-# Merge these keys into ~/.hermes/profiles/manager/config.yaml (the file `hermes profile create manager --clone`
-# copied from the default profile). Keep the cloned `model:` block: it is the ChatGPT-plan login (openai-codex)
-# with gpt-6-sol at default reasoning, the same as the default profile (docs/pi-vs-hermes.md:12, 16).
+# setup.sh applies these keys to ~/.hermes/profiles/manager/config.yaml (the file `hermes profile create manager
+# --clone` copied from the default profile) with `hermes -p manager config set`, one key each; config_pairs.py
+# reads this file, so keep it to nested maps, plain scalars and one-line lists (no quotes). The cloned `model:`
+# block stays: it is the ChatGPT-plan login (openai-codex) with gpt-6-sol at default reasoning, the same as the
+# default profile (docs/pi-vs-hermes.md:12, 16).
 # H:L<n> = a line in docs/raw/hermes-llms-full.txt. Design: docs/worker-manager-healer.md §2.1.
 
 delegation:

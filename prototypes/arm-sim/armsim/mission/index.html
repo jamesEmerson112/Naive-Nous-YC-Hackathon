@@ -1521,7 +1521,8 @@ function ansWords(p) {
   }
 }
 function doingWords(p) {
-  const w = { restart_sensor: "Restarting the sensor", pod_rollback: "Rolling the firmware back", verify: "Retrying, checked",
+  // pod_rollback: plain code can't flash the pod; it waits for the pod's own healer (worker.py execute)
+  const w = { restart_sensor: "Restarting the sensor", pod_rollback: "Waiting for the pod's own healer", verify: "Retrying, checked",
     no_action: "Checking at home", park: "Parking", handoff_human: "Handing to a person" };
   return (p && w[p.action]) || `${ansWords(p)}`;
 }
@@ -1570,6 +1571,7 @@ function xFault(mode, arm) {
   }
   else if (!chk || !chk.ok) N.push(XN0("ARM", "pend", "", ""));
   else if (closed) N.push(XN0("ARM", "done", "Healed, checked at home", ""));
+  else if (act && !act.verified && /^(park|handoff_human|none)$/.test(act.action || "")) N.push(XN0("ARM", "fail", "Stays parked: a person", ""));
   else if (person || (act && !act.verified) || (heal && !heal.ok)) N.push(XN0("ARM", "fail", mode.person && mode.done && !mode.done.handed_off ? "A person took over" : "Retry failed: a person", ""));
   else if ((act && act.verified) || (heal && heal.ok)) N.push(XN0("ARM", "done", "Checked at home", ""));
   else if (verifying) N.push(XN0("ARM", "now", "Checking at home…", ""));
@@ -1807,7 +1809,9 @@ function evOf(it) {
   return null;
 }
 const UNDO = { release: "jaws open", lift: "backed off 30 mm", reach: "back over the block" };
-const DID = { restart_sensor: "Restarted the sensor", pod_rollback: "Rolled the pod firmware back", verify: "Ran a checked retry", no_action: "Checked at home" };
+// what ran (plan_action's `action`; the plan's own action is `planned`): a pod_rollback plan runs as wait_for_pod
+const DID = { restart_sensor: "Restarted the sensor", verify: "Ran a checked retry", no_action: "Checked at home" };
+const didWords = (a) => DID[a] || (/^wait_for_pod/.test(a || "") ? "Waited for the pod's own healer" : cap1(String(a || "acted").replace(/_/g, " ")));
 function feedWords(it) {
   const e = evOf(it) || {};
   const wrong = e.category === "wrong_action" || /\(a wrong action\)/.test(it.text || "") || /-wa-/.test(e.escalation || "");
@@ -1825,9 +1829,11 @@ function feedWords(it) {
     case "plan_check":
       return it.ok ? `Plain code approved it: ${wrong ? "inside ±40 mm" : "on the allowlist"}, in budget` : `Plain code refused it: ${lc(tidy(e.reason || ""))}`;
     case "plan_action":
-      if (e.action === "handoff_human") return "Handed to a person: the plan was refused";
+      if (e.action === "handoff_human") return /plan was refused/.test(it.text || "") ? "Handed to a person: the plan was refused" : "Handed to a person: the manager's choice";
+      if (e.action === "park") return "Kept parked for a person: the manager's choice";
+      if (e.action === "none") return e.stale === "closed" ? "Nothing ran: the incident closed on its own first" : "Nothing ran: a person has it";
       if (e.action === "redo_step") return it.ok ? "Redone: the gripper holds the block" : "The redo missed again";
-      return `${DID[e.action] || cap1(String(e.action || "acted").replace(/_/g, " "))}${it.ok ? ": the check at home passed" : ": still failing at home"}`;
+      return `${didWords(e.action)}${it.ok ? ": the check at home passed" : ": still failing at home"}`;
     case "reverse":
       return `Reversed the grip: ${UNDO[e.undo] || lc(tidy(it.text))}`;
     case "redo":

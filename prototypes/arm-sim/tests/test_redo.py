@@ -36,13 +36,16 @@ class Bench(Host):
       fault_on="approach"  the corrected (redo) approach opens a us_stuck incident and halts
     Every skill reply is the host's shape ({ok, skill, result}); self.skills records (name, offset_mm)."""
 
-    def __init__(self, *, block=(30, 0), finds=None, fault_on=None, arm="sim", **kw):
+    def __init__(self, *, block=(30, 0), finds=None, fault_on=None, arm="sim", window_ok=True, **kw):
         super().__init__(**kw)
         self.block, self.finds, self.fault_on, self.arm = block, None if finds is None else list(finds), fault_on, arm
+        self.window_ok = window_ok              # False: an older host without the window op
         self.at, self.holding, self.skills = (0, 0), False, []
 
     def __call__(self, op, **f):
         if op == "window":
+            if not self.window_ok:
+                return {"ok": False, "error": "unknown op 'window'"}
             return {**super().__call__(op, **f), "arm": self.arm, "kinematics": self.arm == "sim"}
         if op != "skill" or self.open():
             return super().__call__(op, **f)
@@ -236,6 +239,60 @@ def test_on_the_real_arm_nothing_is_reversed_or_redone():
     assert texts(board, card["id"])[-1] == "BLOCKED: grip: the gripper isn't holding the block"
     assert [n for n, _ in host.skills] == ["go_home", "reach", "approach", "grip"], host.skills    # no move after
     assert not evs(log, "reverse") and not evs(log, "escalation") and "sim only" in evs(log, "handoff")[0]["text"]
+
+
+def test_a_host_that_doesnt_say_sim_gets_no_redo():
+    # finding 9: fail closed. The window op failed (an older host, a host error): arm is unknown, so nothing
+    # is reversed or redone, as on the real arm
+    board, card, host, log, jobs = bench("no-window", block=(30, 0), window_ok=False)
+    assert board.card(card["id"])["status"] == "blocked"
+    assert texts(board, card["id"])[-1] == "BLOCKED: grip: the gripper isn't holding the block"
+    assert [n for n, _ in host.skills] == ["go_home", "reach", "approach", "grip"], host.skills
+    assert not evs(log, "reverse") and not evs(log, "escalation")
+    assert "didn't say this arm is the sim" in evs(log, "handoff")[0]["text"], evs(log, "handoff")[0]["text"]
+
+
+def test_a_fault_that_opens_while_the_manager_thinks_makes_the_redo_plan_stale():
+    # nit 12: the check reads the host's real state instead of assuming the arm still waits where it was left
+    host_ref = {}
+
+    class Faulty(Stub):
+        def ask(self, esc):
+            host_ref["host"]._open("us_stuck", "Distance stuck at 95 mm")      # the watchdog parks the arm meanwhile
+            return super().ask(esc)
+    _, board, log, emit = fresh("stale-redo")
+    _, card = orders.place(board, "pick", source="test")
+    host = host_ref["host"] = Bench(block=(30, 0))
+    worker = Worker(Faulty(from_step="approach", correction="relocate"), emit=emit, deadline_s=10,
+                    packet_dir=TMP / "stale-redo-packets")
+    ex = dispatch.ScriptedExecutor(board, call=host, emit=emit, poll_s=0.01, pod_clear_s=0.05, hold_s=0.05,
+                                   worker=worker, redo=Redo(worker))
+    dispatch.Dispatcher(board, ex, call=host, emit=emit, every=0.01, sleep=lambda s: None).run(once=True)
+    check = evs(log, "plan_check")[0]
+    assert check["ok"] is False and "no longer halted" in check["reason"], check
+    assert "locate" not in [n for n, _ in host.skills], host.skills                  # nothing was redone
+    assert board.card(card["id"])["status"] == "blocked"
+
+
+def test_a_card_run_again_gets_a_fresh_redo_budget():
+    # nit 12: the budget was keyed by card and never reset, so a card a person moved back to todo had none left
+    _, board, log, emit = fresh("rerun")
+    _, card = orders.place(board, "pick", source="test")
+    srv, url = fake_manager.start("good", delay=0.05)
+    worker = Worker(ManagerClient(url, label="fake", poll_s=0.05), emit=emit, deadline_s=10,
+                    packet_dir=TMP / "rerun-packets")
+    host = Bench(block=(60, 0))                                   # past the scan: 2 failed redos, then a person
+    ex = dispatch.ScriptedExecutor(board, call=host, emit=emit, poll_s=0.01, pod_clear_s=0.05, hold_s=0.05,
+                                   worker=worker, redo=Redo(worker))
+    d = dispatch.Dispatcher(board, ex, call=host, emit=emit, every=0.01, sleep=lambda s: None)
+    d.run(once=True)
+    assert board.card(card["id"])["status"] == "blocked"
+    board.move(card["id"], status="todo")                         # a person checks the arm and runs it again
+    d.run(once=True)
+    srv.shutdown()
+    checks = evs(log, "plan_check")
+    assert len(checks) == 4 and all(c["ok"] for c in checks), [(c["ok"], c["reason"]) for c in checks]
+    assert [n for n, _ in host.skills].count("locate") == 4, host.skills
 
 
 def test_wrong_action_redo_needs_the_manager():

@@ -11,7 +11,12 @@ U=$ARMSIM_MANAGER_URL; K=$ARMSIM_MANAGER_KEY; fail=0
 say() { printf '%-44s %s\n' "$1" "$2"; }
 code() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@"; }
 
-say "GET $U/health (H:L39505)" "$(curl -s --max-time 5 "$U/health" || echo unreachable)"
+# /health is shown unprefixed (H:L39505); with branch (a) U ends in /p/manager, so if the prefixed probe
+# doesn't answer 200, probe the shared listener's own /health (inferred: the prefix may not route /health).
+h=$(code "$U/health"); hu="$U/health"
+if [[ $h != 200 && "$U" == */p/* ]]; then hu="${U%/p/*}/health"; h=$(code "$hu"); fi
+say "GET $hu (H:L39505)" "HTTP $h $(curl -s --max-time 5 "$hu" 2>/dev/null | head -c 80)"
+[[ $h == 200 ]] || fail=1
 c=$(code "$U/v1/capabilities" -H "Authorization: Bearer wrong-key")
 say "a wrong key on /v1/capabilities" "HTTP $c (want 401, H:L39844-39860)"; [[ $c == 401 ]] || fail=1
 caps=$(curl -s --max-time 5 "$U/v1/capabilities" -H "Authorization: Bearer $K")

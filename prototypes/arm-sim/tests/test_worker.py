@@ -158,16 +158,22 @@ def test_a_stalled_joint_is_checked_once_then_handed_to_a_person():
 
 
 def test_a_bad_pod_image_gets_the_pod_rollback_row():
-    board, card, host, log, d, srv = bench("pod", pod_on={"approach": 5})
+    # 6 status polls until the fake pod healer finishes: the worker reads the status once more just before
+    # the action (finding 2), so 5 would clear the pod before the wait sees podd's flag
+    board, card, host, log, d, srv = bench("pod", pod_on={"approach": 6})
     d.run(once=True)
     srv.shutdown()
     c = board.card(card["id"])
     assert c["status"] == "done" and "us_offset (the sensor pod's us_mismatch)" in c["note"], c
     esc = evs(log, "escalation")[0]
     assert esc["allowed"][0] == "pod_rollback", esc
-    assert evs(log, "plan_action")[0]["action"] == "pod_rollback"
+    act = evs(log, "plan_action")[0]          # what ran is the wait for the pod's own healer, not a rollback
+    assert act["planned"] == "pod_rollback" and act["action"].startswith("wait_for_pod"), act
     assert ("repair", "restart_sensor") not in host.calls, host.calls
-    assert "the pod healer's rollback" in texts(board, card["id"])[-1]
+    said = texts(board, card["id"])
+    assert "planned pod_rollback, plain code checked it and waited for the sensor pod's own healer (wait_for_pod" \
+        in said[-1] and "rolled back" not in said[-1], said[-1]
+    assert any(t.startswith("PLAN: us_offset") and "waited for the sensor pod's own healer" in t for t in said), said
 
 
 def test_manager_needs_the_scripted_commander():
@@ -324,6 +330,227 @@ def test_exec_via_lm_no_call_in_time_plain_code_issues_it():
     gate = evs(log, "plan_gate")[0]
     assert gate["ok"] is False and "no call from the worker's model within 1 s" in gate["text"], gate
     assert board.card(card["id"])["status"] == "done" and ("repair", "restart_sensor") in host.calls
+
+
+# ---- the review's findings (worker/manager adversarial review) -----------------------------------------
+class Plan:
+    """A manager client that answers one fixed action (no HTTP); `on_ask(esc)` runs before it answers."""
+    label = "stub"
+
+    def __init__(self, action, on_ask=None):
+        self.action, self.on_ask, self.asks = action, on_ask, []
+
+    def ask(self, esc, deadline_s=None):
+        self.asks.append(esc["incident_id"])
+        if self.on_ask:
+            self.on_ask(esc)
+        return json.dumps({"schema": "arm-fixplan/v1", "incident_id": esc["incident_id"], "action": self.action,
+                           "args": {}, "kind": "us_stuck", "confidence": 0.5, "touches_safety": False,
+                           "why": "stub"}), "ok"
+
+
+def rig(name, client, *, orders_n=1, emit_hook=None, **host_kw):
+    """A dispatcher with a worker on `client` (a ManagerClient or a stub) and n orders placed."""
+    _, board, log, emit = fresh(name)
+    cards = [orders.place(board, "pick", source="test")[1] for _ in range(orders_n)]
+    host = host_kw.pop("host", None) or Host(**host_kw)
+    if emit_hook:
+        base = emit
+
+        def emit(src, kind, text, **f):
+            emit_hook(src, kind, f)
+            return base(src, kind, text, **f)
+    worker = Worker(client, emit=emit, deadline_s=10, packet_dir=TMP / f"{name}-packets")
+    ex = dispatch.ScriptedExecutor(board, call=host, emit=emit, poll_s=0.01, pod_clear_s=0.05, hold_s=0.05,
+                                   worker=worker)
+    d = dispatch.Dispatcher(board, ex, call=host, emit=emit, every=0.01, sleep=lambda s: None)
+    return board, cards, host, log, d
+
+
+def test_a_manager_park_is_sticky_the_next_order_waits_for_a_person():
+    # finding 3 (the reviewer's park_probe.py, made a test): park hands the incident to a person, so the
+    # next orders can't un-park the arm through the scripted heal
+    client = Plan("park")
+    board, cards, host, log, d = rig("park", client, orders_n=3, fail={"approach": "us_stuck"})
+    for _ in range(3):
+        d.run(once=True)
+    assert [board.card(c["id"])["status"] for c in cards] == ["blocked", "todo", "todo"], \
+        [board.card(c["id"])["status"] for c in cards]
+    assert len(client.asks) == 1 and ("handoff", "inc-1") in host.calls, (client.asks, host.calls)
+    assert host.incidents[0]["state"] == "open" and host.incidents[0]["handed_off"], host.incidents   # a person has it
+    assert not [c for c in host.calls if c[0] == "repair"], host.calls          # no scripted heal ran
+    act = evs(log, "plan_action")[0]
+    assert act["action"] == "park" and act["ok"] is False, act
+    assert any(e["kind"] == "waiting" and "waiting for a person" in e["text"] for e in evs(log)), evs(log, "waiting")
+    assert "for a person" in texts(board, cards[0]["id"])[-1]
+
+
+def test_the_plan_is_checked_again_just_before_it_runs():
+    # finding 2: the incident closes after the check (the pod's healer, the host's own check), before the action
+    def close_after_check(src, kind, f):
+        if kind == "plan_check" and f.get("ok"):
+            for i in host.open():
+                i["state"] = "resolved"
+    host = Host(fail={"approach": "us_stuck"})
+    board, cards, host, log, d = rig("stale-closed", Plan("restart_sensor"), host=host, emit_hook=close_after_check)
+    d.run(once=True)
+    assert board.card(cards[0]["id"])["status"] == "done"
+    assert not [c for c in host.calls if c[0] == "repair"], host.calls          # nothing ran
+    act = evs(log, "plan_action")[0]
+    assert act["action"] == "none" and act["planned"] == "restart_sensor" and act["stale"] == "closed", act
+    said = texts(board, cards[0]["id"])
+    assert any(t.startswith("PLAN:") and "nothing ran" in t for t in said) and "nothing ran" in said[-1], said
+
+
+def test_a_plan_whose_incident_went_to_a_person_meanwhile_runs_nothing():
+    def hand_off_after_check(src, kind, f):
+        if kind == "plan_check" and f.get("ok"):
+            host.open()[0].update(handed_off=1.0, handoff_reason="Olir took the pod off the bench")
+    host = Host(fail={"approach": "us_stuck"})
+    board, cards, host, log, d = rig("stale-handed", Plan("restart_sensor"), host=host, emit_hook=hand_off_after_check)
+    jobs = d.run(once=True)
+    assert board.card(cards[0]["id"])["status"] == "blocked" and jobs[0]["outcome"] == "blocked"
+    assert not [c for c in host.calls if c[0] in ("repair", "handoff")], host.calls   # no fallback either
+    act = evs(log, "plan_action")[0]
+    assert act["action"] == "none" and act["stale"] == "handed" and act["ok"] is False, act
+    assert "Olir took the pod off the bench" in texts(board, cards[0]["id"])[-1]
+
+
+def test_the_recheck_comes_after_the_exec_via_lm_gate():
+    # the gate can take up to 15 s: the status read that decides must come after it, right before the action
+    srv_lm = FakeLM(tool_call("restart_sensor", {}))
+
+    def close_at_gate(src, kind, f):
+        if kind == "plan_gate":
+            for i in host.open():
+                i["state"] = "resolved"
+    host = Host(fail={"approach": "us_stuck"})
+    board, cards, host, log, d = rig("stale-gate", Plan("restart_sensor"), host=host, emit_hook=close_at_gate)
+    d.exec.worker.lm, d.exec.worker.exec_via = {"endpoint": srv_lm.url, "model": "m"}, "lm"
+    d.run(once=True)
+    srv_lm.shutdown()
+    assert evs(log, "plan_gate")[0]["ok"] is True and evs(log, "plan_action")[0]["action"] == "none"
+    assert not [c for c in host.calls if c[0] == "repair"], host.calls
+
+
+def test_the_plan_comments_go_on_the_cards_after_the_action():
+    order = []
+
+    class Seq(Host):
+        def __call__(self, op, **f):
+            if op == "repair":
+                order.append(("repair", f.get("action")))
+            return super().__call__(op, **f)
+    host = Seq(fail={"approach": "us_stuck"})
+    board, cards, host, log, d = rig("order", Plan("restart_sensor"), host=host)
+    base = board.comment
+
+    def comment(cid, text, **kw):
+        if text.startswith("PLAN:"):
+            order.append(("PLAN", cid))
+        return base(cid, text, **kw)
+    board.comment = comment
+    d.run(once=True)
+    assert order[0] == ("repair", "restart_sensor") and [o[0] for o in order[1:]] == ["PLAN", "PLAN"], order
+
+
+def test_a_repeated_fix_refused_by_the_check_is_not_run_by_the_fallback():
+    # finding 11: the host's record says restart_sensor already ran on this incident and failed its check; the
+    # manager plans it again; the check refuses it, and the scripted fallback must not run it either
+    class Tried(Host):
+        def _open(self, kind, summary, **extra):
+            return super()._open(kind, summary, actions=[{"tool": "arm_restart_sensor", "ok": True}], **extra)
+    board, cards, host, log, d = rig("repeat", Plan("restart_sensor"), host=Tried(fail={"approach": "us_stuck"}))
+    d.run(once=True)
+    assert "not tried again" in evs(log, "plan_check")[0]["reason"]
+    assert [n for op, n in host.calls if op == "repair"] == ["verify"], host.calls   # the next fix, not the same one
+    assert board.card(cards[0]["id"])["status"] == "done"
+    assert "won't run restart_sensor again either" in texts(board, cards[0]["id"])[-1]
+
+
+def test_when_every_scripted_fix_was_refused_as_a_repeat_a_person_takes_it():
+    class Tried(Host):
+        def _open(self, kind, summary, **extra):
+            return super()._open(kind, summary, actions=[{"tool": "arm_verify", "ok": True}], **extra)
+    board, cards, host, log, d = rig("repeat-all", Plan("verify"), host=Tried(fail={"reach": "joint_stall"}))
+    d.run(once=True)
+    assert not [c for c in host.calls if c[0] == "repair"] and ("handoff", "inc-1") in host.calls, host.calls
+    assert board.card(cards[0]["id"])["status"] == "blocked"
+    assert evs(log, "heal")[0]["action"] == "handoff_human"
+
+
+def test_podd_gets_its_hold_once_on_a_fallback():
+    # nit 12: us_offset may be the pod's; the worker gives podd hold_s, and a fallback mustn't wait again
+    srv, url = fake_manager.start("refused")
+    board, cards, host, log, d = rig("hold", ManagerClient(url, poll_s=0.05), fail={"approach": "us_offset"})
+    held = []
+    real = d.exec._hold_for_pod
+    d.exec._hold_for_pod = lambda inc: held.append(inc.get("id")) or real(inc)
+    d.run(once=True)
+    assert held == ["inc-1"], held
+    assert board.card(cards[0]["id"])["status"] == "done" and [n for op, n in host.calls if op == "repair"] == \
+        ["restart_sensor"], host.calls
+
+
+def test_execute_never_fakes_a_redo_step():
+    # nit 12: the unreachable redo_step branch moved the arm and reported success; it now runs nothing
+    _, board, log, emit = fresh("dead-redo")
+    host = Host()
+    inc = host._open("us_stuck", "stuck")
+    ex = dispatch.ScriptedExecutor(board, call=host, emit=emit)
+    ex.ctx = {"card": "crd_x"}
+    w = Worker(Plan("verify"), emit=emit, packet_dir=TMP / "dead-redo-packets")
+    w.cur = {}
+    ok, action, detail = w.execute({"action": "redo_step", "args": {"from_step": "approach"}, "why": "w"}, ex, inc, "grip")
+    assert ok is False and action == "redo_step" and "nothing ran" in detail, detail
+    assert not [c for c in host.calls if c[0] == "skill"], host.calls
+
+
+def test_manager_hermes_refuses_to_start_unless_its_tools_are_off():
+    # finding 1: /v1/toolsets read before the first ask; anything that can act, or an unreadable answer, refuses
+    import argparse
+    from armsim import worker as worker_mod
+
+    def args(url):
+        return argparse.Namespace(manager="hermes", manager_url=url, fake_mode="good", worker_lm="off",
+                                  manager_deadline=90.0, exec_via="code")
+    srv, url = fake_manager.start("good")
+    try:
+        assert isinstance(worker_mod.make(args(url)), Worker)                 # clean: delegation and memory only
+    finally:
+        srv.shutdown()
+    srv, url = fake_manager.start("good", toolsets="dirty")
+    try:
+        try:
+            dispatch.main(["--manager", "hermes", "--manager-url", url])
+            raise AssertionError("a manager with terminal and so101_arm on was accepted")
+        except SystemExit as exc:
+            msg = str(exc)
+            assert "won't start" in msg and "terminal is enabled" in msg and "so101_arm is enabled" in msg, msg
+            assert "hermes-manager/README.md" in msg and "check.sh" in msg, msg
+        assert not srv.stops and not [r for r in srv.requests if r["path"] == "/v1/runs"]   # never asked
+    finally:
+        srv.shutdown()
+    for mode, toolsets in (("refused", "clean"), ("good", "missing")):
+        srv, url = fake_manager.start(mode, toolsets=toolsets)
+        try:
+            worker_mod.make(args(url))
+            raise AssertionError(f"an unreadable /v1/toolsets ({mode}, {toolsets}) was accepted")
+        except SystemExit as exc:
+            assert "fails closed" in str(exc) and "check.sh" in str(exc), exc
+        finally:
+            if srv:
+                srv.shutdown()
+
+
+def test_a_bad_manager_deadline_refuses_to_start():
+    # finding 7: outside 3-120 every packet fails its schema and every heal would silently fall back
+    for bad in ("2", "121", "0"):
+        try:
+            dispatch.main(["--manager", "fake", "--manager-deadline", bad])
+            raise AssertionError(f"--manager-deadline {bad} was accepted")
+        except SystemExit as exc:
+            assert "--manager-deadline must be 3-120 s" in str(exc), exc
 
 
 if __name__ == "__main__":

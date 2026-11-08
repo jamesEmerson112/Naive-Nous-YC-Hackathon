@@ -12,9 +12,11 @@ Options: --board file|naive (default $ARMSIM_BOARD_KIND, else file), --board-id 
 (seconds; Hermes is killed after it, the scripted commander stops between steps).
 The worker/manager healer (armsim/worker.py, docs/worker-manager-healer.md), scripted commander only:
 --manager off|fake|hermes (default off: today's scripted heal), --manager-url (default $ARMSIM_MANAGER_URL;
-the key is $ARMSIM_MANAGER_KEY), --manager-deadline 90, --fake-mode good|bad_json|off_list|unsafe|slow|429|
-500|failed|refused (--manager fake), --worker-lm off|ollama, --ollama URL, --worker-model qwen3.5:4b,
---exec-via code|lm (lm: the worker's model issues the checked action, gated to that exact call).
+the key is $ARMSIM_MANAGER_KEY), --manager-deadline 90 (3-120 s, the packet's bounds), --fake-mode good|
+bad_json|off_list|unsafe|slow|429|500|failed|refused|redo_offset|park|trickle|errstr (--manager fake),
+--worker-lm off|ollama, --ollama URL, --worker-model qwen3.5:4b, --exec-via code|lm (lm: the worker's model
+issues the checked action, gated to that exact call). --manager hermes reads the manager's /v1/toolsets
+first and won't start if it has tools that can act, or if that can't be read (armsim/worker.py preflight).
 --wrong-action off|redo (default off; redo needs --manager): a missed grasp is a wrong action (category 2,
 armsim/redo.py): reverse it, the manager corrects the command, the arm redoes it, at most twice.
 
@@ -198,6 +200,8 @@ class ScriptedExecutor:
       a sensor kind (us_*)   -> `repair restart_sensor` (podd's `us off`, `us on`, then the check at home)
       joint_stall, the rest  -> `repair verify` (a checked retry at home)
       still open             -> a person: BLOCKED.
+    With the worker (--manager), the manager's checked plan runs first; when it falls back, the fix a
+    refused plan repeated is skipped here too (worker.cur["skip"]), and podd isn't given its hold_s twice.
     """
 
     name = "scripted"
@@ -213,6 +217,7 @@ class ScriptedExecutor:
         self.max_heals, self.pod_wait_s, self.pod_clear_s = max_heals, pod_wait_s, pod_clear_s
         self.hold_s, self.poll_s, self.sleep = hold_s, poll_s, sleep
         self.ctx, self.healed, self.pod_seen = {}, [], {}
+        self.job_key = None                   # this run of the job: the worker's and redo's per-job budgets
         self.stop = threading.Event()         # set: block the card at the next step instead of going on
 
     def _ev(self, kind, text, **fields):
@@ -223,6 +228,7 @@ class ScriptedExecutor:
         job = parse_card(card)
         self.ctx = {"card": card["id"], "order": job["order"], "job": job["job"], "exec": self.name}
         self.healed, self.replies = [], {}
+        self.job_key = f"{card['id']}/{uuid.uuid4().hex[:8]}"   # a re-run card gets fresh budgets (not in ctx)
         t0 = time.time()
         steps = self.job_steps = job["steps"]
         self._ev("job_started", f"the scripted commander starts {JOBS[job['job']]['title']}: {', '.join(steps)}",
@@ -302,11 +308,18 @@ class ScriptedExecutor:
         if handed:
             return False, f"{kind} was handed to a person: {handed.get('handoff_reason') or summary}"
         done = self.worker.heal(self, inc, step) if self.worker else None   # None: the scripted heal below
+        hint = {}
+        if self.worker and not done:
+            hint = dict(self.worker.cur or {})     # read before closed() clears it
+            st = self.host("status")               # the manager's round trip took time: read the host again
+        skip = set(hint.get("skip") or ())         # a fix a refused plan repeated: it isn't run again here
+        pod = not done and (self._pod_side(inc, st) or (kind in MAYBE_POD_KINDS and not hint.get("held")
+                                                        and self._hold_for_pod(inc)))
         if done:
             ok, action, detail = done
-        elif self._pod_side(inc, st) or (kind in MAYBE_POD_KINDS and self._hold_for_pod(inc)):
+        elif pod and "pod_rollback" not in skip:
             ok, action, detail = self._wait_for_pod(inc)
-        elif kind.startswith("us_"):
+        elif kind.startswith("us_") and not pod and "restart_sensor" not in skip:
             r = self.host("repair", action="restart_sensor")
             if r.get("verified"):
                 ok, action, detail = True, "restart_sensor", "restarted the sensor through podd; the check at home passed"
@@ -315,7 +328,7 @@ class ScriptedExecutor:
             else:
                 ok, action, detail = False, "restart_sensor", ("restarted the sensor, but the check at home still "
                                                                f"fails: {self._still(r)}")
-        else:
+        elif "verify" not in skip:
             r = self.host("repair", action="verify")
             if r.get("verified"):
                 ok, action, detail = True, "verify", "a checked retry at home passed"
@@ -323,6 +336,11 @@ class ScriptedExecutor:
                 handed = self._handed_off(self.host("status"), iid)
                 ok, action, detail = False, "verify", ((handed or {}).get("handoff_reason")
                                                        or f"still failing after a checked retry at home: {self._still(r)}")
+        else:                                      # every scripted fix for it already ran and failed its check
+            why = f"the scripted fixes for it ({', '.join(sorted(skip))}) already ran and failed their checks"
+            r = self.host("handoff", id=iid, reason=why)
+            ok, action, detail = False, "handoff_human", f"{why}; the arm stays parked for a person" + (
+                "" if r.get("ok") else f" (the host's handoff failed: {short(r.get('error'), 80)})")
         if self.worker:
             detail = self.worker.closed(self, inc, step, ok, action, detail)
         secs = round(time.time() - t0, 1)
@@ -923,7 +941,8 @@ def main(argv=None):
                     help="the manager's Hermes API server, with /p/manager when the gateway multiplexes profiles")
     ap.add_argument("--manager-deadline", type=float, default=90.0, help="seconds the manager gets (3-120)")
     ap.add_argument("--fake-mode", default="good", choices=["good", "bad_json", "off_list", "unsafe", "slow", "429",
-                                                           "500", "failed", "refused", "redo_offset"],
+                                                           "500", "failed", "refused", "redo_offset", "park",
+                                                           "trickle", "errstr"],
                     help="--manager fake only")
     ap.add_argument("--worker-lm", choices=["off", "ollama"], default="off", help="the worker's model writes its answer")
     ap.add_argument("--ollama", default=os.environ.get("ARMSIM_OLLAMA", "http://127.0.0.1:11434/v1"),
@@ -941,10 +960,17 @@ def main(argv=None):
         raise SystemExit("--exec-via lm needs --worker-lm ollama: the worker's model issues the call")
     if a.manager != "off" and a.exec != "scripted":
         raise SystemExit("--manager works with --exec scripted only: the Hermes commander heals with its own rules")
+    if a.manager != "off" and not 3 <= a.manager_deadline <= 120:
+        raise SystemExit(f"--manager-deadline must be 3-120 s (the escalation packet's bounds), not {a.manager_deadline:g}: "
+                         "outside them every packet would fail its schema and every heal would fall back")
     kind = a.board or os.environ.get("ARMSIM_BOARD_KIND", "file")
     if a.exec == "hermes" and kind == "file":
         raise SystemExit("--exec hermes needs --board naive: Hermes reads and closes cards only through its "
                          "naive_board MCP, so it can't see the file board. Use --exec scripted with the file board.")
+    worker = None
+    if a.exec != "hermes":                 # before the board and the lock: --manager hermes may refuse to start
+        from .worker import make as make_worker     # (worker.preflight reads the manager's /v1/toolsets)
+        worker = make_worker(a)
     board = open_board(kind, a.board_id)
     lock = take_lock(lock_path(board))
 
@@ -964,8 +990,6 @@ def main(argv=None):
         executor = HermesExecutor(board)
     else:
         from .redo import make as make_redo
-        from .worker import make as make_worker
-        worker = make_worker(a)
         executor = ScriptedExecutor(board, worker=worker, redo=make_redo(a, worker))
     try:
         Dispatcher(board, executor, every=a.every, job_timeout=a.job_timeout, stop=stop).run(

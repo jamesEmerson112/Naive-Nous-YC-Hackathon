@@ -4,8 +4,15 @@ Run from prototypes/arm-sim:
 
     PYTHONPATH=. .venv/bin/python tests/test_manager.py      (or: python -m pytest tests/)
 """
+import importlib.util
 import json
+import os
+import re
+import shutil
+import stat
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -48,7 +55,9 @@ def test_good_answers_a_plan_that_passes_the_check():
     body = json.loads(post["body"])
     assert post["headers"]["Idempotency-Key"] == ESC["incident_id"] and body["session_id"] == ESC["incident_id"]
     assert json.loads(body["input"]) == ESC and "arm-fixplan/v1" in body["instructions"]
+    assert body["conversation_history"] == [], body        # caller-supplied history: delegation runs inline (H:L39622-39628)
     assert m.last["run_id"].startswith("run_") and m.last["status"] == "completed"
+    assert "stop" not in m.last and not srv.stops         # a completed run is never stopped
 
 
 def test_bad_json_comes_back_and_the_check_refuses_it():
@@ -76,6 +85,7 @@ def test_slow_gives_up_at_the_deadline():
     assert 2.8 <= secs < 4.5, secs
     polls = [r for r in srv.requests if r["method"] == "GET"]
     assert len(polls) >= 5, len(polls)                     # it kept polling until the deadline
+    assert srv.stops == [m.last["run_id"]] and m.last["stop"] == 200, (srv.stops, m.last)   # finding 5: stopped
 
 
 def test_429_backs_off_then_gets_the_same_plan():
@@ -98,6 +108,7 @@ def test_500_fails_fast():
 def test_a_failed_run_gives_up():
     text, why, secs, m, srv = ask("failed")
     assert text is None and "ended failed" in why, why
+    assert not srv.stops and "stop" not in m.last, srv.stops     # it is over: nothing to stop
 
 
 def test_connection_refused_fails_fast():
@@ -135,6 +146,173 @@ def test_the_dispatcher_fake_is_the_same_server_over_http():
     try:
         text, why = m.ask(ESC, deadline_s=5)
         assert m.label == "fake" and m.url.startswith("http://127.0.0.1:") and check(text)[0], (m.url, why)
+    finally:
+        srv.shutdown()
+
+
+def test_a_trickling_server_is_cut_at_the_wall_clock_deadline():
+    # finding 4: urllib's timeout is per socket read; a body that trickles one byte every 0.4 s used to run
+    # 22.8 s past a 3 s deadline (the reviewer's probe). Each call now runs in a thread joined for what's left.
+    text, why, secs, m, srv = ask("trickle", deadline=3)
+    assert text is None and "within its 3 s deadline" in why, why
+    assert 2.8 <= secs < 3.0 + 2.0 + 1.0, secs                # the deadline, plus the stop's own 2 s budget at most
+    assert srv.stops == [m.last["run_id"]], srv.stops         # and the run it gave up on was stopped (finding 5)
+
+
+def test_the_stop_is_bounded_even_when_the_server_trickles():
+    srv, url = fake_manager.start("trickle")
+    try:
+        m = ManagerClient(url, poll_s=0.1)
+        t0 = time.time()
+        code = m.stop("run_nope", timeout=1.0)                # 404 from the fake, answered at once
+        assert code == 404 and time.time() - t0 < 1.5, code
+    finally:
+        srv.shutdown()
+    t0 = time.time()
+    got = ManagerClient(fake_manager.start("refused")[1]).stop("run_x")
+    assert isinstance(got, str) and "Error" in got and time.time() - t0 < 2.5, got   # never raises
+
+
+def test_an_error_that_is_a_string_does_not_crash_the_client():
+    text, why, secs, m, srv = ask("errstr")                  # finding 10: {"error": "text"} on a 400
+    assert text is None and why == "the manager refused the run: HTTP 400 (fake manager: Too many concurrent runs (max 2))", why
+    assert ManagerClient._error_text({"error": {"message": "m"}}) == "m"
+    assert ManagerClient._error_text({"error": None}) is None and ManagerClient._error_text(None) is None
+
+
+def test_toolsets_clean_dirty_and_unreadable():
+    from armsim.manager import toolset_problems
+    srv, url = fake_manager.start("good", key="k")
+    try:
+        bad, why = ManagerClient(url, key="k").check_tools()
+        assert bad == [] and "delegation and memory" in why, (bad, why)
+        bad, why = ManagerClient(url, key="wrong").check_tools()       # 401: can't read it, fail closed
+        assert bad is None and "HTTP 401" in why, (bad, why)
+    finally:
+        srv.shutdown()
+    srv, url = fake_manager.start("good", toolsets="dirty")
+    try:
+        bad, why = ManagerClient(url).check_tools()
+        assert bad and any("terminal is enabled" in b for b in bad) and any("so101_arm is enabled" in b for b in bad), bad
+        assert any("arm_restart_sensor" in b for b in bad) and any(b.endswith("exposes terminal") for b in bad), bad
+    finally:
+        srv.shutdown()
+    for ts in ("garbage", "missing"):
+        srv, url = fake_manager.start("good", toolsets=ts)
+        try:
+            bad, why = ManagerClient(url).check_tools()
+            assert bad is None, (ts, bad, why)
+        finally:
+            srv.shutdown()
+    bad, why = ManagerClient(fake_manager.start("refused")[1]).check_tools()
+    assert bad is None and "can't be read" in why, why
+    # the shapes: a {"data": [...]} wrapper is fine; a delegation toolset that sneaks in an arm tool is not
+    assert toolset_problems({"data": [{"name": "delegation", "enabled": True, "tools": ["delegate_task"]}]}) == []
+    assert toolset_problems([{"name": "delegation", "enabled": True, "tools": ["delegate_task", "arm_wave"]}]) == \
+        ["toolset delegation exposes arm_wave"]
+    assert toolset_problems([{"name": "file", "enabled": True, "tools": ["read_file", "write_file", "patch"]}]) == \
+        ["toolset file is enabled", "toolset file exposes patch, write_file"]
+
+
+# ---- hermes-manager/: setup.sh, config_pairs.py, check.sh, ask.sh, in a copy of the folder ------------
+HM = HERE.parent / "hermes-manager"
+
+
+def hm_copy():
+    d = Path(tempfile.mkdtemp(prefix="armsim-hm-test-"))
+    shutil.copytree(HM, d / "hm", ignore=shutil.ignore_patterns("manager.key.env"))
+    return d, d / "hm"
+
+
+def test_config_pairs_reads_config_manager_yaml():
+    spec = importlib.util.spec_from_file_location("config_pairs", HM / "config_pairs.py")
+    cp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cp)
+    got = dict(cp.pairs((HM / "config.manager.yaml").read_text()))
+    assert got["delegation.gateway_mode"] == "inline" and got["gateway.api_server.max_concurrent_runs"] == "2", got
+    assert json.loads(got["agent.disabled_toolsets"]) == ["terminal", "code_execution", "file", "browser", "web",
+                                                          "so101_arm", "mcp-naive_board"], got
+    assert got["approvals.unattended_mode"] == "deny" and len(got) == 10, got
+    for bad in ("a:\n   b: 1\n", "a: 'quoted'\n", "a: [x,\n", "- item\n"):
+        try:
+            cp.pairs(bad)
+            raise AssertionError(f"accepted {bad!r}")
+        except ValueError:
+            pass
+
+
+STAND_IN = """#!/usr/bin/env bash
+# a stand-in `hermes`: logs its argv; `profile create` makes a cloned profile; `config set` can fail on demand
+echo "$*" >> "$HERMES_HOME/calls.log"
+case "$*" in
+  --version) echo "Hermes Agent v0.23.0 (stand-in)";;
+  "profile create manager"*) p="$HERMES_HOME/profiles/manager"; mkdir -p "$p/memories"
+     echo "the arm commander's soul" > "$p/SOUL.md"; echo "commander memory" > "$p/memories/MEMORY.md"
+     echo "user memory" > "$p/memories/USER.md"; echo "API_SERVER_KEY=default-key" > "$p/.env";;
+  "-p manager config set"*) [[ -n "${FAIL_SET:-}" && "$*" == *"$FAIL_SET"* ]] && exit 3; exit 0;;
+esac
+"""
+
+
+def run_setup(env_extra=None):
+    d, hm = hm_copy()
+    home, bin_ = d / "hermes-home", d / "bin"
+    home.mkdir()
+    bin_.mkdir()
+    (bin_ / "hermes").write_text(STAND_IN)
+    (bin_ / "hermes").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_}:{os.environ['PATH']}", "HERMES_HOME": str(home), **(env_extra or {})}
+    r = subprocess.run(["bash", str(hm / "setup.sh"), "b", "127.0.0.1"], capture_output=True, text=True, env=env,
+                       timeout=60)
+    return r, home, hm
+
+
+def test_setup_sh_applies_the_config_and_blanks_the_cloned_memory():
+    r, home, hm = run_setup()
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = (home / "calls.log").read_text().splitlines()
+    sets = [c for c in calls if c.startswith("-p manager config set ")]
+    assert len(sets) == 10 and "-p manager config set delegation.gateway_mode inline" in sets, calls
+    assert '-p manager config set agent.disabled_toolsets ["terminal", "code_execution", "file", "browser", "web", ' \
+           '"so101_arm", "mcp-naive_board"]' in sets, sets
+    p = home / "profiles" / "manager"
+    assert not (p / "memories" / "MEMORY.md").exists() and not (p / "memories" / "USER.md").exists()
+    assert (p / "memories" / "MEMORY.md.cloned-from-default").read_text() == "commander memory\n"
+    assert "incident manager" in (p / "SOUL.md").read_text() and (p / "SOUL.md.cloned-from-default").exists()
+    env = (p / ".env").read_text()
+    assert "default-key" not in env and "API_SERVER_KEY=" in env and "API_SERVER_HOST=127.0.0.1" in env, env
+    assert stat.S_IMODE((hm / "manager.key.env").stat().st_mode) == 0o600
+    r, home, hm = run_setup({"FAIL_SET": "gateway_mode"})          # a failing config set stops the script
+    assert r.returncode == 1 and "FAILED: hermes -p manager config set delegation.gateway_mode" in r.stdout, r.stdout
+
+
+def test_check_sh_and_ask_sh_against_the_fake():
+    for toolsets, want_rc in (("clean", 0), ("dirty", 1)):
+        srv, url = fake_manager.start("good", key="k", toolsets=toolsets, delay=0.0)
+        try:
+            d, hm = hm_copy()
+            (hm / "manager.key.env").write_text(f"ARMSIM_MANAGER_URL={url}\nARMSIM_MANAGER_KEY=k\n")
+            r = subprocess.run(["bash", str(hm / "check.sh")], capture_output=True, text=True, timeout=60)
+            assert r.returncode == want_rc, (toolsets, r.stdout + r.stderr)
+            assert f"GET {url}/health (H:L39505)" in r.stdout and "HTTP 200" in r.stdout, r.stdout
+            if toolsets == "clean":
+                code = [ln for ln in (hm / "ask.sh").read_text().splitlines() if not ln.lstrip().startswith("#")]
+                assert not [ln for ln in code if re.search(r"\bjq\b", ln)], "ask.sh still calls jq"   # macOS < 15 has none
+                r = subprocess.run(["bash", str(hm / "ask.sh"), str(hm / "samples" / "esc-us_stuck.json")],
+                                   capture_output=True, text=True, timeout=60)
+                assert r.returncode == 0 and "status: completed" in r.stdout and "output is one JSON object" in r.stdout, \
+                    r.stdout + r.stderr
+                body = json.loads(next(q for q in srv.requests if q["method"] == "POST")["body"])
+                assert body["conversation_history"] == [] and body["session_id"].startswith("inc-manual-"), body
+        finally:
+            srv.shutdown()
+    # branch (a): the /p/manager prefix's /health doesn't answer, so the listener's own /health is probed
+    srv, url = fake_manager.start("good", key="k")
+    try:
+        d, hm = hm_copy()
+        (hm / "manager.key.env").write_text(f"ARMSIM_MANAGER_URL={url}/p/manager\nARMSIM_MANAGER_KEY=k\n")
+        r = subprocess.run(["bash", str(hm / "check.sh")], capture_output=True, text=True, timeout=60)
+        assert f"GET {url}/health (H:L39505)" in r.stdout and "HTTP 200" in r.stdout, r.stdout
     finally:
         srv.shutdown()
 

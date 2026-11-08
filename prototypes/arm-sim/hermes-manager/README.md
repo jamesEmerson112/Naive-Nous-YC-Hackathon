@@ -7,11 +7,11 @@ and runs the one action. The design is `docs/worker-manager-healer.md` §1-2. `H
 
 | File | What it is |
 |---|---|
-| `setup.sh a\|b <mac-ip>` | Creates the profile (`--clone`), installs the skill, writes a fresh `API_SERVER_KEY`, and writes `manager.key.env` for the worker |
-| `config.manager.yaml` | The keys to merge into `~/.hermes/profiles/manager/config.yaml` by hand |
+| `setup.sh a\|b <mac-ip>` | Creates the profile (`--clone`), gives a fresh clone a blank memory and its own `SOUL.md`, installs the skill, writes a fresh `API_SERVER_KEY` and `manager.key.env` for the worker, and applies `config.manager.yaml` with `hermes -p manager config set` |
+| `config.manager.yaml` | The manager's config keys; `setup.sh` applies them (`config_pairs.py` reads the file) |
 | `skills/arm-incident-manager/SKILL.md` | The skill: a triage parent, 1-3 `delegate_task` analysts with `output_schema`, one critic, one `arm-fixplan/v1` answer |
-| `check.sh` | The no-model checks: `/health`, a wrong key gets 401, `/v1/capabilities`, `/v1/toolsets` has no terminal, file or `so101_arm`, the skill is listed |
-| `ask.sh <packet>` | One escalation by hand (the §2.3 curl), with its latency |
+| `check.sh` | The no-model checks: `/health` (unprefixed if the `/p/manager` one doesn't answer), a wrong key gets 401, `/v1/capabilities`, `/v1/toolsets` has no terminal, file or `so101_arm`, the skill is listed. Needs `curl` and `python3` |
+| `ask.sh <packet>` | One escalation by hand (the §2.3 curl, with the worker's own POST body), with its latency and whether the output is one JSON object. Needs `curl` and `python3`, not `jq` |
 | `samples/esc-*.json` | Real packets from the sim (story b's `us_stuck` and `us_frozen`, image 07's `us_offset`, the stall's `joint_stall`, story redo's `grasp_missed`) |
 | `arm-escalation.v1.schema.json`, `arm-fixplan.v1.schema.json` | The two schemas (`python -m armsim.escalation schemas hermes-manager` regenerates them) |
 
@@ -24,10 +24,12 @@ and runs the one action. The design is `docs/worker-manager-healer.md` §1-2. `H
    ```bash
    ./setup.sh a 127.0.0.1        # or: ./setup.sh b 127.0.0.1
    ```
-   It runs `hermes profile create manager --clone --description "..."`. `--clone` copies the default profile's config, `.env`, skills and plugins (H:L9028). OAuth logins aren't copied: the profile keeps reading the root `auth.json`, so the ChatGPT-plan login carries over (H:L9049-9050).
+   It runs `hermes profile create manager --clone --description "..."`. `--clone` copies the default profile's config, `.env`, `SOUL.md`, skills, plugins, and the memory files `memories/MEMORY.md` and `memories/USER.md` (H:L9028). OAuth logins aren't copied: the profile keeps reading the root `auth.json`, so the ChatGPT-plan login carries over (H:L9049-9050).
+   - **Inherited memory and personality.** The default profile is the arm commander's, so its `SOUL.md` and memories would ride into every manager run. For a profile it creates, the script moves `~/.hermes/profiles/manager/memories/MEMORY.md` and `memories/USER.md` aside (to `*.cloned-from-default`) and writes the manager's own `SOUL.md` (the cloned one becomes `SOUL.md.cloned-from-default`). "For a blank memory ... delete the two files afterwards; the agent never falls back to another profile's memory when they are absent" (H:L9028). A profile that already existed is left as it is: clear it by hand with `cd ~/.hermes/profiles/manager && mv memories/MEMORY.md memories/MEMORY.md.old && mv memories/USER.md memories/USER.md.old`, and edit `SOUL.md` (H:L9028).
    - Because `.env` is copied, the script drops any `API_SERVER_*` lines the clone brought and writes a fresh key. A named prefix needs its own key, and the default's key is refused there (H:L39844-39860).
    - Branch (b) also writes `API_SERVER_ENABLED=true`, `API_SERVER_HOST=<mac-ip>`, `API_SERVER_PORT=8642` (H:L39877-39884).
-3. **Merge `config.manager.yaml`** into `~/.hermes/profiles/manager/config.yaml`. Where the cloned file already has a key, change its value; don't add a second copy. Keep the cloned `model:` block.
+3. **The config.** The script applies `config.manager.yaml` one key at a time with `hermes -p manager config set <dotted.key> <value>` (`-p` selects the profile, H:L54590-54598; dotted settings go to `config.yaml`, H:L3858-3872; the toolset list goes as an inline JSON literal, H:L7581-7585). An existing key's value is replaced, and the cloned `model:` block is kept. If a `config set` fails (an older `hermes`), the script stops: merge the file into `~/.hermes/profiles/manager/config.yaml` by hand, changing a key's value where the cloned file already has it, not adding a second copy.
+   - **The worker checks it in code.** `--manager hermes` reads the manager's `GET /v1/toolsets` (H:L39794-39809) before its first ask and won't start if any toolset other than `delegation` and `memory` is enabled, or any `arm_*`, `terminal`, `write_file` or `patch` tool is exposed (`armsim/worker.py` `preflight`). A `/v1/toolsets` it can't read (a wrong key, an old server) refuses too. So a skipped or failed config step can't give the manager the arm: the API server "gives full access to hermes-agent's toolset, including terminal commands" (H:L39870), and the cloned `so101_arm` plugin's socket reaches the arm host in sim.
    - **One change from the design's §2.1: `delegation.gateway_mode: inline`.** Under the default `auto`, "the API server ... keep[s] background delegation" (H:L19782-19786). A background delegation ends the parent's turn with a one-line status (H:L19771-19773), so the run's `output` would be that status, not the fix plan. `inline` makes "every gateway session" join its children inside the turn (H:L19787). *(inferred: that runs on the API server count as gateway sessions.)*
    - Also added: `web` in `agent.disabled_toolsets` *(inferred: the analysts only read the packet)*.
    - Check: `hermes -p manager config show | grep -E 'gateway_mode|disabled_toolsets|max_concurrent'`.
@@ -35,14 +37,16 @@ and runs the one action. The design is `docs/worker-manager-healer.md` §1-2. `H
    - (a) The default profile's `.env` must hold `API_SERVER_ENABLED=true`, `API_SERVER_HOST=<mac-ip>`, `API_SERVER_PORT=8642` *(inferred: the listener is shared)*. Then `hermes gateway restart`. URL: `http://<mac-ip>:8642/p/manager`.
    - (b) `hermes -p manager gateway run` in its own terminal (H:L995, H:L4211). URL: `http://<mac-ip>:8642`.
 5. **Check it, no model call:** `./check.sh`. It wants `/health` ok (H:L39505), 401 for a wrong key, `run_submission` in `/v1/capabilities` (H:L39406), no terminal, file, browser, `so101_arm` or `mcp-naive_board` in `/v1/toolsets` (H:L39796-39809), and `arm-incident-manager` in `/v1/skills`.
-   - With branch (a), `/health` is probed under the `/p/manager` prefix *(inferred: the docs show it unprefixed)*. If that 404s, `curl http://<mac-ip>:8642/health` checks the listener itself.
-6. **One real run on a saved packet** (the ChatGPT plan, no API key):
+   - With branch (a), `/health` is probed under the `/p/manager` prefix first *(inferred: the docs show it unprefixed)*; if that doesn't answer 200, the script probes the listener's own `http://<mac-ip>:8642/health`.
+6. **One real run on a saved packet** (the ChatGPT plan, no API key). **Confirm its output is one JSON object**, not a status line:
    ```bash
-   ./ask.sh samples/esc-us_stuck.json                     # the §2.3 curl; prints status, output, latency
+   ./ask.sh samples/esc-us_stuck.json                     # the §2.3 curl; prints status, output, latency, and
+                                                          # "output is one JSON object" (or NOT)
    cd .. && set -a && . hermes-manager/manager.key.env && set +a
    PYTHONPATH=. .venv/bin/python -m armsim.manager ask hermes-manager/samples/esc-us_stuck.json
    ```
-   The second command is the worker's own client. It prints the run's latency and whether `check_plan` accepts the answer (exit 0), refuses it (2) or got none (1). Write the latency down. The design guessed 20-60 s per incident *(inferred)*; if it goes past 90 s, drop the critic (the skill already says to skip it past ~60 s).
+   The second command is the worker's own client. It prints the run's latency and whether `check_plan` accepts the answer (exit 0), refuses it (2) or got none (1). Exit 0 means the output was one JSON plan. Write the latency down. The design guessed 20-60 s per incident *(inferred)*; if it goes past 90 s, drop the critic (the skill already says to skip it past ~60 s).
+   - Both send `"conversation_history": []` with the run, as the worker does: caller-supplied history makes delegation run synchronously inside the turn (H:L39622-39628) *(inferred: that an empty list counts)*. If the output is still a status line, see below.
    - Try all four samples. The answers to expect: `restart_sensor` for `us_stuck` / `us_frozen`, `pod_rollback` for `us_offset` (podd flagged `us_mismatch`), `verify` or `handoff_human` for `joint_stall`.
 
 ## Then the loop, in sim on this Mac
@@ -56,15 +60,21 @@ PYTHONPATH=. .venv/bin/python -m armsim.dispatch --once --manager hermes        
 ```
 - The event log (`runs/events.jsonl`, and Mission Control's feed) shows `incident`, then `escalation` (src worker), `fix_plan` (src manager), `plan_check`, `plan_action`, and `heal`.
 - The board gets one `INC ...` card per escalation with `ESCALATION:`, `PLAN:`, then `RESULT:` or `BLOCKED:`; the job card gets a `PLAN:` line.
-- Rehearse without Hermes first: `--manager fake` (and `--fake-mode off_list|bad_json|slow|unsafe|500|refused`).
+- Rehearse without Hermes first: `--manager fake` (and `--fake-mode off_list|bad_json|slow|unsafe|500|refused|park|trickle|errstr`).
+- A manager `park` is sticky: the arm stays parked and the incident is handed to a person, so the dispatcher waits for them before the next order.
+- A `pod_rollback` plan is carried out as a wait for the pod's own healer (plain code can't flash the pod), and the events and cards say `wait_for_pod`.
 - The worker's model on the laptop: add `--worker-lm ollama --ollama http://192.168.50.1:11434/v1 --worker-model qwen3.5:4b`.
 - `--manager` works only with `--exec scripted`. `stories b --hermes` still runs the Hermes commander with its own healing rules and skips the manager (design §1).
 
 ## If the run answers "working on it"
-That's background delegation (see step 3). The worker refuses the answer and falls back to the scripted heal, so the arm is safe. Fix it one of two ways:
-- confirm `delegation.gateway_mode: inline` took (`hermes -p manager config show`), then restart the gateway;
-- or send caller-supplied history: "Runs requests with `previous_response_id` or caller-supplied history instead execute delegation synchronously" (H:L39622-39627). That means adding `"conversation_history": []` to the POST body in `armsim/manager.py` *(inferred: that an empty list counts)*.
+That's background delegation (see step 3). The worker refuses the answer and falls back to the scripted heal, so the arm is safe. Two things keep it inline, and the second is already done:
+- `delegation.gateway_mode: inline` (setup.sh applies it): confirm it took (`hermes -p manager config show`), then restart the gateway;
+- caller-supplied history: "Runs requests with `previous_response_id` or caller-supplied history instead execute delegation synchronously" (H:L39622-39628). `armsim/manager.py` and `ask.sh` send `"conversation_history": []` with every run *(inferred: that an empty list counts; if a real run shows it doesn't, send the packet as one user turn in the history instead)*.
+
+## The worker's client, for the record
+- Each HTTP call is bounded by what is left of the deadline on the wall clock (a thread joined for that long), so a server that trickles bytes can't hold the arm parked past `--manager-deadline` (3-120 s, checked at startup).
+- A run it gives up on while it may still be going is stopped, best effort: `POST /v1/runs/{run_id}/stop` (H:L39698-39703) with a 2 s budget, so it doesn't keep one of the two `max_concurrent_runs` slots and 429 the next incident.
 
 ## Not done here
-- Nothing above was run against a real Hermes: this container has no `hermes` and no ChatGPT login. `check.sh`, `ask.sh` and `setup.sh` were run against `tests/fake_manager.py` and a stand-in `hermes` script only.
+- Nothing above was run against a real Hermes: this container has no `hermes` and no ChatGPT login. `check.sh`, `ask.sh` and `setup.sh` were run against `tests/fake_manager.py` and a stand-in `hermes` script only, so `hermes -p manager config set` with these keys (`gateway.api_server.max_concurrent_runs` especially) is untested on a real install *(inferred: H:L3872 says unknown paths under a known section are still written, with a notice)*.
 - Path B (a Naïve `pi` team returning the same plan, design §2.4) is not built.
