@@ -1,0 +1,9 @@
+# Opt-in (M8b): publish the db on loopback so the worker can run as a host process.
+# With CODER_PROVIDER=local_agent the worker's job threads run `docker run` for the coding
+# agent and the code replay. Running the worker on the host avoids mounting
+# /var/run/docker.sock into a container (root-equivalent on the host) and keeps the scratch
+# dirs it mounts real host paths. `make worker-host` uses this file; `make up` never does.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-55433}:5432"

@@ -10,6 +10,7 @@ human actions it took (target 0). Every command runs from the repo root.
    external display, keyboard and power attached. In Docker Desktop, turn on
    *Settings → General → Start Docker Desktop when you sign in*.
 2. **The launch commit:** check it out and make sure the tests pass on it (`make test`).
+3. **Never use `make worker-host` overnight:** the Compose worker runs the fleet (`CODER_PROVIDER=fake`), and `worker-host` refuses once the run has started.
 
 ## 2. Launch, in this order
 

@@ -95,6 +95,10 @@ services:
     image: romulus-coder
     build:
       context: cloud/coder
+      # The firmware toolkit (setup.sh, versions.env) as the named context `fwtoolkit`, so the
+      # image installs the STM32 toolchain the firmware pins (B8).
+      additional_contexts:
+        fwtoolkit: firmware/toolkit
     network_mode: none
 
   # Off by default. Only if Naïve agents must call us (open question N3); needs a bearer

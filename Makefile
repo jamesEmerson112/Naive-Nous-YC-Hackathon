@@ -7,23 +7,44 @@ TESTDB      := romulus-testdb
 TESTDB_PORT := 55432
 CLI         := $(COMPOSE) exec -T api python -m romulus_cloud.cli
 
-.PHONY: up dev sim coder-image coder-firmware-check down logs test flows testdb seed reset digest overnight-start \
+.PHONY: up dev sim coder-image coder-firmware-check worker-host down logs test flows testdb seed reset digest overnight-start \
 	overnight-stop overnight-check export lint fmt
 
+# A host worker (`make worker-host`) must not run beside the Compose worker: refuse unless FORCE=1.
+HOST_PIDFILE := data/worker-host.pid
+define no_host_worker
+	@if [ -f $(HOST_PIDFILE) ] && kill -0 "$$(cat $(HOST_PIDFILE))" 2>/dev/null; then \
+		echo "refused: a host worker is running (pid $$(cat $(HOST_PIDFILE)), make worker-host);" \
+			"this would start the Compose worker beside it. Stop it first, or FORCE=1."; \
+		[ "$(FORCE)" = "1" ] || exit 1; \
+	fi
+endef
+
 up:  ## db, api, worker
+	$(no_host_worker)
 	$(COMPOSE) up --build -d db api worker
 
 dev:  ## same, with source mounted and uvicorn --reload
+	$(no_host_worker)
 	$(COMPOSE) -f compose.yaml -f compose.dev.yaml up --build -d db api worker
 
 sim:  ## also start the fake devices (profile sim)
+	$(no_host_worker)
 	$(COMPOSE) --profile sim up --build -d
 
 coder-image:  ## build the coding-agent sandbox image, romulus-coder (M8), with the STM32 toolchain (B8)
-	$(COMPOSE) -f compose.yaml -f compose.coder.yaml --profile coder build coder
+	$(COMPOSE) --profile coder build coder
 
 coder-firmware-check: coder-image  ## B8: build a copy of firmware/ in the coder image, offline
 	@bash cloud/scripts/coder_firmware_check.sh
+
+DB_PORT ?= 55433
+worker-host:  ## the worker as a host process for CODER_PROVIDER=local_agent (M8b); never overnight
+	$(COMPOSE) -f compose.yaml -f compose.host-worker.yaml up -d db
+	$(COMPOSE) stop worker
+	DATABASE_URL=postgresql+psycopg://romulus:romulus@127.0.0.1:$(DB_PORT)/romulus \
+		BLOB_DIR=$(CURDIR)/data/blobs EXPORT_DIR=$(CURDIR)/data/exports FORCE=$(FORCE) \
+		uv run python -m romulus_cloud.worker --host --pidfile $(CURDIR)/$(HOST_PIDFILE)
 
 down:
 	$(COMPOSE) --profile sim --profile tunnel down

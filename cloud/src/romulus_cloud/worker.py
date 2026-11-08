@@ -5,13 +5,22 @@ crashed worker resumes where it stopped. Later PRs append to `STEPS`, e.g.
 `Step("gate.tick", gate.tick)` or `Step("workorders.sync", workorders.sync, every_s=15)`.
 Each step gets its own session and transaction; the worker commits after it returns,
 and a step that raises is rolled back and logged without stopping the others.
+
+Slow work (the coding agent, code replays) never runs inside a step: steps submit it to
+`services/jobs.py` (a small thread pool in this process, JOBS_MAX_WORKERS) and poll it on
+later ticks. With CODER_PROVIDER=local_agent those jobs run `docker run`, so this process
+then runs on the host (`make worker-host`), not in the Compose worker container.
 """
 
+import argparse
+import atexit
+import os
 import time
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -19,7 +28,16 @@ from romulus_cloud import db
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
-from romulus_cloud.services import batch, datasets, doctor, gate, telemetry, workorders
+from romulus_cloud.models import FleetState
+from romulus_cloud.services import (
+    batch,
+    code_lockin,
+    datasets,
+    doctor,
+    gate,
+    telemetry,
+    workorders,
+)
 from romulus_cloud.settings import Settings, get_settings
 
 
@@ -110,11 +128,45 @@ def run_tick(
     return results
 
 
-def main() -> None:
+def host_refusal(session: Session, settings: Settings, force: bool) -> str | None:
+    """Why `make worker-host` must not start: the overnight run uses the Compose worker, and
+    `make up`/`make sim` would start a second worker beside a host one (unless FORCE=1)."""
+    if force:
+        return None
+    row = session.get(FleetState, settings.fleet_id)
+    started = row.overnight_started_at if row else None
+    if started is not None or settings.overnight_started:
+        when = started.isoformat() if started else "OVERNIGHT_STARTED is set"
+        return (
+            f"worker-host: refused, the overnight run is on ({when}). Never use worker-host "
+            "overnight; the Compose worker runs the fleet. FORCE=1 if you really mean it."
+        )
+    return None
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(prog="python -m romulus_cloud.worker")
+    parser.add_argument("--host", action="store_true", help="run as the host worker (M8b)")
+    parser.add_argument("--pidfile", default="", help="with --host: write this pid file")
+    args = parser.parse_args(argv)
     settings = get_settings()
     engine = db.make_engine(settings.database_url)
     db.create_all(engine)
     sessions = db.make_sessionmaker(engine)
+    if args.host:
+        with sessions() as session:
+            refusal = host_refusal(session, settings, os.environ.get("FORCE") == "1")
+        if refusal:
+            log_line("worker.refused", level="error", why=refusal)
+            raise SystemExit(refusal)
+        if args.pidfile:
+            pidfile = Path(args.pidfile)
+            pidfile.parent.mkdir(parents=True, exist_ok=True)
+            pidfile.write_text(str(os.getpid()))
+            atexit.register(lambda: pidfile.unlink(missing_ok=True))
+    blocker = code_lockin.coder_blocker(settings)
+    if blocker:  # said once here; code overlays and coder replays wait until it is fixed
+        log_line("worker.coder_unavailable", level="error", why=blocker)
     last_run: dict[str, datetime] = {}
     steps = steps_for(settings)
     log_line("worker.started", steps=[s.name for s in steps], tick_s=settings.worker_tick_s)

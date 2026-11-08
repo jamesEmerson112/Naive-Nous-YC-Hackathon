@@ -13,8 +13,11 @@ reason and the rest go on.
   (`datasets.regression_cases`, P1). The corpus fails a candidate only on a regression: a
   case the class's current release passes and the candidate fails, each one named in the
   why. An empty corpus, or a case the release already fails, is not a regression. The
-  release's results are computed once per tick per (class, version). Harness and code
-  candidates get a labeled stub.
+  release's results are computed once per tick per (class, version). Harness candidates
+  and pass-through code candidates get a labeled stub. A code candidate the coding agent
+  drafted (M8b) replays as a job off the tick (`code_lockin.gate_replay`: device tests +
+  held-out verify scripts in fresh containers); it stays `replaying` until the job is done,
+  and the tick never waits for it.
 - **canary** (`start_canary`): assign the class's `role = canary` device, remember what it
   had (`canary_prev_version`), set `canary_started_at = now`. Evidence is that device's
   check-ins (`canary_checkins`), install reports and incidents received since then, on the
@@ -59,7 +62,7 @@ from romulus_cloud.models import (
     InstallReport,
     Overlay,
 )
-from romulus_cloud.services import datasets, fleet, incidents, registry
+from romulus_cloud.services import code_lockin, datasets, fleet, incidents, registry
 from romulus_cloud.services.fleet import install_type
 from romulus_cloud.settings import Settings, get_settings
 
@@ -70,6 +73,7 @@ LIVE = fleet.LIVE
 LOCKIN_ROLLED_BACK = "lockin_rolled_back"
 LOCKIN_ERROR = "lockin_error"
 CORPUS_CACHE = "gate.release_corpus"  # session.info key, set for one tick
+CODE_TOOLS = "gate.code_tools"  # session.info key: the tick's code_lockin.ReplayTools
 STALE_RETRY_CAP = 3  # stale re-queues per overlay before it is sticky (PR #18 review)
 TRANSITION_KINDS = {
     "canary": "candidate.canary_started",
@@ -202,9 +206,13 @@ def _incidents(session: Session, c: Candidate) -> list[Incident]:
     return [i for i in rows if i is not None]
 
 
-def _replay(session: Session, c: Candidate) -> g.ReplayResult:
+def _replay(session: Session, c: Candidate) -> g.ReplayResult | None:
+    """The replay; None while a code replay job is still running."""
     if c.type == "code":
-        return g.replay_code_stub()
+        code = session.info.get(CODE_TOOLS)
+        if code is None:
+            return g.replay_code_stub()
+        return code_lockin.gate_replay(session, c, code)
     if c.type == "harness":
         return g.replay_stub("a harness skill is prose; there are no rules to replay")
     fw = session.get(FirmwareVersion, (c.fleet_id, c.version))
@@ -366,7 +374,8 @@ def _inputs(
         kind=c.type,
         replay=replay,
         canary_available=available,
-        passthrough=True,  # FakeCoder only: the coding agent (M8) will set False
+        # True unless the coding agent drafted it (M8b); fails closed.
+        passthrough=c.type != "code" or code_lockin.is_passthrough(session, c),
         # Unlocks code promotion, so only a canary known to be real counts (fail closed).
         real_code_canary=bool(canary and canary.kind == "real"),
         allow_passthrough_code_promotion=settings.allow_passthrough_code_promotion,
@@ -720,10 +729,13 @@ def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now)
     replay = g.ReplayResult.from_json(c.replay)
     if c.status == "replaying" and replay is None and not frozen:
         replay = _replay(session, c)
-        c.replay = replay.to_json()
-        if replay.stub and "replay" not in (c.stub_stages or []):
-            c.stub_stages = [*(c.stub_stages or []), "replay"]
-        _record(session, c, "candidate.replayed", replay.why, now, replay=c.replay)
+        if replay is not None:  # None: a code replay job still running; check next tick
+            c.replay = replay.to_json()
+            if replay.stub and "replay" not in (c.stub_stages or []):
+                c.stub_stages = [*(c.stub_stages or []), "replay"]
+            code = session.info.get(CODE_TOOLS)
+            output = code_lockin.gate_replay_applied(c, code) if code and c.type == "code" else {}
+            _record(session, c, "candidate.replayed", replay.why, now, replay=c.replay, **output)
     inputs, k17 = _inputs(session, c, settings, frozen, replay)
     t = g.next_state(c.status, inputs, now)
     if t.state == c.status:
@@ -751,8 +763,15 @@ def _error(session: Session, candidate_id: str, exc: Exception, now: datetime) -
         log.exception("gate: could not mark candidate %s as error", candidate_id)
 
 
-def tick(session: Session, now: datetime, *, settings: Settings | None = None) -> list[str]:
-    """The worker step. Returns the ids of candidates that changed state."""
+def tick(
+    session: Session,
+    now: datetime,
+    *,
+    settings: Settings | None = None,
+    code: code_lockin.ReplayTools | None = None,
+) -> list[str]:
+    """The worker step. Returns the ids of candidates that changed state. `code` runs code
+    replays as jobs (default: from settings)."""
     settings = settings or get_settings()
     frozen = fleet.state(session, settings.fleet_id, lock=True).frozen
     stmt = select(Candidate.id).where(
@@ -760,6 +779,7 @@ def tick(session: Session, now: datetime, *, settings: Settings | None = None) -
     )
     changed = []
     session.info[CORPUS_CACHE] = {}
+    session.info[CODE_TOOLS] = code or code_lockin.ReplayTools.from_settings(settings)
     try:
         for cid in session.scalars(stmt.order_by(Candidate.created_at, Candidate.type)).all():
             c = session.get(Candidate, cid)
@@ -774,5 +794,6 @@ def tick(session: Session, now: datetime, *, settings: Settings | None = None) -
                 changed.append(cid)
     finally:
         session.info.pop(CORPUS_CACHE, None)
+        session.info.pop(CODE_TOOLS, None)
     session.flush()
     return changed

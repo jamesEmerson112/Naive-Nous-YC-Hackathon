@@ -7,7 +7,8 @@ network:
 1. the held-out `verify/` scripts, run by the image's fixed `verify` mode (isolated Python,
    `--noconftest`, a clean pytest config, no cache), which must pass *every* test the base
    collected: a skipped, deselected or missing verify test is not a pass;
-2. the device's own test command.
+2. the device's own test command (skipped when it is empty; then the verify scripts must
+   carry the replay alone, and with neither the replay fails: nothing checked the patch).
 
 The verify scripts are the package's `device/verify/` plus any `verify_files` the caller
 holds (e.g. from the fault catalog). A patch that touches `verify/`, or has a symlink, a
@@ -19,8 +20,8 @@ Limit: the code under test runs inside the verify process, so a deliberately mal
 could still forge its result from within. This stops test gaming (skips, conftest, config);
 the canary and a person stop malice.
 
-Not wired into the gate yet (M8b). No database, no events: the caller turns a `CodeReplay`
-into a gate decision and an Event.
+No database, no events: `code_lockin.gate_replay` runs it as a job off the gate's tick
+(M8b) and turns the `CodeReplay` into the gate's replay result and an Event.
 """
 
 from __future__ import annotations
@@ -51,10 +52,11 @@ class TestRun:
     exit_code: int | None  # None: the sandbox returned no result
     output: str
     timed_out: bool = False
+    configured: bool = True  # False: no test command, so nothing ran (and nothing failed)
 
     @property
     def passed(self) -> bool:
-        return self.exit_code == 0 and not self.timed_out
+        return not self.configured or (self.exit_code == 0 and not self.timed_out)
 
 
 @dataclass(frozen=True)
@@ -102,14 +104,21 @@ class CodeReplay:
         return self.patched_verify.all_passed(self.expected_verify)
 
     @property
+    def checked_anything(self) -> bool:
+        """Device tests ran or there were verify scripts: without either nothing was checked."""
+        return self.base.configured or self.expected_verify > 0
+
+    @property
     def passed(self) -> bool:
         """What the gate needs: device tests pass and every verify test passes on the patch,
-        and nothing touched the verify scripts (belt and braces: such a patch is refused)."""
+        something was actually checked, and nothing touched the verify scripts (belt and
+        braces: such a patch is refused). Fails closed."""
         touched_verify = any(f.startswith("verify_scripts:") for f in self.flags)
         return (
             self.patched is not None
             and self.patched.passed
             and self.verify_passed
+            and self.checked_anything
             and not touched_verify
         )
 
@@ -125,6 +134,8 @@ class CodeReplay:
         def tests(run: TestRun | None) -> str:
             if run is None:
                 return "not run"
+            if not run.configured:
+                return "none (CODER_TEST_CMD is empty)"
             if run.timed_out:
                 return "timed out"
             if run.exit_code is None:
@@ -150,6 +161,8 @@ class CodeReplay:
             text += f"; patch refused: {self.patch_error}"
         if self.flags:
             text += "; flagged: " + "; ".join(self.flags)
+        if not self.checked_anything:
+            text += "; nothing checked the patch: no device test command and no verify scripts"
         return text
 
 
@@ -180,7 +193,8 @@ def _verify_run(run: SandboxRun) -> VerifyRun:
     )
 
 
-def _refusal(patch: str) -> str | None:
+def patch_refusal(patch: str) -> str | None:
+    """Why a patch can't be replayed at all (format problems, or it touches `verify/`)."""
     summary = summarize_code_patch(patch)
     if summary.problems:
         return "; ".join(summary.problems)
@@ -214,6 +228,8 @@ def replay_code_patch(
             safe_write(repo.work, name, data)
         kw = {"env": env, "timeout_s": timeout_s + 60, "network": "none"}
         verify = _verify_run(sandbox.run(repo.work, "verify", **kw))
+        if not test_cmd.strip():
+            return verify, TestRun(None, "", configured=False)
         return verify, _test_run(sandbox.run(repo.work, "test", **kw))
 
     with tempfile.TemporaryDirectory(prefix="romulus-replay-", dir=scratch_dir) as tmp:
@@ -222,7 +238,7 @@ def replay_code_patch(
         def refused(why: str, flags: tuple[str, ...] = ()) -> CodeReplay:
             return CodeReplay(base, base_verify, None, None, patch_error=why, flags=flags)
 
-        why = _refusal(patch)
+        why = patch_refusal(patch)
         if why:
             return refused(why)
         repo = ScratchRepo.create(Path(tmp) / "patched", files)

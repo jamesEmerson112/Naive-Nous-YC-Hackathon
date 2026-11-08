@@ -76,10 +76,13 @@ class Coder(Protocol):
         incident: dict[str, Any],
         code_rev: str,
         files: Mapping[str, bytes] | None = None,
+        task: str | None = None,
     ) -> CodeDraft:
         """Draft a clean change from `patch` (unified diff against `code_rev`) and test it.
 
-        `files` is the code package of `code_rev` (paths start with `device/`).
+        `files` is the code package of `code_rev` (paths start with `device/`). `task`, when
+        given, replaces the default prompt (`build_task_prompt`), e.g. the Fleet Doctor's
+        "write a fix from scratch plus a repro test"; `patch` may then be empty.
         """
         ...
 
@@ -97,6 +100,7 @@ class FakeCoder:
         incident: dict[str, Any],
         code_rev: str,
         files: Mapping[str, bytes] | None = None,
+        task: str | None = None,  # ignored: the fake writes nothing
     ) -> CodeDraft:
         return CodeDraft(
             diff=patch,
@@ -430,6 +434,7 @@ class LocalAgent:
         incident: dict[str, Any],
         code_rev: str,
         files: Mapping[str, bytes] | None = None,
+        task: str | None = None,
     ) -> CodeDraft:
         if files is None:
             raise CoderError(f"LocalAgent needs the code package of {code_rev} (files=...)")
@@ -449,7 +454,7 @@ class LocalAgent:
                 repo.work,
                 "agent",
                 env=env,
-                stdin=build_task_prompt(patch, incident, code_rev),
+                stdin=task if task is not None else build_task_prompt(patch, incident, code_rev),
                 # the agent's own wall-clock limit, then the tests, then a margin
                 timeout_s=self.time_limit_s + self.test_timeout_s + 60,
                 network="bridge",
@@ -539,6 +544,7 @@ def build_coder(
     step_limit: int = 30,
     time_limit_s: int = 600,
     runner: Runner | None = None,
+    scratch_dir: str | None = None,
 ) -> Coder:
     """Factory called with CODER_PROVIDER, CODER_AGENT, CODER_IMAGE (+ the LLM endpoint)."""
     if provider == "fake":
@@ -556,6 +562,7 @@ def build_coder(
             test_cmd=test_cmd or DEFAULT_TEST_CMD,
             step_limit=step_limit,
             time_limit_s=time_limit_s,
+            scratch_dir=scratch_dir or None,
         )
     if provider == "naive_session":
         raise NotImplementedError(

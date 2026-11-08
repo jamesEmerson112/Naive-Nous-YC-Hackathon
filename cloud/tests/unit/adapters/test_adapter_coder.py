@@ -89,6 +89,25 @@ def test_good_agent_run_returns_a_clean_diff_that_passes():
     assert "tests `python -m pytest -q`: exit 0" in draft.notes
 
 
+def test_a_given_task_replaces_the_default_prompt():
+    """The Fleet Doctor drafts from scratch: its own task text is the agent's whole prompt."""
+    docker = fakes.FakeDocker(agent=fakes.fix_like_a_careful_engineer)
+    task = "Write a fix for D1 from scratch and a test that reproduces it."
+    draft = make_agent(docker).draft("", INCIDENT, "c0de001", fakes.toy_files(), task=task)
+    assert docker.run_call["stdin"] == task
+    assert draft.passed is True, draft.notes
+
+
+def test_fake_coder_ignores_a_task():
+    draft = FakeCoder().draft(PATCH, {"id": "inc-1"}, "rev-3", task="anything")
+    assert draft.diff == PATCH and "pass-through" in draft.notes
+
+
+def test_factory_passes_the_scratch_dir(tmp_path):
+    agent = build_coder("local_agent", base_url="u", model="m", scratch_dir=str(tmp_path))
+    assert agent.scratch_dir == str(tmp_path)
+
+
 def test_agent_never_sees_git_metadata_or_the_verify_scripts():
     docker = fakes.FakeDocker(agent=fakes.fix_like_a_careful_engineer)
     draft = make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
