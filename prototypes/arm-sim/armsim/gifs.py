@@ -1,12 +1,10 @@
-"""GIFs of the generate-and-test runs on the real arm, for the README, from the camera frames gentest saved.
+"""GIFs of the successful generate-and-test tries on the real arm (the red bag in the box), for the README.
 
     python -m armsim.gifs [--out media/gentest] [--width 480]
 
-Reads runs/gentest/trials.jsonl and hermes-trials.jsonl (one row per try, oldest first) and writes:
-  timelapse.gif  every try's AFTER frame (a probe's frame for a probe), captioned, in time order
-  grabs.gif      each full grab as BEFORE -> the moment the jaws close -> AFTER
-  probes.gif     each probe: the open jaws held at the closing point, with Astra's go / no-go
-Captions carry the try, the recording, pan, speed, the result, Astra's reasoning effort and the time.
+A try counts as a success when Astra's eye judged it INSIDE: a `success` row in runs/gentest/hermes-trials.jsonl,
+or the next row's `hermes_verdict_before`. Each success becomes success-<time>.gif: BEFORE -> the moment the jaws
+close -> AFTER, captioned with the try, the recording, pan, speed, the grip and the time. No success, no GIF.
 """
 import argparse
 import json
@@ -91,25 +89,32 @@ def save(frames, out, ms):
     return out
 
 
+def successes(tries):
+    """The full tries the eye judged INSIDE."""
+    ok = []
+    for k, r in enumerate(tries):
+        if r.get("success"):
+            hit = next((x for x in tries if x.get("ts") == r.get("of_ts")), None) if r.get("of_ts") else None
+            hit = hit or next((x for x in reversed(tries[:k]) if not x.get("success")), None)
+        elif r.get("hermes_verdict_before") == "INSIDE" and k:
+            hit = tries[k - 1]
+        else:
+            continue
+        if hit and not hit.get("probe") and not hit.get("success") and hit not in ok:
+            ok.append(hit)
+    return ok
+
+
 def build(out_dir, width):
     tries = rows()
-    timelapse, grabs, probes = [], [], []
-    for r in tries:
-        if r.get("probe"):
-            if existing(r.get("after")):
-                f = frame(r["after"], "PROBE: jaws open at the grip point", r, width)
-                timelapse.append(f)
-                probes.extend([f, f])                       # hold each probe frame twice as long
-            continue
-        if existing(r.get("after")):
-            timelapse.append(frame(r["after"], "AFTER", r, width))
-        if existing(r.get("close_image")):
-            for p, stage in ((r.get("before"), "BEFORE"), (r["close_image"], "JAWS CLOSE"), (r.get("after"), "AFTER")):
-                if existing(p):
-                    grabs.append(frame(p, stage, r, width))
-    made = [save(timelapse, out_dir / "timelapse.gif", 500), save(grabs, out_dir / "grabs.gif", 900),
-            save(probes, out_dir / "probes.gif", 600)]
-    return [(m, m.stat().st_size) for m in made if m], len(tries)
+    made = []
+    for r in successes(tries):
+        frames = [frame(p, stage, r, width) for p, stage in ((r.get("before"), "BEFORE"),
+                  (r.get("close_image"), "JAWS CLOSE"), (r.get("after"), "AFTER: IN THE BOX")) if existing(p)]
+        out = out_dir / f"success-{time.strftime('%Y%m%d-%H%M%S', time.localtime(r.get('ts', 0)))}.gif"
+        if save(frames, out, 1100):
+            made.append((out, out.stat().st_size))
+    return made, len(tries)
 
 
 def main():
@@ -118,7 +123,7 @@ def main():
     ap.add_argument("--width", type=int, default=480)
     a = ap.parse_args()
     made, n = build(Path(a.out), a.width)
-    print(f"{n} tries")
+    print(f"{n} tries, {len(made)} successful" + ("" if made else ": no GIF yet"))
     for m, size in made:
         print(f"  {m}  {size / 1e6:.1f} MB")
 

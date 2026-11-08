@@ -566,6 +566,9 @@ def guided(max_trials, probe_first=False, efforts=()):
                 print(f"Hermes bag: {json.dumps(p['bag'])}", flush=True)
             if p["verdict"] == "INSIDE" and history:
                 print(f"SUCCESS: the eye sees the bag in the box after try {history[-1]['try']}", flush=True)
+                with open(PLAN_LOG, "a") as f:        # the success, for the record (and armsim.gifs)
+                    f.write(json.dumps({"success": True, "of": history[-1]["try"], "of_ts": history[-1].get("ts"),
+                                        "verdict": p["verdict"], "debug": p["debug"], "ts": time.time()}) + "\n")
                 break
             if not p["next"]:
                 print("stopping: Hermes gave no usable next test", flush=True)
@@ -584,7 +587,8 @@ def guided(max_trials, probe_first=False, efforts=()):
                         "probe_check": why, "plan": n, "before": str(before), "after": str(image), "ts": time.time()}
                 history.append(prow)
                 with open(PLAN_LOG, "a") as f:
-                    f.write(json.dumps({**prow, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"]}) + "\n")
+                    f.write(json.dumps({**prow, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"],
+                                    "hermes_verdict_before": p["verdict"]}) + "\n")
                 print(f"  probe {i}: jaws open at {pr['open_jaws_at']['tip_m']} -> {'GO' if go else 'NO-GO'} "
                       f"(jaws {cells.get('jaws_cell', '?')}, edge {cells.get('edge_cell', '?')}; {check_s} s): {why} | alarms {pr['alarms']}", flush=True)
                 if any(pr["alarms"]):
@@ -606,7 +610,8 @@ def guided(max_trials, probe_first=False, efforts=()):
                    "close_image": str(close_img) if close_img else None, "ts": time.time()}
             history.append(row)
             with open(PLAN_LOG, "a") as f:
-                f.write(json.dumps({**row, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"]}) + "\n")
+                f.write(json.dumps({**row, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"],
+                                    "hermes_verdict_before": p["verdict"]}) + "\n")
             print(f"  -> {'GRASPED' if res['grasped'] else 'no grasp'} (held {res['holding_s']} s, widest "
                   f"{res['widest_hold']}, peak grip load {res['peak_grip_load_nm']} N*m), {res['seconds']} s, "
                   f"alarms {res['alarms']}", flush=True)
