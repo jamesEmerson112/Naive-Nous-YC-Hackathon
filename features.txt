@@ -2,7 +2,7 @@ FEATURES: who is on what
 Claim a line by adding "<--- Name" (several names: "<--- Olir, Andre").
 Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
-Updated Sat Nov 7, 5:38 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 5:48 PM PST from CLAUDE.md, commits and docs/.
 
 NAIVE
 Naive API key for Romulus (by 5:15 PM)
@@ -108,6 +108,7 @@ Hub: team status sync in CLAUDE.md      <--- James
 Hub: SO-101 research notes              <--- James
 Hub: stack hub artifact v1              <--- James
 Hub: stack hub refresh, features.txt    <--- James
+Hub: Human-Computer-Labs insights       <--- James
 Romulus: cloud platform PRD and APIs    <--- Kent
 Romulus: v0 plan and decisions          <--- Kent
 Romulus: build plan, Naive, telemetry docs <--- Kent
