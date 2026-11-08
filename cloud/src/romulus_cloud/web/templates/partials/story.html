@@ -13,7 +13,7 @@
     · {{ 'resolved on the device' if inc.resolved else 'not resolved on the device' }}{% if inc.resolving_action %} ({{ inc.resolving_action }}){% endif %}</p>
   {% if story.links %}
   {% set stations = [] %}
-  {% for label, kind in story.links %}{% set _ = stations.append((label | shortid, last_state if loop.last else "done")) %}{% endfor %}
+  {% for label, kind in story.links %}{% set _ = stations.append(((label | kindword) if label == inc.kind else (label | shortid), last_state if loop.last else "done")) %}{% endfor %}
   <div class="story-line" title="{{ story.chain }}">{{ heal_line(stations) }}</div>
   {% endif %}
   {% if story.device %}
@@ -73,10 +73,10 @@
   <li class="step step-quiet actor-{{ s.actor_class }}">
     <span class="step-node" aria-hidden="true"></span>
     <details class="step-body" id="{{ s.dom }}">
-      <summary class="step-line"{{ full(s.line) }}><span class="actor">{{ s.who }}</span> · {{ s.line | shortid }}
+      <summary class="step-line"{{ full(s.line) }}><span class="actor">{{ s.who | shortid }}</span> · {{ s.line | shortid }}
         <span class="step-when"><time datetime="{{ s.iso }}">{{ s.clock }}</time> <span class="gap">{{ s.gap or s.day }}</span></span></summary>
       <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="actor-icon">{{ icon(actor_icon) }}</span><span class="badge actor-badge">{{ s.actor_class }}</span>
-        <span class="actor">{{ s.who }}</span> · <span class="kind">{{ s.what }}</span></p>
+        <span class="actor">{{ s.who | shortid }}</span> · <span class="kind">{{ s.what }}</span></p>
       <p class="step-why"{{ full(why) }}>{{ why | shortid }}</p>
       {% if s.recording %}<p class="evidence">Evidence: <a href="/v1/recordings/{{ s.recording }}" title="{{ s.recording }}">recording {{ s.recording[:8] }}…</a></p>{% endif %}
     </details>
@@ -87,14 +87,14 @@
     <div class="step-body">
       <div class="step-head">
         <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="actor-icon">{{ icon(actor_icon) }}</span><span class="badge actor-badge">{{ s.actor_class }}</span>
-          <span class="actor">{{ s.who }}</span> · <span class="kind">{{ s.what }}</span>
+          <span class="actor">{{ s.who | shortid }}</span> · <span class="kind">{{ s.what }}</span>
           {% if s.touches_safety %}<span class="safety">touches safety</span>{% endif %}</p>
         <p class="step-when"><time datetime="{{ s.iso }}">{{ s.clock }}</time> <span class="gap">{{ s.gap or s.day }}</span></p>
       </div>
       <p class="step-line"{{ full(s.line) }}>{{ s.line | shortid }}</p>
       {% if why | length > 220 or '{"' in why %}
       {% if '{"' in why %}{% set head = why.split('{"')[0].rstrip(":;,—-( ") %}{% else %}{% set head = why.split(". ")[0].rstrip(". ") ~ "." %}{% endif %}
-      <p class="step-why">{{ (head or "The reason is raw data") | truncate(220) | shortid }}</p>
+      <p class="step-why">{{ (head or "The reason is raw data") | truncate(220, end="…") | shortid }}</p>
       <details class="why-more" id="{{ s.dom }}-why">
         <summary>{{ icon("chevron") }}Full reason</summary>
         <p class="why-full">{{ why }}</p>

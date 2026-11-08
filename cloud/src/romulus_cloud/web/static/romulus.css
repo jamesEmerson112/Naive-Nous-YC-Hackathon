@@ -698,7 +698,7 @@ details[open] > summary.block-h { margin-bottom: 12px; }
 .versions li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 0; }
 .versions li + li { border-top: 1px solid var(--line); }
 form.inline { display: inline; }
-.add-label { display: inline-flex; align-items: center; gap: 6px; }
+form.add-label { display: inline-flex; align-items: center; gap: 6px; }
 /* shared? a small button size. */
 .btn.btn-sm { padding: 5px 12px; font-size: 0.833rem; border-radius: 10px; }
 .label-pill { cursor: pointer; margin: 0 4px 4px 0; transition: background-color 150ms var(--ease); }

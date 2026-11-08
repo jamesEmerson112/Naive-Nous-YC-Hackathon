@@ -55,7 +55,7 @@
       {% if f.bad or f.error %}{% set fw_icon, fw_tone = ("x" if f.bad else "alert"), "bad" %}
       {% elif f.event in ('refused', 'not_flashed') %}{% set fw_icon, fw_tone = "pause", "info" %}
       {% elif f.flashed or f.running_at_end %}{% set fw_icon, fw_tone = "check", "good" %}
-      {% else %}{% set fw_icon, fw_tone = "chevron", "info" %}{% endif %}
+      {% else %}{% set fw_icon, fw_tone = "auto", "info" %}{% endif %}
       <li class="fw{% if f.bad %} fw-bad{% elif f.error %} fw-error{% elif f.event in ('refused', 'not_flashed') %} fw-skip{% elif f.flashed %} fw-ok{% endif %}">
         <span class="fw-mark tone-{{ fw_tone }}" aria-hidden="true">{{ icon(fw_icon) }}</span>
         <div class="fw-body">
