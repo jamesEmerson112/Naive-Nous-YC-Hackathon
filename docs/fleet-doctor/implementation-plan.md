@@ -113,7 +113,7 @@ Wave 3  PR 7 evidence + real draft/check + traces (after M8b)      PR 9 lock-in 
 
 | Item | Why it matters | Owner |
 |---|---|---|
-| **B5 egress (#46)**: the coder container gets only an LLM proxy, with no key inside | Until it merges, **keep `DOCTOR_DRAFT=coder` off on real device text**: the agent sees untrusted log text, and its container has a bridge network and the key | cloud lead (c9e401) |
+| ~~B5 egress (#46)~~: the coder container gets only an LLM proxy, with no key inside | Merged (Sun 2:35 AM, `ef2a722`). `DOCTOR_DRAFT=coder` on real device text no longer waits on B5; real offers still wait on K17 (`SAFETY_PATHS_CONFIRMED`) and on held-out verify (below) | cloud lead, merged |
 | K17 safety and visor path list | `SAFETY_PATHS_CONFIRMED` stays false, and every proposal is discarded, until it lands | Ishaan → Kent |
 | Real token price | `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder *(inferred)*; the dollar cap is only as good as it | Kent |
 | ~~Gate replay hardening + `batch._drafts_this_hour` refund kinds~~ | Done in #53 (result seal, process-isolated verify, stdlib- and pytest-named files refused, refunds) | cloud lead, merged |
