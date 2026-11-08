@@ -23,7 +23,7 @@ Bench board token (scoped MCP session)
 Work-order cards from Romulus (M5)      <--- Kent
 
 MODELS
-OpenAI key for bench Hermes
+OpenAI key for bench Hermes             <--- James
 Naive model proxy for batch (D22)       <--- Kent
 RunPod LLM endpoint (D22, optional)
 
@@ -35,7 +35,7 @@ Self-reset retry loop
 VLA policy (if training allowed)
 
 HERMES
-Hermes install on the bench
+Hermes install on the bench             <--- James
 Hermes arm plugin tools
 pre_tool_call safety guard
 Board link via Hermes MCP client
