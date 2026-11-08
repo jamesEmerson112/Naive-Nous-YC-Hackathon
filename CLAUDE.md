@@ -76,12 +76,12 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 2:38 AM PST_
+_Last updated: Sun Nov 8, 2:48 AM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P2 overnight runs to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), then P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). James's session is building the sim on `james/arm-sim-ydcsss`: item 8 (job board) pushed, items 9 and the soak in progress, a soak every 10 min and UI polish until 7 AM, then the Pi with Andre at 7 AM (pin serial ports, teach Andre's four poses, `demo/up.sh --real`). Kent merged B5 (#46) and the Doctor repro seal (#57) at 2:34–2:35 AM; only #58 (the gate waits for a held-out verify) is still open, and next are the overnight go/no-go and the live Naïve card. Olir is on `full-test-2`: a new bad image for the heal test, then a laptop-side Romulus cloud the Pi's edge bridge reports to over Ethernet.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P2 overnight runs to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), then P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). James's session is building the sim on `james/arm-sim-ydcsss`: item 8 (job board) pushed, items 9 and the soak in progress, a soak every 10 min and UI polish until 7 AM, then the Pi with Andre at 7 AM (pin serial ports, teach Andre's four poses, `demo/up.sh --real`). Kent merged B5 (#46) and the Doctor repro seal (#57) at 2:34–2:35 AM and the tracker update #60 at 2:47 AM; only #58 (the gate waits for a held-out verify) is still open, and next are the overnight go/no-go and the live Naïve card. Olir is on `full-test-2`: a new bad image for the heal test, then a laptop-side Romulus cloud the Pi's edge bridge reports to over Ethernet.
 
 **Recently done:**
-- Kent merged **B5 (#46)** at 2:35 AM (`ef2a722`): the coding-agent sandbox can reach only the LLM, and the API key is held by a proxy outside it (`cloud/coder/llm_proxy.py`, `cloud/src/romulus_cloud/adapters/coder_egress.py`, egress integration and teardown tests; 19 files, +1987)
+- Kent merged **B5 (#46)** at 2:35 AM (`ef2a722`): the coding-agent sandbox can reach only the LLM, and the API key is held by a proxy outside it (`cloud/coder/llm_proxy.py`, `cloud/src/romulus_cloud/adapters/coder_egress.py`, egress integration and teardown tests; 19 files, +1987); tracker #60 (2:47 AM, `9ca63a7`) strikes B5 from `docs/fleet-doctor/implementation-plan.md`: real offers now wait only on K17 (`SAFETY_PATHS_CONFIRMED`) and held-out verify
 - Kent merged **#57** at 2:34 AM (`bf8421b`): the Doctor's repro check reads only a complete result seal and fails closed without one; its held-out verify comes from the gate's sources, there is no offer without held-out verify unless `DOCTOR_OFFER_UNVERIFIED` is set, and the last fix (`efae759`) counts zero verify tests as none only on pytest exit 5. Tracker #59 merged with it (`docs/fleet-doctor/implementation-plan.md`: #57 merged, #53 done, #58 open)
 - Kent pushed two more fixes to #58 (2:22–2:26 AM): a missing `CODER_VERIFY_DIR` now always waits, even when the base has `verify/` (`f5361d1`), and an unreadable one (OSError) waits instead of escaping the tick (`bf3b7a8`)
 - James's session pushed three commits to `james/arm-sim-ydcsss` (no PR yet, 2:22–2:27 AM): item 8, a job board (Naïve CLI plus a local file board under the same rules) with a shared event log and an ARM JOB order format, a fix so fast status pollers can't starve a queued verify or a park, and the plan `docs/healer-data-levels.md` (healer levels L1 rules done, L2 ChatTS on one Runpod GPU not yet run, L3 a learned model). Its BOARD claims in features.txt land on main when it merges
@@ -93,16 +93,16 @@ _Last updated: Sun Nov 8, 2:38 AM PST_
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo (live texts a teammate's phone)
 
 **Recent commits (all authors):**
+- `261ec71` Sun 02:48 · Kent Gang · Update Kent status in CLAUDE.md
+- `5d5eaf0` Sun 02:47 · kgang · Merge pull request #60 from jamesEmerson112/doctor/tracker-b5
+- `9ca63a7` Sun 02:47 · Kent Gang · Fleet Doctor tracker: B5 (#46) merged
+- `0527c1f` Sun 02:39 · jamesEmerson112 · Update team status and features.txt
+- `7f7d0c7` Sun 02:38 · Kent Gang · Update Kent status in CLAUDE.md
 - `ef2a722` Sun 02:35 · kgang · Romulus B5: coding-agent sandbox reaches only the LLM; key held by a proxy (#46)
 - `1eb40b2` Sun 02:35 · kgang · Merge pull request #59 from jamesEmerson112/doctor/tracker-57
 - `139915c` Sun 02:34 · Kent Gang · Fleet Doctor tracker: #57 merged, #53 done, #58 open, verify scripts for real-mode checks
 - `bf8421b` Sun 02:34 · kgang · Merge pull request #57 from jamesEmerson112/doctor/repro-seal
 - `efae759` Sun 02:27 · Kent Gang · Fleet Doctor: zero verify tests count as none only on pytest exit 5; unreadable CODER_VERIFY_DIR is left out
-- `1733be9` Sun 02:06 · Kent Gang · Fleet Doctor: held-out verify from the gate's sources; re-check unverified at offer
-- `2e0214c` Sun 01:50 · Kent Gang · Fleet Doctor: repro step 2 also requires TestRun.passed; repro command stays sealable
-- `2a4c427` Sun 01:40 · Kent Gang · Fleet Doctor: no held-out verify scripts, no offer unless DOCTOR_OFFER_UNVERIFIED
-- `0823445` Sun 01:17 · Kent Gang · Fleet Doctor: repro check reads the result seal, fails closed when unsealed
-- `cdd66d1` Sun 02:28 · jamesEmerson112 · Update team status in CLAUDE.md
 
 **Branches on GitHub:** `main`; open PR branch `cloud/gate-require-verify` (#58, Kent, 4 commits), and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `full-test-2` (Olir, 2 commits ahead of main, no PR); `james/arm-sim-ydcsss` (James's session, item 8 job board and the healer-levels plan, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
