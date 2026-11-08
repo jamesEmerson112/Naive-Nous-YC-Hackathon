@@ -102,10 +102,10 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 5:12 PM PST._
-- **Now:** screening healer harness versions h1, h2 and h3 in `edge/healer/harnesses/` (uncommitted), about halfway through. granite4.1:3b on h3 scored 1/6: all five software tasks hit the 30-step limit now that parking can't be used to escape. qwen3.5:4b with thinking reported health-checked fixes for D1, D2, D3 and S1 and is on S2; hidden-check scores come when its run ends, then thinking-off and qwen3:4b-instruct-2507 (config d, now downloaded) (sessions "btw: what types of tests..." and "Current idea summary").
-- **Just finished:** claimed the device lines in `features.txt` (`cd54c16`, `e59093f`); the project overview and fault catalog (`16c6b9c`, `38771aa`, `325a4bb`); device-side answers in Kent's decision log (`5cea9c2`). Kent accepted the D5a change (logged as K17).
-- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), a call on `edge/` vs `device/` (B1), and a review of the code-package and `code_patch` formats in PR #3 (B2, B3), per Kent's block.
+_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 5:42 PM PST._
+- **Now:** confirmation runs for the healer model pick: 18 trials each for qwen3.5:4b thinking on and off, plus 5 extra D1 trials, then the leader pick and an update to `docs/healer-benchmark-progress.md` (session "Build the edge test bed (iteration 1)").
+- **Just finished:** first-pass screen on harness h3: qwen3.5:4b fixed 6/6 with thinking, 5/6 without (missed D1), qwen3:4b-instruct-2507 3/6, granite4.1:3b 1/6 (session "Current idea summary"); pushed the progress doc and model-selection method (`b9b0f89`). Earlier: `features.txt` claims (`cd54c16`, `e59093f`), overview and fault catalog (`16c6b9c`, `38771aa`, `325a4bb`), device-side answers (`5cea9c2`).
+- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), the `edge/` to `device/` move after the tests (B1), and a review of the code-package and `code_patch` formats in PR #3 (B2, B3), per Kent's block.
 - **Branch and files:** `main`. `edge/` (robot app, sim, supervisor, healer harnesses h1–h3, `bench/run_bench.py`, `bench/analyze.py`) stays local until its own checks pass.
 <!-- ishaan-sync:end -->
 
