@@ -53,6 +53,7 @@ from romulus_cloud.settings import Settings, get_settings
 ACTOR = "agent:fleet-doctor"
 OPENED = "review.session_opened"
 OUTCOMES = ("review.staged", "review.accepted", "review.rejected")
+OUTCOME_NAMES = ("staged", "accepted", "rejected")  # ReviewResult.outcome, in OUTCOMES order
 CLEARED = "review.cleared"
 KINDS = (OPENED, *OUTCOMES, CLEARED)
 MODES = ("fixture", "live")
@@ -410,7 +411,7 @@ def _record_outcome(
         session,
         ACTOR,
         "agent",
-        f"review.{result.outcome}",
+        OUTCOMES[OUTCOME_NAMES.index(result.outcome)],
         refs,
         why,
         data={
