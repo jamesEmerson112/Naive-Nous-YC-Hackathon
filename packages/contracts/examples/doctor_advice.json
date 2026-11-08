@@ -1,0 +1,14 @@
+{
+  "ask_id": "ask_5b9e2f7a1c3d4e8f9a0b1c2d3e4f5a6b",
+  "hypotheses": [
+    {
+      "claim": "The threshold isn't the bug: SPEC.md says never open the gripper because of the ultrasonic reading while holding, so any proximity release in the HOLDING branch is wrong.",
+      "how_to_check": "Read SPEC.md's holding rule, remove the release branch in step(), and run d1_hand_trace: the gripper should stay closed for the whole trace."
+    },
+    {
+      "claim": "Each lower threshold only moves the release point, because the hand keeps approaching (31, 18, 12 mm).",
+      "how_to_check": "Compare the dist_mm at each release with the threshold you set; if it always releases just under it, stop tuning the number."
+    }
+  ],
+  "model": "fake-templated"
+}

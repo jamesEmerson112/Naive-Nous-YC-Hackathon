@@ -65,7 +65,7 @@ class DoctorAsk(DeviceModel):
     trigger: str                               # "T1".."T7", an open string
     question: str = ""
     context: DoctorContext = DoctorContext()
-    budget_s: float = 20                       # the device gives up after this
+    budget_s: float = 20                       # the device gives up after this; clamped to [3, 120]
     contract_version: str | None = None
 
 class ConsultRequest(DeviceModel):              # IncidentReport.consult
@@ -94,6 +94,7 @@ class ProposalPointer(CloudModel):              # CheckInResponse.proposal
     proposal_id: str
     incident_id: UUID
     expires_at: UtcDatetime
+    sha256: str | None = None                  # of the exact body GET serves (see §6.5)
 
 class ProposalBase(CloudModel):
     firmware: Version | None = None
@@ -117,14 +118,23 @@ def proposal_body_and_sha256(p: Proposal) -> tuple[bytes, str]:
 ```
 
 **Edits to existing models:**
-- `device.CheckInResponse` gets `proposal: ProposalPointer | None = None`. Update `test_contract_models.py:194-207`, which pins the dump's keys.
+- `device.CheckInResponse` gets `proposal: ProposalPointer | None = None`. Update `test_contract_models.py:194-207`, which pins the dump's keys. A malformed pointer reads as `None`: a device that can't parse a check-in loses `frozen`.
 - `incident.IncidentReport` gets `consult: ConsultRequest | None = None`.
-- `incident.Overlay` gets `proposal_id: str | None = None`.
+- `incident.Overlay` gets `proposal_id: str | None = None`. **It is provenance only.** A proposal overlay reaches the cloud through `ProposalResult` (`record_result("applied")` creates the row, §6.5), never inside an incident. The device sets `Overlay.proposal_id` on a *later* incident report when the overlay active at that time came from a proposal (for example, the fault recurred under it). The cloud keeps it in `raw`.
+- **`ProposalPointer.sha256`** lets the device check the pulled body against the check-in, not only against the same response's `X-Sha256`. The server computes it with `proposal_body_and_sha256` on each request (§6.5).
 
 **Wiring:**
-- Register every new model in `schema.MODELS` and `__init__.__all__`.
-- Add examples `examples/doctor_ask.json`, `doctor_advice.json`, `proposal.json`, `proposal_result.json` with `MODEL_BY_PREFIX` entries.
+- Export every new model from `__init__.__all__`. Register the four top-level messages (`DoctorAsk`, `ProposalResult`, `DoctorAdvice`, `Proposal`) in `schema.MODELS`; the sub-models appear in their `$defs`, as `Overlay` and `Running` already do.
+- Add examples `examples/doctor_ask.json`, `doctor_advice.json`, `proposal.json`, `proposal_result.json` with `MODEL_BY_PREFIX` entries, plus `incident_consult_wanted.json` (an `IncidentReport` with `consult`, a fixture for F12). All five tell one story: the same incident, base `c0de001`.
 - Add README rows.
+
+**Leniency (as built in PR 1):** a bad optional field reads as its default instead of failing the payload (`common.fallback`).
+- `IncidentReport.consult` accepts `true` as `{"wanted": true}`, and a consult that isn't an object reads as `null`. Inside `ConsultRequest`, a bad field nulls only that field: `{"wanted": true, "trigger": true}` → `wanted=True, trigger=None`. A bad `wanted` reads as `False`, and `attempts` reads anything that isn't a whole number as `null`. A numeric `trigger` reads as a string.
+- `CheckInResponse.proposal`: a malformed pointer reads as `None`.
+- `DoctorAsk.budget_s` is clamped to [3, 120]; a non-numeric, non-finite or null value reads as 20. `null` text, lists and `context` read as their defaults.
+- `ProposalResult`: a numeric `overlay_id` reads as a string (any other non-string reads as `None`), a non-string `reason` reads as `str(...)` (`None` reads as `""`), and a malformed `occurred_at` reads as `None`.
+- **The one strict rule:** `applied` with no `overlay_id`, or a blank one, fails, because a lost `applied` means no overlay row and no lock-in.
+- `repro_test` is the path or pytest node id of the test inside `code_patch`.
 
 **APIs doc** (`docs/cloud-platform-planning/cloud-platform-apis.md`):
 - PR 1 adds the payloads (§2) and the three routes (§3).
@@ -142,7 +152,7 @@ All three are device routes. They take `{device_id}` from the path with no auth,
 
 **L1 handler rule (FR11):** `/doctor/ask` does **not** use `SessionDep`. It runs in four steps:
 1. A short session reads the device, `frozen`, the caps and the spend, then closes.
-2. The LLM call runs with **no session open**. Its timeout is `min(settings.doctor_ask_timeout_s, body.budget_s - 2)`.
+2. The LLM call runs with **no session open**. Its timeout is `min(settings.doctor_ask_timeout_s, body.budget_s - 2)`. The contract has already clamped `budget_s` to [3, 120] (non-numeric, non-finite or null reads as 20), so the timeout is at least 1 s.
 3. A second short session records `doctor.asked` and `doctor.advised`, or `doctor.blocked_over_cap`, then commits.
 4. The handler returns.
 
@@ -316,6 +326,8 @@ def get_for_device(session, device_id, proposal_id, now) -> tuple[bytes, str]   
 def record_result(session, device_id, proposal_id, body: ProposalResult, raw: dict, now, *, safety_paths) -> bool  # True if new
 def expire_due(session, now) -> int
 ```
+
+**Hashes are computed per request, never stored.** `pointer_for` (which fills `ProposalPointer.sha256`) and `get_for_device` (which returns the body and `X-Sha256`) each call `contracts.proposal_body_and_sha256` on the same stored proposal for every request. The dump is canonical, so both give the same bytes and the same hash. Never serve a stored hash next to a re-dumped body.
 
 **`record_result("applied")` creates the overlay row itself** (architecture §5.4). It sets:
 - `(device_id, overlay_id)`;

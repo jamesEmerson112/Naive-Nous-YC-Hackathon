@@ -1,7 +1,7 @@
 """Check-in (APIs §2.3, route 3.1) and install result (§2.4, route 3.4)."""
 
 import math
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import model_validator
 
@@ -12,7 +12,9 @@ from romulus_contracts.common import (
     Running,
     UtcDatetime,
     Version,
+    fallback,
 )
+from romulus_contracts.doctor import ProposalPointer
 
 Health = Literal["ok", "degraded", "failing"]
 """Coarse device health (APIs §2.3). Tier detail goes in `health_detail` or `metrics`."""
@@ -57,11 +59,16 @@ class CheckInResponse(CloudModel):
 
     The code version to run is the assigned firmware manifest's `code_rev` (APIs §2.10).
     `frozen` means the kill switch is on: the device stays on its assigned version.
+    `proposal` (optional, Fleet Doctor L2, D28) points at a checked fix waiting for this
+    device (pull it with `GET /v1/devices/{id}/proposals/{proposal_id}`); null when there
+    is none, and always null while `frozen`. A malformed pointer reads as null: a device that
+    can't parse a check-in would lose `frozen`, the kill switch.
     """
 
     assigned: Assigned
     drop_overlay: bool = False
     frozen: bool = False
+    proposal: Annotated[ProposalPointer | None, fallback(None)] = None
 
 
 InstallType = Literal["firmware", "harness", "code"]

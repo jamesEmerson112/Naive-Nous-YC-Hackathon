@@ -1,0 +1,45 @@
+{
+  "incident_id": "6d0a4c2e-9b1f-4e3a-8c5d-7f2e1a0b9c84",
+  "occurred_at": "2026-11-08T03:12:40Z",
+  "kind": "unexpected_release",
+  "summary": "Gripper opened while holding as a hand approached; two threshold patches failed verify, so the healer parked and asked for a consult",
+  "running": {
+    "firmware": 1,
+    "harness": 1,
+    "code_rev": "c0de001"
+  },
+  "agent": {
+    "reasoning": "Tier 3: 'S HOLDING->RELEASE reason=dist_lt_threshold' while holding. Lowered RELEASE_THRESHOLD_MM twice; d1_hand_trace still released each time, just closer. Rolled both patches back and parked.",
+    "actions": [
+      "snapshot",
+      "park",
+      "patch control/hold.py: RELEASE_THRESHOLD_MM 40 -> 25",
+      "verify d1_hand_trace: FAIL",
+      "patch control/hold.py: RELEASE_THRESHOLD_MM 25 -> 15",
+      "verify d1_hand_trace: FAIL",
+      "rollback"
+    ]
+  },
+  "overlay": null,
+  "outcome": {
+    "resolved": false,
+    "resolving_action": "park",
+    "suspected_cause": "software"
+  },
+  "signals": {
+    "dist_mm": [212, 140, 64, 31, 18, 12],
+    "gripper_closed": [1, 1, 1, 1, 1, 0]
+  },
+  "recordings": [],
+  "tier": 3,
+  "log_tail": [
+    "S HOLDING->RELEASE reason=dist_lt_threshold dist_mm=18",
+    "S HOLDING->RELEASE reason=dist_lt_threshold dist_mm=12"
+  ],
+  "consult": {
+    "wanted": true,
+    "trigger": "T2",
+    "attempts": 2
+  },
+  "contract_version": "0.1"
+}

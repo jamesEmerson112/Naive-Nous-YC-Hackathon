@@ -17,6 +17,9 @@ from pydantic import (
     ConfigDict,
     NonNegativeInt,
     StringConstraints,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    WrapValidator,
 )
 
 
@@ -45,6 +48,23 @@ OpenDict = Annotated[dict[str, Any], BeforeValidator(_null_dict)]
 
 NullAsEmpty = BeforeValidator(_null_list)
 """Put on a list field (`Annotated[list[X], NullAsEmpty]`) so `null` reads as `[]`."""
+
+
+def fallback(default: None | bool | str = None) -> WrapValidator:
+    """Put on an optional field (`Annotated[X, fallback(d)]`) so a value that fails validation
+    reads as `d` instead of rejecting the whole payload.
+
+    Only for fields whose loss is harmless: a bad sub-field must never cost the device a
+    check-in (and with it `frozen`) or an incident in the outbox. The default must be immutable.
+    """
+
+    def _or_default(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+        try:
+            return handler(value)
+        except ValidationError:
+            return default
+
+    return WrapValidator(_or_default)
 
 
 def _to_utc(value: datetime) -> datetime:

@@ -45,6 +45,7 @@ def test_f1_happy_path(client, seeded, example, count_events):
         "assigned": {"firmware": 1, "harness": 1},
         "drop_overlay": False,
         "frozen": False,
+        "proposal": None,
     }
     dev = _device(client, "arm-9")
     assert dev["assigned"] == {"firmware": 1, "harness": 1}

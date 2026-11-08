@@ -12,11 +12,15 @@ import pytest
 from romulus_contracts import (
     CheckIn,
     CheckInResponse,
+    DoctorAdvice,
+    DoctorAsk,
     FirmwareResponse,
     HarnessMeta,
     IncidentReport,
     InstallResult,
     OverlayStatus,
+    Proposal,
+    ProposalResult,
     RecordingMeta,
     evaluate,
     firmware_response,
@@ -33,11 +37,15 @@ EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 MODEL_BY_PREFIX = {
     "checkin_response": CheckInResponse,
     "checkin": CheckIn,
+    "doctor_advice": DoctorAdvice,
+    "doctor_ask": DoctorAsk,
     "firmware_response": FirmwareResponse,
     "harness": HarnessMeta,
     "install_result": InstallResult,
     "incident": IncidentReport,
     "overlay_status": OverlayStatus,
+    "proposal_result": ProposalResult,
+    "proposal": Proposal,
     "recording": RecordingMeta,
 }
 
@@ -67,7 +75,10 @@ def test_example_validates_and_round_trips(name):
     assert model.model_validate(parsed.model_dump(mode="json")) == parsed
 
 
-@pytest.mark.parametrize("name", [n for n in ALL if model_for(n) is not CheckInResponse])
+CLOUD_SENT = (CheckInResponse, DoctorAdvice, Proposal)
+
+
+@pytest.mark.parametrize("name", [n for n in ALL if model_for(n) not in CLOUD_SENT])
 def test_device_examples_carry_supported_contract_version_when_present(name):
     version = load(name).get("contract_version")
     assert version is None or is_supported(version)
@@ -134,3 +145,19 @@ def test_lerobot_recordings_use_the_fleet_schema():
 def test_both_overlay_statuses_have_examples():
     statuses = {OverlayStatus.model_validate(load(n)).status for n in ALL if "overlay_status" in n}
     assert statuses == {"held", "reverted"}
+
+
+def test_doctor_examples_tell_one_consult_story():
+    inc = IncidentReport.model_validate(load("incident_consult_wanted.json"))
+    ask = DoctorAsk.model_validate(load("doctor_ask.json"))
+    proposal = Proposal.model_validate(load("proposal.json"))
+    result = ProposalResult.model_validate(load("proposal_result.json"))
+    # A consult the cloud can admit: unresolved software fault, wanted, with a base code_rev.
+    assert inc.consult.wanted and inc.consult.trigger == "T2" and inc.consult.attempts == 2
+    assert inc.outcome.resolved is False and inc.outcome.suspected_cause == "software"
+    assert ask.incident_id == proposal.incident_id == inc.incident_id
+    assert proposal.base.code_rev == inc.running.code_rev == ask.context.code_rev
+    # The proposal's patch is valid and carries its reproduction test.
+    assert validate_code_patch(proposal.code_patch) == []
+    assert proposal.repro_test.split("::")[0] in patch_paths(proposal.code_patch)
+    assert result.result == "applied" and result.overlay_id
