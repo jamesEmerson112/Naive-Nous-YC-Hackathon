@@ -18,8 +18,10 @@ each (plus a `.bin` blob for a recording), so the queue survives restarts and po
 Crash safety: every file is written to a temp file, fsynced, then renamed into place. A
 blob is written before its JSON and deleted after it, so a crash never leaves a JSON entry
 pointing at a missing blob (at worst an orphan `.bin`, which is ignored). Entry names are
-`<time_ns>-<random>.<kind>.json`: sortable, and unique even when two processes (say the
-visor and the healer) add to the same directory. Let one process drain; any may add.
+`<seq>-<random>.<kind>.json`, where `seq` comes from a counter file (`.seq`) bumped under an
+`fcntl` lock: the order is the order of `add_*` calls, survives restarts and clock steps,
+and stays unique when two processes (say the visor and the healer) add to the same
+directory. Let one process drain; any may add. (`fcntl` is POSIX: Linux and macOS.)
 
 Standard library + httpx + romulus-contracts only, Python 3.11+, so it can be copied into
 the Pi app as is.
@@ -27,10 +29,11 @@ the Pi app as is.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
-import time
+import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -95,7 +98,6 @@ class Outbox:
         self.max_backoff_s = max_backoff_s
         self.failures = 0
         self.retry_at: datetime | None = None
-        self._last_ns = 0
 
     # -- queueing ---------------------------------------------------------------------
 
@@ -112,12 +114,26 @@ class Outbox:
         """Queue the metadata and keep a copy of the blob next to it until it's uploaded."""
         self._add("recording", body(meta), blob=data)
 
+    def _next_seq(self) -> int:
+        """Bump the persisted counter under an exclusive lock shared by every process."""
+        counter = self.dir / ".seq"
+        with open(self.dir / ".seq.lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                try:
+                    last = int(counter.read_text())
+                except (FileNotFoundError, ValueError):
+                    # No counter yet (or a damaged one): continue after the newest entry.
+                    names = [*self.dir.glob("*.json"), *self.dir.glob("dead/*.json")]
+                    seqs = [re.match(r"\d*", n.name).group() for n in names]
+                    last = max((int(q) for q in seqs if q), default=0)
+                atomic_write(counter, str(last + 1).encode())
+                return last + 1
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
     def _stem(self, kind: str) -> str:
-        # Wall-clock nanoseconds order entries across processes; never repeat one within
-        # this process even if the clock doesn't move. The random part keeps names unique.
-        # This only names files; nothing reads it as a time.
-        self._last_ns = max(time.time_ns(), self._last_ns + 1)
-        return f"{self._last_ns:020d}-{uuid.uuid4().hex[:8]}.{kind}"
+        return f"{self._next_seq():020d}-{uuid.uuid4().hex[:8]}.{kind}"
 
     def _add(self, kind: str, payload: dict[str, Any], blob: bytes | None = None, **extra) -> None:
         stem = self._stem(kind)

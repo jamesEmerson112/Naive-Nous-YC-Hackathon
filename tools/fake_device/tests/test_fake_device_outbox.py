@@ -2,6 +2,9 @@
 
 import hashlib
 import logging
+import subprocess
+import sys
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -46,6 +49,11 @@ def recording(incident_id: uuid.UUID, data: bytes) -> RecordingMeta:
     )
 
 
+def files(directory: Path) -> list[Path]:
+    """Queue files, without the outbox's own `.seq` counter and lock."""
+    return [p for p in directory.iterdir() if not p.name.startswith(".")]
+
+
 @pytest.fixture
 def cloud() -> FakeCloud:
     return FakeCloud.seeded()
@@ -67,7 +75,7 @@ def test_drain_sends_everything_in_order(tmp_path, cloud, client):
 
     assert box.drain(client, T0) == 4
     assert len(box) == 0
-    assert list(tmp_path.iterdir()) == []  # blob copies are deleted too
+    assert files(tmp_path) == []  # blob copies are deleted too
     assert [p.rsplit("/", 1)[-1] for p in cloud.paths()] == [
         "incidents",
         "recordings",
@@ -234,4 +242,48 @@ def test_writes_leave_no_temp_files(tmp_path):
     inc = incident()
     box.add_incident(inc)
     box.add_recording(recording(inc.incident_id, b"x"), b"x")
-    assert sorted(p.suffix for p in tmp_path.iterdir()) == [".bin", ".json", ".json"]
+    assert sorted(p.suffix for p in files(tmp_path)) == [".bin", ".json", ".json"]
+
+
+def test_order_survives_a_backwards_clock_step(tmp_path, cloud, client, monkeypatch):
+    box = Outbox(tmp_path)
+    clock = iter([3_000_000_000, 2_000_000_000, 1_000_000_000])  # NTP steps the clock back
+    monkeypatch.setattr(time, "time", lambda: next(clock))
+    monkeypatch.setattr(time, "time_ns", lambda: int(next(clock) * 1e9))
+    for kind in "abc":
+        box.add_incident(incident(kind))
+    monkeypatch.undo()
+    box.drain(client, T0)
+    assert [i["kind"] for i in cloud.incidents.values()] == ["a", "b", "c"]
+
+
+def test_sequence_persists_across_restarts(tmp_path, cloud, client):
+    box = Outbox(tmp_path)
+    box.add_incident(incident("a"))
+    box.drain(client, T0)  # the queue is empty again
+    Outbox(tmp_path).add_incident(incident("b"))  # a new process
+    (entry,) = files(tmp_path)
+    assert entry.name.startswith(f"{2:020d}-")
+
+
+ADD_25 = """
+import sys, uuid
+from datetime import UTC, datetime
+from fake_device.outbox import Outbox
+from romulus_contracts import IncidentReport, Outcome
+box = Outbox(sys.argv[1])
+for i in range(25):
+    box.add_incident(IncidentReport(incident_id=uuid.uuid4(), occurred_at=datetime.now(UTC),
+                                    kind=f"{sys.argv[2]}{i}", outcome=Outcome(resolved=True)))
+"""
+
+
+def test_two_processes_share_one_outbox(tmp_path):
+    procs = [subprocess.Popen([sys.executable, "-c", ADD_25, str(tmp_path), tag]) for tag in "xy"]
+    assert [p.wait(timeout=60) for p in procs] == [0, 0]
+    box = Outbox(tmp_path)
+    seqs = sorted(int(p.name.split("-", 1)[0]) for p in tmp_path.glob("*.json"))
+    assert seqs == list(range(1, 51))  # 50 entries, each with its own number
+    kinds = [e["payload"]["kind"] for e in box.pending()]
+    for tag in "xy":  # each process's own entries stay in its order
+        assert [k for k in kinds if k[0] == tag] == [f"{tag}{i}" for i in range(25)]
