@@ -559,15 +559,21 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
             return {"ok": True, "bye": True}
         return {"ok": False, "error": f"unknown op {op!r}"}
 
+    def chores():
+        """The main thread's own work: a verify the pod thread queued, or parking on a pod incident.
+        Run when idle and after every connection, so clients polling `status` faster than the
+        accept timeout (the dispatcher, the soak, Mission Control) can't starve them."""
+        if dog.verify_pending:
+            print("VERIFY", dog.verify_pending, json.dumps(dog.verify(dog.verify_pending))[:300], flush=True)
+        elif dog.open() and not state["parked"]:
+            park()                                    # a pod incident while idle: park anyway
+
     try:
         while True:
             try:
                 conn, _ = srv.accept()
-            except socket.timeout:                    # idle: the main thread's own chores
-                if dog.verify_pending:
-                    print("VERIFY", dog.verify_pending, json.dumps(dog.verify(dog.verify_pending))[:300], flush=True)
-                elif dog.open() and not state["parked"]:
-                    park()                            # a pod incident while idle: park anyway
+            except socket.timeout:                    # idle
+                chores()
                 continue
             conn.settimeout(None)
             with conn, conn.makefile("rw", encoding="utf-8") as f:
@@ -581,6 +587,7 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
                     f.flush()
                     if reply.get("bye"):
                         raise SystemExit
+            chores()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
