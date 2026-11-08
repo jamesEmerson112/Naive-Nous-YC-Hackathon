@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Romulus · {{ story.incident.device_id }} · {{ story.incident.kind }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/">← all incidents</a></p>
+<div id="story" hx-get="/partials/incidents/{{ story.incident.incident_id }}" hx-trigger="every 3s" hx-swap="innerHTML">
+  {% include "partials/story.html" %}
+</div>
+{% endblock %}

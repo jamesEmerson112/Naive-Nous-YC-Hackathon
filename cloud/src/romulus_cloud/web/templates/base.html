@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Romulus{% endblock %}</title>
+  <link rel="stylesheet" href="/static/romulus.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Romulus <span>incident timeline</span></a>
+    {% include "partials/killswitch.html" %}
+  </header>
+  <p id="killswitch-result" class="switch-result" role="status" aria-live="polite"></p>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="foot">Times in {{ tz }}. The page updates every 3 s. Every step says who acted and why.</footer>
+  <script>
+  // Kill switch (D11): POST JSON to the ops route and show what it answered.
+  document.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-switch]");
+    if (!btn) return;
+    const freezing = btn.dataset.switch === "freeze";
+    const ask = freezing
+      ? "Freeze the fleet? Rollouts stop and every arm is pinned to its last good version."
+      : "Unfreeze the fleet? Frozen candidates restart from replay.";
+    if (!confirm(ask)) return;
+    const out = document.getElementById("killswitch-result");
+    out.className = "switch-result";
+    out.textContent = freezing ? "Freezing…" : "Unfreezing…";
+    try {
+      const resp = await fetch(btn.dataset.url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({by: "dashboard", reason: "Pressed " + btn.textContent.trim() + " on the dashboard"}),
+      });
+      const body = await resp.json().catch(() => ({}));
+      out.classList.add(resp.ok ? "ok" : "err");
+      out.textContent = resp.ok
+        ? (body.why || (freezing ? "Fleet frozen." : "Fleet unfrozen."))
+        : (body.detail || ("Request failed: HTTP " + resp.status));
+    } catch (e) {
+      out.classList.add("err");
+      out.textContent = "Could not reach the server: " + e;
+    }
+    if (window.htmx) htmx.ajax("GET", "/partials/killswitch", {target: "#killswitch", swap: "outerHTML"});
+  });
+  </script>
+</body>
+</html>

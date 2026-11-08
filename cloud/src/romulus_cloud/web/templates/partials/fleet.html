@@ -1,0 +1,22 @@
+{% if fleet.frozen %}<p class="frozen-note">Fleet frozen: {{ fleet.frozen_why }}</p>{% endif %}
+{% if fleet.devices %}
+<ul class="fleet">
+  {% for d in fleet.devices %}
+  <li class="device health-{{ d.health or 'unknown' }}">
+    <span class="dev-id">{{ d.id }}</span>
+    <span class="dev-meta">{{ d.kind }}{% if d.role == 'canary' %} · canary{% endif %}</span>
+    <span class="dev-health">{{ d.health or 'not seen yet' }}</span>
+    <span class="dev-ver" title="running firmware · harness (→ assigned, if different)">
+      fw {{ d.running.firmware if d.running.firmware is not none else '–' }}
+      · h {{ d.running.harness if d.running.harness is not none else '–' }}
+      {%- if d.running.firmware != d.assigned.firmware or d.running.harness != d.assigned.harness %}
+      <span class="pending">→ fw {{ d.assigned.firmware }} · h {{ d.assigned.harness }}</span>
+      {%- endif %}
+    </span>
+    {% if d.overlay_id %}<span class="dev-overlay">overlay {{ d.overlay_id }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No devices yet. Run <code>make seed</code> or check a device in.</p>
+{% endif %}

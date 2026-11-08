@@ -1,0 +1,9 @@
+<div id="killswitch" class="killswitch{% if fleet.frozen %} frozen{% endif %}"
+     hx-get="/partials/killswitch" hx-trigger="every 3s" hx-swap="outerHTML">
+  {% if fleet.frozen %}
+    <span class="frozen-banner" title="{{ fleet.frozen_why or '' }}">FLEET FROZEN</span>
+    <button type="button" class="switch unfreeze" data-switch="unfreeze" data-url="/v1/fleet/unfreeze">Unfreeze</button>
+  {% else %}
+    <button type="button" class="switch freeze" data-switch="freeze" data-url="/v1/fleet/freeze">Freeze fleet</button>
+  {% endif %}
+</div>
