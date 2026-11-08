@@ -85,33 +85,33 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 10:08 AM PST_
+_Last updated: Sun Nov 8, 10:19 AM PST_
 
-**Current focus:** P4: past the 10 AM code freeze, prepping the judges' table at 11 and the stage at 1 PM. James is bringing up the real arm wave only: `poses.json` now has rest and home poses from the folded arm, and `RealArm.goto` refuses the untaught pick poses (`9297646`); the iPhone camera snapshots stall because macOS hasn't granted camera access to the capture process. Kent wrote a fleet-learning demo runbook; Ishaan is recording the judges' video.
+**Current focus:** P4: past the 10 AM code freeze, prepping the judges' table at 11 and the stage at 1 PM. The real arm moved for the first time: James replayed Andre's recorded chips pick-and-place (`skill wave`) through the arm host on the Pi three times (17.9 s, max error 0.53°, no incidents), runs 2 and 3 filmed through Continuity Camera. Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
 
 **Recently done:**
-- Kent merged **#88** (one UI vocabulary across pages), **#89** (fleet learning live polish: 5 s tick, no cost label for a $0 session, live publisher follows `LEARNING_MODE=live`), **#90** (`/learning` on the Sunlit Workshop) and **#91** (Technician empty state); all of Kent's PRs are merged
-- Kent added the fleet-learning demo runbook `docs/recursive-self-improvement/runbook.md` (`5eaedb9`): `learning_demo.py` seed/status/reset-learn on the `learn` stack (:8001)
-- James landed rest and home poses for the real arm and the pick-pose guard (`9297646`), plus the Pi setup bench log (`b88aced`)
-- Andre's pitch animations (`pitch/`: buddy, keynote, mission, storyboard) landed on `main` directly in `f3a388e`, though PR **#87** is still open
+- James: first real-arm moves, runs 1–3 of Andre's chips pick-and-place (`9ed7f9b`, `0387b94`), after fixing servo load read as masked instead of signed (`ee507e2`, all alarm bits now 0); the Romulus device kind now follows the arm, not the pod, and bench tests set `TECHNICIAN_MODE=off` (`6b3f5ec`)
+- Kent merged **#92** (fleet-learning runbook with a measured live run: 2 Naïve sessions, 57 s from lesson to every arm, Skills v1 → v2) and **#93** (built status in the README and build plan); no open PRs from Kent
+- Camera fix: ffmpeg run from VS Code's terminal (which has camera permission) writes `/tmp/armcam/latest.jpg` once a second
+- Andre's PR **#87** is closed (`pitch/` already landed on `main` in `f3a388e`)
 
 **Open questions:**
-- Real arm: camera checks need camera permission (System Settings → Camera, or run the snapshot from Terminal); is the demo wave only, or will Andre add pick poses? *(inferred)*
+- Real arm: the gripper missed the bag in runs 2 and 3 (James says it's the recording); the ultrasonic sensor isn't on the arm right now (podd reads a steady ~659 mm), so the ultrasonic story can't run on the real arm as it stands *(inferred)*
 - 1 PM demo: which cloud runs `main` with `TECHNICIAN_MODE` (Kent's `tech` stack is pinned at `6e5be55`)? D30 is still a draft; Andre to confirm the STS3215 is the C018 12 V; who is the technician for the demo email (plus phone for T1)?
-- Which demo video is the backup for 1 PM ("Backup demo video" is unclaimed) *(inferred)*; can #87 be closed now that `pitch/` is on `main`, and #63 now that `full-test-2` is merged? *(inferred)*
+- Which demo video is the backup for 1 PM ("Backup demo video" is unclaimed) *(inferred)*; can #63 be closed now that `full-test-2` is merged? *(inferred)*
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
-- `6b2ed83` Sun 10:07 · Kent Gang · Update Kent status in CLAUDE.md
-- `5eaedb9` Sun 10:06 · Kent Gang · Fleet learning: demo runbook
-- `9c76c01` Sun 10:04 · Kent Gang · Redesign: mark built (PRs #80-#91) and move the claim to FINISHED
-- `2b86421` Sun 10:03 · kgang · Merge pull request #91 from jamesEmerson112/ui/technician-empty
-- `23e21ca` Sun 10:03 · Kent Gang · Technician page: a styled empty state in the shell when no case exists yet
-- `9297646` Sun 10:02 · jamesEmerson112 · arm: rest and home poses from the folded arm; untaught pick poses are refused
-- `b88aced` Sun 09:44 · jamesEmerson112 · arm-sim: handoff R0 adds setup.sh and POD_PORT pinning; bench log for the Pi setup
-- `9a6239f` Sun 10:02 · kgang · Merge pull request #90 from jamesEmerson112/ui/learning
-- `2b7ffad` Sun 10:00 · kgang · Merge pull request #89 from jamesEmerson112/learn/live-polish
-- `f3a388e` Sun 09:59 · andred1729 · animation
+- `0387b94` Sun 10:17 · jamesEmerson112 · arm-sim: bench log, runs 2 and 3 of the chips pick-and-place on camera
+- `3728d25` Sun 10:17 · Kent Gang · Update Kent status in CLAUDE.md
+- `8ca0420` Sun 10:11 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `6b3f5ec` Sun 18:11 · Claude · arm-sim: the Romulus device kind follows the arm, not the pod (a sim arm next to the real pod reported as the real arm-1); handoff: set TECHNICIAN_MODE=off for bench tests, since live is now the default
+- `cf46e94` Sun 10:10 · Kent Gang · Fleet learning docs: correct the build-finish time to 10:10
+- `6cf5948` Sun 10:10 · kgang · Merge pull request #93 from jamesEmerson112/learn/wrap-up
+- `0643110` Sun 10:10 · Kent Gang · Fleet learning: built status in README, build plan and team note; quote the lesson title in the card comment
+- `9ed7f9b` Sun 10:09 · jamesEmerson112 · arm-sim: bench log, first real move (Andre's chips pick-and-place) and the load fix
+- `5578135` Sun 10:09 · kgang · Merge pull request #92 from jamesEmerson112/learn/runbook
+- `ee507e2` Sun 10:09 · jamesEmerson112 · arm-sim: read the real servos' load as signed, not masked
 
-**Branches on GitHub:** `main`; open PRs: `claude/hardware-buddy-animation-56b7ff` (#87, Andre's pitch animations), `main` (#63); `ishaan/demo-video-animation` (Ishaan's demo video); merged and still on GitHub: `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PR: `main` (#63); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
