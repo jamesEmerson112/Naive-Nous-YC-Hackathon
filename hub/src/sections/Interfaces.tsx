@@ -19,7 +19,7 @@ import {
   V0_STACK,
   WORK_ORDER_FLOW,
 } from "../content/romulus";
-import { More, Section, Sources, StatusChip, Table } from "../ui";
+import { More, Section, Sources, StatusChip, Table, Txt } from "../ui";
 import { Icon, Schedule, Steps } from "../viz";
 
 function Catalog() {
@@ -76,6 +76,8 @@ function Catalog() {
 
 export function Interfaces() {
   const decided = DECISIONS.filter((d) => d.status === "decided").length;
+  const undecided = DECISIONS.filter((d) => d.status !== "decided").map((d) => d.id);
+  const passing = FLOWS.filter((f) => f.state === "pass").length;
   return (
     <Section id="interfaces" title="Self-healing" layer="heal" owner="Ishaan's overview · Kent's Romulus" status="tentative" sub="The device heals first; Romulus locks good fixes in. Tap a fault to see how it's planted, caught and fixed.">
       <h3>On the device</h3>
@@ -131,13 +133,16 @@ export function Interfaces() {
       <div className="grid-2">
         <div className="panel">
           <div className="head">
-            <h4>Flows F1–F10</h4>
-            <span className="small muted">P0 must work · P1 next</span>
+            <h4>Flows F1–F{FLOWS.length}</h4>
+            <span className="small muted">
+              ✓ {passing} pass with fake devices · ◐ partial · none live yet · P0 must work
+            </span>
           </div>
           <div className="flows">
             {FLOWS.map((f) => (
-              <span key={f.id} className={`flow ${f.p}`}>
-                <b>{f.id}</b> {f.name}
+              <span key={f.id} className={`flow ${f.p}`} title={f.state === "pass" ? "passes with fake devices" : "partly built"}>
+                <span aria-hidden="true">{f.state === "pass" ? "✓" : "◐"}</span> <b>{f.id}</b> {f.name}
+                <span className="sr-only">{f.state === "pass" ? ", passes with fake devices" : ", partly built"}</span>
               </span>
             ))}
           </div>
@@ -155,7 +160,7 @@ export function Interfaces() {
           <div className="head">
             <h4>Decision log</h4>
             <span className="small muted">
-              {decided} decided · D14 open · D15 D19 D20 pending
+              {decided} decided{undecided.length ? ` · ${undecided.join(" ")} not decided` : ""}
             </span>
           </div>
           <div className="decisions">
@@ -225,7 +230,9 @@ export function Interfaces() {
         <More title="Kent's open questions" hint={`${ROMULUS_OPEN.length} items`}>
           <ul className="small">
             {ROMULUS_OPEN.map((q) => (
-              <li key={q}>{q}</li>
+              <li key={q}>
+                <Txt t={q} />
+              </li>
             ))}
           </ul>
         </More>

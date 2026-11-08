@@ -240,12 +240,12 @@ export interface Placement {
 
 export const PLACEMENTS: Placement[] = [
   { what: "Company agents + board", where: "Naïve cloud", lane: "Business", layer: "naive", status: "proposed", note: "pi harness keeps approvals" },
-  { what: "Work-order agent", where: "Naïve agent + Mobilerun MCP", lane: "Business", layer: "naive", status: "tentative", note: "spend cap in Naïve policy (D12)" },
-  { what: "Romulus server", where: "Kent's laptop, bench LAN", lane: "Romulus", layer: "heal", status: "tentative", note: "FastAPI + SQLite + htmx" },
-  { what: "Hermes + arm plugin", where: "bench machine", lane: "Bench control", layer: "hermes", status: "open", note: "or a RunPod pod through a tunnel" },
-  { what: "Pi app + healer + visor", where: "Raspberry Pi 5", lane: "Device (TBD, D14)", layer: "edge", status: "open", note: "one serial-port owner" },
-  { what: "STM32 firmware", where: "Nucleo-F042K6", lane: "Device (Olir)", layer: "edge", status: "tentative", note: "role in the loop TBD" },
-  { what: "Local model", where: "Pi 5, later Jetson Xavier", lane: "Device", layer: "edge", status: "tentative", note: "llama.cpp" },
-  { what: "Batch LLM + diagnosis", where: "Claude API or RunPod", lane: "Romulus", layer: "compute", status: "open", note: "not latency-critical" },
+  { what: "Work-order agent", where: "Naïve agent + Mobilerun MCP", lane: "Business", layer: "naive", status: "open", note: "caps live in our code (D19b); no fleet-ops agent yet" },
+  { what: "Romulus server", where: "Kent's laptop, bench LAN", lane: "Romulus", layer: "heal", status: "decided", note: "FastAPI + Postgres 17 + htmx; M0–M8a merged" },
+  { what: "Hermes + arm plugin", where: "James's Mac for now", lane: "Bench control", layer: "hermes", status: "tentative", note: "Hermes runs with Naïve's MCP; the plugin isn't started" },
+  { what: "Pi app + healer + visor", where: "Raspberry Pi 5", lane: "Device (Ishaan)", layer: "edge", status: "tentative", note: "code not pushed yet (B1); one serial-port owner" },
+  { what: "STM32 sensor pod", where: "Nucleo-F042K6", lane: "Device (Olir)", layer: "edge", status: "tentative", note: "HC-SR04 + LIS3DH; podd + heal tools (#20)" },
+  { what: "Local model", where: "Pi 5, later the Jetson", lane: "Device", layer: "edge", status: "tentative", note: "Ollama · qwen3.5:4b, thinking on (Ishaan's pick)" },
+  { what: "Batch LLM + coding agent", where: "Naïve model proxy", lane: "Romulus", layer: "compute", status: "decided", note: "gpt-oss-120b, ~1.8 s; RunPod optional (D22)" },
   { what: "Isaac Sim + LeIsaac", where: "RunPod RTX pod", lane: "Sim + control", layer: "sim", status: "proposed", note: "candidate canary device" },
 ];

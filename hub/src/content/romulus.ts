@@ -1,4 +1,4 @@
-import { repo, type Src, type Status } from "./meta";
+import { ext, REPO, repo, type Src, type Status } from "./meta";
 import type { IconName } from "../viz";
 
 /** Kent's v0 heal-and-release loop (docs/cloud-platform-planning/cloud-platform-v0-plan.md; D15 pending). */
@@ -30,7 +30,7 @@ export const DECISIONS: Decision[] = [
   { id: "D3", text: "Firmware = versioned manifest: code rev + rules/params + policy model", status: "decided" },
   { id: "D4", text: "Harness = versioned folder; the device teammate picks the framework", status: "decided" },
   { id: "D5", text: "The on-device agent may patch code or rules, then report", status: "decided" },
-  { id: "D5a", text: "Patches are self-reverting overlays. Ishaan now proposes the healer may patch everything, safety layer and visor included; Kent to review", status: "open" },
+  { id: "D5a", text: "Patches are self-reverting overlays; the healer may patch everything, safety layer and visor included (flagged touches_safety, sim canary first, K17)", status: "decided" },
   { id: "D6", text: "Replay, then canary, then auto promote or rollback; no human gate", status: "decided" },
   { id: "D7", text: "Device: hash check, install, health check, roll back on failure", status: "decided" },
   { id: "D8", text: "Cloud down: run last good, queue reports on disk, never bricked", status: "decided" },
@@ -39,56 +39,68 @@ export const DECISIONS: Decision[] = [
   { id: "D11", text: "Humans act only through the kill switch", status: "decided" },
   { id: "D12", text: "Naïve runs parts and technician agents via board cards and Mobilerun", status: "decided" },
   { id: "D13", text: "Cut: twins/ERP, billing per heal, trust ledger, policy retraining", status: "decided" },
-  { id: "D14", text: "A teammate (TBD) owns the device side; Kent owns cloud and contracts", status: "open" },
+  { id: "D14", text: "A teammate owns the device side (Ishaan claimed it in features.txt); Kent owns cloud and contracts", status: "decided" },
   { id: "D15", text: "The v0 build plan: approved in principle (v2)", status: "decided" },
   { id: "D16", text: "Robot telemetry is a first-class asset: synced, curated, versioned datasets", status: "decided" },
   { id: "D17", text: "Runtime: local Docker containers; Python + FastAPI", status: "decided" },
   { id: "D18", text: "Architecture: Compose, Postgres 17, one image for api + worker, Jinja + htmx", status: "decided" },
-  { id: "D19", text: "Naïve integration design, pending", status: "proposed" },
-  { id: "D19b", text: "Over the spend cap: (a) block and wait for a person (recommended) or (b) gated agent", status: "open" },
+  { id: "D19", text: "Naïve integration: outbound only, cards with an Idempotency-Key, poll by card id, caps in our code, fleet-ops on the pi harness", status: "decided" },
+  { id: "D19b", text: "Over the spend cap: block and wait for a person (blocked_over_cap on the timeline)", status: "decided" },
   { id: "D20", text: "Telemetry: LeRobot v3 incident windows, MCAP logs, JSONL traces, schema v0.1", status: "decided" },
   { id: "D21", text: "A coding agent turns code patches into candidates through the gate", status: "decided" },
-  { id: "D21a", text: "Where the coding agent sits in the build order", status: "open" },
+  { id: "D21a", text: "The coding agent is the first P1 item; it starts once its blockers clear (M8)", status: "decided" },
+  { id: "D22", text: "Batch models: Naïve proxy first (gpt-oss-120b), RunPod swappable; the coding agent sits behind a Coder adapter", status: "decided" },
+  { id: "D23", text: "Fleet Doctor in scope: L1 advise and L2 consult on top of the healer, built behind doctor_mode=off", status: "decided" },
+  { id: "D24", text: "Only the device changes the device: Doctor fixes arrive as checked overlays with a proposal_id", status: "decided" },
+  { id: "D25", text: "The Doctor stays out of safety; 6 asks and 2 consults per incident, plus a daily dollar cap", status: "decided" },
+  { id: "D26", text: "The device's harness decides when to escalate (triggers T1–T7, with a circuit breaker)", status: "decided" },
+  { id: "D27", text: "L3 live sessions, and where their agent loop runs: deferred until after the hackathon", status: "open" },
+  { id: "D28", text: "Optional, additive contract changes don't bump CONTRACT_VERSION", status: "decided" },
+  { id: "D29", text: "The sensor pod reports through tools/edge_bridge, which maps the pod healer's records onto contract v0.1; pod patches travel as evidence only (in PR #25)", status: "proposed" },
 ];
 
-/** Kent's timed build plan (cloud-platform-build-plan.md). Times are PST; Sun = day 2. */
-export const SCHEDULE: { id: string; what: string; from: string; to: string; flows?: string }[] = [
-  { id: "M0", what: "Scaffold, contracts v0.1, Naïve + LLM spikes", from: "2026-11-08T00:15:00Z", to: "2026-11-08T01:15:00Z" },
-  { id: "M1", what: "Walking skeleton", from: "2026-11-08T01:15:00Z", to: "2026-11-08T02:45:00Z", flows: "F1 F2" },
-  { id: "M2", what: "Incident timeline page", from: "2026-11-08T02:45:00Z", to: "2026-11-08T03:30:00Z" },
-  { id: "M3", what: "Batch, gate, kill switch", from: "2026-11-08T03:30:00Z", to: "2026-11-08T05:30:00Z", flows: "F3 F4 F5" },
-  { id: "M4", what: "Telemetry ingest", from: "2026-11-08T05:30:00Z", to: "2026-11-08T06:30:00Z", flows: "F7" },
-  { id: "M5", what: "Work orders to Naïve", from: "2026-11-08T06:30:00Z", to: "2026-11-08T07:30:00Z", flows: "F6" },
-  { id: "M7", what: "Overnight launch", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:30:00Z", flows: "F10" },
+/**
+ * Kent's timed build plan (cloud-platform-build-plan.md). Times are PST; Sun = day 2.
+ * `done` is the real state from the build-status table (PR #21); blocks without it count as done once their time passes.
+ */
+export const SCHEDULE: { id: string; what: string; from: string; to: string; flows?: string; done?: boolean }[] = [
+  { id: "M0", what: "Scaffold, contracts v0.1, Naïve + LLM spikes · #1–#4; the live card is still pending", from: "2026-11-08T00:15:00Z", to: "2026-11-08T01:15:00Z", done: false },
+  { id: "M1", what: "Walking skeleton · #5 #8", from: "2026-11-08T01:15:00Z", to: "2026-11-08T02:45:00Z", flows: "F1 F2", done: true },
+  { id: "M2", what: "Incident timeline page · #9", from: "2026-11-08T02:45:00Z", to: "2026-11-08T03:30:00Z", done: true },
+  { id: "M3", what: "Batch, gate, kill switch · #7 #12 #18", from: "2026-11-08T03:30:00Z", to: "2026-11-08T05:30:00Z", flows: "F3 F4 F5", done: true },
+  { id: "M4", what: "Telemetry ingest · #10", from: "2026-11-08T05:30:00Z", to: "2026-11-08T06:30:00Z", flows: "F7", done: true },
+  { id: "M5", what: "Work orders to Naïve · #6 #11 #15", from: "2026-11-08T06:30:00Z", to: "2026-11-08T07:30:00Z", flows: "F6", done: true },
+  { id: "M7", what: "Overnight launch · kit merged (#16); the launch itself is ~12:30 AM", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:30:00Z", flows: "F10", done: false },
   { id: "ON", what: "Overnight run, hands off", from: "2026-11-08T08:30:00Z", to: "2026-11-08T15:00:00Z" },
   { id: "AM", what: "Read digest, fix breakage", from: "2026-11-08T15:00:00Z", to: "2026-11-08T15:30:00Z" },
-  { id: "M6", what: "Datasets and exports", from: "2026-11-08T15:30:00Z", to: "2026-11-08T17:00:00Z", flows: "F8" },
+  { id: "M6", what: "Datasets and exports · #14, built early", from: "2026-11-08T15:30:00Z", to: "2026-11-08T17:00:00Z", flows: "F8", done: true },
   { id: "RA", what: "Real arm + polish", from: "2026-11-08T17:00:00Z", to: "2026-11-08T18:00:00Z" },
   { id: "FZ", what: "Code freeze, rehearse ×3", from: "2026-11-08T18:00:00Z", to: "2026-11-08T19:00:00Z" },
 ];
 
-/** What Kent needs from others, and by when. */
+/** What Kent still needs from others, and by when (Kent's block and the M8 blocker table). */
 export const NEEDS: { what: string; from: string; by: string }[] = [
-  { what: "Device contracts agreed", from: "device teammate (D14)", by: "5:15 PM" },
-  { what: "Naïve API key", from: "Naïve owner", by: "5:15 PM" },
-  { what: "LLM key or RunPod endpoint", from: "whoever owns models", by: "5:15 PM" },
-  { what: "First real check-in", from: "device teammate", by: "9:30 PM" },
-  { what: "fleet-ops agent live", from: "Naïve owner", by: "11:30 PM" },
-  { what: "Real arm ready", from: "device teammate", by: "Sun 9:00 AM" },
+  { what: "Device code + tests in the repo (B1)", from: "Ishaan · still in his checkout", by: "now" },
+  { what: "K17 safety + visor paths", from: "Ishaan · the Fleet Doctor waits too", by: "now" },
+  { what: "Contracts review (I0: B2, B3)", from: "Ishaan", by: "was 5:15 PM" },
+  { what: "First real check-in", from: "the device side", by: "9:30 PM" },
+  { what: "fleet-ops agent live", from: "nobody yet", by: "11:30 PM" },
+  { what: "Real arm ready", from: "Andre (calibrating now) + the device side", by: "Sun 9:00 AM" },
 ];
 
-/** Flows F1–F10 from cloud-platform-flows.md (the progress tracker). */
-export const FLOWS: { id: string; name: string; p: "P0" | "P1" }[] = [
-  { id: "F1", name: "Version sync", p: "P0" },
-  { id: "F2", name: "Incident → story", p: "P0" },
-  { id: "F3", name: "Lock-in to fleet", p: "P0" },
-  { id: "F4", name: "Bad candidate rollback", p: "P0" },
-  { id: "F5", name: "Kill switch", p: "P0" },
-  { id: "F6", name: "Hardware → Naïve work order", p: "P0" },
-  { id: "F7", name: "Telemetry sync", p: "P0" },
-  { id: "F8", name: "Dataset snapshot + export", p: "P1" },
-  { id: "F9", name: "Offline backfill", p: "P1" },
-  { id: "F10", name: "Overnight unattended run", p: "P0" },
+/** Flows F1–F11 from cloud-platform-flows.md (the progress tracker, PR #21). "pass" = passing with fake devices; none is live yet. */
+export const FLOWS: { id: string; name: string; p: "P0" | "P1"; state: "pass" | "partial" }[] = [
+  { id: "F1", name: "Version sync", p: "P0", state: "pass" },
+  { id: "F2", name: "Incident → story", p: "P0", state: "pass" },
+  { id: "F3", name: "Lock-in to fleet", p: "P0", state: "pass" },
+  { id: "F4", name: "Bad candidate rollback", p: "P0", state: "pass" },
+  { id: "F5", name: "Kill switch", p: "P0", state: "pass" },
+  { id: "F6", name: "Hardware → Naïve work order", p: "P0", state: "pass" },
+  { id: "F7", name: "Telemetry sync", p: "P0", state: "pass" },
+  { id: "F8", name: "Dataset snapshot + export", p: "P1", state: "pass" },
+  { id: "F9", name: "Offline backfill", p: "P1", state: "partial" },
+  { id: "F10", name: "Overnight unattended run", p: "P0", state: "pass" },
+  { id: "F11", name: "Code patch → coding agent → candidate", p: "P1", state: "partial" },
 ];
 
 export const DEMO_ORDER: { icon: IconName; title: string; sub: string }[] = [
@@ -119,6 +131,8 @@ export const NAIVE_LIMITS: string[] = [
   "Wallet and prepaid cards return 501: how a phone order gets paid is open.",
   "There is no Python SDK (TypeScript only); Romulus calls REST with httpx. Does that count as \"using the Naïve SDK\"? (Q1)",
   "Overnight runs use NAIVE_MODE=fake, so chaos tests never phone a real supplier (K13).",
+  "The team key lists only the agents and sessions scopes, yet board reads and the model proxy both work with it (Kent's spike, PR #21).",
+  "The org has no fleet-ops agent yet: only the CEO agent and James's test agents.",
 ];
 
 /** What the arm sends (cloud-platform-telemetry.md, pending D20). */
@@ -143,7 +157,7 @@ export const DEVICE_API: [string, string, string][] = [
 ];
 export const API_META = "Base http://<Kent's laptop LAN IP>:8000 · contract v0.1 · no auth in v0 (bench network only) · the device always initiates · ~40 operator endpoints too.";
 
-export const V0_STACK: string[] = ["Docker Compose on Kent's laptop", "api: FastAPI :8000", "worker: batch · gate · Naïve sync", "Postgres 17", "content-addressed blobs (20 GB)", "Jinja + htmx timeline", "fake devices (profile sim)"];
+export const V0_STACK: string[] = ["Docker Compose on Kent's laptop", "api: FastAPI :8000", "worker: batch · gate · Naïve sync", "Postgres 17", "content-addressed blobs (20 GB)", "Jinja + htmx timeline", "fake devices (profile sim)", "coder: mini-swe-agent sandbox (#19)"];
 
 /** Kent's architecture doc §1–2: who calls whom. */
 export const V0_NETWORK: string[] = [
@@ -154,23 +168,25 @@ export const V0_NETWORK: string[] = [
 
 /** Where our sim + control lane plugs into Kent's open questions. */
 export const HOOKS: { q: string; ours: string }[] = [
-  { q: "The canary is always a simulated device. Which sim?", ours: "Our NVIDIA sim (Isaac + LeIsaac, or MuJoCo) as canary sim-2." },
-  { q: "Batch LLM by 5:15 PM: API key or RunPod endpoint?", ours: "Our RunPod vLLM pod or OpenAI credits." },
-  { q: "Is the device agent Hermes (D4)?", ours: "Hermes on the bench is the team's working assumption." },
+  { q: "The canary is always a simulated device. Which sim?", ours: "Still open: a code fix needs a sim twin that runs the device stack (B7). MuJoCo's SO-101 runs on a Mac." },
+  { q: "Batch LLM: API key or RunPod endpoint?", ours: "Answered: the Naïve proxy with the team key (gpt-oss-120b, ~1.8 s). RunPod stays optional (D22)." },
+  { q: "Is the device agent Hermes (D4)?", ours: "No: Ishaan's healer is mini-swe-agent + qwen3.5:4b (h3). Hermes runs arm jobs on the bench." },
 ];
 
 export const ROMULUS_OPEN: string[] = [
-  "D14: who owns the device side (embedded agent, overlays, visor)?",
-  "D19, D19b, D21a: Naïve integration, the over-cap rule, and when the coding agent gets built.",
-  "D5a: may the healer patch the safety layer and visor (Ishaan's answer), or not?",
+  "The go-ahead for the first live Naïve card: creating a card with an Idempotency-Key hasn't been tried live (PR #21).",
+  "Overnight launch (~12:30 AM): at #16's check the laptop was on battery and Docker didn't start on login; make overnight-check flags both.",
+  "M8b is in review (#28): the coding agent wired into batch and gate, for flow F11.",
+  "B7: a canary that runs real device code (a sim twin, or a supervised real arm).",
+  "K17: the safety and visor path list from Ishaan. Until it arrives, the Fleet Doctor blocks everything (D25).",
   "Q1: does calling Naïve's REST API from Python count as using the Naïve SDK?",
-  "How does a phone order get paid (wallet returns 501)? Parts catalogue (parts.yaml) is undefined.",
-  "Is the arm run by lerobot-rollout or a scripted stack?",
-  "Signal and action lists for rules need the device teammate's agreement.",
-  "What marks a fault as suspected hardware? When is an overlay \"held\"?",
+  "How does a phone order get paid (the wallet returns 501)?",
 ];
 
 export const ROMULUS_SRC: Src[] = [
+  ext("PR #21: build status", `${REPO}/pull/21`),
+  repo("cloud/OVERNIGHT.md", "overnight runbook"),
+  repo("docs/fleet-doctor/README.md", "Fleet Doctor"),
   repo("docs/cloud-platform-planning/cloud-platform-build-plan.md", "build plan"),
   repo("docs/cloud-platform-planning/cloud-platform-flows.md", "flows tracker"),
   repo("docs/cloud-platform-planning/cloud-platform-naive-integration.md", "Naïve integration"),

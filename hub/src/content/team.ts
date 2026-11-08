@@ -1,19 +1,80 @@
-import { repo, type Layer, type Src, type Status } from "./meta";
+import { ext, REPO, repo, type Layer, type Src, type Status } from "./meta";
 
 export interface Person {
   who: string;
   initial: string;
   layer: Layer;
+  /** What they're on right now. */
   doing: string;
+  /** What landed since the last map (4:06 PM). */
+  landed: string;
+  /** When their status was last written, and where. */
   synced: string;
 }
 
 export const PEOPLE: Person[] = [
-  { who: "James", initial: "J", layer: "sim", doing: "Putting it all together: this map, research; sim + control next", synced: "3:50 PM" },
-  { who: "Kent", initial: "K", layer: "heal", doing: "Planning done (D0–D21); coding Romulus M0 now, due 5:15 PM. Set up the Naïve org.", synced: "3:47 PM" },
-  { who: "Olir", initial: "O", layer: "edge", doing: "STM32 sanity firmware: LED, banner, heartbeat, build-ID check (firmware branch)", synced: "3:11 PM" },
-  { who: "Ishaan", initial: "I", layer: "heal", doing: "Overview, fault catalog, device-side answers (healer may patch everything)", synced: "3:39 PM" },
-  { who: "Andre", initial: "A", layer: "neutral", doing: "no status yet", synced: "—" },
+  {
+    who: "Kent",
+    initial: "K",
+    layer: "heal",
+    doing: "Four PRs open (#25–#28): M8b wires the coding agent into batch and gate; the edge bridge brings Olir's pod healer into Romulus (D29); Fleet Doctor contracts and foundation. Next: the first live Naïve card, then the overnight launch (~12:30 AM).",
+    landed: "23 PRs merged: Romulus M0–M7 and M8a (#1–#19), the build-status docs (#21), Fleet Doctor plan and decisions D23–D28 (#22, #23), the STM32 toolchain in the sandbox (#24, closes B8). Flows F1–F8 and F10 pass on fake devices. B4 cleared: the team key reaches the Naïve proxy.",
+    synced: "8:10 PM · his block",
+  },
+  {
+    who: "Olir",
+    initial: "O",
+    layer: "edge",
+    doing: "Pod firmware and healer tools are on main. HARNESS.md hands the pod healer's LLM agent loop and blind eval to whoever builds them; nobody has claimed them.",
+    landed: "#20 (7:34 PM): STM32 sensor pod (HC-SR04 + LIS3DH, self-diagnostics), podd + 38 heal tools, six known-bad releases v1.1–v1.6, a portable toolkit/. Bench detection re-verified for scenarios 01–05.",
+    synced: "7:34 PM · his merge",
+  },
+  {
+    who: "Ishaan",
+    initial: "I",
+    layer: "edge",
+    doing: "Getting the Jetson edge box to talk to the Mac: it's plugged in, but no USB device comes up and there's no LAN path yet. The device code (B1) is still unpushed.",
+    landed: "Healer benchmark (835c4f0): qwen3.5:4b with thinking on, harness h3, passed 10 of 12, and it's the only config to pass D1. Device suite: 18 tests, and each planted fault turns it red.",
+    synced: "8:12 PM · his block",
+  },
+  {
+    who: "James",
+    initial: "J",
+    layer: "hermes",
+    doing: "Plan: build arm prototypes tonight without the real arm (a MuJoCo twin, Kent's fake device, Olir's sensor pod), then plug in the red follower arm tomorrow to test and collect data. Owns the Hermes install and this map.",
+    landed: "Naïve console + fault lab (98fe550): pi and Hermes each fixed 12 of 12 runs of Ishaan's six faults on gpt-6-sol; Hermes was faster on 5 of 6, and pi spent $1.37. Self-Healing Arm Briefing page (private).",
+    synced: "7:58 PM · team status",
+  },
+  {
+    who: "Andre",
+    initial: "A",
+    layer: "edge",
+    doing: "Our main person for the arm: calibrating the SO-101 at the bench. With Olir he also has assembly and the camera and ultrasonic wiring (features.txt).",
+    landed: "Bench work, so nothing to commit yet: no commits or branches on GitHub.",
+    synced: "7:58 PM · James",
+  },
+];
+
+export interface OffMain {
+  who: string;
+  where: string;
+  what: string;
+  state: string;
+  href?: string;
+}
+
+/** Work that isn't on main: every branch on GitHub (no forks exist), plus what status blocks say is local. Checked 8:10 PM. */
+export const OFF_MAIN: OffMain[] = [
+  { who: "Kent", where: "cloud/m8b-wiring", what: "M8b: the coding agent wired into batch and gate (F11)", state: "PR #28 open", href: `${REPO}/pull/28` },
+  { who: "Kent", where: "edge/bridge", what: "Edge bridge: Olir's pod healer reports to Romulus with no device changes (D29)", state: "PR #25 open", href: `${REPO}/pull/25` },
+  { who: "Kent", where: "doctor/contracts", what: "Fleet Doctor contracts: ask, advice, proposal, proposal result", state: "PR #26 open", href: `${REPO}/pull/26` },
+  { who: "Kent", where: "doctor/foundation", what: "Fleet Doctor foundation: settings, tables, domain rules, stubs (doctor_mode=off)", state: "PR #27 open", href: `${REPO}/pull/27` },
+  { who: "Kent", where: "cloud/m8-coder-wip", what: "M8 WIP: toy device, code replay, an F11 draft", state: "marked \"not for merge\"; the toy device and replay landed in #19 (inferred)" },
+  { who: "Olir", where: "firmware, demo", what: "Nothing: both branches end at ded518a, which is in main", state: "merged as #20" },
+  { who: "Ishaan", where: "his own checkout (no branch, no fork)", what: "device/ (app, fake hardware, 18 tests), harness/ (h1–h3), bench/ (benchmark runner)", state: "not pushed: blocker B1 for Kent" },
+  { who: "Andre", where: "the bench", what: "Calibrating the arm: hands-on hardware work", state: "nothing to commit yet (per James)" },
+  { who: "James", where: "claude/robot-library-olir-firmware-1b9411 (this Mac)", what: "79f938b: marks the pod's ultrasonic sample as verified pod output", state: "local commit, not pushed" },
+  { who: "James", where: "private artifact + local note", what: "Self-Healing Arm Briefing; a phased plan for tomorrow's demo", state: "not in the repo", href: "https://claude.ai/artifact/7MVLeY6DMTCrLLodGUT9Ft" },
 ];
 
 export interface Lane {
@@ -34,38 +95,50 @@ export const LANES: Lane[] = [
   {
     name: "Business on Naïve",
     layer: "naive",
-    who: ["?"],
-    owner: "unassigned",
+    who: ["K", "?"],
+    owner: "Kent: the org, parts.yaml and posting work orders · the fleet-ops agent and intake: nobody yet",
     status: "open",
     pills: ["intake", "board → Stripe", "work orders"],
-    sunday: ["Org exists: Pro plan, $249.92, one CEO agent (Kent set it up).", "Hires (Operator, Insights, Roboticist) on hold until the control plane exists (N1).", "fleet-ops takes Romulus work orders and phones in parts via Mobilerun."],
+    sunday: [
+      "Romulus posts work orders as Naïve board cards: built and tested in fake mode (M5, #11, #15). The first live card waits on Kent's go-ahead.",
+      "No fleet-ops agent exists yet. The org has the CEO agent and James's test agents (Kent's spike, PR #21).",
+      "Hires (Operator, Insights, Roboticist) are on hold (N1).",
+    ],
     stretch: ["Storefront app", "CRM for customers", "AgentMail customer updates"],
-    needs: ["The bench ↔ cloud bridge", "Mobilerun MCP set up with a spend cap"],
-    overlaps: "Kent's M5 posts the work-order cards this lane's agent picks up.",
+    needs: ["An owner for the fleet-ops agent", "Mobilerun MCP set up with a spend cap", "Stripe direction: bill the robot owner, or pay the supplier"],
+    overlaps: "Kent's M5 posts the work-order cards this lane's agent picks up. Romulus's batch model already runs on the Naïve proxy (gpt-oss-120b).",
   },
   {
     name: "Bench control: Hermes plugin",
     layer: "hermes",
-    who: ["?"],
-    owner: "unassigned",
-    status: "open",
+    who: ["J"],
+    owner: "James: Hermes installed and tested · the arm plugin: nobody yet",
+    status: "tentative",
     pills: ["arm plugin", "guard hook", "phone alerts"],
-    sunday: ["Arm tools in a plugin, a pre_tool_call guard, a post_tool_call log.", "Cron pulls the next card; the gateway sends alerts to a phone."],
+    sunday: [
+      "Hermes v0.23 runs on James's Mac with Naïve's MCP tools and a ChatGPT-plan model (gpt-6-luna or gpt-6-sol).",
+      "Fault lab: Hermes and pi each fixed 12 of 12 stand-in faults; Hermes was faster on 5 of 6 (docs/pi-vs-hermes.md).",
+      "Not started: arm tools in a plugin, the pre_tool_call guard, cron pulling the next card, gateway alerts.",
+    ],
     stretch: ["Catalog PR, video and form by Wed 2 PM PST"],
-    needs: ["One owner of the arm's serial port", "A model with ≥ 64K context"],
-    overlaps: "The healer's harness (pi or mini-swe-agent) is a separate, open choice.",
+    needs: ["An owner for the arm plugin", "One owner of the arm's serial port", "Hermes compaction fix: its summarizer can't load the ChatGPT login"],
+    overlaps: "The healers don't run on Hermes: Ishaan's device healer is mini-swe-agent + qwen3.5:4b, and Olir's pod healer is a tool set waiting for an agent loop.",
   },
   {
     name: "Device: Pi 5 + STM32",
     layer: "edge",
-    who: ["O", "?"],
-    owner: "Olir (STM32) · device side TBD (D14)",
-    status: "open",
-    pills: ["healer", "visor + overlays", "STM32 firmware"],
-    sunday: ["Pi app holds an object; ultrasonic drives the arm.", "Health checks, park, healer fixes and verifies.", "Bare-metal C firmware on the STM32."],
-    stretch: ["Jetson Xavier as a bigger local model"],
-    needs: ["Kent's device contracts (M0)", "LeRobot 0.7 on Python 3.12"],
-    overlaps: "Our earlier arm-host draft; the device side now leads.",
+    who: ["I", "O", "A"],
+    owner: "Ishaan: the device side (D14) · Olir: the STM32 sensor pod · Andre: the arm itself",
+    status: "tentative",
+    pills: ["healer", "sensor pod", "arm calibration"],
+    sunday: [
+      "Ishaan: device app, fake hardware and 18 tests in his checkout, not pushed (B1). Healer: qwen3.5:4b with thinking on, harness h3 (10 of 12).",
+      "Olir: sensor pod firmware, podd with 38 heal tools, and six known-bad releases, on main (#20).",
+      "Andre: calibrating the arm now. It has to be on the bench by Sun 9 AM for F2 and F3 on real hardware (Kent's plan).",
+    ],
+    stretch: ["The Jetson as a bigger local model (Ishaan is connecting it)", "An LLM agent loop for the pod healer (HARNESS.md)"],
+    needs: ["device/ in the repo with its tests (B1)", "Contracts review (I0: B2, B3)", "The K17 safety and visor path list", "A LAN path to the Jetson"],
+    overlaps: "Two healers, one demo story: Olir's pod tools and Ishaan's device healer are separate code (inferred).",
   },
   {
     name: "Romulus cloud",
@@ -73,23 +146,31 @@ export const LANES: Lane[] = [
     who: ["K"],
     owner: "Kent",
     status: "tentative",
-    pills: ["incident timeline", "replay + canary", "kill switch"],
-    sunday: ["Planning done; coding M0 now (contracts, one real Naïve card, one real LLM call), due 5:15 PM.", "M1–M7 through the overnight launch at 12:30 AM; code freeze Sun 10 AM."],
-    stretch: ["Fleet grid and version pipeline screens"],
-    needs: ["Device contracts by 5:15 PM", "Naïve API key by 5:15 PM", "LLM endpoint by 5:15 PM", "fleet-ops agent by 11:30 PM"],
-    overlaps: "The canary device can be our NVIDIA sim.",
+    pills: ["incident timeline", "replay + canary", "Fleet Doctor"],
+    sunday: [
+      "Merged: M0–M7 and M8a (#1–#19). 82 flow tests pass; F1–F8 and F10 work on fake devices.",
+      "In review: M8b (#28), the edge bridge from podd to the cloud (#25, D29), Fleet Doctor contracts and foundation behind doctor_mode=off (#26, #27). B8 closed: the STM32 toolchain merged (#24).",
+      "Next: the first live Naïve card, the overnight launch (~12:30 AM), then code freeze Sun 10 AM.",
+    ],
+    stretch: ["Fleet Doctor L1 advise and L2 consult (off by default)", "Fleet Doctor L3 live sessions (D27, deferred)"],
+    needs: ["Device code in the repo (B1)", "K17 safety and visor paths (the Fleet Doctor waits on them too, D25)", "A canary that runs real device code (B7)"],
+    overlaps: "B7's canary needs a sim twin running the device stack, and the sim box is still unclaimed.",
   },
   {
     name: "Sim + control",
     layer: "sim",
     who: ["J", "C"],
-    owner: "James + Claude · not started; after the map",
+    owner: "James + Claude · no sim running yet",
     status: "proposed",
-    pills: ["API bridge", "canary device", "benchmark"],
-    sunday: ["Bench ↔ cloud bridge with plain APIs.", "NVIDIA sim as Romulus's canary device.", "Control benchmark: VLA vs LLM."],
+    pills: ["sim twin", "canary device", "benchmark"],
+    sunday: [
+      "Done instead: the Naïve console and fault lab (pi vs Hermes), and the Self-Healing Arm Briefing (MuJoCo vs Isaac, GR00T).",
+      "James's plan: arm prototypes tonight without the real arm (a MuJoCo twin, Kent's fake device, Olir's sensor pod); the red follower arm plugs in tomorrow for tests and data.",
+      "Pitch only: a fault factory of 1,000 sim copies to train a level-3 model (inferred).",
+    ],
     stretch: ["Self-reset retry loop", "A trained VLA, if the team allows training"],
-    needs: ["Kent's device contract", "RunPod budget ($75 cap)"],
-    overlaps: "Ishaan's overview says no model training this hackathon. P2 (VLA) needs a call.",
+    needs: ["Pick MuJoCo (runs on a Mac) or Isaac on RunPod", "RunPod budget ($75 cap)"],
+    overlaps: "Kent's B7 needs exactly this sim twin. The motor layer is still open: scripted skills, SmolVLA or Instant Policy.",
   },
 ];
 
@@ -115,9 +196,13 @@ export const PRD: { objective: string; requirements: string[]; apis: string[] } 
 
 export const TEAM_SRC: Src[] = [
   repo("CLAUDE.md"),
-  repo("docs/project-overview.md", "project overview"),
-  repo("docs/cloud-platform-planning/cloud-platform-v0-plan.md", "v0 plan"),
   repo("features.txt", "features.txt"),
+  ext("PR #21: build status", `${REPO}/pull/21`),
+  repo("docs/fleet-doctor/README.md", "Fleet Doctor"),
+  repo("firmware/docs/HARNESS.md", "HARNESS.md"),
+  repo("docs/healer-benchmark-progress.md", "healer benchmark"),
+  repo("docs/pi-vs-hermes.md", "pi vs Hermes"),
+  repo("docs/project-overview.md", "project overview"),
 ];
 
 export interface Question {
@@ -127,17 +212,16 @@ export interface Question {
 }
 
 export const OPEN: Question[] = [
-  { q: "Bench ↔ clouds with plain APIs. Answered so far: board via a scoped MCP token, Romulus via LAN check-ins. Left: Hermes and the Pi's wiring.", who: "James + Claude, next", status: "open" },
-  { q: "Where does Romulus live? N3 (3 PM) said a Naïve app; D17/D18 (3:46 PM) say local Docker. Newer wins?", who: "Kent", status: "open" },
-  { q: "D5a: may the healer patch the safety layer and visor (Ishaan) or not (original rule)?", who: "Kent, Ishaan", status: "open" },
-  { q: "D14: who owns the device side (healer, overlays, visor)?", who: "team", status: "open" },
-  { q: "D19, D19b, D21a: Naïve integration, over-cap rule, coding-agent timing.", who: "Kent", status: "open" },
-  { q: "Train a model this hackathon? The overview says no; P2 (VLA) needs training.", who: "James, team", status: "open" },
-  { q: "What does the STM32 do in the loop, and how does it talk to the Pi?", who: "Olir", status: "open" },
-  { q: "Which harness and model run on the Pi (pi or mini-swe-agent; llama.cpp)?", who: "device owner", status: "open" },
-  { q: "The v0 batch job skips code patches, but D1 and F1–F11 are code fixes.", who: "Kent, device owner", status: "open" },
-  { q: "Which device is the canary? Proposed: our NVIDIA sim.", who: "Kent, James", status: "proposed" },
-  { q: "Which LLM for the batch job and cloud diagnosis: Claude API or RunPod?", who: "Kent, James", status: "open" },
-  { q: "What does the arm do in the demo? (being designed)", who: "team", status: "open" },
+  { q: "Who builds the pod healer's LLM agent loop and blind eval? HARNESS.md says \"you build this\": Ishaan's device healer, a Hermes plugin, or new work?", who: "team", status: "open" },
+  { q: "Two healers, one demo story: Olir's pod healer and Ishaan's device healer are separate code (inferred).", who: "Olir, Ishaan", status: "open" },
+  { q: "Is the ultrasonic read through the STM32 pod or through Pi GPIO?", who: "Olir, Ishaan", status: "open" },
+  { q: "Should pi (Naïve's harness) drive the arm at all, or only Hermes on the bench? In the fault lab both fixed 12 of 12, and Hermes was faster.", who: "team", status: "open" },
+  { q: "Triage gaps: no rule catches a frozen ultrasonic, and the health check doesn't test that the arm lifts, so a wrong D2 fix passes it.", who: "Olir, Ishaan", status: "open" },
+  { q: "Owners for the unclaimed lines: the fleet-ops agent, the Hermes arm plugin, the Mobilerun key, Stripe payment, the AgentMail email.", who: "team", status: "open" },
+  { q: "Stripe direction: bill the robot owner, or pay the supplier? And what is Monid's job?", who: "team", status: "open" },
+  { q: "The go-ahead for the first live Naïve card, before the overnight launch (~12:30 AM).", who: "Kent", status: "open" },
+  { q: "Sim for tomorrow: a twin beside the real arm, or the code canary (B7)? Motor layer: scripted skills, SmolVLA or Instant Policy?", who: "James, team", status: "open" },
+  { q: "A Naïve key with Board scopes for James.", who: "Kent", status: "open" },
+  { q: "When is the arm calibrated and ready for the real-arm run (Sun 9 AM, F2 and F3)? Andre is calibrating it now.", who: "Andre", status: "open" },
   { q: "Can one company win Main plus a sponsor track? AgentMail and Monid bearer auth?", who: "ask organizers", status: "open" },
 ];

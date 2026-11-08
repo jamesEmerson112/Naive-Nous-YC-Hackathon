@@ -323,11 +323,15 @@ h4 { font-size: var(--fs-md); font-weight: 600; }
   .lane-btn { grid-template-columns: 1fr auto auto; }
   .lane-pills { grid-column: 1 / -1; justify-content: flex-start; }
 }
-.people { display: flex; flex-wrap: wrap; gap: 8px; }
-.person { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); flex: 1 1 150px; min-width: 0; }
-.person .avatar { grid-row: span 2; }
+.people { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); }
+.person { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; row-gap: 6px; align-items: start; align-content: start; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--l, var(--line-strong)); border-radius: var(--radius); min-width: 0; }
+.person .avatar { grid-row: span 3; }
 .person-name { font: 700 var(--fs-sm)/1.2 var(--font-display); }
+.person-synced { font-weight: 400; color: var(--muted); }
 .person-doing { font-size: var(--fs-xs); color: var(--muted); }
+.person-doing b { color: var(--ink); font-weight: 600; }
+/* Owner lines are sentences: let them wrap instead of widening the page on phones. */
+.owner-chip, .zoom-head .chip { white-space: normal; text-align: left; }
 .avatars { display: inline-flex; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; font: 700 12px/1 var(--font-mono); background: var(--ls, var(--panel-2)); border: 2px solid var(--l, var(--line-strong)); color: var(--ink); }
 .avatars .avatar + .avatar { margin-left: -6px; }

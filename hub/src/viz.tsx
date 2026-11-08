@@ -204,52 +204,52 @@ const NH = 66;
 
 const NODES: LoopNode[] = [
   {
-    id: "naive", x: 30, y: 62,  title: "Naïve", sub: "the office", layer: "naive", href: "#hosts", owner: "Kent set up the org · hires on hold (N1)",
-    plain: "A hosted platform where AI agents run the company. Naïve provides the infrastructure the agents live on; we write the agents. Both notes are right. It never touches the arm. Today: Pro plan, $249.92, one CEO agent.",
+    id: "naive", x: 30, y: 62,  title: "Naïve", sub: "the office", layer: "naive", href: "#hosts", owner: "Kent: org, parts.yaml, work-order posting · fleet-ops agent: nobody yet",
+    plain: "A hosted platform where AI agents run the company. Naïve provides the infrastructure the agents live on; we write the agents. Both notes are right. It never touches the arm. Today: Pro plan, the CEO agent and James's test agents; no fleet-ops agent yet.",
     a: { h: "Naïve gives us", items: ["agent runtime (micro-VMs)", "Board", "persona inbox + phone", "vault for secrets", "apps + database", "CRM", "budgets + approvals", "audit log"] },
     b: { h: "We build on it", items: ["agent configs: planner, ops", "fleet-ops work-order agent", "customer intake", "Stripe store"] },
   },
   {
-    id: "board", x: 300, y: 62,  title: "Board", sub: "shared to-do list", layer: "naive", href: "#infra", owner: "part of Naïve · Kent's setup",
+    id: "board", x: 300, y: 62,  title: "Board", sub: "shared to-do list", layer: "naive", href: "#infra", owner: "Kent: work-order cards built in fake mode · first live card pending",
     plain: "Naïve's shared to-do list, like Trello. Each job is a card that moves todo → doing → blocked → done.",
     a: { h: "Cards come from", items: ["Naïve agents: arm jobs", "Romulus: work orders"] },
     b: { h: "Cards go to", items: ["Hermes on the bench: arm jobs (scoped token, no tunnel)", "fleet-ops agent: work orders"] },
   },
   {
-    id: "models", x: 560, y: 62,  title: "Models", sub: "RunPod · OpenAI", layer: "compute", href: "#ours", owner: "Kent: batch model proxy (D22) · bench key open",
-    plain: "The LLMs the bench and Romulus call: open models on rented RunPod GPUs, or an API.",
-    a: { h: "Options", items: ["Qwen3-VL-8B on vLLM (RunPod)", "OpenAI ($100 credits)", "Claude API (Kent's batch)"] },
-    b: { h: "Needs", items: ["≥ 64K context for Hermes", "reads images", "tool calling", "an endpoint by 5:15 PM"] },
+    id: "models", x: 560, y: 62,  title: "Models", sub: "RunPod · OpenAI", layer: "compute", href: "#ours", owner: "Kent: Naïve proxy (gpt-oss-120b) · James: ChatGPT plan for Hermes",
+    plain: "The LLMs the bench, the healers and Romulus call: Naïve's model proxy, a ChatGPT plan, a small local model, or rented RunPod GPUs.",
+    a: { h: "In use", items: ["Naïve proxy: gpt-oss-120b (Romulus batch, coding agent)", "ChatGPT plan: gpt-6-luna, gpt-6-sol (bench Hermes)", "Ollama: qwen3.5:4b (device healer)", "RunPod vLLM (optional, D22)"] },
+    b: { h: "Needs", items: ["≥ 64K context for Hermes", "reads images", "tool calling"] },
   },
   {
-    id: "sim", x: 790, y: 62,  title: "NVIDIA sim", sub: "RunPod · canary", layer: "sim", href: "#ours", owner: "nobody yet · James + Claude later",
+    id: "sim", x: 790, y: 62,  title: "NVIDIA sim", sub: "RunPod · canary", layer: "sim", href: "#ours", owner: "nobody yet · needed as the code canary (B7)",
     plain: "A simulated arm on a RunPod GPU. It can be Romulus's canary: new versions run here before the real arm gets them.",
     a: { h: "Tools", items: ["Isaac Sim 5.1 + Isaac Lab", "LeIsaac SO-101 tasks", "MuJoCo + Menagerie"] },
     b: { h: "Our use", items: ["canary device sim-2", "fault drills", "VLA vs LLM benchmark"] },
   },
   {
-    id: "hermes", x: 300, y: 252,  title: "Hermes", sub: "the hands", layer: "hermes", href: "#hosts", owner: "nobody yet · the bench control lane",
+    id: "hermes", x: 300, y: 252,  title: "Hermes", sub: "the hands", layer: "hermes", href: "#hosts", owner: "James: installed and tested vs pi · arm plugin: nobody yet",
     plain: "Nous Research's agent, running at the bench. It pulls the next card and works the arm through our plugin.",
     a: { h: "Hermes gives us", items: ["agent loop", "plugins + tools", "pre_tool_call guard", "cron every 60 s", "gateway → phone", "any model endpoint"] },
     b: { h: "We build on it", items: ["arm plugin", "guard rules", "card-pulling job", "alerts"] },
   },
   {
-    id: "romulus", x: 790, y: 330,  title: "Romulus", sub: "Kent's laptop", layer: "heal", href: "#interfaces", owner: "Kent",
-    plain: "Kent's back office for the arm's health, on his laptop on the bench network. It logs incidents, turns fixes into versions, tests them on the sim canary, and rolls out or back.",
-    a: { h: "What it does", items: ["incident timeline", "version registry", "batch lock-in", "replay + canary", "kill switch", "work-order cards"] },
+    id: "romulus", x: 790, y: 330,  title: "Romulus", sub: "Kent's laptop", layer: "heal", href: "#interfaces", owner: "Kent: M0–M8a and B8 merged · 4 PRs open (M8b, edge bridge, Fleet Doctor)",
+    plain: "Kent's back office for the arm's health: Docker on his laptop, on the bench network. It never watches the arm itself. The Pi's healer, with the local model, fixes faults first and checks in every ~10 s with incidents and recordings. Romulus turns good fixes into versions, tests them on a sim canary, rolls out or back, and calls out to Naïve for board cards and its model proxy (gpt-oss-120b).",
+    a: { h: "What it does", items: ["incident timeline", "version registry", "batch lock-in", "replay + canary", "kill switch", "work-order cards", "coding agent (M8a)", "Fleet Doctor (off)"] },
     b: { h: "Built with", items: ["FastAPI :8000", "worker", "Postgres 17", "Docker Compose", "outbound calls only"] },
   },
   {
-    id: "pi", x: 300, y: 432,  title: "Pi 5", sub: "app · healer · visor", layer: "edge", href: "#interfaces", owner: "Ishaan: app, healer, health checks",
-    plain: "The computer next to the arm. It runs the robot app, a healer agent with a small local model, and the visor that installs new versions.",
-    a: { h: "Runs", items: ["robot app (Python)", "healer + llama.cpp", "visor: check in, pull, install", "LeRobot 0.7", "incident outbox"] },
+    id: "pi", x: 300, y: 432,  title: "Pi 5", sub: "app · healer · visor", layer: "edge", href: "#interfaces", owner: "Ishaan: device code + healer, not pushed yet (B1)",
+    plain: "The computer next to the arm. It runs the robot app; the healer, a small local model (qwen3.5:4b) that watches the arm and fixes faults first; and the visor that pulls new versions from Romulus.",
+    a: { h: "Runs", items: ["robot app (Python)", "healer: mini-swe-agent + qwen3.5:4b", "visor: check in, pull, install", "LeRobot 0.7", "incident outbox", "podd for the sensor pod"] },
     b: { h: "Talks to Romulus", items: ["check-in every ~10 s", "incidents + recordings", "pulls firmware + harness"] },
   },
   {
-    id: "so101", x: 30, y: 432,  title: "SO-101", sub: "the metal", layer: "edge", href: "#lanes", owner: "Olir + Andre: build · Olir: STM32",
+    id: "so101", x: 30, y: 432,  title: "SO-101", sub: "the metal", layer: "edge", href: "#lanes", owner: "Andre: the arm, calibrating now · Olir: STM32 sensor pod (#20)",
     plain: "The physical arm and its sensors on the bench.",
-    a: { h: "Hardware", items: ["6× STS3215 servos", "USB camera 720p", "HC-SR04 ultrasonic", "STM32 Nucleo-F042K6", "e-stop"] },
-    b: { h: "STM32 firmware (Olir)", items: ["LED + boot banner", "1 s heartbeat", "build ID via make check"] },
+    a: { h: "Hardware", items: ["6× STS3215 servos", "USB camera 720p", "HC-SR04 ultrasonic", "LIS3DH accelerometer", "STM32 Nucleo-F042K6", "e-stop"] },
+    b: { h: "STM32 sensor pod (Olir, #20)", items: ["HC-SR04 + LIS3DH", "self-diagnostics", "podd: logs, triage every 3 s", "38 heal tools", "6 known-bad releases"] },
   },
 ];
 
@@ -349,7 +349,7 @@ export function SystemLoop() {
             {n.title}: {n.owner}
           </button>
         ))}
-        <span className="chip">Ishaan: overview + fault catalog (spans boxes)</span>
+        <span className="chip">Ishaan: overview, fault catalog, healer benchmark (spans boxes)</span>
       </div>
       <div className="owners-row gaps" aria-label="Boxes nobody owns yet">
         <span className="eyebrow">Black · not worked on yet</span>
@@ -645,25 +645,27 @@ export function JourneyPlayer({ ok, fail }: { ok: { who: string; title: string; 
 }
 
 /* ---------- Schedule: time blocks on a real clock, with a live "now" line ---------- */
-export function Schedule({ blocks, from, to }: { blocks: { id: string; what: string; from: string; to: string; flows?: string }[]; from: string; to: string }) {
+export function Schedule({ blocks, from, to }: { blocks: { id: string; what: string; from: string; to: string; flows?: string; done?: boolean }[]; from: string; to: string }) {
   const now = useNow();
   const t0 = Date.parse(from);
   const t1 = Date.parse(to);
   const pct = (t: number) => Math.min(100, Math.max(0, ((t - t0) / (t1 - t0)) * 100));
   const fmt = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
+  // A block's real state wins; without one, a block counts as done once its time has passed.
+  const isDone = (b: { to: string; done?: boolean }) => b.done ?? Date.parse(b.to) <= now;
   return (
     <div className="sched">
       <div className="sched-bar" role="img" aria-label={`Build plan from ${fmt(from)} to ${fmt(to)}: ${blocks.map((b) => `${b.id} ${b.what}`).join("; ")}`}>
         {blocks.map((b) => {
           const left = pct(Date.parse(b.from));
           const width = pct(Date.parse(b.to)) - left;
-          const done = Date.parse(b.to) <= now;
+          const done = isDone(b);
           return (
             <span
               key={b.id}
               className={`sb${b.id === "ON" ? " night" : ""}${done ? " done" : ""}`}
               style={{ left: `${left}%`, width: `${width}%` }}
-              title={`${b.id} · ${b.what} · ${fmt(b.from)}–${fmt(b.to)}`}
+              title={`${b.id} · ${b.what} · ${fmt(b.from)}–${fmt(b.to)}${done ? " · done" : ""}`}
             >
               {width > 3.5 ? b.id : ""}
             </span>
@@ -682,8 +684,9 @@ export function Schedule({ blocks, from, to }: { blocks: { id: string; what: str
       </div>
       <ol className="sched-list">
         {blocks.map((b) => (
-          <li key={b.id} className={Date.parse(b.to) <= now ? "done" : ""}>
+          <li key={b.id} className={isDone(b) ? "done" : ""}>
             <b>{b.id}</b> <span className="mono small muted">{fmt(b.from)}</span> {b.what} {b.flows ? <span className="chip">{b.flows}</span> : null}
+            {isDone(b) ? <span className="sr-only"> (done)</span> : null}
           </li>
         ))}
       </ol>

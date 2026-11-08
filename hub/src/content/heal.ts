@@ -56,6 +56,13 @@ export const CATALOG: Fault[] = [
   { id: "F9", name: "flash fails", comp: "STM32", plant: "Stale OpenOCD holds the ST-LINK", detect: "OpenOCD can't open the probe", fix: "Kill the stale session, retry", verify: "Flash and make check pass", human: "board unplugged" },
   { id: "F10", name: "stale build", comp: "STM32", plant: "Flash an old ELF or skip the flash", detect: "make check: build ID mismatch", fix: "Reflash", verify: "make check passes", human: "" },
   { id: "F11", name: "port mix-up", comp: "STM32", plant: "Nucleo and arm adapter both /dev/ttyACM*", detect: "Arm opens the Nucleo; missing motor IDs", fix: "Use /dev/serial/by-id", verify: "Right device after replug, either order", human: "" },
+  // Olir's six known-bad pod releases (fault catalog §A2, firmware/docs/DEMO.md): built and on main (#20).
+  { id: "v1.1", name: "unaligned frame", comp: "STM32", plant: "Pod release v1.1: unaligned stores in the radio frame", detect: "crash, reboot_loop, safe_mode: a HardFault loop", fix: "memcpy or byte-wise stores; rebuild, reflash", verify: "fw_flash: build ID in flash ✓, boot event ✓", human: "" },
+  { id: "v1.2", name: "half-speed clock", comp: "STM32", plant: "v1.2 assumes an HSI/2 PLL input", detect: "link_garbled: UART at half baud; time and distances halved", fix: "Restore the HSI/PREDIV clock setup", verify: "Clean link at 115200; clock and uptime ratios 1.0", human: "" },
+  { id: "v1.3", name: "frozen accelerometer", comp: "STM32", plant: "v1.3 drops the config readback; glitch the supply", detect: "acc_frozen: the accelerometer stays powered down", fix: "Runtime acc init, then restore the readback", verify: "Trigger again: the fixed firmware heals itself", human: "" },
+  { id: "v1.4", name: "UART byte budget", comp: "STM32", plant: "v1.4 streams the accelerometer at 400 Hz", detect: "tx_overrun: ~19 kB/s into an 11.5 kB/s link; distance starves", fix: "Runtime rate acc 50, then fit the byte budget", verify: "tx_drop stops; distance back at 10 Hz; loop ~3 ms", human: "" },
+  { id: "v1.5", name: "wrong g range", comp: "STM32", plant: "v1.5 sets ±4 g without changing the sensitivity", detect: "acc_gravity: 0.5 g at rest", fix: "Use 2 mg per digit for ±4 g", verify: "|a| about 1000–1080 mg at rest", human: "" },
+  { id: "v1.6", name: "I2C hang", comp: "STM32", plant: "v1.6 waits on I2C with no timeout; unplug the sensor", detect: "watchdog, reboot_loop, then safe mode", fix: "Restore the I2C timeouts", verify: "Sensor still out: no reboots, ultrasonic works", human: "replug the sensor" },
   { id: "S1", name: "startup crash", comp: "Pi app", plant: "Exception in the startup path", detect: "Traceback; restart loop", fix: "Fix the startup code", verify: "Up for 60 s", human: "" },
   { id: "S2", name: "hang", comp: "Pi app", plant: "Blocking read or a loop with no exit", detect: "Stale heartbeat; py-spy shows where", fix: "Add a timeout or exit", verify: "Heartbeat < 5 s old for 60 s", human: "" },
   { id: "S3", name: "missing dependency", comp: "Pi app", plant: "Uninstall a dependency", detect: "ImportError", fix: "Reinstall pinned requirements", verify: "import app works", human: "" },
@@ -94,10 +101,11 @@ export const CATALOG: Fault[] = [
 export const HARDWARE: { name: string; icon: IconName; layer: Layer; role: string; note?: string }[] = [
   { name: "Raspberry Pi 5 · 8 GB", icon: "gpu", layer: "edge", role: "robot app, healer agent, local model" },
   { name: "SO-101 arm", icon: "arm", layer: "edge", role: "6× STS3215 servos, LeRobot 0.7" },
-  { name: "HC-SR04 ultrasonic", icon: "loop", layer: "edge", role: "2–400 cm; its reading drives the arm" },
+  { name: "HC-SR04 ultrasonic", icon: "loop", layer: "edge", role: "2–400 cm; its reading drives the arm", note: "read by the STM32 pod" },
+  { name: "LIS3DH accelerometer", icon: "alert", layer: "edge", role: "on the sensor pod, ~50 Hz; triage flags frozen or wrong-range data" },
   { name: "USB camera · 720p", icon: "eye", layer: "edge", role: "evidence for faults" },
-  { name: "STM32 Nucleo-F042K6", icon: "gpu", layer: "edge", role: "sanity firmware: LED, boot banner, 1 s heartbeat, build ID via make check", note: "Olir · firmware branch" },
-  { name: "Jetson AGX Xavier", icon: "cube", layer: "compute", role: "bigger local model, later", note: "not set up" },
+  { name: "STM32 Nucleo-F042K6", icon: "gpu", layer: "edge", role: "sensor pod: reads both sensors, catches its own crashes and resets; podd on the Pi owns its serial port", note: "Olir · on main (#20)" },
+  { name: "Jetson AGX Xavier", icon: "cube", layer: "compute", role: "bigger local model, later", note: "Ishaan is connecting it" },
 ];
 export const HARDWARE_NOTE = "Also on the bench: a 5 V / 5 A supply for the Pi, a matching servo supply, and a router with Ethernet as the Wi-Fi backup.";
 
@@ -120,4 +128,9 @@ export const HEAL_TERMS: { term: string; what: string }[] = [
   { term: "Park", what: "Safe pose, torque off" },
 ];
 
-export const HEAL_SRC: Src[] = [repo("docs/project-overview.md", "Ishaan's project overview"), repo("docs/fault-catalog.md", "fault catalog")];
+export const HEAL_SRC: Src[] = [
+  repo("docs/project-overview.md", "Ishaan's project overview"),
+  repo("docs/fault-catalog.md", "fault catalog"),
+  repo("firmware/docs/DEMO.md", "Olir's demo guide"),
+  repo("docs/healer-benchmark-progress.md", "healer benchmark"),
+];

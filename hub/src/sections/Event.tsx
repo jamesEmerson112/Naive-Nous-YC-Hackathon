@@ -5,6 +5,7 @@ import { Timeline } from "../viz";
 
 const EVENTS = [
   { at: "2026-11-07T19:30:00Z", when: "Sat 11:30 AM", label: "hacking starts" },
+  { at: "2026-11-08T08:30:00Z", when: "Sun 12:30 AM", label: "overnight run starts" },
   { at: "2026-11-08T17:00:00Z", when: "Sun 9:00 AM", label: "collect proof" },
   { at: "2026-11-08T19:00:00Z", when: "Sun 11:00 AM", label: "hacking stops" },
   { at: "2026-11-08T21:00:00Z", when: "Sun 1:00 PM", label: "demos" },

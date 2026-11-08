@@ -32,7 +32,7 @@ const RISKS: string[] = [
 
 export function OurLane() {
   return (
-    <Section id="ours" title="Sim + control" layer="sim" owner="James + Claude" status="proposed" sub="Our lane. A proposal: built on RunPod and the bench once the arm-host owner is settled.">
+    <Section id="ours" title="Sim + control" layer="sim" owner="James + Claude" status="proposed" sub="Our lane, still a proposal: no sim is running yet. So far James + Claude built the Naïve console and fault lab (pi vs Hermes) and the Self-Healing Arm Briefing. Kent's code canary (B7) needs the sim twin below.">
       <div className="jobs">
         {JOBS.map((j) => (
           <div key={j.name} className="job l-sim">

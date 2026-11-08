@@ -78,6 +78,9 @@ export default function App() {
           <div className="mast-text">
             <h1>Arm Company Stack Map</h1>
             <p className="lede">An SO-101 robot-arm company on the hosts' stacks: Naïve is the office, RunPod the machine room, Hermes the hands.</p>
+            <p className="small muted">
+              Refreshed <span className="mono">{AS_OF}</span>: what each person is on, and what isn't on main yet, in <a href="#lanes">Team</a>.
+            </p>
           </div>
           <Countdowns />
         </div>

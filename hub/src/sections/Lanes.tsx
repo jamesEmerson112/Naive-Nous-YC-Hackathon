@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { LANES, PEOPLE, PRD, ROMULUS_RULES, TEAM_SRC } from "../content/team";
+import { LANES, OFF_MAIN, PEOPLE, PRD, ROMULUS_RULES, TEAM_SRC } from "../content/team";
 import { DEMO_PLAN, HARDWARE, HARDWARE_NOTE } from "../content/heal";
 import { TEAM_AS_OF } from "../content/meta";
-import { More, Section, Sources, StatusChip, Txt } from "../ui";
+import { More, Section, Sources, StatusChip, Table, Txt } from "../ui";
 import { Avatars, Icon, Steps } from "../viz";
 
 function List({ title, items }: { title: string; items: string[] }) {
@@ -11,7 +11,9 @@ function List({ title, items }: { title: string; items: string[] }) {
       <p className="eyebrow">{title}</p>
       <ul className="small">
         {items.map((x) => (
-          <li key={x}>{x}</li>
+          <li key={x}>
+            <Txt t={x} />
+          </li>
         ))}
       </ul>
     </div>
@@ -21,16 +23,42 @@ function List({ title, items }: { title: string; items: string[] }) {
 export function Lanes() {
   const [open, setOpen] = useState<string | null>(null);
   return (
-    <Section id="lanes" title="Team lanes" sub={`Five people, five layers. Tentative, as of ${TEAM_AS_OF}. Tap a lane for its scope.`}>
+    <Section id="lanes" title="Team lanes" sub={`Five people, five layers. As of ${TEAM_AS_OF}. Tap a lane for its scope.`}>
       <div className="people" aria-label="People">
         {PEOPLE.map((p) => (
           <div key={p.who} className={`person l-${p.layer}`}>
             <span className={`avatar${p.layer === "neutral" ? " unknown" : ""}`}>{p.initial}</span>
-            <span className="person-name">{p.who}</span>
-            <span className="person-doing">{p.doing}</span>
+            <span className="person-name">
+              {p.who} <span className="person-synced mono">{p.synced}</span>
+            </span>
+            <span className="person-doing">
+              <b>Now</b> {p.doing}
+            </span>
+            <span className="person-doing">
+              <b>Since 4 PM</b> {p.landed}
+            </span>
           </div>
         ))}
       </div>
+
+      <h3>Not on main yet</h3>
+      <p className="sub muted small">Every branch on GitHub (there are no forks), plus what each person's status says is still local.</p>
+      <Table
+        caption="Work not on main"
+        head={["Who", "Where", "What", "State"]}
+        rows={OFF_MAIN.map((o) => [
+          <b key="w">{o.who}</b>,
+          <code key="b">{o.where}</code>,
+          o.what,
+          o.href ? (
+            <a key="s" href={o.href} target="_blank" rel="noreferrer">
+              <Txt t={o.state} />
+            </a>
+          ) : (
+            <Txt key="s" t={o.state} />
+          ),
+        ])}
+      />
 
       <div className="swim">
         {LANES.map((l) => {
@@ -59,7 +87,7 @@ export function Lanes() {
                   </div>
                   <p className="small">
                     <span className="eyebrow">Overlaps </span>
-                    {l.overlaps}
+                    <Txt t={l.overlaps} />
                   </p>
                 </div>
               ) : null}
