@@ -73,13 +73,17 @@ def trial(rec, pan):
 
 # ---- on the Mac: the loop ---------------------------------------------------------------------------------
 def ssh(cmd, timeout=180):
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", PI, cmd], capture_output=True, text=True, timeout=timeout)
+    try:
+        r = subprocess.run(["ssh", "-n", "-o", "BatchMode=yes", PI, cmd], capture_output=True, text=True,
+                           timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as exc:            # a backgrounded process can hold the session open
+        return 124, (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or ""), "timed out"
     return r.returncode, r.stdout, r.stderr
 
 
 HOST_UP = (f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. setsid nohup .venv/bin/python -u -m armsim.host "
            f"--arm real --pod real --var {PI_REPO}/firmware/healer/var --romulus http://192.168.50.1:8000 "
-           "> runs/logs/host.log 2>&1 < /dev/null & echo $! > runs/logs/host.pid; sleep 6; "
+           "> runs/logs/host.log 2>&1 < /dev/null & disown; echo $! > runs/logs/host.pid; sleep 6; "
            "PYTHONPATH=. .venv/bin/python -c \"from armsim.client import call; s=call('status'); "
            "print('host up', s['ok'], s['status'], s['incidents'])\"")
 HOST_DOWN = (f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -c \"from armsim.client import "
@@ -146,7 +150,7 @@ def run(max_trials):
         else:
             print("no success within the cap", flush=True)
     finally:
-        rc, out, err = ssh(HOST_UP)
+        rc, out, err = ssh(HOST_UP, timeout=45)
         print((out.strip().splitlines() or [err.strip()])[-1], flush=True)
 
 
