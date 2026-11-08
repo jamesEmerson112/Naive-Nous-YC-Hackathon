@@ -43,7 +43,9 @@ defaults stay fake and stub):**
 - `check` fails a patch that tampers with existing tests, then proves in the coder image
   with no network that the repro tests fail on behaviour on the base (exit 1, ids in the
   repro file), that the same ids pass with the fix, and that the device tests pass
-  (`doctor_code.check_job`). Anything else closes `failed_checks` (retried within the cap).
+  (`doctor_code.check_job`), then runs the held-out verify scripts. A base with none closes
+  `advised` unless DOCTOR_OFFER_UNVERIFIED (then the check says "offered unverified").
+  Anything else closes `failed_checks` (retried within the cap).
 - Waiting consults (`raw.retry_at` ahead, or blocked on `docker`) take no
   DOCTOR_MAX_OPEN slot.
 - Every close writes the consult's trace as a `doctor_consult` recording
@@ -1376,6 +1378,14 @@ def _apply_verdict(
     )
     if verdict["passed"]:
         _move(t, consult, "offer")
+    elif verdict["outcome"] == rules.ADVISED:  # no verify/ scripts and no opt-in: no retry
+        _close(
+            t,
+            consult,
+            rules.ADVISED,
+            f"The fix passed the repro and device-test checks, but nothing is offered: "
+            f"{verdict['reason']}. The hypotheses stand as advice.",
+        )
     else:
         _close(t, consult, rules.FAILED_CHECKS, f"The fix failed its checks: {verdict['reason']}.")
 
@@ -1385,8 +1395,9 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
     (`domain.doctor.tampered_tests`, before any sandbox run); then job `check:{id}`
     (`doctor_code.check_job`) proves in the coder image, with no network, that the repro
     tests fail on behaviour on the base, that the same test ids pass with the fix, and that
-    the device tests pass (`domain.doctor.check_verdict`). Pass → `offer`; anything else →
-    `failed_checks` (retried within the consult cap)."""
+    the device tests pass (`domain.doctor.check_verdict`), then runs the held-out verify
+    scripts. Pass → `offer`; a base with no verify scripts → `advised` unless
+    DOCTOR_OFFER_UNVERIFIED; anything else → `failed_checks` (retried within the cap)."""
     s = t.settings
     repro = (consult.draft or {}).get("repro_test")
     if (
@@ -1460,6 +1471,7 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
         result.get("after"),
         repro,
         verify=result.get("verify"),
+        offer_unverified=s.doctor_offer_unverified,
     )
     _apply_verdict(t, consult, repro, verdict, result)
     _forget_after_commit(t, key)

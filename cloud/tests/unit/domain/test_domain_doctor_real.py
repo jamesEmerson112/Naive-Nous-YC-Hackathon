@@ -314,7 +314,7 @@ def test_a_repro_that_fails_on_behaviour_then_passes_with_a_clean_fix_passes():
 @pytest.mark.parametrize(
     ("verify", "state", "reason"),
     [
-        ({"available": False}, "none available", None),
+        ({"available": False}, "none available", rules.UNVERIFIED_REASON),
         (VERIFY_OK, "passed", None),
         ({"available": True, "passed": False, "tests": 2}, "failed", "held-out verify failed"),
         ({"available": True, "passed": "yes"}, "failed", "held-out verify failed"),  # strict
@@ -325,6 +325,43 @@ def test_the_held_out_verify_is_pass_fail_only(verify, state, reason):
     v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=verify)
     assert v["verify"] == state and v["reason"] == reason
     assert v["passed"] is (reason is None)
+
+
+def test_with_no_verify_scripts_a_real_check_offers_nothing_unless_opted_in():
+    """Steps 1-3 can be forged from inside the code's own pytest process; only verify can't.
+    No verify scripts: closed `advised` (a retry would end the same way), not offered."""
+    no_scripts = {"available": False}
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts)
+    assert (v["passed"], v["outcome"], v["verify"]) == (False, rules.ADVISED, "none available")
+    assert v["reason"] == (
+        "no held-out verify/ scripts on this base, so nothing decisive checked the fix "
+        "(DOCTOR_OFFER_UNVERIFIED=false)"
+    )
+    assert (v["fails_before"], v["passes_after"], v["device_tests"]) == (True, True, True)
+    assert rules.unverified({"stub": False, "verify": v["verify"]})
+    # The operator's opt-in: it passes, and the check says it went out unverified.
+    v = rules.check_verdict(
+        _run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts, offer_unverified=True
+    )
+    assert (v["passed"], v["outcome"], v["reason"]) == (True, None, None)
+    assert v["verify"] == "none available (offered unverified)"
+    assert "held-out verify: none available (offered unverified)" in v["summary"]
+    assert rules.unverified({"stub": False, "verify": v["verify"]})
+    # The opt-in changes nothing else: an earlier failure still closes failed_checks.
+    v = rules.check_verdict(
+        _run(1), _run(1), _run(0), REPRO_PATH, verify=no_scripts, offer_unverified=True
+    )
+    assert (v["passed"], v["outcome"]) == (False, rules.FAILED_CHECKS)
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=VERIFY_OK)
+    assert v["outcome"] is None and not rules.unverified({"stub": False, "verify": "passed"})
+
+
+@pytest.mark.parametrize(
+    "checks",
+    [{"stub": True, "verify": "none available"}, {"stub": True}, {"stub": False}, {}, None],
+)
+def test_only_a_real_check_without_verify_counts_as_unverified(checks):
+    assert rules.unverified(checks) is False
 
 
 def test_a_collection_error_on_the_base_proves_nothing():

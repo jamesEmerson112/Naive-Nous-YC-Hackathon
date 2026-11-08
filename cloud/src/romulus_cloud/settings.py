@@ -150,6 +150,11 @@ class Settings(BaseSettings):
     doctor_check: Literal["stub", "sandbox"] = "stub"
     # Offer proposals whose check is only a stub (demos and F12); the event says so.
     doctor_offer_stub_checked: bool = False
+    # Offer a sandbox-checked fix whose base has no held-out verify/ scripts. While false
+    # such a consult closes `advised`: the repro and device-test steps run in the code's own
+    # pytest process and can be forged there, so only verify decides. The check says
+    # "offered unverified" when this lets one through.
+    doctor_offer_unverified: bool = False
     # False until the K17 list replaces `safety_paths`; while false every proposal is
     # discarded with "safety paths unknown" (D25).
     safety_paths_confirmed: bool = False

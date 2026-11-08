@@ -1294,6 +1294,25 @@ def _describe(run: Mapping[str, Any] | None) -> str:
     return f"exit {code}" + (f", {tests}" if tests else "")
 
 
+# The held-out verify step's states when the base has no verify/ scripts. Steps 1-3 run in
+# the code under test's own pytest process, so they can be forged from there; only verify
+# (its own process) decides. Without it a real check offers nothing unless the operator opts
+# in (DOCTOR_OFFER_UNVERIFIED), and then the check says so.
+NO_VERIFY = "none available"
+OFFERED_UNVERIFIED = "none available (offered unverified)"
+UNVERIFIED_REASON = (
+    "no held-out verify/ scripts on this base, so nothing decisive checked the fix "
+    "(DOCTOR_OFFER_UNVERIFIED=false)"
+)
+
+
+def unverified(checks: Mapping[str, Any] | None) -> bool:
+    """A real (not stub) check that passed without held-out verify scripts: offered or
+    served only while DOCTOR_OFFER_UNVERIFIED is on (`services.proposals.serve_refusal`)."""
+    checks = checks if isinstance(checks, Mapping) else {}
+    return not checks.get("stub") and checks.get("verify") in (NO_VERIFY, OFFERED_UNVERIFIED)
+
+
 def check_verdict(
     before: Mapping[str, Any] | None,
     after_repro: Mapping[str, Any] | None,
@@ -1301,6 +1320,8 @@ def check_verdict(
     repro_test: str,
     screened: Iterable[str] = (),
     verify: Mapping[str, Any] | None = None,
+    *,
+    offer_unverified: bool = False,
 ) -> dict[str, Any]:
     """The sandbox check's answer (`services.doctor_code.check_job`). Fails closed. In order:
 
@@ -1311,12 +1332,17 @@ def check_verdict(
     3. **passes after:** those same test ids pass with the full patch (`repro_passes`);
     4. the device tests (CODER_TEST_CMD) pass on the base plus the patch's **non-test**
        hunks (`code_only`), with no harness flag (`GAMING_FLAGS`, `existing_test:`);
-    5. the held-out verify scripts, when the base has any, pass on the same code: reason
-       exactly "held-out verify failed", nothing more (`verify` is `{"available", "passed"}`;
-       their output is never kept).
+    5. the held-out verify scripts pass on the same code: reason exactly "held-out verify
+       failed", nothing more (`verify` is `{"available", "passed"}`; their output is never
+       kept). With no scripts on the base, nothing decisive checked the fix: the check
+       fails with `UNVERIFIED_REASON` and outcome `advised` (a retry would end the same
+       way), unless `offer_unverified` (DOCTOR_OFFER_UNVERIFIED), when it passes with
+       `verify` = `OFFERED_UNVERIFIED`.
 
-    → `{passed, fails_before, passes_after, device_tests, verify ("passed" | "failed" |
-    "none available" | "not run"), reason (None when passed), summary, flags, repro_ids}`.
+    → `{passed, outcome (None when passed, else "failed_checks" or "advised"),
+    fails_before, passes_after, device_tests, verify ("passed" | "failed" | "none available"
+    | "none available (offered unverified)" | "not run"), reason (None when passed),
+    summary, flags, repro_ids}`.
     """
     screened = list(screened)
     after = after if isinstance(after, Mapping) else None
@@ -1331,7 +1357,7 @@ def check_verdict(
     if not isinstance(verify, Mapping):
         verify_state = "not run"
     elif not verify.get("available"):
-        verify_state = "none available"
+        verify_state = OFFERED_UNVERIFIED if offer_unverified else NO_VERIFY
     else:
         verify_state = "passed" if verify.get("passed") is True else "failed"
     if screened:
@@ -1355,8 +1381,14 @@ def check_verdict(
         reason = "held-out verify failed"
     elif verify_state == "not run":
         reason = "the held-out verify step never ran"
+    elif verify_state == NO_VERIFY:
+        reason = UNVERIFIED_REASON
     else:
         reason = None
+    if reason is None:
+        outcome = None
+    else:
+        outcome = ADVISED if reason == UNVERIFIED_REASON else FAILED_CHECKS
     summary = (
         f"repro {repro_test}: {'fails' if fails_before else 'does not fail'} on the base "
         f"({_describe(before)}); {'passes' if passes_after else 'does not pass'} with the fix "
@@ -1365,6 +1397,7 @@ def check_verdict(
     )
     return {
         "passed": reason is None,
+        "outcome": outcome,
         "fails_before": fails_before,
         "passes_after": passes_after,
         "device_tests": device_tests,

@@ -238,7 +238,7 @@ Each tick does five things, in order:
 |---|---|---|
 | `declined` | Not wired, no `code_rev`, or the fleet doesn't want it | no |
 | `blocked_over_cap` | The daily spend cap was hit at admit | no |
-| `advised` | Ended with the ledger only: draft `none`, or a stub check that isn't offered | no |
+| `advised` | Ended with the ledger only: draft `none`, a stub check that isn't offered, or a real check on a base with no held-out `verify/` scripts while `DOCTOR_OFFER_UNVERIFIED` is off (§5.4) | no |
 | `discarded` | The patch touches safety, or the safety paths are unknown | no |
 | `failed_checks` | The repro test didn't fail before, or didn't pass after, or the device tests failed | yes |
 | `held` | The device held the overlay | — (lock-in takes over) |
@@ -321,10 +321,11 @@ Both stay behind settings whose defaults don't change behavior (`DOCTOR_DRAFT=fa
     4. **Held-out verify** (architecture §6 item 7: once, at the end, pass/fail only). When the base package has `verify/` scripts (`domain.doctor.held_out_files`; #38's `make device-verify` writes them), one more replay runs them on the same code-only patch (`verify_files=…`, no test command).
        - If they fail, the consult closes `failed_checks` with the reason exactly "held-out verify failed".
        - Only the state and the counts (`tests`, `passed_count`, `skipped`, `timed_out`) are kept. The scripts' output never reaches the ledger, a prompt, the trace or event data.
-       - With no scripts: `checks.verify = "none available"`.
+       - **With no scripts, nothing is offered by default.** Steps 1–3 run inside the code under test's own pytest process, so code there can forge them (the seal included); only the verify process can't be reached. So the check fails with "no held-out verify/ scripts on this base, so nothing decisive checked the fix (DOCTOR_OFFER_UNVERIFIED=false)" and the consult closes `advised`, not `failed_checks`, because a retry on the same base would end the same way. `checks.verify = "none available"`.
+       - **`DOCTOR_OFFER_UNVERIFIED=true`** (an operator's opt-in) offers it anyway, with `checks.verify = "none available (offered unverified)"` in the checks, the summary and `doctor.checked`. The serve-time gate (§6.5) holds such a proposal back whenever the API's own setting is off.
        - `CODER_VERIFY_DIR` isn't read here.
 
-  `domain.doctor.check_verdict` decides. `consult.checks = {stub: False, fails_before, passes_after, device_tests, repro_test, repro_ids, verify, summary}`, which is what the proposal carries; `verify` is `passed`, `failed`, `none available` or `not run`. `doctor.checked` adds `reason`, `repro_test`, `repro_ids`, `flags`, `before` / `after_repro` / `after` (exit code, test counts, `sealed`, the seal's failed ids with reasons, its passed ids, a 2,000-character output tail, all redacted), `verify` and `verify_counts`. A pass goes to `offer`; it needs no `DOCTOR_OFFER_STUB_CHECKED`, since the check is real. Anything else closes `failed_checks`.
+  `domain.doctor.check_verdict` decides. `consult.checks = {stub: False, fails_before, passes_after, device_tests, repro_test, repro_ids, verify, summary}`, which is what the proposal carries; `verify` is `passed`, `failed`, `none available`, `none available (offered unverified)` or `not run`. `doctor.checked` adds `reason`, `repro_test`, `repro_ids`, `flags`, `before` / `after_repro` / `after` (exit code, test counts, `sealed`, the seal's failed ids with reasons, its passed ids, a 2,000-character output tail, all redacted), `verify` and `verify_counts`. A pass goes to `offer`; it needs no `DOCTOR_OFFER_STUB_CHECKED`, since the check is real. No verify scripts without the opt-in closes `advised` (above); anything else closes `failed_checks`.
   - The check calls no model, so it skips the spend check, and a failed or lost run records `doctor.declined` at $0.
   - No repro test inside the patch closes `failed_checks`. An empty `CODER_TEST_CMD` closes `advised`. A worker without `docker` waits (logged once); an injected sandbox is never blocked.
   - **Hidden checks stay hidden.** The `verify/` scripts are in no replay but the last, and nothing from that one beyond pass/fail and counts is kept.
@@ -494,7 +495,8 @@ If an `OverlayStatus` arrived first, `incidents.set_overlay_status` will have ma
   - `doctor_mode != "off"` (no settings counts as off);
   - `safety_paths_confirmed` is true;
   - `touches_safety(code_patch, safety_paths)` is false, recomputed now (OR'ed with the stored flag);
-  - the check isn't a stub, unless `doctor_offer_stub_checked` is on and the draft was a stub (`raw.draft_stub`).
+  - the check isn't a stub, unless `doctor_offer_stub_checked` is on and the draft was a stub (`raw.draft_stub`);
+  - a real check had held-out verify scripts, unless `doctor_offer_unverified` is on (`domain.doctor.unverified`: `checks.verify` is `none available` or `none available (offered unverified)`).
 
   Otherwise the pointer is null and the GET answers `410 proposal_gone`. Nothing is written, so turning a setting back on serves the proposal again. `record_result` is **not** gated: a device can always report what it did.
 - **The result is recorded once,** in `doctor_proposals.raw["result"]` (`result`, `overlay_id`, the verbatim body). A resend is the same `result` and, for `applied`, the same `overlay_id`; reason text and `occurred_at` may differ between outbox attempts. It answers 200 and writes nothing. Any other result answers `409 proposal_result_conflict`.
@@ -538,6 +540,7 @@ Each setting also goes in `.env.example` (`test_settings_defaults.py:108` checks
 | `doctor_draft` | `"fake"` | `none \| fake \| coder` |
 | `doctor_check` | `"stub"` | `stub \| sandbox` |
 | `doctor_offer_stub_checked` | `False` | Offer proposals whose check is a stub (for demos and the F12 test). The event says so |
+| `doctor_offer_unverified` | `False` | Offer a sandbox-checked fix whose base has no held-out `verify/` scripts. Off: the consult closes `advised`, since only verify can't be forged from inside the tests (§5.4). On: offered, labeled `none available (offered unverified)`; the serve-time gate reads it too |
 | `safety_paths_confirmed` | `False` | Stays false until Ishaan's K17 list replaces `safety_paths`. While false, every proposal is discarded (D25) |
 | `doctor_asks_per_incident` | `6` | |
 | `doctor_asks_per_device_day` | `30` | For asks with no incident |

@@ -619,21 +619,73 @@ def test_a_fix_that_fails_the_held_out_verify_closes_with_that_reason_only(
         assert "hand_came_near" not in text and "HAND_AT_30_MM" not in text
 
 
-def test_with_no_verify_scripts_the_check_says_none_available(
-    client, example, make_doctor, db_session, clock
-):
-    doc = make_doctor(ScriptedCoder(GOOD))
-    clock.at(T0)
+def _report_no_verify(client, example) -> str:
+    """An incident on `NO_VERIFY_REV`: the base package has no held-out verify scripts."""
     body = example("incident_consult_wanted") | {
         "incident_id": str(uuid.uuid4()),
         "occurred_at": (T0 - timedelta(minutes=1)).isoformat(),
         "running": {"firmware": 1, "harness": 1, "code_rev": NO_VERIFY_REV},
     }
     assert client.post("/v1/devices/arm-1/incidents", json=body).status_code == 201
-    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER)
-    (consult,) = _consults(db_session, body["incident_id"])
-    assert consult.stage == "applied" and consult.checks["verify"] == "none available"
+    return body["incident_id"]
+
+
+NO_VERIFY_REASON = (
+    "no held-out verify/ scripts on this base, so nothing decisive checked the fix "
+    "(DOCTOR_OFFER_UNVERIFIED=false)"
+)
+OFFERED_UNVERIFIED = "none available (offered unverified)"
+
+
+def test_with_no_verify_scripts_a_good_fix_closes_advised_by_default(
+    client, example, make_doctor, db_session, clock
+):
+    """Steps 1-3 run in the code's own pytest process, so they can be forged from there;
+    without verify scripts nothing decisive checked the fix. Nothing is offered, and no
+    retry (it would end the same way)."""
+    doc = make_doctor(ScriptedCoder(GOOD))
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    assert (first.checks["fails_before"], first.checks["passes_after"]) == (True, True)
+    assert first.checks["device_tests"] is True
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["passed"] is False and checked.data["reason"] == NO_VERIFY_REASON
+    assert checked.data["verify"] == "none available" and checked.data["verify_counts"] is None
+    (closed,) = _events(db_session, incident_id, "doctor.consult_closed")
+    assert closed.data["outcome"] == "advised" and NO_VERIFY_REASON in closed.data["why"]
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
     assert not doc.docker.ever_saw_verify and len(doc.docker.runs) == 12  # no verify replay
+    doc.run(T0 + timedelta(minutes=1), 3)
+    assert len(_consults(db_session, incident_id)) == 1  # advised is never retried
+
+
+def test_with_the_opt_in_a_fix_with_no_verify_scripts_is_offered_labeled_unverified(
+    app, client, example, make_doctor, db_session, clock
+):
+    doc = make_doctor(ScriptedCoder(GOOD), doctor_offer_unverified=True)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER)
+    (consult,) = _consults(db_session, incident_id)
+    assert (consult.stage, consult.status, consult.outcome) == ("applied", "waiting", None)
+    assert consult.checks["verify"] == OFFERED_UNVERIFIED
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["passed"] is True and checked.data["verify"] == OFFERED_UNVERIFIED
+    assert f"held-out verify: {OFFERED_UNVERIFIED}" in checked.data["summary"]
+    assert not doc.docker.ever_saw_verify and len(doc.docker.runs) == 12  # no verify replay
+    # The serve-time gate reads the API's own settings: held back until it opts in too.
+    pid = consult.raw["proposal_id"]
+    held = client.post("/v1/devices/arm-1/checkin", json=example("checkin")).json()
+    assert held["proposal"] is None
+    assert client.get(f"/v1/devices/arm-1/proposals/{pid}").status_code == 410
+    app.state.settings = app.state.settings.model_copy(update={"doctor_offer_unverified": True})
+    pointer = client.post("/v1/devices/arm-1/checkin", json=example("checkin")).json()["proposal"]
+    assert pointer is not None and pointer["proposal_id"] == pid
+    pulled = client.get(f"/v1/devices/arm-1/proposals/{pid}")
+    assert pulled.status_code == 200, pulled.text
+    assert pulled.json()["checks"]["verify"] == OFFERED_UNVERIFIED
 
 
 REPRO_ID = f"{REPRO_PATH}::test_a_hand_near_while_holding_keeps_the_gripper_closed"
@@ -657,20 +709,16 @@ FORGER = (
 def test_a_repro_that_forges_its_pass_is_refused_without_a_seal(
     client, example, make_doctor, db_session, clock
 ):
-    """With no verify scripts, nothing but the repro steps stands between this do-nothing
-    "fix" and an offer. Its repro prints a believable PASSED summary and calls os._exit(0)
-    with the fix; the repro steps read only the result seal, which never got its end."""
+    """With no verify scripts and the opt-in on, nothing but the repro steps stands between
+    this do-nothing "fix" and an offer. Its repro prints a believable PASSED summary and
+    calls os._exit(0) with the fix; the repro steps read only the result seal, which never
+    got its end."""
     doc = make_doctor(
-        ScriptedCoder(_patch_paths({"control/gripper.py": NOT_A_FIX, REPRO_PATH: FORGER}))
+        ScriptedCoder(_patch_paths({"control/gripper.py": NOT_A_FIX, REPRO_PATH: FORGER})),
+        doctor_offer_unverified=True,  # so only the seal stands between it and an offer
     )
     clock.at(T0)
-    body = example("incident_consult_wanted") | {
-        "incident_id": str(uuid.uuid4()),
-        "occurred_at": (T0 - timedelta(minutes=1)).isoformat(),
-        "running": {"firmware": 1, "harness": 1, "code_rev": NO_VERIFY_REV},
-    }
-    assert client.post("/v1/devices/arm-1/incidents", json=body).status_code == 201
-    incident_id = body["incident_id"]
+    incident_id = _report_no_verify(client, example)
     first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
     assert first.outcome == "failed_checks"
     (checked,) = _events(db_session, incident_id, "doctor.checked")
