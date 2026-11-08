@@ -112,33 +112,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 5:19 PM PST_
+_Last updated: Sat Nov 7, 5:30 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged PRs #5 (M1 fake device) and #6 (M4/M5/M7 triage), and still has #7 (M3a gate core) and #8 (`cloud/m1-skeleton`, the device API the Pi will call) open. M0's live Naïve card and LLM call missed the 5:15 PM target. Ishaan is halfway through screening healer harnesses h1–h3 in `edge/` (local). James is cutting the Naïve console down to the agents whose models match on pi and Hermes.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged #7 (M3a gate core) and #8 (M1 walking skeleton, the device API the Pi will call), so M1 is in; #9 (`cloud/m2-timeline`) is open and `cloud/m4-telemetry` is new. M0's live Naïve card and LLM call are still missing. Ishaan is finishing the healer model screen (qwen3:4b-instruct-2507 running). James trimmed the Naïve console to OpenAI-model agents only.
 
 **Recently done:**
-- James pushed `4c5f5b2` (5:17 PM): a reasoning-effort picker for Hermes in the Naïve console, plus a fix to the Hermes MCP toolset name. The picker only changes Hermes. Only the OpenAI agents (hello-luna, hello-sol) run the same model on both sides; GLM and Claude agents fall back to `gpt-6-luna` on Hermes (James's session)
-- Kent merged PR #5 (`9245bd1`, 5:13 PM): the fake fleet, whose client is the reference visor and outbox for the Pi (hash-checked installs with rollback, on-disk FIFO outbox, four scenarios)
-- Kent merged PR #6 (`9870a67`, 5:11 PM): pure functions for work-order triage, spend caps and card text, plus `cloud/config/parts.yaml` with placeholder supplier phones (K13)
-- Ishaan's harness screen: granite4.1:3b on h3 scored 1/6; qwen3.5:4b with thinking reported fixes for D1, D2, D3 and S1, and its hidden-check scores aren't in yet (Ishaan's block)
+- Kent merged PR #8 (`422d4bb`, 5:28 PM): M1 walking skeleton with the device API, registry, incident story, seed and flows F1 + F2; and PR #7 (`05797bf`, 5:23 PM): the pure gate core (`domain/merge.py`, `domain/gate.py`) with tests
+- Ishaan pushed `docs/healer-benchmark-progress.md` (`b9b0f89`, 5:24 PM): on harness h3, qwen3.5:4b with thinking passed **6/6**, thinking off 5/6 (D1 overflowed 16k context), granite4.1:3b 1/6. Single runs, so still noisy; 3-run confirmation comes next
+- James pushed `65795b8` (5:20 PM): the Naïve console lists only OpenAI-model agents, so Hermes runs the same model as pi
+- James's session confirmed pi's context handling from Naïve's docs (auto compaction, context editing, progressive disclosure). There's no compaction event; drops in `token_usage` between turns are the only signal *(inferred)*
 
 **Open questions:**
 - Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4). B4 probably also holds up M0's live Naïve card and LLM call *(inferred, Kent's block)*
-- Ishaan owes Kent a review of the code-package and `code_patch` formats in PR #3 (B2, B3) and a call on `edge/` vs `device/` (B1). PR #8 is the device API his Pi will call (Kent's and Ishaan's blocks)
+- Ishaan plans to move `edge/` into the repo as `device/` once the model tests finish (benchmark doc), which would settle B1. He still owes Kent a review of the code-package and `code_patch` formats in PR #3 (B2, B3)
 - The current Naïve key covers agents and sessions only. A key with `proxy:write` would let Hermes run the same models as pi through Naïve's proxy. A key with Board scopes (and `NAIVE_API_KEY` in `~/.hermes/.env`) would let Hermes pick up and close cards
-- Which small model and harness run on the Pi 5, and what does the STM32 do in the robot loop?
+- Pi heal time is still unmeasured: it needs the Pi's tokens per second for the chosen model (benchmark doc). What does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `422d4bb` Sat 17:28 · kgang · Romulus M1: walking skeleton (device API, registry, story, seed, flows F1 + F2) (#8)
+- `bb74f5a` Sat 17:27 · Kent Gang · Update Kent status in CLAUDE.md
+- `b9b0f89` Sat 17:24 · Ishaan Ranjan · Add device healer benchmark progress and model-selection method
+- `05797bf` Sat 17:23 · kgang · Romulus M3a: pure gate core (domain/merge.py + domain/gate.py) (#7)
+- `65795b8` Sat 17:20 · jamesEmerson112 · Naive console: list only OpenAI-model agents so Hermes runs the same model
+- `e91c5a0` Sat 17:19 · jamesEmerson112 · Update team status in CLAUDE.md
 - `4c5f5b2` Sat 17:17 · jamesEmerson112 · Naive console: Hermes reasoning-effort picker; fix Hermes MCP toolset name
 - `09b3259` Sat 17:16 · Kent Gang · Update Kent status in CLAUDE.md
 - `9245bd1` Sat 17:13 · kgang · Romulus M1: fake device + reference visor/outbox client (#5)
 - `2535308` Sat 17:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `9870a67` Sat 17:11 · kgang · Romulus M4/M5/M7: pure domain triage, labels, digest + parts.yaml (#6)
-- `89f2fbf` Sat 17:09 · jamesEmerson112 · Update team status and features.txt
-- `59d6764` Sat 17:07 · jamesEmerson112 · Naive console: pi vs Hermes side by side, matched models, locked-scope panel
-- `fecf8d3` Sat 17:06 · Kent Gang · Update Kent status in CLAUDE.md
-- `54c8aaf` Sat 16:58 · jamesEmerson112 · Update team status in CLAUDE.md
-- `8c9df7d` Sat 16:56 · Kent Gang · Update Kent status in CLAUDE.md
 
-**Branches on GitHub:** `main`, `firmware` (Olir), `cloud/fake-device` (Kent, merged as PR #5), `cloud/domain-triage-labels-digest` (Kent, merged as PR #6), `cloud/m3a-domain-gate` (Kent, PR #7), `cloud/m1-skeleton` (Kent, PR #8)
+**Branches on GitHub:** `main`, `firmware` (Olir), `cloud/m2-timeline` (Kent, PR #9), `cloud/m4-telemetry` (Kent, new). The merged `cloud/*` branches for #5–#8 are gone
 <!-- team-status:end -->
