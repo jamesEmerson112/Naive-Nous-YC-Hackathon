@@ -28,6 +28,50 @@ PI = os.environ.get("ARMSIM_PI", "pi@192.168.50.2")
 PI_REPO = "~/sage_hardware_healer/Naive-Nous-YC-Hackathon"
 CAMERA = os.environ.get("ARMSIM_CAMERA", "/tmp/armcam/latest.jpg")
 OUT = Path(__file__).resolve().parents[1] / "runs" / "gentest"
+# The debugger and the eye run on Astra (the default profile stays as it is); ARMSIM_HERMES_MODEL overrides.
+HERMES_MODEL = ["-m", os.environ.get("ARMSIM_HERMES_MODEL", "gpt-6-astra"), "--provider", "openai-codex"]
+FRAME = "metres from the centre of the arm's base: x forward (where the arm faces at pan 0), y to the arm's left, z up (the twin's estimated calibration)"
+
+
+class GripEvents:
+    """Grasp and release from the commanded gripper (0-100): a grasp is a drop of 15 or more from an open
+    peak of 40 or more (the recordings squeeze to 1, ~15-20 or ~31); the release is a rise of 10 or more
+    after it."""
+    def __init__(self):
+        self.peak, self.low, self.state = 0.0, None, "idle"      # idle -> open -> grasping -> released
+
+    def step(self, g):
+        if self.state in ("idle", "open"):
+            self.peak = max(self.peak, g)
+            if g >= 40:
+                self.state = "open"
+            if self.state == "open" and g <= self.peak - 15:
+                self.state, self.low = "grasping", g
+                return "close_at"
+        elif self.state == "grasping":
+            self.low = min(self.low, g)
+            if g >= self.low + 10:
+                self.state = "released"
+                return "open_at"
+        return None
+
+
+def planned_points(rec, pan):
+    """Where the recording puts the gripper tip when it closes the jaws and when it opens them again (the
+    twin's forward kinematics on the recorded frames, rotated by pan): for tries with no measurement."""
+    from .arm import SimArm
+    import mujoco
+    frames = json.loads((LIB / f"{rec}.json").read_text())["frames"]
+    arm, out, ev = SimArm(), {}, GripEvents()
+    for i in range(len(frames)):
+        event = ev.step(frames[i][5])
+        if event:
+            f = [frames[i][0] + pan, *frames[i][1:]]
+            arm.d.qpos[arm._qadr] = arm._raw(f)
+            mujoco.mj_forward(arm.m, arm.d)
+            out[event] = {"tip_m": [round(float(v), 3) for v in arm.d.site_xpos[arm._tip]],
+                          "joints_deg": [round(float(v), 1) for v in f], "t_s": round(i / 50, 2)}
+    return out
 
 
 def candidates(n):
@@ -36,13 +80,14 @@ def candidates(n):
 
 
 # ---- on the Pi: one candidate on the real arm -----------------------------------------------------------
-def trial(rec, pan):
+def trial(rec, pan, speed=1.0):
     from .real import RealArm
     prim = json.loads((LIB / f"{rec}.json").read_text())
     prim = {**prim, "frames": [[f[0] + pan, *f[1:]] for f in prim["frames"]]}
     arm = RealArm().connect()
     rest = arm.read()
-    seen = {"holding_s": 0.0, "widest_hold": 0.0, "peak_grip_load_nm": 0.0, "last": time.monotonic()}
+    seen = {"holding_s": 0.0, "widest_hold": 0.0, "peak_grip_load_nm": 0.0, "last": time.monotonic(),
+            "ev": GripEvents(), "close_at": None, "open_at": None}
 
     def watch(a):
         now = time.monotonic()
@@ -51,22 +96,29 @@ def trial(rec, pan):
         cmd = a._goal if a._goal is not None else q
         g, gc, gl = float(q[5]), float(cmd[5]), float(load[5])
         seen["peak_grip_load_nm"] = max(seen["peak_grip_load_nm"], gl)
-        if gc < 10 and g - gc > 4 and gl > 0.25:      # told to close, stopped open, under load
+        event = seen["ev"].step(gc)
+        if event:
+            if seen[event] is None:
+                tip = a.tip()[0]
+                seen[event] = {"tip_m": [round(float(v), 3) for v in tip],
+                               "joints_deg": [round(float(v), 1) for v in q], "t_s": round(a.t, 2)}
+        if seen["ev"].state == "grasping" and g - gc > 4 and gl > 0.25:   # squeezing, stopped open, under load
             seen["holding_s"] += dt
             seen["widest_hold"] = max(seen["widest_hold"], g)
 
     arm.hooks.append(watch)
     t0 = time.time()
     try:
-        r = arm.play(prim)
+        r = arm.play(prim, speed=speed)
     finally:
         arm.hooks.remove(watch)
     back = arm.goto(rest, duration=1.5)
-    out = {"recording": rec, "pan_offset": pan, "arrived": r.get("arrived"), "max_err_deg": r.get("max_err_deg"),
+    out = {"recording": rec, "pan_offset": pan, "speed": speed, "arrived": r.get("arrived"), "max_err_deg": r.get("max_err_deg"),
            "seconds": round(time.time() - t0, 1), "grasped": seen["holding_s"] >= 0.5,
            "holding_s": round(seen["holding_s"], 2), "widest_hold": round(seen["widest_hold"], 1),
            "peak_grip_load_nm": round(seen["peak_grip_load_nm"], 2), "alarms": arm.status(),
-           "back_at_rest": back.get("arrived")}
+           "back_at_rest": back.get("arrived"), "close_at": seen["close_at"], "open_at": seen["open_at"],
+           "points": "measured"}
     arm.disconnect()                                   # torque off, folded on its stops
     return out
 
@@ -103,7 +155,7 @@ def judge(image):
     q = (f"Use your vision tool on the image file {image}. Is a bag of chips inside the open cardboard box? "
          "Reply with exactly one word: INSIDE, NOT, or UNSURE.")
     try:
-        r = subprocess.run(["hermes", "chat", "--oneshot", "-t", "vision", "-q", q], capture_output=True,
+        r = subprocess.run(["hermes", "chat", "--oneshot", *HERMES_MODEL, "-t", "vision", "-q", q], capture_output=True,
                            text=True, timeout=120)
     except subprocess.TimeoutExpired:
         return "UNSURE", "vision timed out"
@@ -154,21 +206,167 @@ def run(max_trials):
         print((out.strip().splitlines() or [err.strip()])[-1], flush=True)
 
 
+SPEEDS = (0.5, 1.0)                                  # the slowest and fastest replay Hermes may ask for
+PLAN_LOG = OUT / "hermes-trials.jsonl"
+
+
+def last_json(text):
+    """The last JSON object in Hermes's reply (it may be pretty-printed over several lines)."""
+    best, depth, start = None, 0, None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(text[start:i + 1])
+                    if isinstance(obj, dict):
+                        best = obj
+                except json.JSONDecodeError:
+                    pass
+    return best
+
+
+def plan(history, before, after):
+    """Hermes debugs the last try and designs the next test. The code clamps whatever it asks for."""
+    tries = []
+    for h in history[-12:]:
+        row = {k: h.get(k) for k in ("try", "recording", "pan_offset", "speed", "grasped", "holding_s",
+                                     "widest_hold", "peak_grip_load_nm", "arrived", "eye", "debug")}
+        if h.get("close_at") or h.get("open_at"):
+            row.update(gripper_closed_at=h.get("close_at"), gripper_opened_at=h.get("open_at"), points="measured")
+        else:
+            pts = planned_points(h["recording"], float(h.get("pan_offset") or 0.0))
+            row.update(gripper_closed_at=pts.get("close_at"), gripper_opened_at=pts.get("open_at"),
+                       points="planned (from the recording; no measurement for this try)")
+        tries.append(row)
+    context = {"coordinate_frame": FRAME, "joint_order": ["shoulder_pan", "shoulder_lift", "elbow_flex",
+               "wrist_flex", "wrist_roll", "gripper"], "tries": tries}
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "context.json").write_text(json.dumps(context, indent=1) + "\n")
+    rows = json.dumps(context, indent=1)
+    q = ("You are debugging a robot arm on a bench. The task: pick up a bag of chips and put it in the open cardboard "
+         "box. The arm can only replay one of three motions taught by hand (recordings: wave, recording_2, "
+         "recording_3), each a pick-and-place, optionally rotated at the base by pan degrees (-10 to +10; which way "
+         "positive turns as seen from the camera is unknown, so infer it from the history) and slowed by speed "
+         "(0.5 to 1.0, lower is slower). The gripper data per try: holding_s is how long the jaws were stopped open "
+         "under load while told to close (0.5 s or more counts as a grasp), widest_hold is how far open they stopped "
+         "(0-100), peak_grip_load_nm is the gripper's peak load, gripper_closed_at / gripper_opened_at are where the "
+         "gripper tip was (and the joint angles) when the jaws closed for the grasp and opened for the drop. "
+         "The structured context, all tries oldest first (also saved as context.json):\n" + rows + "\n"
+         f"Use your vision tool on both camera images of the last try: BEFORE {before} and AFTER {after}. The camera "
+         "faces the arm from the front at about table height, so it may not see inside the box. Then reply with ONE "
+         'JSON object and nothing else: {"verdict": "INSIDE" or "NOT" or "UNSURE" (is a bag of chips inside the box '
+         'in the AFTER image), "debug": "one or two sentences: what happened on the last try and why", '
+         '"next": {"recording": "wave" or "recording_2" or "recording_3", "pan": number, "speed": number, '
+         '"why": "one sentence"}}. Use the coordinates: say where the grasp point was relative to where the bag '
+         'appears in the images, and move it toward the bag. Design the next test to fix what went wrong; do not repeat a try that failed '
+         "the same way.")
+    t0 = time.time()
+    try:
+        r = subprocess.run(["hermes", "chat", "--oneshot", *HERMES_MODEL, "-t", "vision", "-q", q], capture_output=True, text=True,
+                           timeout=180)
+        reply = last_json(r.stdout) or {}
+    except subprocess.TimeoutExpired:
+        reply = {}
+    nxt = reply.get("next") if isinstance(reply.get("next"), dict) else {}
+    rec = nxt.get("recording") if nxt.get("recording") in RECORDINGS else None
+    try:
+        pan = max(-10.0, min(10.0, float(nxt.get("pan"))))
+        speed = max(SPEEDS[0], min(SPEEDS[1], float(nxt.get("speed"))))
+    except (TypeError, ValueError):
+        pan, speed = None, None
+    verdict = reply.get("verdict") if reply.get("verdict") in ("INSIDE", "NOT", "UNSURE") else "UNSURE"
+    return {"verdict": verdict, "debug": str(reply.get("debug") or "no reply from Hermes")[:400],
+            "next": None if rec is None or pan is None else {"recording": rec, "pan": round(pan, 1),
+                                                              "speed": round(speed, 2), "why": str(nxt.get("why", ""))[:200]},
+            "plan_s": round(time.time() - t0, 1)}
+
+
+def guided(max_trials):
+    """One Hermes-designed test per trial until the eye says INSIDE (or the cap, or a servo alarm)."""
+    OUT.mkdir(parents=True, exist_ok=True)
+    history = []
+    old = OUT / "trials.jsonl"                      # what the fixed run already learned
+    if old.exists():
+        for line in old.read_text().splitlines():
+            try:
+                h = json.loads(line)
+                history.append({**h, "pan_offset": h.get("pan_offset"), "speed": h.get("speed", 1.0)})
+            except json.JSONDecodeError:
+                pass
+    before = after = snap("now")
+    print(f"Hermes-guided generate and test: up to {max_trials} tries, {len(history)} earlier tries as data; "
+          f"log {PLAN_LOG}", flush=True)
+    rc, out, err = ssh(HOST_DOWN)
+    print("arm host:", out.strip() or err.strip(), flush=True)
+    try:
+        for i in range(1, max_trials + 1):
+            p = plan(history, before, after)
+            if history:
+                history[-1]["eye"] = p["verdict"]
+                history[-1]["debug"] = p["debug"]
+            print(f"Hermes ({p['plan_s']} s): {p['debug']}", flush=True)
+            if p["verdict"] == "INSIDE" and history:
+                print(f"SUCCESS: the eye sees the bag in the box after try {history[-1]['try']}", flush=True)
+                break
+            if not p["next"]:
+                print("stopping: Hermes gave no usable next test", flush=True)
+                break
+            n = p["next"]
+            print(f"test {i}: {n['recording']} pan {n['pan']:+.1f} speed {n['speed']} | why: {n['why']}", flush=True)
+            before = snap(f"g{i}-before")
+            rc, out, err = ssh(f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.gentest "
+                               f"trial --rec {n['recording']} --pan {n['pan']} --speed {n['speed']}", timeout=240)
+            try:
+                res = json.loads((out.strip().splitlines() or [""])[-1])
+            except json.JSONDecodeError:
+                print(f"test {i} failed to run: {(err or out)[-300:]}", flush=True)
+                break
+            time.sleep(2)
+            after = snap(f"g{i}-after")
+            row = {"try": f"g{i}", **res, "plan": n, "before": str(before), "after": str(after), "ts": time.time()}
+            history.append(row)
+            with open(PLAN_LOG, "a") as f:
+                f.write(json.dumps({**row, "hermes_debug_before": p["debug"]}) + "\n")
+            print(f"  -> {'GRASPED' if res['grasped'] else 'no grasp'} (held {res['holding_s']} s, widest "
+                  f"{res['widest_hold']}, peak grip load {res['peak_grip_load_nm']} N*m), {res['seconds']} s, "
+                  f"alarms {res['alarms']}", flush=True)
+            if any(res["alarms"]):
+                print("stopping: a servo reported an alarm", flush=True)
+                break
+        else:
+            p = plan(history, before, after)               # judge the last try
+            print(f"Hermes ({p['plan_s']} s): {p['debug']} | verdict {p['verdict']}", flush=True)
+            if p["verdict"] != "INSIDE":
+                print("no success within the cap", flush=True)
+    finally:
+        rc, out, err = ssh(HOST_UP, timeout=45)
+        print((out.strip().splitlines() or [err.strip()])[-1], flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="python -m armsim.gentest")
     sub = ap.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("trial")
     t.add_argument("--rec", choices=RECORDINGS, required=True)
     t.add_argument("--pan", type=float, default=0.0)
+    t.add_argument("--speed", type=float, default=1.0)
     r = sub.add_parser("run")
     r.add_argument("--max-trials", type=int, default=6)
+    r.add_argument("--guide", choices=["fixed", "hermes"], default="fixed")
     a = ap.parse_args()
     if a.cmd == "trial":
         if abs(a.pan) > 10:
             raise SystemExit("pan shift capped at 10 degrees")
-        print(json.dumps(trial(a.rec, a.pan)), flush=True)
+        if not SPEEDS[0] <= a.speed <= SPEEDS[1]:
+            raise SystemExit(f"speed must be {SPEEDS[0]}-{SPEEDS[1]}")
+        print(json.dumps(trial(a.rec, a.pan, a.speed)), flush=True)
     else:
-        run(a.max_trials)
+        guided(a.max_trials) if a.guide == "hermes" else run(a.max_trials)
 
 
 if __name__ == "__main__":
