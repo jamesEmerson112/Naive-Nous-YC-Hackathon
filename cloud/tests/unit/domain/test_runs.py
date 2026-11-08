@@ -86,7 +86,12 @@ def _run(**kw):
         ),
         # unverified
         ((_run(),), {}, UNVERIFIED, "device says fixed; nothing checked it"),
-        ((None, {"resolved": True}, {"id": "ov-3", "status": "active"}), {}, UNVERIFIED, "resolved"),
+        (
+            (None, {"resolved": True}, {"id": "ov-3", "status": "active"}),
+            {},
+            UNVERIFIED,
+            "resolved",
+        ),
         ((_run(status="unknown"),), {}, UNVERIFIED, "nothing checked it"),
     ],
 )

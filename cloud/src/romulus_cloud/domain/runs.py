@@ -39,7 +39,10 @@ REPEAT_WINDOW_S = 900.0
 
 # The table as the dataset card prints it: (verdict, when).
 TABLE = (
-    (EXCLUDED, "a rehearsal (`agent_runs.sim`), a run still going, or hardware (work order or park)"),
+    (
+        EXCLUDED,
+        "a rehearsal (`agent_runs.sim`), a run still going, or hardware (work order or park)",
+    ),
     (
         FAIL,
         "bench check failed; agent left it broken; lock-in rolled back; device reverted the "
