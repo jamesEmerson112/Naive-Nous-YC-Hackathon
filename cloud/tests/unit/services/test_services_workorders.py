@@ -225,6 +225,19 @@ def test_live_mode_refuses_the_placeholder_phone(db_session, settings, arm):
     assert "· +1 teammate" in card["body"]
 
 
+@pytest.mark.parametrize("spelling", ["teammate_phone", "  Teammate_Phone\t", " TEAMMATE_PHONE "])
+def test_live_mode_refuses_any_spelling_of_the_placeholder(db_session, settings, arm, spelling):
+    """PR #11 nit 1: the K13 check ignores case and surrounding whitespace."""
+    live = settings.model_copy(update={"naive_mode": "live", "work_order_phone": spelling})
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, live)
+    naive = FakeNaive()
+    _sync(db_session, live, naive)
+    order = _order(db_session, incident_id)
+    assert order.status == "needs_human" and naive.cards == {}
+    assert "request" not in order.raw
+
+
 def test_live_never_posts_an_order_created_in_fake_mode(db_session, settings, arm):
     """Decision (c): the fake backlog goes to a person instead of out to Naïve."""
     incident_id = _incident(db_session, arm)
@@ -303,6 +316,44 @@ def test_http_naive_gets_the_idempotency_key_and_polls_by_id(db_session, setting
 
 
 # --- polling ---------------------------------------------------------------------------------
+
+
+def test_a_card_without_updated_at_is_compared_by_status_and_note(db_session, settings, arm):
+    """PR #11 nit 2: with no `updated_at`, an event is recorded only when status or note
+    changed, not on every poll."""
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, settings)
+    card = {"id": "crd_1", "status": "todo", "note": None}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201 if request.method == "POST" else 200, json=card)
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    naive = HttpNaive("sk_test", "agt_ceo", http_client=http)
+    s = settings.model_copy(update={"naive_api_key": SecretStr("sk_test")})
+    _sync(db_session, s, naive)
+    order = _order(db_session, incident_id)
+    assert order.status == "posted"
+
+    def n_events():
+        return len(events.find(db_session, {"work_order": order.id}))
+
+    n = n_events()
+    for i in (1, 2, 3):  # unchanged card: nothing recorded
+        _sync(db_session, s, naive, T0 + timedelta(seconds=15 * i))
+    assert n_events() == n and order.status == "posted"
+
+    card["note"] = "calling the desk"  # note changed, status the same
+    _sync(db_session, s, naive, T0 + timedelta(seconds=60))
+    assert n_events() == n + 1
+    _sync(db_session, s, naive, T0 + timedelta(seconds=75))
+    assert n_events() == n + 1
+
+    card["status"] = "doing"  # status changed
+    _sync(db_session, s, naive, T0 + timedelta(seconds=90))
+    assert order.status == "in_progress" and n_events() == n + 2
+    _sync(db_session, s, naive, T0 + timedelta(seconds=105))
+    assert n_events() == n + 2
 
 
 class CountingNaive(FakeNaive):

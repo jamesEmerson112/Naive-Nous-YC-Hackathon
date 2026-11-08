@@ -464,7 +464,7 @@ def _request(
             )
         return frozen
     phone = settings.work_order_phone.strip()
-    if settings.naive_mode == "live" and phone in ("", PLACEHOLDER_PHONE):
+    if settings.naive_mode == "live" and phone.upper() in ("", PLACEHOLDER_PHONE):
         return (
             "WORK_ORDER_PHONE is still the placeholder. Set it to a teammate's phone "
             "(never a business, K13), restart the worker, then approve the order"
@@ -573,8 +573,8 @@ def _post_failed(session: Session, order: WorkOrder, now: datetime, exc: NaiveEr
 
 
 def _poll(session: Session, order: WorkOrder, now: datetime, naive: NaiveClient) -> int:
-    """Read one card and act only if Naïve changed it (`updated_at`, §3.2). Returns 1 on a
-    recorded change."""
+    """Read one card and act only if Naïve changed it (`updated_at`, §3.2; without one, its
+    status or note). Returns 1 on a recorded change."""
     assert order.naive_card_id is not None
     if _card(order).get("status") == "done":
         return 0  # Naïve's `done` is final: nothing more will change on the card
@@ -583,6 +583,12 @@ def _poll(session: Session, order: WorkOrder, now: datetime, naive: NaiveClient)
         stamp = card.get("updated_at")
         if stamp is not None and stamp == order.naive_updated_at:
             return 0
+        last = _card(order)
+        if stamp is None and (card.get("status"), card.get("note")) == (
+            last.get("status"),
+            last.get("note"),
+        ):
+            return 0  # no `updated_at` to go by: unchanged status and note mean no change
         status = str(card.get("status") or "")
         last_comment = ""
         if status not in ("todo", "doing", "done"):
