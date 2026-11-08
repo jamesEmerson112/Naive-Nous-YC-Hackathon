@@ -1,5 +1,27 @@
 # CLAUDE.md — Naive Nous YC Hackathon
 
+## Branch notice for Andre's Claude session (from James, Sat Nov 7, about 11 PM PST)
+
+**`arm/teleop-recording` is 59 commits behind `main`.** Everything below this notice is `main`'s CLAUDE.md at `7c734da` (Sat 10:59 PM). The team status, the claims and the working rules below are current; the copy this branch had was from Sat 8:19 PM. This branch has 6 commits of its own (the `arm/prims/` work), so expect the `arm/README.md` conflict described below.
+
+Before you do more work on this branch:
+1. Bring in main with `git fetch origin && git merge origin/main`, or start a fresh branch from `origin/main`. If CLAUDE.md conflicts, take main's copy with `git checkout --theirs CLAUDE.md`. That also removes this notice.
+2. Read `features.txt` on main and check the claims (`<--- Name`) before starting anything. If someone else has the line, talk to them first.
+3. Check these overlaps, found Sat 10:55 PM:
+   - **Two layouts for the same arm files.** #36 (merged from `demo`) put byte-identical copies of Andre's `recording_2.json`, `recording_3.json`, `wave.json`, `naive_follower.json` and `prim-record.sh` on main in a flat `arm/` folder, with its own `arm/README.md`. `arm/teleop-recording` keeps the same files under `arm/prims/library/`, `arm/calibration/` and `arm/bin/`. Merging main into that branch conflicts on `arm/README.md` and leaves two copies of each file. Andre and Olir: pick one layout.
+   - **Three drivers for the real arm.**
+     - Andre's `prims.Arm` (`arm/prims/core.py`, on `arm/teleop-recording`).
+     - Olir's `arm/safe_replay.py` and `arm/live_replay.py` (on main, #36).
+     - James's simulated arm host and the Hermes `so101-arm` plugin (`prototypes/arm-sim/` on `james/arm-sim`, not pushed yet). James and Andre plan to point it at the real arm on Sunday at 7:30 AM.
+
+     Agree which one drives the demo before extending any of them.
+   - **Ultrasonic source and serial ports.** Both were flagged in #31:
+     - `device/robot/` reads the ultrasonic in cm from Pi GPIO, while Olir's pod reports mm through `podd`.
+     - The arm's servo bus and `podd` both default to `/dev/ttyACM0`.
+   - **One ultrasonic heal story.** Olir's `features.txt` claim "Ultrasonic bad image 07 + arm heal test" and James's sim watchdog are two halves of the same demo. The watchdog parks the arm when the distance stays stuck while the arm moves, then resumes after a verified repair. Line the two up.
+
+---
+
 Shared context for everyone working in this repo, people and Claude sessions alike. A Claude Code session rewrites the **Team status** section about every 10 minutes and pushes it to `main`. You can edit everything else by hand.
 
 ## What this repo is
@@ -10,6 +32,7 @@ Prep and build work for two hackathons running at the same time:
 - **Hermes Agent Plugin Hackathon** (Nous Research, online). Entries are due **Wed Nov 11, 5 PM EST**.
 
 ## Where things are
+- `README.md`: how the pieces fit and what each code folder is: `cloud/` (Romulus cloud), `packages/contracts/` (the device ↔ cloud contract), `tools/fake_device/` (fake arms), `tools/edge_bridge/` (runs on the Pi and reports Olir's pod healer to the cloud), `firmware/` (Olir's STM32 pod and its healer)
 - `features.txt`: the feature tracker. One short line per feature; claim one by adding `<--- YourName`, and move it to FINISHED when done. Check it before you start anything.
 - `hub/`: source of the "Arm Company Stack Map" artifact (visual map of the stack, team lanes, faults, tools). Content is in `hub/src/content/*.ts`; `npm run build` writes `hub/dist/artifact.html`.
 - `docs/so101-research.md`: LeRobot 0.7 on the SO-101, NVIDIA sim on RunPod, resets, edge devices, models, with sources
@@ -45,7 +68,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 8:20 PM PST · write notes outside the markers_
+_Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 11:00 PM PST · write notes outside the markers_
 
 - **Pitch:** we sell uptime: one heal loop at arm, fleet and company scale. Rivals only diagnose ([Alloy](https://theaiinsider.tech/2026/08/13/alloy-robotics-raises-8m-in-new-funding-to-help-engineers-debug-robot-fleets-with-ai-agents/)) or recommend fixes ([Formant F3](https://www.businesswire.com/news/home/20250630008190/en/Formant-F3-Brings-Generative-AI-and-Agentic-Reasoning-to-Robot-Ops)). We close the loop: "PagerDuty with hands" *(inferred)*.
 - **Rule:** no LLM in the real-time control loop. Models propose reversible fixes, and the gate checks them: replay → simulated canary → automatic promote or rollback. People only touch the kill switch (D6, D11).
@@ -55,49 +78,53 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 8:20 PM P
 - **Research:** pin LeRobot v0.7.0, since it breaks the API ([release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
 - **Research:** the SO-101 sim twin is `robotstudio_so101` in MuJoCo Menagerie, and it runs on a Mac ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
 - **Research:** bring a router, Ethernet and a backup video, because venue Wi-Fi sinks demos ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)). Everything else is in [`docs/cloud-platform-planning/README.md`](docs/cloud-platform-planning/README.md).
-- **Now:** three PRs are open. #28 (M8b) wires the coding agent into the batch and gate (F11). #25 is the edge bridge: Olir's pod healer reports to the cloud with no device changes (D29). #27 is the Fleet Doctor foundation, behind `doctor_mode=off`; its contracts merged in #26. Coming up: the live Naïve card on Kent's go-ahead, and the 12:30 AM go/no-go.
-- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3 #7, #12, #18 · M4 #10 · M5 #11, #15 · M6 #14 · M7 #16 · M8a #19 · B8 toolchain #24 · docs #21 · Fleet Doctor plan #22, decisions #23, contracts #26 · triage #6 · lint #13 · device kinds #17 · decisions D0–D28 locked (D27 deferred).
-- **Blocked:** not on B4: the team key reaches the Naïve proxy, and the live card waits only on Kent's go-ahead (#21). B8 closed with #24. Still open: B1 (device code in the repo; Ishaan is held up by the Jetson link) and the K17 path list, which also gates the Fleet Doctor.
-- **Asks:** Ishaan: land `device/` (healer pick is qwen3.5:4b with thinking on h3, [benchmark](docs/healer-benchmark-progress.md)), review contracts #3 (B2, B3), send the K17 safety and visor paths. Until those paths arrive, the Fleet Doctor is blocked too (D25). Owed to James: a Naïve key with Board scopes.
+- **Now:** two PRs are open. #44 is Fleet Doctor PR 7, the last of its 9: real evidence, coder draft, sandbox check, consult traces. #46 (B5) limits the coding-agent sandbox to the LLM only, with the key held by a proxy. M8 is fully merged (#24, #28, #38). Next: P0 Stripe direction with James · P1 live Naïve card · P2 overnight launch by 12:30 AM.
+- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3 #7, #12, #18 · M4 #10 · M5 #11, #15 · M6 #14 · M7 #16 · M8a #19 · M8b #28 · real device code #38 · B8 toolchain #24 · edge bridge #25 · docs #21, #45 · Fleet Doctor plan #22, decisions #23, contracts #26, foundation #27, LLM helper #29, L1 ask #34, L2 consult #35, device reference #32, held-overlay lock-in #39, F12 interop #42, ledger #33, L3 contract draft #30, tracker #37 · triage #6 · lint #13, #40 · device kinds #17 · decisions D0–D28 locked (D27 deferred).
+- **Blocked:** only on the K17 safety and visor path list, which also gates the Fleet Doctor. B4 is clear (the live card waits only on Kent's go-ahead, #21), and B1 cleared when Ishaan's device code merged as #31 (`device/`, `harness/`, `bench/`).
+- **Asks:** Ishaan: review the contracts (I0: B2, B3) and send the K17 safety and visor paths. James: decide the Stripe direction with Kent (bill the robot's owner, or pay the supplier). Owed to James: a Naïve key with Board scopes.
 <!-- romulus-sync:end -->
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sat Nov 7, 8:12 PM PST._
-- **Now:** getting the Jetson edge box talking to the Mac. It is in the right USB-C port and the Mac saw the replug at 7:45 PM, but no USB device has come up and no prompt shows; either Linux with USB device mode isn't up on the Jetson or the cable carries no data, and there is no LAN path yet (session "Identify the connected Jetson", 20:10). The device code (B1) is still split into `device/`, `harness/` and `bench/` in his checkout and not pushed yet.
-- **Just finished:** healer benchmark progress doc with final results and the model pick, qwen3.5:4b with thinking on, harness h3 (`835c4f0`). Device test suite: 18 tests pass, and each planted fault turns it red; oracle 6/6 and baseline 0/6 still hold (test-bed session recap). Earlier: model-selection method (`b9b0f89`), `features.txt` claims (`cd54c16`, `e59093f`), device-side answers (`5cea9c2`).
-- **Blocked on:** the Jetson link (no USB data, no LAN). Owes Kent the safety and visor path list (K17), the `device/` landing (B1), a review of the code-package and `code_patch` formats in PR #3 (B2, B3), and a co-review of Fleet Doctor D23–D27, per Kent's block.
-- **Branch and files:** `main`. Untracked in his checkout: `device/` (README, pytest.ini, `tests/test_spec.py`, `tests/test_classify.py`, conftest), `harness/`, `bench/` (`run_bench.py`, `tasks.py`, README).
+_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sat Nov 7, 10:15 PM PST._
+- **Now:** pod healer loop handed to Olir's session for bench runs (`firmware/harness/HANDOFF.md`, `8d9a30b`); session "Build the pod healer agent loop and blind eval" stood down at 21:47 with no bench run. Not on the bench yet. The Jetson link is still paused (no USB data or LAN path, session "Identify the connected Jetson").
+- **Just finished:** pod healer agent loop and blind eval merged as #41 (`4ee3517`): `agent.py` with Claude and Ollama drivers and a risk gate, `evaluate.py`, tests, README, HANDOFF.md (`72f53c8`); pointed Olir's session to the handoff in CLAUDE.md (`8d9a30b`). Earlier: device code and healer harness #31 (`6c3b006`).
+- **Blocked on:** bench runs wait on Olir (SSH to the pod, API key, per the session recap). Still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), per Kent's block.
+- **Branch and files:** main checkout on `main` at `8d9a30b`, clean, up to date. `ishaan/pod-agent-loop` (worktree `naive-pod-loop`) is merged.
 <!-- ishaan-sync:end -->
+
+**Pod healer agent loop, for Olir's session:** running or benchmarking it on the bench (`firmware/harness/`, merged as #41)? Start with [`firmware/harness/HANDOFF.md`](firmware/harness/HANDOFF.md): bench steps, what's verified, what to report.
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 8:19 PM PST_
+## Team status
+_Last updated: Sat Nov 7, 10:58 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged B8 (#24) at 8:12 PM and the Fleet Doctor contracts (#26) at 8:18 PM; three PRs are still open: the edge bridge (#25), the Fleet Doctor foundation (#27, behind `doctor_mode=off`) and M8b, the coding agent wired into batch and gate (#28). James's session is folding #24 and Ishaan's 8:12 PM status into the Stack Map for v10 *(James's session)*. Andre is calibrating the arm; Ishaan is still blocked on the Jetson link, and the device code (B1) is not pushed.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent opened #46 (B5, 10:57 PM): the coding agent's sandbox now reaches only the LLM, through a key-holding proxy; #44 (Fleet Doctor PR 7, the last of 9) is still open. James's P1 arm prototypes work in the MuJoCo sim but aren't pushed yet. Olir has the pod healer bench runs (`firmware/harness/HANDOFF.md`) and the arm heal test with bad ultrasonic image 07. The overnight launch is due by 12:30 AM (Kent's plan).
 
 **Recently done:**
-- Kent merged #24 (`34c52c7`, 8:12 PM): the coder sandbox image now carries the STM32 toolchain, with an offline firmware build check (`cloud/coder/firmware_check.py`), a `coder_firmware_check.sh` script and unit plus integration tests. This closes blocker B8 *(inferred from Kent's block: "B8 closes with #24")*
-- Ishaan's 8:12 PM update: the Jetson is in the right USB-C port and the Mac saw the replug, but no USB device comes up; either Linux USB device mode isn't running on the Jetson or the cable carries no data, and there is still no LAN path
-- Kent merged #26 (`3239ad1`, 8:18 PM): Fleet Doctor contracts for ask, advice, proposal and proposal result, with no contract version bump per D28. #25 (edge bridge, D29), #27 (foundation) and #28 (M8b, F11 code-patch flow test) are still open
+- Kent opened #46 (`cloud/b5-egress`): `cloud/coder/llm_proxy.py` holds the real key and forwards only `POST /v1/chat/completions` with a per-job token; `adapters/coder_egress.py` puts the agent on an `--internal` Docker network per run and tears it down after; no open-network mode (fail closed). Why: #44 feeds the agent untrusted log text (PR body)
+- James made an 81-second animated explainer of the self-healing demo (private claude.ai artifact "Self-Healing SO-101"). Its 49 mm / 30 mm numbers are illustrative; tonight's sim run gave 130 mm / 29 mm (James's session)
+- Kent merged #38 (`c8b58cb`, 10:20 PM): real device code in the coder path (B1, B3), then #45 (`ccb95fb`, 10:28 PM), M8 status docs
+- James's P1 prototypes run in simulation (local branch `james/arm-sim`, not pushed): arm host, `so101-arm` Hermes plugin with a `pre_tool_call` guard, approach-then-grasp, a level-1 watchdog, a fault factory, a ChatTS level-2 test on RunPod (pod terminated). Sim only; the real arm still needs checking (James's session)
 
 **Open questions:**
-- Kent still waits on: device code in the repo (B1; Ishaan's Jetson shows no USB data and has no LAN path), the K17 safety and visor path list (it also gates the Fleet Doctor, D25), and Kent's go-ahead for the live Naïve card
-- Nobody owns the pod healer's agent loop and blind scenario eval yet; `HARNESS.md` marks both "you build this". Is that Ishaan's device healer, a Hermes plugin, or new work? Fleet Doctor's L3 agent loop location (D27) is deferred too
-- Arm prototypes for tomorrow (control program with a servo error-bit watchdog, approach-then-grasp with the ultrasonic, predicted-vs-measured check, frozen-ultrasonic rule, labelled run logger) have no `features.txt` lines or owners yet, and they need to be ready before Kent's 9–10 AM "real arm + polish" slot. James's overview fixes `79f938b` and `952cf79` are committed locally but not on `main` *(James's session, inferred)*
-- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email) *(James's session)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all?
+- Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block)
+- Kent is still blocked only on the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor), plus his own go-ahead for the live Naïve card. Ishaan also still owes the contracts review (B2, B3)
+- #31 flagged two clashes: the arm's servo bus and `podd` both default to `/dev/ttyACM0`, and `robot/` reads the ultrasonic in cm from Pi GPIO while Olir's pod reports mm. Should `robot/` follow `arm/safe_replay.py` (`/dev/serial/by-id/`, mm through `podd`)? *(inferred)*
+- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and when `james/arm-sim` gets pushed for Kent's 9–10 AM "real arm + polish" slot
 
 **Recent commits (all authors):**
-- `cc95fa9` Sat 20:18 · jamesEmerson112 · Update team status and features.txt
-- `a1fdfd9` Sat 20:18 · Kent Gang · Update Kent status in CLAUDE.md
-- `95f1497` Sat 20:18 · Kent Gang · Update Kent status in CLAUDE.md
-- `3239ad1` Sat 20:18 · kgang · Fleet Doctor contracts: ask, advice, proposal, proposal result (PR 1, no version bump per D28) (#26)
-- `34c52c7` Sat 20:12 · kgang · Romulus B8: STM32 toolchain in the coder sandbox (#24)
-- `f3669cc` Sat 20:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `e7b5a54` Sat 20:09 · jamesEmerson112 · Update team status and features.txt
-- `aec1f68` Sat 20:08 · Kent Gang · Update Kent status in CLAUDE.md
-- `b11f910` Sat 19:59 · jamesEmerson112 · Update team status in CLAUDE.md
-- `02ffd52` Sat 19:58 · Kent Gang · Update Kent status in CLAUDE.md
+- `1f043d6` Sat 22:38 · jamesEmerson112 · Update team status in CLAUDE.md
+- `612ca01` Sat 22:38 · Kent Gang · Update Kent status in CLAUDE.md
+- `5ce8590` Sat 22:29 · jamesEmerson112 · Update team status in CLAUDE.md
+- `fba444e` Sat 22:29 · jamesEmerson112 · Update team status and features.txt
+- `cd261a2` Sat 22:28 · Olir Eswar · Claim pod healer bench runs and the ultrasonic arm heal test in features.txt
+- `ccb95fb` Sat 22:28 · kgang · Romulus docs: M8 status after #24, #28, #38 (#45)
+- `625c345` Sat 22:28 · Kent Gang · Update Kent status in CLAUDE.md
+- `c8b58cb` Sat 22:20 · kgang · Romulus B1: real device code in the coder path (#38)
+- `dd40482` Sat 22:19 · jamesEmerson112 · Update team status and features.txt
+- `22ff5a8` Sat 22:18 · Kent Gang · Update Kent status in CLAUDE.md
 
-**Branches on GitHub:** `main`; Kent's open PR branches `edge/bridge` (#25), `doctor/foundation` (#27), `cloud/m8b-wiring` (#28); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `cloud/b8-stm32-toolchain` and `doctor/contracts` are gone after #24 and #26 merged
+**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and `doctor/evidence-real` (#44, Kent); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir). `cloud/b1-device-code` (#38) has been deleted
 <!-- team-status:end -->
