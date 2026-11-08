@@ -258,24 +258,28 @@ def canary_verdict(
     `started_at` is this run's start (`Transition.start_canary`); observations before it
     are ignored, so a re-run never reuses an earlier run's reports. Order doesn't matter.
     Pass only the canary device's observations. `version` / `install_type` name the
-    candidate: an observation for another *known* version counts for nothing.
+    candidate. An observation with an unknown version (None) counts as this version for
+    every failure signal (fail closed) but never as a healthy check-in.
 
     1. **Fail fast**, at any time at or after `started_at` (even after the window ends):
        - an install of this `install_type` and `version` that is `rolled_back`,
-         `hash_mismatch` or `invalid`;
+         `hash_mismatch` or `invalid` (other versions' and types' installs are ignored);
+       - after the matching install, a check-in on another known version: the canary fell
+         back without an install report ("canary no longer runs firmware 8");
        - a `failing` check-in, or an incident whose kind is in `repeat_kinds`, unless it
-         is known to come from another version (unknown version counts: fail closed);
-       - a check-in on this version, after the install, with an `overlay_id`: the healer
-         had to patch the candidate, so it didn't stand on its own.
+         is known to come from another version;
+       - a check-in with an `overlay_id`, unless it is known to come from another version:
+         the healer had to patch the candidate, so it didn't stand on its own.
        The earliest such observation is the reason.
     2. **Pending** while `now < started_at + window_s`.
     3. **At or after the window end** (exactly `window_s` counts), "healthy enough" means,
-       counting only check-ins on this version from the first matching `installed` report
-       up to the window end, each `(device_id, at)` once:
+       counting check-ins from the first matching `installed` report up to the window end,
+       each `(device_id, at)` once:
        - an `installed` report for this version inside the window;
-       - at least `min_checkins` `ok` check-ins;
+       - at least `min_checkins` (>= 1) `ok` check-ins on this version;
        - one of them in the last third of the window (coverage: no going silent);
-       - the last of them is `ok` (a `degraded` one is tolerated if an `ok` follows).
+       - the last check-in is one of them. A `degraded` (or unknown-version) check-in
+         is not ok; it is tolerated only if a later ok check-in follows it.
        Otherwise the verdict is fail, with the reason.
     Incidents of other kinds don't fail the canary; the pass reason mentions them.
     """
@@ -290,15 +294,17 @@ def canary_verdict(
     def this_install(o: CanaryObs) -> bool:
         return isinstance(o, InstallObs) and o.type == install_type and o.version == version
 
+    if isinstance(min_checkins, bool) or not isinstance(min_checkins, int) or min_checkins < 1:
+        raise ValueError(f"min_checkins must be an integer >= 1, got {min_checkins!r}")
     installed_at = next((o.at for o in obs if this_install(o) and o.result == "installed"), None)
     seen: set[tuple[str, datetime]] = set()
-    checkins: list[CheckinObs] = []  # this version, after the install, deduped
+    checkins: list[CheckinObs] = []  # this or an unknown version, after the install, deduped
     for o in obs:
         if (
             isinstance(o, CheckinObs)
             and installed_at is not None
             and o.at >= installed_at
-            and o.version == version
+            and not other_version(o)
             and (o.device_id, o.at) not in seen
         ):
             seen.add((o.device_id, o.at))
@@ -310,15 +316,21 @@ def canary_verdict(
         if this_install(o) and o.result in INSTALL_FAILURES:
             detail = f" ({o.detail})" if o.detail else ""
             failures.append((o.at, f"canary install {o.result} {when}{detail}"))
-        elif isinstance(o, CheckinObs) and o.health == "failing" and not other_version(o):
-            failures.append((o.at, f"canary reported health failing {when}"))
         elif isinstance(o, IncidentObs) and o.kind in repeat and not other_version(o):
             failures.append((o.at, f"canary repeated {o.kind} {when}"))
-    for c in checkins:
-        if c.overlay_id is not None:
-            failures.append(
-                (c.at, f"canary needed a local overlay ({c.overlay_id}) {_ts(c.at, started_at)}")
-            )
+        elif isinstance(o, CheckinObs):
+            if installed_at is not None and o.at >= installed_at and other_version(o):
+                failures.append(
+                    (
+                        o.at,
+                        f"canary no longer runs {install_type} {version}: "
+                        f"reported {o.version} {when}",
+                    )
+                )
+            elif o.health == "failing" and not other_version(o):
+                failures.append((o.at, f"canary reported health failing {when}"))
+            elif o.overlay_id is not None and not other_version(o):
+                failures.append((o.at, f"canary needed a local overlay ({o.overlay_id}) {when}"))
     if failures:
         return Verdict("fail", min(failures, key=lambda f: f[0])[1])
 
@@ -332,7 +344,7 @@ def canary_verdict(
             f"no successful {install_type} {version} install within the {window_s:g} s window",
         )
     in_window = [c for c in checkins if c.at <= end]
-    ok = [c for c in in_window if c.health == "ok"]
+    ok = [c for c in in_window if c.health == "ok" and c.version == version]
     if len(ok) < min_checkins:
         return Verdict(
             "fail",
@@ -340,13 +352,15 @@ def canary_verdict(
             f"in the {window_s:g} s window; need {min_checkins}",
         )
     tail = end - timedelta(seconds=window_s * COVERAGE_FRACTION)
-    if min_checkins > 0 and not any(c.at >= tail for c in ok):
+    if not any(c.at >= tail for c in ok):
         return Verdict(
             "fail",
             f"no healthy check-in in the last {window_s * COVERAGE_FRACTION:g} s of the window",
         )
-    if in_window and in_window[-1].health != "ok":
-        return Verdict("fail", f"last check-in in the window was {in_window[-1].health}")
+    last = in_window[-1]
+    if last is not ok[-1]:
+        state = last.health if last.version == version else f"{last.health}, version unknown"
+        return Verdict("fail", f"last check-in in the window was not ok ({state})")
     why = f"canary healthy for {window_s:g} s: installed {version}, {len(ok)} ok check-ins"
     if len(in_window) > len(ok):
         why += f", {len(in_window) - len(ok)} non-ok check-ins that recovered"

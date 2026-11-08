@@ -208,6 +208,13 @@ def test_now_before_started_at_is_pending():
         (IncidentObs(at(40), "camera_occluded"), "repeated camera_occluded 40 s after"),
         (IncidentObs(at(40), "camera_occluded", V), "repeated camera_occluded 40 s after"),
         (CheckinObs(at(30), "ok", V, overlay_id="ov-9"), "needed a local overlay (ov-9) 30 s"),
+        (CheckinObs(at(0.5), "ok", V, overlay_id="ov-9"), "needed a local overlay (ov-9)"),
+        # an overlay with an unknown version counts as this version (fail closed)
+        (CheckinObs(at(30), "ok", None, overlay_id="ov-9"), "needed a local overlay (ov-9)"),
+        (CheckinObs(at(0.5), "ok", None, overlay_id="ov-9"), "needed a local overlay (ov-9)"),
+        # after the install, the canary reports the old version: it fell back silently
+        (CheckinObs(at(30), "ok", OLD), "canary no longer runs firmware 8: reported 7 30 s"),
+        (CheckinObs(at(30), "ok", "8"), "canary no longer runs firmware 8: reported 8 30 s"),
     ],
 )
 @pytest.mark.parametrize("now_s", [10, 45, W, W + 1000])
@@ -220,17 +227,54 @@ def test_fail_fast_at_any_time(bad, needle, now_s):
 @pytest.mark.parametrize(
     "ignored",
     [
-        CheckinObs(at(30), "failing", OLD),  # the old version was failing: not the candidate
+        # before the install (at 1 s) the canary still runs OLD: its reports aren't the candidate
+        CheckinObs(at(0.5), "failing", OLD),
+        CheckinObs(at(0.5), "ok", OLD, overlay_id="ov-1"),
+        CheckinObs(at(0.5), "degraded", None),
         IncidentObs(at(30), "camera_occluded", OLD),  # the fault the candidate fixes, on OLD
         InstallObs(at(30), "rolled_back", OLD),  # another version's install
         InstallObs(at(30), "rolled_back", V, type="harness"),  # another type's install
-        CheckinObs(at(0.5), "ok", V, overlay_id="ov-1"),  # overlay before the install
-        CheckinObs(at(30), "ok", OLD, overlay_id="ov-1"),  # overlay on another version
     ],
 )
 def test_observations_for_another_version_count_for_nothing(ignored):
     v = verdict([*healthy(), ignored], W, repeat_kinds={"camera_occluded"})
     assert v.status == "pass", v.why
+
+
+def test_reviewer_case_canary_falls_back_after_the_install():
+    """Re-review nit 1: ok on v8 at 85 s, then v7 at 95-115 s (one degraded) -> fail."""
+    obs = [
+        InstallObs(at(1), "installed", V),
+        CheckinObs(at(50), "ok", V),
+        CheckinObs(at(85), "ok", V),
+        CheckinObs(at(95), "ok", OLD),
+        CheckinObs(at(105), "degraded", OLD),
+        CheckinObs(at(115), "ok", OLD),
+    ]
+    v = verdict(obs, W)
+    assert v.status == "fail" and v.why.startswith("canary no longer runs firmware 8: reported 7")
+
+
+def test_unknown_version_checkins_are_never_healthy():
+    obs = [InstallObs(at(1), "installed", V), CheckinObs(at(50), "ok", V)]
+    obs += [CheckinObs(at(90), "ok", None), CheckinObs(at(110), "ok", None)]
+    v = verdict(obs, W)
+    assert v.status == "fail" and "only 1 healthy check-ins" in v.why
+
+
+def test_unknown_version_degraded_last_checkin_fails():
+    """Re-review nit 3: a degraded check-in with an unknown version is not ignored."""
+    obs = [*healthy(n=5), CheckinObs(at(110), "degraded", None)]
+    v = verdict(obs, W)
+    assert v.status == "fail" and "not ok (degraded, version unknown)" in v.why
+
+
+def test_degraded_in_the_last_third_does_not_satisfy_coverage():
+    """Re-review nit 3: only an ok check-in on this version covers the last third."""
+    obs = [InstallObs(at(1), "installed", V), CheckinObs(at(10), "ok", V)]
+    obs += [CheckinObs(at(20), "ok", V), CheckinObs(at(100), "degraded", V)]
+    v = verdict(obs, W)
+    assert v.status == "fail" and "no healthy check-in in the last 40 s" in v.why
 
 
 def test_reviewer_case_old_version_checkins_before_a_late_install_do_not_pass():
@@ -326,7 +370,15 @@ def test_too_few_healthy_checkins_fails():
 def test_min_checkins_is_configurable():
     assert verdict(healthy(n=1, start=100), W, min_checkins=1).status == "pass"
     assert verdict(healthy(n=3, start=60), W, min_checkins=4).status == "fail"
-    assert verdict([InstallObs(at(1), "installed", V)], W, min_checkins=0).status == "pass"
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, 1.5, None])
+def test_min_checkins_must_be_at_least_one(bad):
+    """Re-review nit 3: min_checkins=0 used to pass on the install alone."""
+    with pytest.raises(ValueError, match="min_checkins must be an integer >= 1"):
+        verdict([InstallObs(at(1), "installed", V)], W, min_checkins=bad)
+    with pytest.raises(ValueError, match="min_checkins must be an integer >= 1"):
+        next_state("canary", inputs(min_checkins=bad), NOW)
 
 
 def test_checkins_after_window_end_do_not_count_toward_pass():
@@ -372,7 +424,7 @@ def test_degraded_last_checkin_fails_at_window_end_but_not_before():
     obs = [*healthy(n=5, start=5), CheckinObs(at(110), "degraded", V)]
     assert verdict(obs, 115).status == "pending"
     v = verdict(obs, W)
-    assert v.status == "fail" and "last check-in in the window was degraded" in v.why
+    assert v.status == "fail" and "last check-in in the window was not ok (degraded)" in v.why
 
 
 def test_zero_window():
@@ -395,7 +447,7 @@ def test_order_of_observations_does_not_matter():
         CheckinObs(at(55), "degraded", V),
         CheckinObs(at(55), "degraded", V),
         IncidentObs(at(60), "gripper_stall"),
-        CheckinObs(at(70), "ok", OLD),
+        CheckinObs(at(0.5), "ok", OLD),  # before the install: ignored
     ]
     rng = random.Random(7)
     for now_s in (30, W, W + 60):

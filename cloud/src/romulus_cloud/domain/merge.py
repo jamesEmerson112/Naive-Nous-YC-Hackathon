@@ -256,8 +256,9 @@ def base_compatible(
 ) -> Compatibility:
     """May `diff` (made against `overlay_base`) be merged onto `assigned`?
 
-    Yes only if every key the diff writes has the same value (or is absent) in both
-    manifests. Otherwise merging could undo a fix the assigned version promoted (a lost
+    Yes only if everything the diff writes has the same value (or is absent) in both
+    manifests: each rule the diff touches is compared whole (every field), params field
+    by field. Otherwise merging could undo a fix the assigned version promoted (a lost
     update), so the batch skips the overlay with an event naming the conflicts. An unknown
     base (None) is not compatible: fail closed.
     """
@@ -265,6 +266,8 @@ def base_compatible(
         return Compatibility(False, "the overlay's base manifest is unknown; not merging")
     base, now = _as_dict(overlay_base), _as_dict(assigned)
     touched = _touched(diff) if isinstance(diff, Mapping) else []
+    # A rule is compared whole: patching x.below onto an x whose signal changed is a conflict.
+    touched = list(dict.fromkeys(p[:2] if p[0] == "rules" else p for p in touched))
     conflicts = tuple(_dotted(p) for p in touched if _at(base, p) != _at(now, p))
     bv, av = base.get("version"), now.get("version")
     if conflicts:

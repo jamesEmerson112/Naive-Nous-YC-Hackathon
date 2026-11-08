@@ -366,17 +366,37 @@ def test_compatible_when_the_touched_keys_agree():
 def test_incompatible_when_the_assigned_version_changed_a_touched_key():
     """A v7 overlay must not revert v8's camera fix (a lost update)."""
     c = base_compatible(BASE, V8, {"rules": {"camera_occluded": {"below": 0.25}}})
-    assert not c and c.conflicts == ("rules.camera_occluded.below",)
-    assert c.why == "assigned v8 changed rules.camera_occluded.below since the overlay's base v7"
+    assert not c and c.conflicts == ("rules.camera_occluded",)
+    assert c.why == "assigned v8 changed rules.camera_occluded since the overlay's base v7"
+
+
+def test_reviewer_case_rule_compared_whole():
+    """Re-review nit 2: v8 changed x's signal; a v7 patch to x.below must not land on it."""
+    v8 = {
+        **BASE,
+        "version": 8,
+        "rules": {
+            **BASE["rules"],
+            "camera_occluded": {**BASE["rules"]["camera_occluded"], "signal": "luma"},
+        },
+    }
+    c = base_compatible(BASE, v8, {"rules": {"camera_occluded": {"below": 0.35}}})
+    assert not c and c.conflicts == ("rules.camera_occluded",)
+    # an untouched rule may differ freely
+    assert base_compatible(BASE, v8, {"rules": {"gripper_stall": {"above": 950}}})
 
 
 @pytest.mark.parametrize(
     ("diff", "conflicts"),
     [
         ({"params": {"max_speed": 0.4}}, ("params.max_speed",)),
-        ({"params": {"pid": {"kp": 2}}}, ()),
+        ({"params": {"pid": {"kp": 2}}}, ()),  # params stay field by field
         ({"rules": {"camera_occluded": None}}, ("rules.camera_occluded",)),
-        ({"rules": {"camera_occluded": {"action": "x"}}}, ()),  # other fields of the rule
+        ({"rules": {"camera_occluded": {"action": "x"}}}, ("rules.camera_occluded",)),  # whole
+        (
+            {"rules": {"camera_occluded": {"action": "x", "below": 0.3}}},
+            ("rules.camera_occluded",),  # reported once
+        ),
         ({"rules": {"new": {"signal": "s", "above": 1, "action": "a"}}}, ()),  # absent in both
         ({}, ()),
         (None, ()),
@@ -390,7 +410,7 @@ def test_base_compatible_table(diff, conflicts):
 def test_rule_added_in_assigned_conflicts_with_the_overlay_adding_it_too():
     v8 = {**V8, "rules": {**V8["rules"], "new": {"signal": "s", "above": 1, "action": "a"}}}
     c = base_compatible(BASE, v8, {"rules": {"new": {"signal": "s", "above": 2, "action": "a"}}})
-    assert not c and "rules.new.above" in c.conflicts
+    assert not c and c.conflicts == ("rules.new",)
 
 
 def test_unknown_base_is_not_compatible():
