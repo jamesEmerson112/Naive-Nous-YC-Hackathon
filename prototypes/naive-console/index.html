@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #0f1216; --panel: #161a20; --panel-2: #1c2128; --ink: #e6e9ef; --muted: #9aa3ae;
-    --line: #2a3039; --accent: #6ea8ff; --ok: #6fd28a; --bad: #f27f7f;
+    --line: #2a3039; --accent: #6ea8ff; --ok: #6fd28a; --bad: #f27f7f; --warn: #f0a35e;
     --naive: #6ea8ff; --hermes: #b98cff;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
@@ -15,13 +15,17 @@
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, system-ui, sans-serif; }
   main { max-width: 1120px; margin: 0 auto; padding: 20px 16px 40px; display: grid; gap: 14px; }
   h1 { margin: 0; font-size: 1.4rem; }
+  h2 { margin: 0; font-size: 1.05rem; }
+  h3 { margin: 0; font-size: 0.9rem; color: var(--muted); font-weight: 600; }
   .muted { color: var(--muted); }
+  .small { font-size: 0.8rem; }
   .mono { font-family: var(--mono); font-size: 0.86em; }
   .who { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 0.82rem; color: var(--muted); }
   .chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; }
   form { display: grid; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
   label, .label { font-size: 0.8rem; color: var(--muted); }
   select, textarea, button { font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  select:disabled { opacity: 0.6; }
   textarea { min-height: 64px; resize: vertical; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .presets button { background: var(--panel-2); color: var(--muted); font-weight: 500; font-size: 0.82rem; padding: 4px 10px; }
@@ -29,13 +33,15 @@
   button:disabled { opacity: 0.5; cursor: wait; }
   button { cursor: pointer; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .convbar { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 0.85rem; }
+  .convbar b { font-weight: 600; }
+  .convbar .new { margin-left: auto; padding: 4px 12px; font-size: 0.82rem; }
   .cols { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); align-items: start; }
-  .col { display: grid; gap: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 10px; }
-  .col.naive { --c: var(--naive); }
-  .col.hermes { --c: var(--hermes); }
-  .col h2 { margin: 0; font-size: 1.05rem; }
+  .col { display: grid; gap: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 10px; min-width: 0; }
+  .naive { --c: var(--naive); }
+  .hermes { --c: var(--hermes); }
   .col h2 small { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
-  .reply { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 8px; white-space: pre-wrap; min-height: 44px; overflow-wrap: anywhere; }
+  .reply { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 8px; white-space: pre-wrap; min-height: 44px; overflow-wrap: anywhere; max-height: 320px; overflow: auto; }
   .reply.error { border-left-color: var(--bad); color: var(--bad); }
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
   .stat { padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
@@ -47,8 +53,27 @@
   ol { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 260px; overflow: auto; }
   li { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-family: var(--mono); font-size: 0.74rem; color: var(--muted); }
   li .t { color: var(--ink); overflow-wrap: anywhere; }
+  .panel { display: grid; gap: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+  .turns-wrap { overflow-x: auto; }
+  table.turns { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 0.8rem; }
+  .turns th, .turns td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  .turns th { color: var(--muted); font-weight: 600; font-size: 0.74rem; }
+  .turns td.num { font-family: var(--mono); white-space: nowrap; }
+  .bar { height: 5px; border-radius: 3px; background: var(--c); margin-top: 3px; min-width: 2px; }
+  .flag { display: inline-block; font-size: 0.7rem; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line); margin: 1px 3px 1px 0; white-space: nowrap; }
+  .flag.cut { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+  .flag.mem { color: var(--hermes); border-color: color-mix(in srgb, var(--hermes) 50%, transparent); }
+  .flag.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+  .mem { border-top: 3px solid var(--c); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 6px; }
+  pre.note { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: 0.78rem/1.45 var(--mono); max-height: 260px; overflow: auto; }
+  pre.note.summary { border-left: 3px solid var(--warn); }
+  ul.msgs { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; max-height: 340px; overflow: auto; }
+  ul.msgs li { display: block; padding: 5px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; font-family: inherit; font-size: 0.78rem; color: var(--ink); overflow-wrap: anywhere; }
+  ul.msgs li b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+  ul.msgs li.compacted { opacity: 0.45; }
+  ul.msgs li.summary { border-left: 3px solid var(--warn); }
   .locked { display: grid; gap: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-  .locked h2 { margin: 0; font-size: 1.05rem; }
   .locked ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
   .locked li { display: grid; grid-template-columns: 1fr; gap: 4px; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; font-family: inherit; font-size: 0.85rem; color: var(--ink); }
   .locked .scopes { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -60,12 +85,12 @@
 <main>
   <header>
     <h1>pi vs Hermes</h1>
-    <p class="muted">One message, two agent loops. <b>pi</b> runs inside Naïve's cloud. <b>Hermes</b> runs on this Mac and reaches Naïve through its MCP server. Naïve runs are capped at $1 (the agent's own per-run cap may be lower).</p>
+    <p class="muted">One conversation, two agent loops. <b>pi</b> runs inside Naïve's cloud. <b>Hermes</b> runs on this Mac and reaches Naïve through its MCP server. Each message continues the same conversation on both sides until you start a new one, so you can watch how each one carries and trims its memory. A Naïve conversation can spend at most $1 (the agent's own cap may be lower).</p>
     <div class="who" id="who">Checking sign-in…</div>
   </header>
 
   <form id="f">
-    <label for="agent">Naïve agent (pi side)</label>
+    <label for="agent">Naïve agent (pi side). Only OpenAI-model agents are listed, so Hermes runs the same model.</label>
     <select id="agent" required></select>
     <label for="effort">Hermes reasoning effort <span class="muted">(pi can't change it: Naïve agents always run at the model's default)</span></label>
     <select id="effort">
@@ -77,12 +102,22 @@
       <option value="xhigh">Extra high</option>
     </select>
     <label for="msg">Message</label>
-    <textarea id="msg" maxlength="4000" required>Reply with exactly: hello world</textarea>
+    <textarea id="msg" maxlength="60000" required>Reply with exactly: hello world</textarea>
+    <div class="row presets" aria-label="Feed a document">
+      <span class="label">Feed a document:</span>
+      <button type="button" data-doc="so101-research" data-title="SO-101 research notes (docs/so101-research.md)">SO-101 research notes</button>
+      <button type="button" data-doc="fault-catalog" data-title="Fault catalog (docs/fault-catalog.md)">Fault catalog</button>
+      <span class="muted small" id="doclen"></span>
+    </div>
     <div class="row presets" aria-label="Test prompts">
       <span class="label">Try:</span>
       <button type="button" data-p="Reply with exactly: hello world">hello world</button>
       <button type="button" data-p="How many agents are in our Naïve org, and which models do they use?">Naïve agents</button>
       <button type="button" data-p="What is 17 × 23? Answer with the number only.">17 × 23</button>
+      <button type="button" data-p="Kabuto's character throughout the Naruto and Naruto Shippuden manga in 3 paragraphs">Kabuto essay</button>
+      <button type="button" data-p="Remember this for later: our robot arm is an SO-101, and its emergency stop is the red button on the left side of the bench.">Teach a fact</button>
+      <button type="button" data-p="What do you remember about me and my robot arm? List everything you know.">Recall</button>
+      <button type="button" data-p="Write a detailed, roughly 1,500-word history of industrial robot arms, from Unimate to today's collaborative arms.">Long answer</button>
     </div>
     <div class="row">
       <button class="go" id="go" type="submit">Send to both</button>
@@ -90,9 +125,32 @@
     </div>
   </form>
 
+  <div class="convbar" id="convbar" aria-live="polite">
+    <span id="convtext">No conversation yet: your first message starts one on both sides.</span>
+    <button type="button" class="new" id="newconv">New conversation</button>
+  </div>
+
   <div class="cols">
-    <section class="col naive" id="c-naive" aria-label="Naïve pi"></section>
-    <section class="col hermes" id="c-hermes" aria-label="Hermes"></section>
+    <section class="col naive" id="c-naive" aria-label="Naïve pi, latest turn"></section>
+    <section class="col hermes" id="c-hermes" aria-label="Hermes, latest turn"></section>
+  </div>
+
+  <section class="panel" aria-labelledby="turns-h">
+    <h2 id="turns-h">Turn by turn</h2>
+    <p class="muted small">"Context" is the prompt each side sent the model on its last call that turn: the whole memory it is carrying. Watch it grow, and drop when a side compacts.</p>
+    <div class="turns-wrap"><table class="turns">
+      <thead><tr>
+        <th>#</th><th>Message</th>
+        <th class="naive">pi context</th><th>pi wall</th><th>pi cost</th>
+        <th class="hermes">Hermes context</th><th>Hermes wall</th><th>Memory events</th>
+      </tr></thead>
+      <tbody id="turnrows"><tr><td colspan="8" class="muted">No turns yet.</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <div class="cols">
+    <section class="panel mem naive" id="m-naive" aria-label="pi memory"></section>
+    <section class="panel mem hermes" id="m-hermes" aria-label="Hermes memory"></section>
   </div>
 
   <section class="locked" id="locked" aria-labelledby="locked-h" hidden></section>
@@ -104,7 +162,7 @@
   <div class="stats">
     <div class="stat"><b data-k="wall">–</b><span>wall time</span></div>
     <div class="stat"><b data-k="model">–</b><span>model time</span></div>
-    <div class="stat"><b data-k="tok">–</b><span>tokens in / out</span></div>
+    <div class="stat"><b data-k="tok">–</b><span data-k="toklabel">tokens in / out</span></div>
     <div class="stat"><b data-k="cost">–</b><span data-k="costlabel">cost</span></div>
   </div>
   <div><span class="label">Tool calls</span> <div class="tools" data-k="tools"><span class="muted">none</span></div></div>
@@ -131,63 +189,98 @@ const ALL_SCOPES = [
 ];
 const SCOPE_INFO = Object.fromEntries(ALL_SCOPES.map((s) => [s.scope, s]));
 
+const $ = (id) => document.getElementById(id);
+const usd = (micro) => "$" + (micro / 1e6).toFixed(4);
+const secs = (ms) => (ms / 1000).toFixed(1) + " s";
+const num = (n) => (n == null ? "–" : Number(n).toLocaleString("en-US"));
+/** Build an element from properties and children (text children become text nodes, never HTML). */
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids);
+  return e;
+}
+const HERMES_COMPACT_AT = 12000; // compression.threshold_tokens set in ~/.hermes/config.yaml for this test
+
 function renderLocked(granted) {
   const have = new Set(granted);
   const missing = ALL_SCOPES.filter((s) => !have.has(s.scope));
-  const el = $("locked");
-  if (!missing.length) { el.hidden = true; return; }
+  const box = $("locked");
+  if (!missing.length) { box.hidden = true; return; }
   const groups = new Map(); // same description + link share one row (read/write pairs)
   for (const s of missing) {
     const key = s.what + "|" + s.href;
     if (!groups.has(key)) groups.set(key, { what: s.what, href: s.href, scopes: [] });
     groups.get(key).scopes.push(s.scope);
   }
-  const h = document.createElement("h2");
-  h.id = "locked-h";
-  h.textContent = `Scopes this key doesn't have (${missing.length})`;
-  const ul = document.createElement("ul");
+  const ul = el("ul");
   for (const g of groups.values()) {
-    const li = document.createElement("li");
-    const chips = document.createElement("div");
-    chips.className = "scopes";
-    for (const sc of g.scopes) chips.append(Object.assign(document.createElement("span"), { className: "chip off", textContent: sc }));
-    const what = document.createElement("div");
-    what.textContent = g.what;
-    const a = document.createElement("a");
-    a.href = g.href; a.target = "_blank"; a.rel = "noopener"; a.textContent = g.href.replace("https://", "");
-    li.append(chips, what, a);
-    ul.append(li);
+    const chips = el("div", { className: "scopes" }, ...g.scopes.map((sc) => el("span", { className: "chip off", textContent: sc })));
+    const a = el("a", { href: g.href, target: "_blank", rel: "noopener", textContent: g.href.replace("https://", "") });
+    ul.append(el("li", {}, chips, el("div", { textContent: g.what }), a));
   }
-  el.replaceChildren(h, ul);
-  el.hidden = false;
+  box.replaceChildren(el("h2", { id: "locked-h", textContent: `Scopes this key doesn't have (${missing.length})` }), ul);
+  box.hidden = false;
 }
-const $ = (id) => document.getElementById(id);
-const usd = (micro) => "$" + (micro / 1e6).toFixed(4);
-const secs = (ms) => (ms / 1000).toFixed(1) + " s";
 
-function makeCol(id, title, sub, costLabel) {
-  const el = $(id);
-  el.replaceChildren($("col").content.cloneNode(true));
-  el.querySelector("h2").innerHTML = `${title} <small></small>`;
-  el.querySelector("h2 small").textContent = sub;
-  const k = (name) => el.querySelector(`[data-k="${name}"]`);
+/* ---------- conversation state (kept in this browser, survives reloads) ---------- */
+const STORE = "naive-console-conversation-v1";
+const store = {
+  load() { try { return JSON.parse(localStorage.getItem(STORE) ?? "null"); } catch { return null; } },
+  save(v) { try { v ? localStorage.setItem(STORE, JSON.stringify(v)) : localStorage.removeItem(STORE); } catch { /* private window */ } },
+};
+let conv = store.load(); // { id, agent, model, effort, piSession, hermesSession, piSpent, turns: [] }
+let lastMemory = null;   // Hermes memory files as last seen, to spot changes
+let hermesSnap = null;   // latest `hermes sessions export` summary
+
+function startConv() {
+  const opt = $("agent").selectedOptions[0];
+  conv = {
+    id: `console-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    agent: $("agent").value, agentName: opt?.textContent.split(" · ")[0] ?? "", model: opt?.dataset.model ?? "",
+    effort: $("effort").value, piSession: null, hermesSession: null, piSpent: 0, turns: [],
+  };
+}
+
+function lockControls() {
+  const locked = Boolean(conv?.turns.length);
+  $("agent").disabled = locked;
+  $("effort").disabled = locked;
+}
+
+function renderConvbar() {
+  if (!conv?.turns.length) {
+    $("convtext").textContent = "No conversation yet: your first message starts one on both sides.";
+    return;
+  }
+  $("convtext").replaceChildren(
+    el("b", { textContent: `Conversation · turn ${conv.turns.length}` }),
+    ` · ${conv.agentName || conv.model}${conv.effort ? ` · Hermes effort ${conv.effort}` : ""} · `,
+    el("span", { className: "mono", textContent: `pi ${conv.piSession ?? "–"} · Hermes ${conv.hermesSession ? conv.hermesSession.slice(0, 18) + "…" : "–"}` }),
+    el("span", { className: "muted", textContent: " · agent and effort are fixed until you start a new conversation" }),
+  );
+}
+
+/* ---------- latest-turn columns ---------- */
+function makeCol(id, title, sub, costLabel, tokLabel = "tokens in / out") {
+  const box = $(id);
+  box.replaceChildren($("col").content.cloneNode(true));
+  box.querySelector("h2").replaceChildren(title + " ", el("small", { textContent: sub }));
+  const k = (name) => box.querySelector(`[data-k="${name}"]`);
   k("costlabel").textContent = costLabel;
+  k("toklabel").textContent = tokLabel;
   const tools = [];
   return {
     k,
     set: (name, v) => (k(name).textContent = v),
-    sub: (v) => (el.querySelector("h2 small").textContent = v),
+    sub: (v) => (box.querySelector("h2 small").textContent = v),
     reply: (v, append) => (k("reply").textContent = append ? k("reply").textContent + v : v),
     error: (msg) => { k("reply").classList.add("error"); k("reply").textContent = msg; },
     tool: (name) => {
       tools.push(name);
-      k("tools").replaceChildren(...tools.map((t) => Object.assign(document.createElement("span"), { className: "chip", textContent: t })));
+      k("tools").replaceChildren(...tools.map((t) => el("span", { className: "chip", textContent: t })));
     },
     event: (type, detail, at) => {
-      const li = document.createElement("li");
-      li.innerHTML = `<span class="t"></span><span></span>`;
-      li.children[0].textContent = detail ? `${type} · ${String(detail).slice(0, 140)}` : type;
-      li.children[1].textContent = at ?? "";
+      const li = el("li", {}, el("span", { className: "t", textContent: detail ? `${type} · ${String(detail).slice(0, 140)}` : type }), el("span", { textContent: at ?? "" }));
       k("events").append(li);
       k("n").textContent = `(${k("events").children.length})`;
     },
@@ -199,28 +292,6 @@ async function getJson(path) {
   const body = await r.json();
   if (!r.ok) throw new Error(body.error || r.statusText);
   return body;
-}
-
-let hasHermes = false;
-async function load() {
-  try {
-    const w = await getJson("/api/whoami");
-    hasHermes = w.hermes;
-    $("who").replaceChildren(...[`Naïve org: ${w.org?.name}`, ...w.scopes, hasHermes ? "Hermes: installed" : "Hermes: not installed"]
-      .map((t) => Object.assign(document.createElement("span"), { className: "chip", textContent: t, title: SCOPE_INFO[t]?.what ?? "" })));
-    renderLocked(w.scopes);
-    // Only agents Hermes can match model-for-model: OpenAI models, which Hermes runs on the ChatGPT plan.
-    for (const a of await getJson("/api/agents")) {
-      if (!a.model?.startsWith("openai/")) continue;
-      const o = new Option(`${a.name} · ${a.model} · ${a.harness}`, a.id);
-      o.dataset.model = a.model;
-      if (a.name === "hello-luna") o.selected = true;
-      $("agent").add(o);
-    }
-  } catch (e) {
-    $("who").textContent = `Not signed in to Naïve: ${e.message}. Run naive login, then reload.`;
-    $("go").disabled = true;
-  }
 }
 
 /** POST and feed each NDJSON line to onItem. */
@@ -242,76 +313,303 @@ async function streamTo(path, body, onItem) {
   }
 }
 
-function runNaive(message) {
-  const opt = $("agent").selectedOptions[0];
-  const c = makeCol("c-naive", "Naïve · pi", `${opt?.dataset.model ?? ""} · Naïve's cloud`, "cost (Naïve meter)");
+/** One pi turn. Returns what the turn table and memory panel need. */
+async function runNaive(message) {
+  const c = makeCol("c-naive", "Naïve · pi", `${conv.model} · Naïve's cloud`, "cost this turn · conversation", "context / out tokens");
+  const t = { reply: "", ctx: [], out: 0, modelMs: 0, cost: null, wall: null, waitMs: 0, retries: 0, stop: null, error: null };
+  const starts = [];
   c.reply("…");
   let started = false;
-  return streamTo("/api/run", { agent: $("agent").value, message }, (item) => {
-    if (item.kind === "event") {
-      const ev = item.event;
-      c.event(ev.type, ev.data?.content ?? ev.data?.name ?? ev.data?.stop_reason ?? "", ev.created_at?.slice(11, 19));
-      if (ev.type === "message.delta") { c.reply(ev.data.content ?? "", started); started = true; }
-      if (ev.type === "message.completed" && ev.data.role === "assistant") c.reply(ev.data.content);
-      if (ev.type === "tool.started") c.tool(ev.data?.name ?? ev.data?.tool ?? "tool");
-      if (ev.type === "session.usage") {
-        c.set("model", `${ev.data.active_seconds} s`);
-        // Count cached prompt tokens too, so "in" means the whole prompt, as on the Hermes side.
-        const u = ev.data.token_usage;
-        c.set("tok", `${u.input + (u.cache_read ?? 0) + (u.cache_write ?? 0)} / ${u.output}`);
-        c.set("cost", usd(ev.data.consumed_micro_usd));
-      }
-    } else if (item.kind === "session") {
-      c.set("cost", usd(item.session.consumed_micro_usd));
-    } else if (item.kind === "wall") c.set("wall", secs(item.ms));
-    else if (item.kind === "error") c.error(item.message);
-  }).catch((e) => c.error(e.message));
+  try {
+    await streamTo("/api/run", { agent: conv.agent, message, session: conv.piSession ?? undefined }, (item) => {
+      if (item.kind === "event") {
+        const ev = item.event;
+        c.event(ev.type, ev.data?.content ?? ev.data?.name ?? ev.data?.stop_reason ?? "", ev.created_at?.slice(11, 19));
+        if (ev.type === "message.delta") { c.reply(ev.data.content ?? "", started); started = true; }
+        if (ev.type === "message.completed" && ev.data.role === "assistant") { t.reply = ev.data.content ?? ""; c.reply(t.reply); }
+        if (ev.type === "tool.started") c.tool(ev.data?.name ?? ev.data?.tool ?? "tool");
+        if (ev.type === "span.model_request.start") starts.push(Date.parse(ev.created_at));
+        if (ev.type === "span.model_request.end") {
+          // The whole prompt of this call, cached parts included: what pi is carrying into the model.
+          const u = ev.data?.token_usage ?? {};
+          t.ctx.push((u.input ?? 0) + (u.cache_read ?? 0) + (u.cache_write ?? 0));
+          t.out += u.output ?? 0;
+          const s = starts.shift();
+          if (s) t.modelMs += Date.parse(ev.created_at) - s;
+          c.set("tok", `${num(t.ctx.at(-1))} / ${num(t.out)}`);
+          c.set("model", secs(t.modelMs));
+        }
+        if (ev.type === "session.idle") t.stop = ev.data?.stop_reason ?? null;
+      } else if (item.kind === "session") {
+        const s = item.session;
+        conv.piSession = s.id;
+        t.cost = s.consumed_micro_usd - (conv.piSpent ?? 0);
+        conv.piSpent = s.consumed_micro_usd;
+        c.set("cost", `${usd(t.cost)} · ${usd(s.consumed_micro_usd)}`);
+      } else if (item.kind === "retry") {
+        t.retries++;
+        c.event("retry", `${item.reason}: waiting ${secs(item.ms)}`, "");
+        $("state").textContent = `Naïve is at capacity: retrying in ${secs(item.ms)}…`;
+      } else if (item.kind === "wall") {
+        t.wall = item.ms;
+        t.waitMs = item.waitMs ?? 0;
+        c.set("wall", t.waitMs ? `${secs(item.ms)} (${secs(t.waitMs)} waiting)` : secs(item.ms));
+      } else if (item.kind === "error") { t.error = item.message; c.error(item.message); }
+    });
+  } catch (e) { t.error = e.message; c.error(e.message); }
+  if (t.stop && t.stop !== "end_turn" && !t.error) c.error(`stopped: ${t.stop}`);
+  return t;
 }
 
-function runHermes(message) {
+/** One Hermes turn, in the conversation's Hermes session. */
+async function runHermes(message) {
   const c = makeCol("c-hermes", "Hermes + Naïve MCP", "this Mac", "cost");
-  if (!hasHermes) return c.error("Hermes isn't installed on this machine."), Promise.resolve();
+  const t = { reply: "", in: null, out: null, modelMs: null, wall: null, error: null, ctx: null, summaries: 0, memChanged: [] };
+  if (!hasHermes) { c.error("Hermes isn't installed on this machine."); t.error = "not installed"; return t; }
   c.reply("…");
   let started = false;
-  // Same brain on both sides: an `openai/<id>` pi agent makes Hermes run `<id>` on the ChatGPT plan.
-  const piModel = $("agent").selectedOptions[0]?.dataset.model ?? "";
-  const model = piModel.startsWith("openai/") ? piModel.slice("openai/".length) : undefined;
-  const effort = $("effort").value || undefined;
-  const effortLabel = `effort ${effort ?? "default"}`;
-  return streamTo("/api/hermes", { message, model, effort }, (item) => {
-    if (item.kind === "hermes") {
-      const ev = item.event;
-      const at = ev.timestamp ? new Date(ev.timestamp).toISOString().slice(11, 19) : "";
-      if (ev.type === "system") { c.sub(`${ev.model} · ${effortLabel} · this Mac (ChatGPT plan)`); c.event("system", ev.model, at); }
-      if (ev.type === "text") { c.reply(ev.text ?? "", started); started = true; }
-      if (ev.type === "tool_use") { c.tool(ev.name); c.event("tool_use", ev.name, at); }
-      if (ev.type === "tool_result") c.event("tool_result", `${ev.name} · ${ev.duration_ms} ms${ev.is_error ? " · error" : ""}`, at);
-      if (ev.type === "result") {
-        c.event("result", `exit ${ev.exit_code}`, at);
-        if (ev.exit_code !== 0) c.error(ev.text || ev.error || "Hermes run failed");
-        else c.reply(ev.text);
-        if (ev.tokens) c.set("tok", `${ev.tokens.input} / ${ev.tokens.output}`);
-        if (ev.duration_ms != null) c.set("model", secs(ev.duration_ms));
-        c.set("cost", "ChatGPT plan");
+  const model = conv.model.startsWith("openai/") ? conv.model.slice("openai/".length) : undefined;
+  try {
+    await streamTo("/api/hermes", { message, model, effort: conv.effort || undefined, conversation: conv.id }, (item) => {
+      if (item.kind === "hermes") {
+        const ev = item.event;
+        const at = ev.timestamp ? new Date(ev.timestamp).toISOString().slice(11, 19) : "";
+        if (ev.type === "system") { c.sub(`${ev.model} · effort ${conv.effort || "default"} · this Mac (ChatGPT plan)`); c.event("system", ev.model, at); }
+        if (ev.type === "text") { c.reply(ev.text ?? "", started); started = true; }
+        if (ev.type === "tool_use") { c.tool(ev.name); c.event("tool_use", ev.name, at); }
+        if (ev.type === "tool_result") c.event("tool_result", `${ev.name} · ${ev.duration_ms} ms${ev.is_error ? " · error" : ""}`, at);
+        if (ev.type === "result") {
+          c.event("result", `exit ${ev.exit_code}`, at);
+          if (ev.session_id) conv.hermesSession = ev.session_id;
+          if (ev.exit_code !== 0) { t.error = ev.text || ev.error || "Hermes run failed"; c.error(t.error); }
+          else { t.reply = ev.text ?? ""; c.reply(t.reply); }
+          if (ev.tokens) { t.in = ev.tokens.input; t.out = ev.tokens.output; c.set("tok", `${num(t.in)} / ${num(t.out)}`); }
+          if (ev.duration_ms != null) { t.modelMs = ev.duration_ms; c.set("model", secs(ev.duration_ms)); }
+          c.set("cost", "ChatGPT plan");
+        }
+      } else if (item.kind === "wall") { t.wall = item.ms; c.set("wall", secs(item.ms)); }
+      else if (item.kind === "error") { t.error = item.message; c.error(item.message); }
+    });
+  } catch (e) { t.error = e.message; c.error(e.message); }
+  return t;
+}
+
+/* ---------- memory panels ---------- */
+async function refreshHermes(turn) {
+  if (!hasHermes) return;
+  try {
+    const mem = await getJson("/api/hermes/memory");
+    if (turn && lastMemory) turn.memChanged = mem.files.filter((f) => f.text !== lastMemory[f.name]).map((f) => f.name);
+    lastMemory = Object.fromEntries(mem.files.map((f) => [f.name, f.text]));
+    hermesMem = mem;
+  } catch (e) { hermesMem = { error: e.message }; }
+  if (conv?.hermesSession) {
+    try {
+      hermesSnap = await getJson(`/api/hermes/session?id=${encodeURIComponent(conv.hermesSession)}`);
+      if (turn) {
+        turn.ctx = hermesSnap.context_tokens;
+        turn.summaries = hermesSnap.messages.filter((m) => m.summary).length;
       }
-    } else if (item.kind === "wall") c.set("wall", secs(item.ms));
-    else if (item.kind === "error") c.error(item.message);
-  }).catch((e) => c.error(e.message));
+    } catch (e) { hermesSnap = { error: e.message }; }
+  } else hermesSnap = null;
+  renderHermesMemory();
+}
+let hermesMem = null;
+
+function renderHermesMemory() {
+  const box = $("m-hermes");
+  const kids = [el("h2", { textContent: "Hermes memory" })];
+  // Long-term notes (across conversations)
+  kids.push(el("h3", { textContent: "Long-term notes (kept across conversations)" }));
+  if (hermesMem?.error) kids.push(el("p", { className: "muted small", textContent: hermesMem.error }));
+  else if (hermesMem) {
+    const changed = conv?.turns.at(-1)?.hermes?.memChanged ?? [];
+    for (const f of hermesMem.files) {
+      const head = el("div", { className: "row small" }, el("b", { className: "mono", textContent: f.name }),
+        el("span", { className: "muted", textContent: f.name === "USER.md" ? "about you" : "Hermes's own notes" }));
+      if (changed.includes(f.name)) head.append(el("span", { className: "flag mem", textContent: "updated this turn" }));
+      kids.push(head, el("pre", { className: "note", textContent: f.text?.trim() ? f.text : "(empty)" }));
+    }
+    kids.push(el("p", { className: "muted small", textContent: "Hermes writes these with its memory tool and puts them into its prompt (see the system prompt below). Ask it to remember something, then start a new conversation and ask what it remembers." }));
+  }
+  // This conversation
+  kids.push(el("h3", { textContent: "This conversation" }));
+  if (!hermesSnap) kids.push(el("p", { className: "muted small", textContent: "Starts with your first message." }));
+  else if (hermesSnap.error) kids.push(el("p", { className: "muted small", textContent: hermesSnap.error }));
+  else {
+    const msgs = hermesSnap.messages;
+    const summaries = msgs.filter((m) => m.summary);
+    const compacted = msgs.filter((m) => m.compacted).length;
+    kids.push(el("div", { className: "facts" },
+      fact(num(hermesSnap.context_tokens), "context now (tokens)"),
+      fact(`${num(HERMES_COMPACT_AT)}`, "compacts at (set for this test; default 50% of window)"),
+      fact(num(hermesSnap.message_count), "messages stored"),
+      fact(`${summaries.length} · ${compacted}`, "compactions · messages compacted"),
+    ));
+    if (summaries.length) {
+      const d = el("details", { open: true }, el("summary", { textContent: `Compaction summaries (${summaries.length}): what Hermes kept of the older history` }));
+      for (const s of summaries) d.append(el("pre", { className: "note summary", textContent: s.text }));
+      kids.push(d);
+    }
+    const ul = el("ul", { className: "msgs" });
+    for (const m of msgs) {
+      const li = el("li", { className: [m.compacted ? "compacted" : "", m.summary ? "summary" : ""].join(" ").trim() },
+        el("b", { textContent: m.summary ? "summary" : m.tool ? `tool · ${m.tool}` : m.role }), m.text || "(no text)");
+      if (m.compacted) li.append(el("span", { className: "flag cut", textContent: " compacted" }));
+      ul.append(li);
+    }
+    kids.push(el("details", {}, el("summary", { textContent: `Transcript Hermes holds (${msgs.length} messages; faded = compacted away)` }), ul));
+    kids.push(el("details", {}, el("summary", { textContent: `System prompt (${num(hermesSnap.system_prompt.length)} characters, includes injected memory)` }),
+      el("pre", { className: "note", textContent: hermesSnap.system_prompt })));
+  }
+  box.replaceChildren(...kids);
+}
+
+function fact(value, label) {
+  return el("div", { className: "stat" }, el("b", { textContent: value }), el("span", { textContent: label }));
+}
+
+function renderPiMemory() {
+  const box = $("m-naive");
+  const turns = conv?.turns ?? [];
+  const ctx = turns.map((t) => t.pi?.ctx?.at(-1)).filter((n) => n != null);
+  const drops = turns.filter((t, i) => i > 0 && t.pi?.ctx?.length && turns[i - 1].pi?.ctx?.length && t.pi.ctx.at(-1) < 0.8 * turns[i - 1].pi.ctx.at(-1)).length;
+  const kids = [
+    el("h2", { textContent: "pi memory" }),
+    el("h3", { textContent: "Long-term notes (kept across conversations)" }),
+    el("p", { className: "small", textContent: "None that Naïve documents: each new pi session starts empty. Test it: teach a fact, start a new conversation, then ask what it remembers." }),
+    el("h3", { textContent: "This conversation" }),
+  ];
+  if (!turns.length) kids.push(el("p", { className: "muted small", textContent: "Starts with your first message." }));
+  else {
+    kids.push(el("div", { className: "facts" },
+      fact(num(ctx.at(-1)), "context now (tokens)"),
+      fact("not documented", "compacts at"),
+      fact(num(turns.length * 2), "messages (you + pi)"),
+      fact(String(drops), "context drops (compaction?)"),
+    ));
+    kids.push(el("p", { className: "muted small", textContent: "Naïve keeps the full transcript and, per its docs, summarizes older turns once a token threshold is crossed and clears stale tool results. It doesn't publish an event or the summary, so a sudden drop in context is the only sign. If the window ever runs out, the turn stops with context_exhausted." }));
+    const ul = el("ul", { className: "msgs" });
+    for (const t of turns) {
+      ul.append(el("li", {}, el("b", { textContent: `you · ${t.n}` }), t.prompt));
+      ul.append(el("li", {}, el("b", { textContent: "pi" }), (t.pi?.error ? `error: ${t.pi.error}` : t.pi?.reply || "(no text)").slice(0, 400)));
+    }
+    kids.push(el("details", {}, el("summary", { textContent: `Transcript (${turns.length * 2} messages, from this page)` }), ul));
+    const calls = el("ul", { className: "msgs" });
+    for (const t of turns) calls.append(el("li", {}, el("b", { textContent: `turn ${t.n}` }), (t.pi?.ctx ?? []).map(num).join(" → ") || "–"));
+    kids.push(el("details", {}, el("summary", { textContent: "Prompt size of every model call (tokens)" }), calls));
+  }
+  box.replaceChildren(...kids);
+}
+
+/* ---------- turn table ---------- */
+function renderTurns() {
+  const turns = conv?.turns ?? [];
+  const body = $("turnrows");
+  if (!turns.length) { body.replaceChildren(el("tr", {}, el("td", { colSpan: 8, className: "muted", textContent: "No turns yet." }))); return; }
+  const max = Math.max(1, ...turns.flatMap((t) => [t.pi?.ctx?.at(-1) ?? 0, t.hermes?.ctx ?? 0]));
+  const bar = (n, cls) => el("div", { className: `bar ${cls}`, style: `width:${Math.round(((n ?? 0) / max) * 100)}%` });
+  body.replaceChildren(...turns.map((t, i) => {
+    const prev = turns[i - 1];
+    const flags = el("td", {});
+    const piCtx = t.pi?.ctx?.at(-1);
+    if (prev && piCtx != null && prev.pi?.ctx?.length && piCtx < 0.8 * prev.pi.ctx.at(-1)) flags.append(el("span", { className: "flag cut", textContent: "pi context dropped (compaction?)" }));
+    if ((t.hermes?.summaries ?? 0) > (prev?.hermes?.summaries ?? 0)) flags.append(el("span", { className: "flag cut", textContent: "Hermes compacted" }));
+    for (const f of t.hermes?.memChanged ?? []) flags.append(el("span", { className: "flag mem", textContent: `Hermes wrote ${f}` }));
+    if (t.pi?.stop && t.pi.stop !== "end_turn") flags.append(el("span", { className: "flag bad", textContent: `pi: ${t.pi.stop}` }));
+    if (t.pi?.retries) flags.append(el("span", { className: "flag", textContent: `Naïve at capacity ×${t.pi.retries} (${secs(t.pi.waitMs)} waiting)` }));
+    if (t.pi?.error) flags.append(el("span", { className: "flag bad", textContent: "pi error", title: t.pi.error }));
+    if (t.hermes?.error) flags.append(el("span", { className: "flag bad", textContent: "Hermes error" }));
+    return el("tr", {},
+      el("td", { className: "num", textContent: String(t.n) }),
+      el("td", { textContent: t.prompt.length > 70 ? t.prompt.slice(0, 70) + "…" : t.prompt }),
+      el("td", { className: "num naive" }, num(piCtx), bar(piCtx, "naive")),
+      el("td", { className: "num", textContent: t.pi?.wall != null ? secs(t.pi.wall - (t.pi.waitMs ?? 0)) : "–", title: t.pi?.waitMs ? `excludes ${secs(t.pi.waitMs)} spent waiting for Naïve capacity` : "" }),
+      el("td", { className: "num", textContent: t.pi?.cost != null ? usd(t.pi.cost) : "–" }),
+      el("td", { className: "num hermes" }, num(t.hermes?.ctx), bar(t.hermes?.ctx, "hermes")),
+      el("td", { className: "num", textContent: t.hermes?.wall != null ? secs(t.hermes.wall) : "–" }),
+      flags,
+    );
+  }));
+}
+
+function renderAll() {
+  renderConvbar();
+  renderTurns();
+  renderPiMemory();
+  renderHermesMemory();
+  lockControls();
+}
+
+/* ---------- start-up ---------- */
+let hasHermes = false;
+async function load() {
+  try {
+    const w = await getJson("/api/whoami");
+    hasHermes = w.hermes;
+    $("who").replaceChildren(...[`Naïve org: ${w.org?.name}`, ...w.scopes, hasHermes ? "Hermes: installed" : "Hermes: not installed"]
+      .map((t) => el("span", { className: "chip", textContent: t, title: SCOPE_INFO[t]?.what ?? "" })));
+    renderLocked(w.scopes);
+    // Only agents Hermes can match model-for-model: OpenAI models, which Hermes runs on the ChatGPT plan.
+    for (const a of await getJson("/api/agents")) {
+      if (!a.model?.startsWith("openai/")) continue;
+      const o = new Option(`${a.name} · ${a.model} · ${a.harness}`, a.id);
+      o.dataset.model = a.model;
+      if (conv ? a.id === conv.agent : a.name === "hello-luna") o.selected = true;
+      $("agent").add(o);
+    }
+    if (conv) $("effort").value = conv.effort ?? "";
+  } catch (e) {
+    $("who").textContent = `Not signed in to Naïve: ${e.message}. Run naive login, then reload.`;
+    $("go").disabled = true;
+  }
+  renderAll();
+  await refreshHermes(null);
 }
 
 document.querySelectorAll("[data-p]").forEach((b) => b.addEventListener("click", () => ($("msg").value = b.dataset.p)));
+// Load a repo doc into the message box, framed so both agents read it and keep it for later questions.
+document.querySelectorAll("[data-doc]").forEach((b) => b.addEventListener("click", async () => {
+  try {
+    const { text } = await getJson(`/api/docs/${b.dataset.doc}`);
+    $("msg").value = `Here is one of our robot arm documents: ${b.dataset.title}. Read it carefully; I'll ask you questions about it later. For now, reply with a 3-bullet summary.\n\n${text}`;
+    $("doclen").textContent = `${num($("msg").value.length)} characters loaded (about ${num(Math.round($("msg").value.length / 4))} tokens)`;
+  } catch (e) { $("doclen").textContent = e.message; }
+}));
+
+$("newconv").addEventListener("click", () => {
+  conv = null;
+  hermesSnap = null;
+  store.save(null);
+  for (const [id, title] of [["c-naive", "Naïve · pi"], ["c-hermes", "Hermes + Naïve MCP"]]) makeCol(id, title, "new conversation", "cost");
+  renderAll();
+  $("state").textContent = "New conversation: the next message starts fresh on both sides.";
+});
 
 $("f").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const message = $("msg").value;
+  const message = $("msg").value.trim();
+  if (!message) return;
+  if (!conv) startConv();
+  lockControls();
   $("go").disabled = true;
-  $("state").textContent = "Running both…";
-  await Promise.all([runNaive(message), runHermes(message)]);
-  $("state").textContent = "Done";
+  $("newconv").disabled = true;
+  $("state").textContent = `Turn ${conv.turns.length + 1}: running both…`;
+  const [pi, hermes] = await Promise.all([runNaive(message), runHermes(message)]);
+  // Keep a short copy of long messages (a fed document) so the saved conversation stays small.
+  const prompt = message.length > 600 ? `${message.slice(0, 600)}… (${num(message.length)} characters)` : message;
+  const turn = { n: conv.turns.length + 1, prompt, at: Date.now(), pi, hermes };
+  $("state").textContent = "Reading Hermes's memory…";
+  await refreshHermes(turn.hermes);
+  conv.turns.push(turn);
+  store.save(conv);
+  renderAll();
+  $("state").textContent = `Turn ${turn.n} done`;
   $("go").disabled = false;
+  $("newconv").disabled = false;
 });
 
-makeCol("c-naive", "Naïve · pi", "Naïve's cloud", "cost (Naïve meter)");
+makeCol("c-naive", "Naïve · pi", "Naïve's cloud", "cost");
 makeCol("c-hermes", "Hermes + Naïve MCP", "this Mac", "cost");
 load();
 </script>
