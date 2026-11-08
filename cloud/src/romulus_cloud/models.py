@@ -193,13 +193,19 @@ class Incident(Base):
 
 
 class Overlay(Base):
-    """A local patch on one device (D5a). The device makes the id (APIs §1)."""
+    """A local patch on one device (D5a).
+
+    The device makes the id (APIs §1), and ids like `ov-1` are per-device counters, so the
+    key is `(device_id, id)`. Anything that points at an overlay carries both: event refs
+    use {"device": ..., "overlay": ...}; `candidates.from_overlays` holds
+    [{"device_id": ..., "overlay_id": ...}].
+    """
 
     __tablename__ = "overlays"
 
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), primary_key=True)
     id: Mapped[str] = mapped_column(primary_key=True)
     fleet_id: Mapped[str] = _fleet()
-    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
     incident_id: Mapped[str | None] = mapped_column(index=True)
     base_firmware: Mapped[int | None]
     base_harness: Mapped[int | None]
@@ -227,6 +233,7 @@ class Candidate(Base):
     version: Mapped[int | None]  # firmware/harness version it proposes
     code_rev: Mapped[str | None]  # for code candidates
     device_class: Mapped[str] = mapped_column(default="so101")
+    # [{"device_id": "sim-1", "overlay_id": "ov-1"}, ...]; overlay ids are per device
     from_overlays: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     status: Mapped[str] = mapped_column(default="replaying", index=True)
     # replaying | awaiting_canary | canary | promoted | rolled_back | frozen
@@ -248,10 +255,11 @@ class WorkOrder(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True)  # wo_…
     fleet_id: Mapped[str] = _fleet()
-    incident_id: Mapped[str] = mapped_column(index=True)
+    # One order per incident, so a re-run or racing triage can never post two cards.
+    incident_id: Mapped[str] = mapped_column(unique=True, index=True)
     device_id: Mapped[str] = mapped_column(index=True)
     part: Mapped[str]
-    max_usd: Mapped[float] = mapped_column(Numeric(10, 2))
+    max_usd: Mapped[float] = mapped_column(Numeric(10, 2, asdecimal=False))  # reads as float
     status: Mapped[str] = mapped_column(default="pending", index=True)
     # pending | posted | in_progress | done | stopped | needs_human | blocked_over_cap
     naive_card_id: Mapped[str | None]
