@@ -370,6 +370,8 @@ code, .mono { font-family: var(--mono); font-size: 0.88em; }
   color: var(--ink); text-decoration: none; transition: box-shadow 250ms var(--ease);
 }
 a.turn:hover { box-shadow: 0 0 0 2px var(--sun), 0 12px 30px color-mix(in oklch, var(--sun) 30%, transparent); }
+/* The card's own ring would hide the shared focus shadow, so the focus ring sits outside it. */
+a.turn:focus-visible { box-shadow: 0 0 0 1.5px var(--sun), 0 0 0 5px color-mix(in oklch, var(--leaf) 40%, transparent); }
 .turn-mark { width: 44px; height: 44px; border-radius: 50%; background: var(--sun-wash); color: var(--sun-ink); display: grid; place-items: center; }
 .turn-mark .icon { font-size: 22px; }
 .turn-t { font-size: 1.2rem; font-weight: 650; margin: 0; }
