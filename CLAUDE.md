@@ -79,7 +79,7 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 5:20 AM PST_
+_Last updated: Sun Nov 8, 6:29 AM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P2 overnight runs to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), then P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). Olir merged **#62** and **#64** into main at 5:16 AM, so main now has the v1.8 near-hold heal test, heal-agent run reports with their dashboard page, and the Naïve TypeScript SDK check; his new note asks all cloud work to read agent activity from `agent_runs`. James's session on `james/arm-sim-ydcsss` pushed Mission Control UI round 1, the wrong-action redo loop and the RunPod worker-model bench (5:15 AM, `ff1c20d`). Next is the Pi with Andre at 7 AM (pin serial ports, teach Andre's four poses, `demo/up.sh --real`). Kent's Romulus has no open PRs; next are the overnight go/no-go and the live Naïve card.
 
@@ -96,6 +96,8 @@ _Last updated: Sun Nov 8, 5:20 AM PST_
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo (live texts a teammate's phone). #63 (main → `full-test-2`) is still open though `full-test-2` is merged *(inferred: can be closed)*
 
 **Recent commits (all authors):**
+- `c5250b9` Sun 06:19 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `8fb8ec4` Sun 05:19 · jamesEmerson112 · Update team status and features.txt
 - `695c901` Sun 05:16 · Oliravan Eswaramoorthy · Merge pull request #64 from jamesEmerson112/full-test-3
 - `8059bef` Sun 05:15 · Oliravan Eswaramoorthy · Merge branch 'main' into full-test-3
 - `84705f9` Sun 05:11 · OlirEswar · doc changes for updated postgres schema
@@ -104,8 +106,6 @@ _Last updated: Sun Nov 8, 5:20 AM PST_
 - `82c217b` Sun 04:59 · jamesEmerson112 · Update team status and features.txt
 - `5ac13d7` Sun 04:49 · Olir Eswar · updated dashboard
 - `95a83bb` Sun 04:29 · jamesEmerson112 · Update team status and features.txt
-- `983606a` Sun 03:59 · jamesEmerson112 · Update team status and features.txt
-- `a1afa64` Sun 03:50 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 
 **Branches on GitHub:** `main`; the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `james/arm-sim-ydcsss` (James's session, 23 commits ahead of main: job board, healer Levels 2 and 3a, soak runner, worker/manager loop, redo loop, workerbench, Mission Control, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
