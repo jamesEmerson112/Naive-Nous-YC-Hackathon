@@ -72,23 +72,25 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 7:20 PM PST_
+_Last updated: Sat Nov 7, 7:28 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is heading into the 12:30 AM overnight go/no-go with #18 (gate edge cases, regression replay) and #19 (M8a coding-agent sandbox, force-updated 7:12 PM) still open. Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). Olir keeps building the pod demo on `firmware`. James pushed the fault lab and wrote a one-page project briefing.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged #18 and heads into the 12:30 AM overnight go/no-go with only #19 (M8a coding-agent sandbox) open. Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). Olir keeps hardening the pod healer on `firmware`. James is working through the healing story (watchdog code wakes the healer; the healer fixes causes, not positions) for the briefing page.
 
 **Recently done:**
+- Kent merged #18, gate follow-ups (`2e83133`, 7:27 PM): re-queued overlays survive being superseded, freeze snapshot, repeat-incident check on unfreeze (`repeat_since`), failed folds bisected once, regression corpus replay (`test_f4_corpus_regression.py`), K17 fails closed
+- Olir pushed `f1d9224` to `firmware` (7:25 PM): the reboot-loop rule now counts only abnormal boots (crash/watchdog streak, por/lpwr), clock-drift check uses a median over the current run, lines cut short by a reset are dropped via required fields per type, and the line parser no longer uses a backtracking regex
 - James pushed the fault lab (`98fe550`, 7:11 PM): Ishaan's six healer faults (D1–D3, S1, S2, A5) planted in a stand-in app under `prototypes/fault-lab/`, with hidden checks. On gpt-6-sol, pi and Hermes each fixed 12 of 12 and Hermes was faster on 5 of 6. Results are in the Naïve console ("Can it fix the fault?") and `docs/pi-vs-hermes.md` §7
-- Olir pushed `b9819cc` to `firmware` (7:00 PM): a `scenario clear` command that clears injected faults only, `fw_flash` auto-rollback now only goes back to a verified image (otherwise known-good), and `firmware/ultrasonic-sample.json`
 - James's "Self-Healing Arm Briefing" page: problem, demo in five steps, available data and gaps (sim vs bench), three levels, MuJoCo vs NVIDIA Isaac, GR00T. It is private and has no visual check yet; the ultrasonic-sample note is still local only (`79f938b`) *(James's session)*
-- Kent merged #16, M7 overnight kit + F10 (`7dd4606`, 7:01 PM): fake-device chaos schedule, nightly digest, disk budget, overnight flag, `cloud/scripts/overnight_check.sh` preflight, runbook in `cloud/OVERNIGHT.md`
 
 **Open questions:**
 - Kent is blocked on: device code in the repo (B1, Ishaan landing it), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which also holds up M0's live Naïve card and LLM call (Kent's block). Olir's `toolkit/` is now on the `firmware` branch and may solve B8 *(inferred)*
 - Pod triage gap: the rules check the accelerometer for frozen data but not the ultrasonic, so a frozen-echo copy of a real sample raised no finding (`docs/fault-catalog.md`). Separately, the healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it; the fault lab's hidden check catches it
 - Two healers (Olir's firmware healer in `firmware/healer/`, Ishaan's device healer) are separate code; the demo needs one story for both *(inferred, `docs/project-overview.md`)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all? Team calls
-- Motor layer for the arm: scripted skills (doable tomorrow), SmolVLA (~50 demos per task + ~4 h A100) or Instant Policy (needs depth camera, noncommercial). Hermes compaction still needs `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`)
+- Sim use for tomorrow: a twin beside the real arm or the sim canary is doable; the 1,000-copy fault factory for a level-3 model is pitch only *(James's session, inferred)*. Motor layer: scripted skills, SmolVLA (~50 demos per task + ~4 h A100) or Instant Policy. Hermes compaction still needs `hermes gateway ensure` (`docs/pi-vs-hermes.md`)
 
 **Recent commits (all authors):**
+- `2e83133` Sat 19:27 · kgang · Romulus M3 follow-up: gate edge cases + regression corpus replay (#18)
+- `557ad01` Sat 19:19 · jamesEmerson112 · Update team status in CLAUDE.md
 - `98fe550` Sat 19:11 · jamesEmerson112 · Add fault lab: can pi and Hermes fix Ishaan's six healer faults? Show results in the console
 - `cda262d` Sat 19:08 · jamesEmerson112 · Update team status and features.txt
 - `f19cdff` Sat 19:08 · Kent Gang · Update Kent status in CLAUDE.md
@@ -97,8 +99,6 @@ _Last updated: Sat Nov 7, 7:20 PM PST_
 - `fd1f4fd` Sat 18:54 · jamesEmerson112 · Sync notes with Olir's sensor pod, podd healer tools and demo images (69fc292)
 - `a2d6676` Sat 18:49 · jamesEmerson112 · Update team status and features.txt
 - `219a00c` Sat 18:48 · Kent Gang · Update Kent status in CLAUDE.md
-- `f449f96` Sat 18:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `ef7614e` Sat 18:39 · kgang · Romulus: fake arms register as sim; readable chain labels (#17)
 
-**Branches on GitHub:** `main`, `firmware` (Olir, `b9819cc`, not merged), `cloud/gate-followups` (#18 open), `cloud/m8a-coder` (#19 open), `cloud/m8-coder-wip`, `cloud/m3b-followup`; all Kent's except `firmware`. The merged `cloud/m7-overnight` and `cloud/m3b-batch-gate` are deleted
+**Branches on GitHub:** `main`, `firmware` (Olir, `f1d9224`, not merged), `cloud/m8a-coder` (#19 open), `cloud/gate-followups` (#18 merged, not yet deleted), `cloud/m8-coder-wip`, `cloud/m3b-followup`; all Kent's except `firmware`
 <!-- team-status:end -->
