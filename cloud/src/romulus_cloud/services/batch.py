@@ -874,13 +874,15 @@ def _coder_incident(session: Session, ov: Overlay) -> dict[str, Any]:
 def _drafts_this_hour(session: Session, fleet_id: str, now: datetime) -> int:
     """Coder drafts started in the last hour (from `coder.started` events, so a restart
     doesn't reset the budget), minus attempts the provider turned away with exactly 0 tokens
-    spent, counted once per job attempt (overlays sharing a draft share its job)."""
+    spent, counted once per job attempt (overlays sharing a draft share its job): the
+    batch's own (`overlay.deferred`, `batch.error`) and the Fleet Doctor's (`doctor.declined`),
+    the same count as `doctor_code.coder_budget`."""
     recent = (Event.fleet_id == fleet_id, Event.ts > now - timedelta(hours=1))
     started = select(func.count(Event.id)).where(*recent, Event.kind == "coder.started")
     job_attempt = Event.data["job"].astext.concat(":").concat(Event.data["attempt"].astext)
     free = select(func.count(distinct(job_attempt))).where(
         *recent,
-        Event.kind.in_(["overlay.deferred", "batch.error"]),
+        Event.kind.in_(["overlay.deferred", "batch.error", "doctor.declined"]),
         Event.data.contains({"reason": CODER_UNAVAILABLE, "no_tokens": True}),
     )
     return max((session.scalar(started) or 0) - (session.scalar(free) or 0), 0)
