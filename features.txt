@@ -2,7 +2,7 @@ FEATURES: who is on what
 Claim a line by adding "<--- Name" (several names: "<--- Olir, Andre").
 Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
-Updated Sat Nov 7, 5:30 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 5:38 PM PST from CLAUDE.md, commits and docs/.
 
 NAIVE
 Naive API key for Romulus (by 5:15 PM)
@@ -46,9 +46,7 @@ pi vs Hermes comparison (Naive console)  <--- James
 
 ROMULUS
 Scaffold, contracts, spikes (M0)        <--- Kent
-Incident timeline page (M2)             <--- Kent
 Batch, gate, kill switch (M3)           <--- Kent
-Telemetry ingest F7 (M4)                <--- Kent
 Overnight launch F10 (M7)               <--- Kent
 Datasets and exports F8 (M6)            <--- Kent
 Coding agent for code patches (M8)
@@ -71,9 +69,10 @@ SO-101
 Arm assembly                            <--- Olir, Andre
 Calibration with LeRobot                <--- Olir, Andre
 Camera and ultrasonic wiring            <--- Olir, Andre
-Ultrasonic distance reading
+Ultrasonic distance reading             <--- Olir
 STM32 firmware control loop             <--- Olir
 STM32 to Pi link
+STM32 toolchain in healer sandbox (B8)
 
 DEMO AND FAULTS
 Plant demo faults D1-D3                 <--- Ishaan
@@ -119,3 +118,5 @@ Demo: fault catalog                     <--- Ishaan
 Pi 5: device-side answers (healer scope) <--- Ishaan
 SO-101: STM32 firmware boilerplate      <--- Olir
 Romulus: Walking skeleton F1+F2 (M1)    <--- Kent
+Romulus: Incident timeline page (M2)    <--- Kent
+Romulus: Telemetry ingest F7 (M4)       <--- Kent
