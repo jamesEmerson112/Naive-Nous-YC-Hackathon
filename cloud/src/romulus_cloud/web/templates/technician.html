@@ -38,19 +38,20 @@
   .tc-stages li:first-child::before { left: 11px; }
   .tc-stages li:last-child::before { right: auto; width: 11px; }
   .tc-stages .st-done::before { background: var(--leaf); }
-  .tc-stages .st-active::before { background: linear-gradient(90deg, var(--sky), var(--line) 70%); }
+  .tc-stages .st-active::before { background: linear-gradient(90deg, var(--leaf), var(--sky) 40%); }
   .tc-stages .is-you::before { background: linear-gradient(90deg, var(--leaf), var(--sun) 40%); }
-  .tc-stages .st-failed::before, .tc-stages .st-denied::before { background: var(--clay); }
+  .tc-stages .st-failed::before, .tc-stages .st-denied::before { background: linear-gradient(90deg, var(--leaf), var(--clay) 40%); }
   .tc-stages .st-skipped::before { background: repeating-linear-gradient(90deg, var(--line-strong) 0 6px, transparent 6px 11px); }
   .tc-st-mark { position: relative; z-index: 1; flex: none; width: 23px; height: 23px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid var(--line-strong); color: var(--on-leaf); }
   .tc-st-mark .icon { font-size: 13px; stroke-width: 3; }
   .tc-stages .st-done .tc-st-mark { background: var(--leaf); border-color: var(--leaf); }
-  .tc-stages .st-active .tc-st-mark { background: var(--sky); border-color: var(--sky); }
-  .tc-stages .is-you .tc-st-mark { background: var(--sun); border-color: var(--sun); color: var(--ink); }
-  [data-theme="night"] .tc-stages .is-you .tc-st-mark { color: var(--on-leaf); }
-  .tc-stages .st-failed .tc-st-mark, .tc-stages .st-denied .tc-st-mark { background: var(--clay); border-color: var(--clay); }
+  .tc-stages .st-active .tc-st-mark { border-color: var(--sky); }
+  .tc-stages .st-active:not(.is-you) .tc-st-mark::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--sky); }
+  .tc-stages .is-you .tc-st-mark { background: var(--sun); border-color: var(--sun); color: var(--on-sun); }
+  .tc-stages .st-failed .tc-st-mark, .tc-stages .st-denied .tc-st-mark { background: var(--clay); border-color: var(--clay); color: var(--surface); }
   .tc-stages .st-skipped .tc-st-mark { border-style: dashed; border-color: var(--muted); }
-  /* The one loop on the page: a soft ring on the station that is live (2 s, so a 2 s poll swap lands on a cycle boundary) */
+  /* The one loop on the page: a soft ring on the live station, as on the shared heal line, but
+     2 s instead of 2.4 s so the 2 s poll swap lands on a cycle boundary instead of a jump */
   .tc-stages .st-active .tc-st-mark::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid color-mix(in oklch, var(--sky) 55%, transparent); animation: tc-ring 2s var(--ease) infinite; }
   .tc-stages .st-active.is-you .tc-st-mark::after { border-color: color-mix(in oklch, var(--sun) 55%, transparent); }
   .tc-stages .st-active ~ .st-active .tc-st-mark::after { animation: none; opacity: 0.6; }
@@ -136,7 +137,7 @@
   .tc-feed-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; }
   .tc-feed-list li { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 1rem; color: var(--ink-2); }
   .tc-feed-list li:first-child { border-top: 0; }
-  .tc-feed-list time { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.833rem; color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .tc-feed-list time { font-family: var(--mono); font-size: 0.833rem; color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }
   .tc-feed-list span { overflow-wrap: anywhere; }
   .tc-feed .tc-feed-list li.is-last { color: var(--ink); font-weight: 600; }
 

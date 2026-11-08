@@ -35,9 +35,9 @@
   <p class="tc-why">The Naïve agent is reading the incident and the web. Its verdict lands here.</p>
   {% endif %}
   <p class="tc-kicker tc-verdict-meta">
-    {%- if v.confidence %}<span class="pill tc-quiet">Verdict · {{ v.confidence }} confidence</span>{% endif %}
-    {%- if v.joint %}<span class="pill tc-quiet mono">{{ v.joint }}</span>{% endif %}
-    {%- if p and p.staged %}<span class="pill chip-good">✓ {{ 'spare part' if v.part_needed == 'spare' else 'part' }} staged</span>{% elif v.part_needed == 'spare' %}<span class="pill tc-quiet">spare suggested</span>{% elif v.part_needed == 'yes' %}<span class="pill tc-quiet">part needed</span>{% elif v.part_needed == 'no' %}<span class="pill tc-quiet">no part needed</span>{% endif %}
+    {%- if v.confidence %}<span class="pill chip-info">Verdict · {{ v.confidence }} confidence</span>{% endif %}
+    {%- if v.joint %}<span class="pill chip-info mono">{{ v.joint }}</span>{% endif %}
+    {%- if p and p.staged %}<span class="pill chip-good">✓ {{ 'spare part' if v.part_needed == 'spare' else 'part' }} staged</span>{% elif v.part_needed == 'spare' %}<span class="pill chip-info">spare suggested</span>{% elif v.part_needed == 'yes' %}<span class="pill chip-info">part needed</span>{% elif v.part_needed == 'no' %}<span class="pill chip-info">no part needed</span>{% endif %}
     {{- recorded_tag() -}}
   </p>
 </section>
@@ -89,7 +89,7 @@
 <section class="tc-card tc-part is-none">
   <h2 class="tc-part-title">{{ 'Hands-on work only' if v.part_needed == 'no' else 'Nothing to buy' }}</h2>
   <p class="tc-part-vendor">{% if v.part_needed == 'no' %}The agent's report names no part, so there is nothing to approve.{% elif ended_bad and not v.verdict %}No valid report, so no part reached the gate.{% else %}The report's part did not reach the gate.{% endif %}</p>
-  <p class="tc-kicker"><span class="pill tc-quiet">{{ 'No part needed' if v.part_needed == 'no' else 'No part staged' }}</span>{{ recorded_tag() }}</p>
+  <p class="tc-kicker"><span class="pill chip-info">{{ 'No part needed' if v.part_needed == 'no' else 'No part staged' }}</span>{{ recorded_tag() }}</p>
 </section>
 {% endif %}
 {% endmacro %}
@@ -100,7 +100,7 @@
 {% set unsent = e.status not in ('sent', 'sending') %}
 <section class="tc-card tc-email is-{{ e.status }}" aria-label="Technician email">
   <div class="tc-email-top">
-    <p class="tc-kicker">{% if sent %}<span class="pill chip-good">{{ icon('check') }}Technician emailed{% if e.sent_at_label %} · {{ e.sent_at_label }}{% endif %}</span>{% elif e.status == 'sending' %}<span class="pill tc-work">Emailing the technician</span>{% elif e.status == 'failed' %}<span class="pill chip-bad">✕ Email failed</span>{% else %}<span class="pill tc-quiet">Email not sent</span>{% endif %}{{ recorded_tag() }}</p>
+    <p class="tc-kicker">{% if sent %}<span class="pill chip-good">{{ icon('check') }}Technician emailed{% if e.sent_at_label %} · {{ e.sent_at_label }}{% endif %}</span>{% elif e.status == 'sending' %}<span class="pill chip-wait">Emailing the technician</span>{% elif e.status == 'failed' %}<span class="pill chip-bad">✕ Email failed</span>{% else %}<span class="pill chip-info">Email not sent</span>{% endif %}{{ recorded_tag() }}</p>
     <span class="tc-envelope">{{ icon('mail') }}</span>
   </div>
   {% if e.subject %}<h2 class="tc-subject">{% if not sent %}<span class="tc-draft">draft</span> {% endif %}{{ e.subject }}</h2>{% endif %}
