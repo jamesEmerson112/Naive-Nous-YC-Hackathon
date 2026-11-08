@@ -49,9 +49,9 @@ export const PEOPLE: Person[] = [
     who: "Andre",
     initial: "A",
     layer: "edge",
-    doing: "Our main person for the arm: calibrating the SO-101 at the bench. With Olir he also has assembly and the camera and ultrasonic wiring (features.txt).",
-    landed: "Bench work, so nothing to commit yet: no commits or branches on GitHub.",
-    synced: "7:58 PM · James",
+    doing: "Our main person for the arm: calibrating the SO-101 at the bench and building arm/: teleop, recording and motion primitives. With Olir he also has assembly and the camera and ultrasonic wiring (features.txt).",
+    landed: "First push, arm/teleop-recording (8:19 PM, no PR yet): leader → follower teleop, LeRobot v3 recording, JSON motion primitives with play and chain, and a recorded 13.2 s \"wave\".",
+    synced: "8:19 PM · his branch",
   },
 ];
 
@@ -71,7 +71,7 @@ export const OFF_MAIN: OffMain[] = [
   { who: "Kent", where: "cloud/m8-coder-wip", what: "M8 WIP: toy device, code replay, an F11 draft", state: "marked \"not for merge\"; the toy device and replay landed in #19 (inferred)" },
   { who: "Olir", where: "firmware, demo", what: "Nothing: both branches end at ded518a, which is in main", state: "merged as #20" },
   { who: "Ishaan", where: "his own checkout (no branch, no fork)", what: "device/ (app, fake hardware, 18 tests), harness/ (h1–h3), bench/ (benchmark runner)", state: "not pushed: blocker B1 for Kent" },
-  { who: "Andre", where: "the bench", what: "Calibrating the arm: hands-on hardware work", state: "nothing to commit yet (per James)" },
+  { who: "Andre", where: "arm/teleop-recording", what: "arm/: SO-101 teleop, LeRobot recording, motion primitives, a recorded \"wave\"", state: "pushed 8:19 PM; no PR yet" },
   { who: "James", where: "claude/robot-library-olir-firmware-1b9411 (this Mac)", what: "79f938b: marks the pod's ultrasonic sample as verified pod output", state: "local commit, not pushed" },
   { who: "James", where: "private artifact + local note", what: "Self-Healing Arm Briefing; a phased plan for tomorrow's demo", state: "not in the repo", href: "https://claude.ai/artifact/7MVLeY6DMTCrLLodGUT9Ft" },
 ];
@@ -133,7 +133,7 @@ export const LANES: Lane[] = [
     sunday: [
       "Ishaan: device app, fake hardware and 18 tests in his checkout, not pushed (B1). Healer: qwen3.5:4b with thinking on, harness h3 (10 of 12).",
       "Olir: sensor pod firmware, podd with 38 heal tools, and six known-bad releases, on main (#20).",
-      "Andre: calibrating the arm now. It has to be on the bench by Sun 9 AM for F2 and F3 on real hardware (Kent's plan).",
+      "Andre: calibrating the arm, with teleop, recording and motion primitives on his branch arm/teleop-recording. The arm has to be on the bench by Sun 9 AM for F2 and F3 on real hardware (Kent's plan).",
     ],
     stretch: ["The Jetson as a bigger local model (Ishaan is connecting it)", "An LLM agent loop for the pod healer (HARNESS.md)"],
     needs: ["device/ in the repo with its tests (B1)", "Contracts review (I0: B2, B3)", "The K17 safety and visor path list", "A LAN path to the Jetson"],
@@ -221,6 +221,6 @@ export const OPEN: Question[] = [
   { q: "The go-ahead for the first live Naïve card, before the overnight launch (~12:30 AM).", who: "Kent", status: "open" },
   { q: "Sim for tomorrow: a twin beside the real arm, or the code canary (B7)? Motor layer: scripted skills, SmolVLA or Instant Policy?", who: "James, team", status: "open" },
   { q: "A Naïve key with Board scopes for James.", who: "Kent", status: "open" },
-  { q: "When is the arm calibrated and ready for the real-arm run (Sun 9 AM, F2 and F3)? Andre is calibrating it now.", who: "Andre", status: "open" },
+  { q: "When is the arm calibrated and ready for the real-arm run (Sun 9 AM, F2 and F3)? And do Andre's recorded motion primitives become the commander's skill menu?", who: "Andre, James", status: "open" },
   { q: "Can one company win Main plus a sponsor track? AgentMail and Monid bearer auth?", who: "ask organizers", status: "open" },
 ];

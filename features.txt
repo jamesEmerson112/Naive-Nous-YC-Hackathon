@@ -47,6 +47,7 @@ Done: healer benchmark (qwen3.5:4b, h3, 10 of 12); 18 device tests
 
 ANDRE
 Now: calibrating the arm with LeRobot (also has assembly and the camera and ultrasonic wiring, with Olir)
+Now: arm/ on branch arm/teleop-recording, no PR yet: teleop, LeRobot recording, motion primitives (a recorded wave)
 P3 Real arm + polish (with Kent, Olir): F2 and F3 on the real arm
 
 JAMES

@@ -246,7 +246,7 @@ const NODES: LoopNode[] = [
     b: { h: "Talks to Romulus", items: ["check-in every ~10 s", "incidents + recordings", "pulls firmware + harness"] },
   },
   {
-    id: "so101", x: 30, y: 432,  title: "SO-101", sub: "the metal", layer: "edge", href: "#lanes", owner: "Andre: the arm, calibrating now · Olir: STM32 sensor pod (#20)",
+    id: "so101", x: 30, y: 432,  title: "SO-101", sub: "the metal", layer: "edge", href: "#lanes", owner: "Andre: the arm, teleop + motion primitives (his branch) · Olir: STM32 sensor pod (#20)",
     plain: "The physical arm and its sensors on the bench.",
     a: { h: "Hardware", items: ["6× STS3215 servos", "USB camera 720p", "HC-SR04 ultrasonic", "LIS3DH accelerometer", "STM32 Nucleo-F042K6", "e-stop"] },
     b: { h: "STM32 sensor pod (Olir, #20)", items: ["HC-SR04 + LIS3DH", "self-diagnostics", "podd: logs, triage every 3 s", "38 heal tools", "6 known-bad releases"] },
