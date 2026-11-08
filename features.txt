@@ -20,12 +20,11 @@ KENT
 P0 Stripe direction, with James: bill the robot's owner, or pay the supplier
 P1 Live Naive card spike + I0 contract review (M0 rest)
 P1 First live work order: card → fleet-ops phones a teammate (needs a fleet-ops agent)
-P1 Open PRs: Fleet Doctor foundation (#27) (inferred)
-P1 Fleet Doctor L1, L2, device reference, ledger: off by default, not on the demo path (inferred)
-P2 Overnight launch by 12:30 AM: chaos schedule, laptop awake, demo tag
+P1 Fleet Doctor follow-ups: K17 list → SAFETY_PATHS_CONFIRMED; real token price; DOCTOR_DRAFT=coder only after B5 (#46)
+P2 Overnight launch: chaos schedule, laptop awake, demo tag
 P2 Morning digest by 7:30 AM: agent vs human actions
 P3 Real arm + polish, 9-10 AM: F2 and F3 on the real arm (with Olir, Andre)
-Done: Romulus M0-M7 and M8 up to the canary (#19, #28, #38; B7 open), STM32 toolchain (B8, #24), Fleet Doctor plan, D23-D28 and contracts (#26), edge bridge: pod healer → cloud (D29, #25)
+Done: Romulus M0-M7 and M8 up to the canary (#19, #28, #38; B7 open), STM32 toolchain (B8, #24), Fleet Doctor L1 + L2 + Teach + L3 contract (#22-#44, all merged, off by default), edge bridge: pod healer → cloud (D29, #25)
 
 OLIR
 P0 Frozen-ultrasonic triage rule: echo time unchanged for 4 s
@@ -120,8 +119,6 @@ Hermes compaction fix (summarizer login)
 
 ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
-Fleet Doctor proposal (D23-D28)         <--- Kent
-Fleet Doctor PR 7: real evidence (#44)  <--- Kent
 Coder sandbox egress: LLM proxy only (B5, #46) <--- Kent
 
 PI 5
@@ -218,6 +215,10 @@ SO-101: Ultrasonic-gated arm replay (arm/, #36) <--- Olir
 Romulus: Fleet Doctor L2 consult + proposals (#35) <--- Kent
 Romulus: Fleet Doctor device reference code <--- Kent
 Romulus: Fleet Doctor lock-in, PR 9 (#39) <--- Kent
+Romulus: Fleet Doctor proposal + decisions D23-D28 (#22, #23) <--- Kent
+Romulus: Fleet Doctor real evidence, draft, check, traces (#44) <--- Kent
+Romulus: Fleet Doctor F12 interop, real cloud + fake device (#42) <--- Kent
+Romulus: Fleet Doctor L3 device-tool contract, draft (#30) <--- Kent
 SO-101: Pod healer agent loop + blind eval (HARNESS.md) <--- Ishaan
 Models: Laptop serves qwen3.5:4b to the Pi over Ethernet (server/) <--- Olir
 Romulus: Real device/ code in coder path (B1, #38) <--- Kent
