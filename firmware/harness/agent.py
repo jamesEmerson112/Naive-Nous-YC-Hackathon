@@ -762,11 +762,33 @@ def make_ui(a):
     return console.Console(thinking=a.view)
 
 
+def check_ollama(url, model):
+    """Before a run: the model server answers and has the model. Returns None, or what's wrong in plain words."""
+    try:
+        with urllib.request.urlopen(url.rstrip("/") + "/api/tags", timeout=10) as r:
+            names = [m["name"] for m in json.loads(r.read()).get("models", [])]
+    except urllib.error.URLError as e:
+        why = str(getattr(e, "reason", e))
+        if "WRONG_VERSION_NUMBER" in why or "wrong version number" in why:
+            return ("%s answered TLS with plain HTTP: Ollama and server/serve.py speak plain HTTP, so use %s"
+                    % (url, url.replace("https://", "http://", 1)))
+        return "can't reach the model server at %s: %s (is server/start.sh running on the laptop?)" % (url, why)
+    except (OSError, ValueError) as e:
+        return "can't reach the model server at %s: %s" % (url, e)
+    if model not in names:
+        return "%s doesn't serve %s (it has: %s)" % (url, model, ", ".join(names) or "nothing")
+    return None
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("command", choices=["run", "watch"])
     add_agent_args(p)
     a = p.parse_args(argv)
+    if a.driver == "ollama":
+        problem = check_ollama(a.ollama_url, a.model or "qwen3.5:4b")
+        if problem:
+            raise SystemExit("model check failed: " + problem)
     bench = Bench(a.target)
     if a.command == "watch":
         watch(bench, a)

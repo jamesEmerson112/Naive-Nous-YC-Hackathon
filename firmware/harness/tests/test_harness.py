@@ -331,6 +331,29 @@ def test_live_view_renders_a_run(tmp_path):
         assert want in out, want
 
 
+def test_model_check_explains_https_to_a_plain_http_server():
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps({"models": [{"name": "qwen3.5:4b"}]}).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = "127.0.0.1:%d" % srv.server_port
+        assert agent.check_ollama("http://" + url, "qwen3.5:4b") is None
+        assert "doesn't serve gemma" in agent.check_ollama("http://" + url, "gemma")
+        why = agent.check_ollama("https://" + url, "qwen3.5:4b")
+        assert "plain HTTP" in why and ("use http://" + url) in why
+    finally:
+        srv.shutdown()
+
+
 def test_ollama_driver_stops_before_overflowing_context():
     d = agent.OllamaDriver(num_ctx=1000)
     d.start("S" * 10_000, TOOLS[:1], "go")
