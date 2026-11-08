@@ -5,20 +5,26 @@ const LR = "https://huggingface.co/docs/lerobot";
 
 /** James's build plan (the phases in features.txt), on a PST clock. UTC = PST + 8 h. */
 export const OUR_WINDOW: { from: string; to: string; scale: [string, string, string] } = {
-  from: "2026-11-08T04:30:00Z",
+  from: "2026-11-08T05:00:00Z",
   to: "2026-11-08T21:00:00Z",
-  scale: ["Sat 8:30 PM", "overnight", "Sun 1:00 PM · present"],
+  scale: ["Sat 9:00 PM", "overnight: the prototype in sim", "Sun 1:00 PM · present"],
 };
 
+/** "Slap everything together" (re-planned Sun 12:15 AM): the whole loop in sim overnight, the same code on the Pi from 7 AM. */
 export const OUR_SCHEDULE: SchedBlock[] = [
-  { id: "P0", what: "Decide and claim · decisions made 8:45 PM; still open: tell Kent the Stripe step is optional, Olir's frozen-ultrasonic rule, one demo story for the two healers", from: "2026-11-08T04:45:00Z", to: "2026-11-08T05:15:00Z", done: false },
-  { id: "P1.1", what: "Sim arm: MuJoCo SO-101 with a wrist rangefinder, arrival, load and status checks, run records · c42339f", from: "2026-11-08T05:15:00Z", to: "2026-11-08T06:00:00Z", done: true },
-  { id: "P1.2", what: "Commander: Hermes so101-arm plugin; typed \"wave, then go home\" moves the sim arm · fd5c235", from: "2026-11-08T06:00:00Z", to: "2026-11-08T06:45:00Z", done: true },
-  { id: "P1.3", what: "Level-1 sentence: frozen sensor → spoken \"Distance stuck at 130 mm while the arm moved 29 mm\", park, verified repair · dbb361e", from: "2026-11-08T06:45:00Z", to: "2026-11-08T07:30:00Z", done: true },
-  { id: "P1.4", what: "Approach-then-grasp on the wrist sensor · 546e20f; fault factory (1,000 labeled runs) and ChatTS level-2 test · 2692e2a", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:15:00Z", done: true },
-  { id: "P2", what: "Before bed: firmware API and data doc (docs/firmware-apis.md), Olir reviews. Overnight: Olir's pod logs under podd, the only real data tonight (Kent's run is the fake fleet); nothing of ours runs. 7 AM: commit a slice of those logs to samples/pod/", from: "2026-11-08T08:30:00Z", to: "2026-11-08T15:00:00Z", night: true },
-  { id: "P3", what: "Real arm with Andre: swap the sim arm for the real one, wrist HC-SR04 through podd, first labeled real runs; Kent's real-arm slot 9–10", from: "2026-11-08T15:00:00Z", to: "2026-11-08T18:00:00Z" },
-  { id: "P4", what: "10 AM code freeze, rehearse ×3, backup video, present at 1 PM", from: "2026-11-08T18:00:00Z", to: "2026-11-08T21:00:00Z" },
+  { id: "P1", what: "Sim prototypes: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory (1,000 runs), ChatTS level-2 test · c42339f…a5ecc11", from: "2026-11-08T05:15:00Z", to: "2026-11-08T07:30:00Z", done: true },
+  { id: "P2", what: "Firmware API and data doc (docs/firmware-apis.md) · 235e30d; Olir asked to keep his podd logs overnight", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:15:00Z", done: true },
+  { id: "S0", what: "Unblock: main and Andre's arm/prims merged into james/arm-sim (901aa7d); James mints the Naïve bench MCP session and puts one job card on the board", from: "2026-11-08T08:15:00Z", to: "2026-11-08T08:45:00Z", done: false },
+  { id: "S1", what: "Virtual pod: the sim's rangefinder written as real pod lines on a pty, read by Olir's real podd (faults: frozen, image 02, no echo)", from: "2026-11-08T08:45:00Z", to: "2026-11-08T09:45:00Z", done: false },
+  { id: "S2", what: "Arm host reads distance and incidents through podd; restarts the sensor through podd's cmd op; story A's heal stand-in for a firmware rollback", from: "2026-11-08T09:45:00Z", to: "2026-11-08T11:00:00Z", done: false },
+  { id: "S3", what: "Romulus on James's Mac: pod-1 through the edge bridge, arm-1 check-ins and incidents from the arm host; hardware fault → work order (fake tonight)", from: "2026-11-08T11:00:00Z", to: "2026-11-08T12:15:00Z", done: false },
+  { id: "S4", what: "Naïve card → Hermes: the bench MCP session in Hermes; take the arm job, run the skills, comment RESULT, move the card", from: "2026-11-08T12:15:00Z", to: "2026-11-08T13:00:00Z", done: false },
+  { id: "R1", what: "Real-arm adapter on Andre's prims.Arm (arrival, load, Status), tested with a mock", from: "2026-11-08T13:00:00Z", to: "2026-11-08T13:45:00Z", done: false },
+  { id: "S5", what: "Both stories end to end in sim from one script each; GIFs for the backup video; MORNING.md", from: "2026-11-08T13:45:00Z", to: "2026-11-08T14:45:00Z", done: false },
+  { id: "R0", what: "Pi check: SSH, Python 3.12 + LeRobot 0.7, calibration, both ports pinned by /dev/serial/by-id, podd on the real pod", from: "2026-11-08T15:00:00Z", to: "2026-11-08T15:30:00Z" },
+  { id: "R2", what: "Both stories on the real arm and pod, with Andre; story A's rollback by Olir's real pod healer", from: "2026-11-08T15:30:00Z", to: "2026-11-08T17:00:00Z" },
+  { id: "R3", what: "First real runs and the overnight podd slice into samples/; push and PR (with approval); Kent's real-arm slot 9–10", from: "2026-11-08T17:00:00Z", to: "2026-11-08T18:00:00Z" },
+  { id: "FZ", what: "10 AM code freeze, rehearse both stories ×3, backup video (the sim recording), present at 1 PM", from: "2026-11-08T18:00:00Z", to: "2026-11-08T21:00:00Z" },
   { id: "P5", what: "Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video · due Wed Nov 11, 2 PM PST", from: "2026-11-08T21:00:00Z", to: "2026-11-11T22:00:00Z" },
 ];
 

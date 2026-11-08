@@ -10,7 +10,7 @@ BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
 P0 decide and claim: 8:45 → 9:15 PM
 P1 the core loop in simulation: 9:15 PM → bedtime (minimum by 12:30 AM: a typed command moves the sim arm; a planted fault gives a spoken sentence)
-P2 overnight, hands off: 12:30 → 7 AM
+P2 overnight: 12:30 → 7 AM (Kent's run is hands off; James's prototype builds in sim)
 P3 the real arm: Sun 7 → 10 AM (code freeze at 10)
 P4 freeze, rehearse, present: Sun 10 AM → 1 PM
 P5 Hermes plugin entry: due Wed Nov 11, 5 PM EST (2 PM PST)
@@ -52,12 +52,12 @@ P3 Real arm + polish (with Kent, Olir): F2 and F3 on the real arm
 
 JAMES
 P0 Tell Kent the Stripe step is optional (it is still on his P0 line)
-P1 Open a PR for james/arm-sim (the four sim prototypes, fault factory, ChatTS test)
-P2 Firmware API and data doc (docs/firmware-apis.md), Olir reviews; 7 AM: commit a slice of the overnight podd logs (samples/pod/)
-P3 7:30-9 AM with Andre: swap the sim arm for the real one, wrist HC-SR04 through podd, first labeled real runs
+P2 Prototype in sim overnight (james/arm-sim): virtual pod read by Olir's podd, arm host reads and heals through podd, Romulus on James's Mac (pod-1 via the edge bridge, arm-1), Naive card → Hermes, one script per story
+P3 7-10 AM on the Pi with Andre: both stories on the real arm and pod (real-arm adapter on Andre's prims), first real runs into samples/; then a PR for james/arm-sim
 P3 Optional: MuJoCo twin next to the real arm
+P4 10 AM freeze: rehearse both stories x3, backup video from the sim recording
 P5 Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video under 90 s
-Done: Naive console + fault lab (pi vs Hermes), Hermes install, stack hub; P0 decisions (8:45 PM); P1 in simulation: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory (1,000 runs), ChatTS level-2 test; CLAUDE.md notice PRs #47-#51
+Done: Naive console + fault lab (pi vs Hermes), Hermes install, stack hub; P0 decisions (8:45 PM); P1 in simulation: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory (1,000 runs), ChatTS level-2 test; firmware API and data doc (235e30d); CLAUDE.md notice PRs #47-#51; main and Andre's arm/prims merged into james/arm-sim
 
 EVERYONE
 P0 Redeem credits and mark them in SPONSORS AND CREDITS
