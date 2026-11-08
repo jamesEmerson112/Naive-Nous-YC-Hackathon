@@ -446,6 +446,8 @@ def _prunable(session: Session, sha256: str) -> bool:
     ids = [r.id for r in users]
     if _curated(session, ids):
         return False
+    # Blobs referenced by a dataset version are pinned and never deleted. TODO(M6): once
+    # PR #14 lands, use `services.datasets.pinned_blob_shas(session)` instead of this query.
     in_snapshot = select(DatasetVersion.dataset_id).where(
         or_(*(DatasetVersion.recording_ids.contains([rid]) for rid in ids))
     )

@@ -94,6 +94,20 @@ def test_over_budget_deletes_oldest_unlabeled_episodes_only(fleet, store, make_s
     assert telemetry.view(fleet, fleet.get(Recording, eps[2][0]))["stored"] is False
 
 
+def test_a_pinned_unlabeled_episode_survives_the_sweep(fleet, store, make_settings, now):
+    """A blob referenced by a dataset version is pinned, even an unlabeled episode."""
+    pinned, pinned_sha = episode(fleet, store, now, 1)
+    _, loose_sha = episode(fleet, store, now + timedelta(minutes=1), 2)
+    fleet.add(Dataset(id="ds_pin", name="negatives", purpose="policy"))
+    fleet.add(DatasetVersion(dataset_id="ds_pin", n=1, recording_ids=[pinned]))
+    fleet.flush()
+    s = make_settings(blob_budget_gb=1 / telemetry.GB)  # 1 byte: everything is over
+    assert telemetry.enforce_budget(fleet, now, s, store) == 1
+    assert store.exists(pinned_sha) and fleet.get(Blob, pinned_sha) is not None
+    assert not store.exists(loose_sha)
+    assert telemetry.enforce_budget(fleet, now, s, store) == 0  # nothing else may go
+
+
 def test_a_blob_shared_with_incident_evidence_is_kept(fleet, store, make_settings, now):
     rid, sha = episode(fleet, store, now, 1)
     data = store.get(sha).read()
