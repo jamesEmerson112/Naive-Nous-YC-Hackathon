@@ -8,8 +8,12 @@ services:
       - ./data:/data
       - ./cloud/src:/app/cloud/src
       - ./packages/contracts/src:/app/packages/contracts/src
+      # Naïve Technician fixtures: fake mode and replay files (TECHNICIAN_REPLAY_FILE)
+      - ./cloud/tests/fixtures:/app/cloud/tests/fixtures:ro
   worker:
     volumes:
       - ./data:/data
       - ./cloud/src:/app/cloud/src
       - ./packages/contracts/src:/app/packages/contracts/src
+      # Naïve Technician fixtures: fake mode and replay files (TECHNICIAN_REPLAY_FILE)
+      - ./cloud/tests/fixtures:/app/cloud/tests/fixtures:ro
