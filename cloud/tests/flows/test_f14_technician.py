@@ -278,3 +278,44 @@ def test_a_queued_session_is_found_by_case_id_not_created_twice(
     case = _case(db_session, order["id"])
     assert case.status == "diagnosing" and case.naive_session_id
     assert case.request == frozen and list(naive.requests) == [case.id]  # one key, one body
+
+
+def test_the_case_file_reads_what_the_healer_did_from_its_agent_run(
+    client, seeded, sessions, db_session, tech_settings, tmp_path
+):
+    """Real shape (`cloud/CLAUDE.md`, "Real device data"): the run report is built by the
+    unmodified bridge (`edge_bridge.agent_runs.build`) from a harness run folder
+    (`fake_healer.agent_run_01`), sent through the device API and tied to the incident."""
+    from edge_bridge import agent_runs as bridge_runs
+    from edge_bridge.fake_healer import T0 as POD_T0
+    from edge_bridge.fake_healer import agent_run_01
+    from edge_bridge.podd import read_transcript
+
+    incident_id = _report_incident(client, "arm-1")
+    run = agent_run_01(tmp_path / "runs", POD_T0, ("p1", "p2", "p3"))
+    body = bridge_runs.build(run.dir.name, read_transcript(run.path), incident_ids=[incident_id])
+    resp = client.put(f"/v1/devices/arm-1/agent-runs/{run.dir.name}", json=body)
+    assert resp.status_code in (200, 201), resp.text
+
+    naive, shop = _naive(), FakeShop({(ORIGIN, HANDLE): _product()})
+    _tick(sessions, tech_settings, naive, shop, T0)
+    case = _case(db_session, _only_order(client, incident_id)["id"])
+    sent = case.request["message"]
+    assert run.dir.name in sent
+    assert body["writeup"]["summary"][0]["text"][:60] in sent  # the run's write-up headline
+    (ask,) = [h for h in body["help_requests"] if h["to"] == "expert_model"]
+    assert ask["summary"] == "Why does frame_pack fault on the M0?" and ask["summary"] in sent
+    assert '"sim": false' in sent
+    # With a run on record, the thinner Incident.agent fallback stays out.
+    assert "agent_reasoning" not in sent and "agent_actions" not in sent
+
+
+def test_without_agent_runs_the_incident_agent_is_the_fallback(
+    client, seeded, sessions, db_session, tech_settings
+):
+    incident_id = _report_incident(client, "sim-1")  # the fake arms send no runs
+    naive, shop = _naive(), FakeShop({(ORIGIN, HANDLE): _product()})
+    _tick(sessions, tech_settings, naive, shop, T0)
+    sent = _case(db_session, _only_order(client, incident_id)["id"]).request["message"]
+    assert '"agent_reasoning"' in sent and "back_off elbow_flex -10 deg" in sent
+    assert '"agent_runs": []' in sent

@@ -98,9 +98,9 @@ There's no actions list and there are no prices: Romulus works out the actions a
 
 ## 3. The case file
 Built by `services/technician.case_file(session, case)`, on the pattern of `services/doctor_evidence.case_file`, and **frozen into `case.request`**.
-- **Incident:** `kind`, `tier`, `summary` and `outcome`, plus any of `agent.reasoning`/`agent.actions`, `evidence`, `hypotheses`, `next_steps` and `notifications` that are present. The arm host's extras come from `armsim/romulus.py`; the bridge's come from `translate.py`.
+- **Incident:** `kind`, `tier`, `summary` and `outcome`, plus any of `evidence`, `hypotheses`, `next_steps` and `notifications` that are present. The arm host's extras come from `armsim/romulus.py`; the bridge's come from `translate.py`. `agent.reasoning`/`agent.actions` go in **only as the fallback** for a device that sends no agent runs (the fake arms), per `cloud/CLAUDE.md` ("Real device data").
 - **Signals:** a few numbers per series (last value, min/max, how long it was flat). No raw logs.
-- **Agent runs:** the non-`sim` ones, through `services/agent_runs.for_incident`. Include the headline, the problems, at most 12 `tool → effect` steps, and the help request text.
+- **Agent runs: the source for what the healer did,** through `services/agent_runs.for_incident` (APIs §3.11, table `agent_runs`). State comes from the row's columns (`state`, `status`, `sim`), everything else from `report` with `.get()` and a default: the write-up headline, the problem, at most 12 `tool → effect` steps, the help requests and the firmware flashed. Sim runs are included but flagged `sim: true` (diagnosis context, not fleet counting).
 - **Device:** SO-101, the joint → servo ID map, and **the exact servo variant from `ARM_SERVO_VARIANT`**.
 - **Vendors:** each entry is `{origin, handle, variant_id, label}` for parts likely on this arm. The variant id has to be exact: the WowRobo servo product also has 5-pack ($74.95) and 10-pack variants *(review, execution #4)*.
   - C018 12 V: `https://shop.wowrobo.com`, `feetech-sts3215-servo-12v-30kg-high-torque-servo-for-so-arm100`, `48037575033049`.

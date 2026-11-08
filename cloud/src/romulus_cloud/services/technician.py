@@ -362,37 +362,71 @@ def _clip(value: Any, limit: int = 400) -> Any:
     return value
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _run_summary(row: Any) -> dict[str, Any]:
-    report = row.report if isinstance(row.report, dict) else {}
+    """One heal-agent run (APIs §3.11) for the case file. State comes from the row's columns;
+    everything else from the free-form `report`, read with `.get()` and a default
+    (`cloud/CLAUDE.md`, "Real device data")."""
+    report = _dict(row.report)
+    writeup = _dict(report.get("writeup"))
+    summary = writeup.get("summary")
+    if isinstance(summary, list):  # the bridge writes [{label, text}, …]
+        summary = " · ".join(
+            f"{i.get('label')}: {i.get('text')}" for i in summary if isinstance(i, dict)
+        )
     steps = []
     for s in list(report.get("steps") or [])[-MAX_STEPS:]:
         if isinstance(s, dict):
-            tool = s.get("tool") or s.get("action") or s.get("name") or "step"
-            effect = s.get("effect") or s.get("result") or s.get("summary") or ""
-            steps.append(_clip(f"{tool} → {effect}", 200))
-    helps = [
-        _clip(h.get("text") or h.get("message") or h.get("question") or "", 400)
-        for h in report.get("help_requests") or []
-        if isinstance(h, dict)
-    ]
-    writeup = report.get("writeup") if isinstance(report.get("writeup"), dict) else {}
+            what = s.get("action") or s.get("tool") or "step"
+            mark = "" if s.get("ok", True) else " (failed)"
+            steps.append(
+                _clip(f"{s.get('tool') or 'step'}: {what} → {s.get('effect') or ''}{mark}", 240)
+            )
+    helps = []
+    for h in report.get("help_requests") or []:
+        if isinstance(h, dict) and (h.get("summary") or h.get("detail")):
+            helps.append(
+                {
+                    "to": h.get("to") or "person",
+                    "summary": _clip(h.get("summary") or "", 300),
+                    "detail": _clip(h.get("detail") or "", 400),
+                }
+            )
+    firmware = []
+    for fw in report.get("firmware") or []:
+        if isinstance(fw, dict):
+            firmware.append(
+                {k: _clip(fw[k], 80) for k in ("version", "crc", "result", "status") if fw.get(k)}
+            )
     return {
         "run_id": row.run_id,
+        "state": row.state,
         "status": row.status,
-        "headline": _clip(writeup.get("headline") or writeup.get("summary") or "", 300),
-        "problem": report.get("problem") or {},
-        "outcome": report.get("outcome") or {},
+        "sim": bool(row.sim),  # a rehearsal: context for the diagnosis, not fleet behaviour
+        "model": _dict(report.get("agent")).get("model"),
+        "headline": _clip(str(summary or ""), 700),
+        "report": _clip(writeup.get("report") or "", 800),
+        "stop": writeup.get("stop_text") or writeup.get("stop"),
+        "problem": _dict(report.get("problem")),
+        "outcome": _dict(report.get("outcome")),
         "steps": steps,
-        "help_requests": [h for h in helps if h],
+        "help_requests": helps,
+        "firmware": firmware[-6:],
     }
 
 
 def case_file(session: Session, case: TechnicianCase, *, settings: Settings) -> dict[str, Any]:
-    """What the agent gets (design §3): the incident, its signals, the heal-agent runs
-    (non-sim), the device and the vendor allowlist. JSON-safe."""
+    """What the agent gets (design §3): the incident and its signals, what the healer did, the
+    device and the vendor allowlist. JSON-safe.
+
+    What the healer did comes from its agent runs (`agent_runs.for_incident`, sim ones flagged
+    `sim`); `Incident.agent` (actions, reasoning) only when the incident has no runs, i.e. a
+    device that sends none, like the fake arms (`cloud/CLAUDE.md`, "Real device data")."""
     incident = session.get(Incident, case.incident_id)
     raw = incident.raw if incident is not None and isinstance(incident.raw, dict) else {}
-    agent = raw.get("agent") if isinstance(raw.get("agent"), dict) else {}
     found: dict[str, Any] = {
         "id": case.incident_id,
         "kind": incident.kind if incident else None,
@@ -402,14 +436,18 @@ def case_file(session: Session, case: TechnicianCase, *, settings: Settings) -> 
         "suspected_cause": incident.suspected_cause if incident else None,
         "signals": (incident.signals if incident else None) or {},
     }
-    if incident is not None and (incident.agent_reasoning or agent.get("reasoning")):
-        found["agent_reasoning"] = _clip(incident.agent_reasoning or agent.get("reasoning"), 1500)
-    if incident is not None and (incident.actions or agent.get("actions")):
-        found["agent_actions"] = list(incident.actions or agent.get("actions") or [])[-MAX_STEPS:]
     for key in ("evidence", "hypotheses", "next_steps", "notifications"):
         if raw.get(key):
             found[key] = raw[key]
-    runs = [r for r in agent_runs.for_incident(session, case.incident_id) if not r.sim]
+    runs = agent_runs.for_incident(session, case.incident_id)
+    if not runs and incident is not None:
+        agent = _dict(raw.get("agent"))
+        reasoning = incident.agent_reasoning or agent.get("reasoning")
+        actions = incident.actions or agent.get("actions")
+        if reasoning:
+            found["agent_reasoning"] = _clip(reasoning, 1500)
+        if actions:
+            found["agent_actions"] = list(actions)[-MAX_STEPS:]
     return {
         "incident": found,
         "agent_runs": [_run_summary(r) for r in runs[-3:]],
