@@ -6,6 +6,13 @@ The animated visuals for the spoken parts of the pitch: everything before the de
 - **Colour meaning is the same in every scene and every style:** green means healthy or fixed, red means down or broken, and the Buddy accent colour means Hardware Buddy is acting.
 - **The Buddy mark** is the brand: a rounded-square chip with three short pins on each side and two oval eyes. It blinks. "Make hardware alive" is the whole idea, so the mark looks alive.
 
+> **Buddy cut (`buddy.html`, the style we're using).** It differs from the plan below in three ways:
+> - Scene 1 opens directly on its DOWN / $1.4 trillion frame, with no running-arm beat and no count-up.
+> - Scene 4 (Onboarding) is removed.
+> - Scene 6 has no "Make your hardware alive." headline: the heartbeat sits centred, then moves up when the cards come in.
+>
+> That leaves 8 scenes. The demo card is scene 7 and the closing is scene 8. The other two styles still follow the full plan.
+
 ## Running order
 
 | # | Scene | Voiceover (Andre) | Beats | Autoplay |
