@@ -117,6 +117,8 @@ CASES = [
     ("handoff_human again after one", J(plan(action="handoff_human")), ESC,
      {"tried": [{"action": "handoff_human", "verified": False}]}, True, "ok"),
     # a packet that offers no corrections allows none (fail closed, finding 12)
+    ("a NaN confidence", J(plan()).replace('"confidence": 0.86', '"confidence": NaN'), ESC, {}, False,
+     "NaN is not a JSON number"),
     ("a correction when none are offered", J(redo(correction="relocate")), WRONG, {}, False, "not offered"),
     ("an offset when none are offered", J(redo(correction="offset", dx_mm=10, dy_mm=0)), WRONG, {}, False,
      "none offered"),

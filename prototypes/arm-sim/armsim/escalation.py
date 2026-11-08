@@ -195,6 +195,13 @@ def allowed_actions(inc, state=None):
 _FENCE = re.compile(r"```[A-Za-z]*[ \t]*\n?(.*?)\n?[ \t]*```", re.S)
 
 
+def _no_constant(name):
+    raise ValueError(f"{name} is not a JSON number")
+
+
+_STRICT = json.JSONDecoder(parse_constant=_no_constant)     # Python's json takes NaN and Infinity by default
+
+
 def parse_plan(text):
     """(object, None) when `text` is exactly one JSON object, bare or in one code fence; else (None, why).
     A run's output is unchecked text: prose around the JSON, a second object or a second fence is refused."""
@@ -209,9 +216,11 @@ def parse_plan(text):
     if "```" in s:
         return None, "the answer has more than one code fence, or text around its fence"
     try:
-        obj, end = json.JSONDecoder().raw_decode(s)
+        obj, end = _STRICT.raw_decode(s)
     except json.JSONDecodeError as exc:
         return None, f"the answer is not one JSON object ({exc.msg} at character {exc.pos})"
+    except ValueError as exc:                   # NaN / Infinity: not JSON, and NaN slips past minimum/maximum
+        return None, f"the answer is not one JSON object ({exc})"
     if s[end:].strip():
         return None, "the answer has text or a second JSON value after the first object"
     if not isinstance(obj, dict):
