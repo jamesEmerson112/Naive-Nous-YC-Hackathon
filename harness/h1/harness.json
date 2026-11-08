@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "framework": "mini-swe-agent",
+  "prompt": "prompt.md",
+  "knowledge_dir": "skills/",
+  "tools_dir": "tools/",
+  "instance": "instance.md",
+  "finish": "echo"
+}
