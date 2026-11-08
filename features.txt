@@ -20,12 +20,12 @@ KENT
 P0 Stripe direction, with James: bill the robot's owner, or pay the supplier
 P1 Live Naive card spike + I0 contract review (M0 rest)
 P1 First live work order: card → fleet-ops phones a teammate (needs a fleet-ops agent)
-P1 Open PRs: M8b coding agent (#28), edge bridge (#25), Fleet Doctor foundation (#27) (inferred)
+P1 Open PRs: M8b coding agent (#28), Fleet Doctor foundation (#27) (inferred)
 P1 Fleet Doctor L1, L2, device reference, ledger: off by default, not on the demo path (inferred)
 P2 Overnight launch by 12:30 AM: chaos schedule, laptop awake, demo tag
 P2 Morning digest by 7:30 AM: agent vs human actions
 P3 Real arm + polish, 9-10 AM: F2 and F3 on the real arm (with Olir, Andre)
-Done: Romulus M0-M7 and M8a, STM32 toolchain (B8, #24), Fleet Doctor plan, D23-D28 and contracts (#26)
+Done: Romulus M0-M7 and M8a, STM32 toolchain (B8, #24), Fleet Doctor plan, D23-D28 and contracts (#26), edge bridge: pod healer → cloud (D29, #25)
 
 OLIR
 P0 Frozen-ultrasonic triage rule: echo time unchanged for 4 s
@@ -131,14 +131,12 @@ PI 5
 Device side owner (D14)                 <--- Ishaan
 LeRobot 0.7 on Python 3.12
 One serial-port owner (arm host)
-Bench to cloud API bridge (tools/edge_bridge: podd → cloud) <--- Kent
 Pi app: hold object                     <--- Ishaan
 Healer agent on the Pi                  <--- Ishaan
 Health checks, tiers 1-3                <--- Ishaan
 Snapshot and park on fault
 Overlay patches with self-revert
 Visor: check in, pull, install
-Incident + recording outbox (pod, via tools/edge_bridge) <--- Kent
 Local model on the Pi
 
 SO-101
@@ -209,3 +207,5 @@ Romulus: Scaffold, contracts, adapters (M0, #1-#4) <--- Kent
 Naive: Parts catalogue (parts.yaml, #6) <--- Kent
 Models: Naive model proxy works (gpt-oss-120b, D22) <--- Kent
 SO-101: STM32 toolchain in healer sandbox (B8, #24) <--- Kent
+Pi 5: Bench to cloud API bridge (tools/edge_bridge: podd → cloud, D29, #25) <--- Kent
+Pi 5: Incident + recording outbox for the pod (tools/edge_bridge, #25) <--- Kent
