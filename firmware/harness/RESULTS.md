@@ -18,6 +18,20 @@ Report format from [`HANDOFF.md`](HANDOFF.md). One row per run. The raw runs sta
   doesn't show the bench works. The one bench run stopped at stage 1 because the HC-SR04 gets no echo
   (wiring, see HANDOFF).
 
+## Bench: passed (Sat Nov 7, 11:10 PM PST)
+`20261107-231033-arm07-ollama`: the real pod, the real HC-SR04 (open space at ~445 mm), qwen3.5:4b via
+the relay, v2 harness, start gate only (no arm on USB). **All 9 checks passed.**
+
+| | |
+|---|---|
+| Timeline | triage on turn 1 (critical `us_mismatch`); reads source, telemetry, `src_diff`, `src_log` (turns 2–14); `note` with the root cause (15); **`fw_rollback`, verified (16, +144 s)**; **`arm_test` passed (17, +148 s)**; triage clean (19); more reading; budget notice (after 23); `notify_human` (26); report (27) |
+| Totals | 27 turns, 26 tool calls (23 read, 1 flash, 1 arm, 1 notify), 0 refused, 0 errors, 212.8 s, 466k/11k tokens |
+| Root cause | named the `(uint16_t)` cast on line 124 of `src/hcsr04.c`, with correct arithmetic: (uint16_t)892399 = 40431, /2000 = 20 mm vs 446 mm |
+| Note | service was restored by +148 s; the 11 turns after that were extra reading and the report |
+
+Two earlier bench attempts stopped at stage 1, as they should: `224244` (HC-SR04 no echo, wiring, since
+fixed) and `230808` (something within 200 mm on known-good firmware).
+
 **Turn speed:** median 3.4 s per model turn, p90 10.2 s (166 turns: every run below plus the
 bench smoke run).
 

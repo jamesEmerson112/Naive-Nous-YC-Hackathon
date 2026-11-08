@@ -25,9 +25,10 @@ reference for flags, the gate, blind mode and scoring. This file holds the runbo
   - `arm/heal_test.py` on the bench: preflight passes, then it stops at stage 1 because the HC-SR04 gets no
     echo at all (`pod_cmd "us check"`: no pulse, 0 mV at D3, since about 19:20). That's a wiring or 5 V problem
     on the sensor, not software.
-- **Still not verified:** the full arm scenario on the bench, and steps 4–5. `evaluate.py` refuses to start
-  while `us_no_echo` is open ("bench not clean"), so both wait on the HC-SR04 wiring. Also unverified: the
-  real arm motion (`--arm-port`, no arm on USB), the SSH `--target` path and the `claude` driver.
+- **Arm scenario passed on the bench (11:10 PM PST, after the HC-SR04 was rewired):** all 9 checks. The agent
+  rolled back on turn 16 and its `arm_test` passed on turn 17 (`RESULTS.md`).
+- **Still not verified:** steps 4–5 (not run tonight; the sensor that blocked `evaluate.py` now works). Also
+  unverified: the real arm motion (`--arm-port`, no arm on USB), the SSH `--target` path and the `claude` driver.
 - **Changed for the arm scenario (see `README.md`, "The arm task"):** the live view (`console.py`,
   `view.py`), Ollama streaming, the `arm_test` harness tool, `--tools arm`, the arm rules, the turn-budget
   notice, the `us_mismatch` triage rule (restart podd after pulling, so it loads), and bad release v1.7.
