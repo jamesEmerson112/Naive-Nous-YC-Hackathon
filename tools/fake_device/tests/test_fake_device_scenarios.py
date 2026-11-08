@@ -5,9 +5,11 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import fake_device.__main__ as cli
 import httpx
 import pytest
+from mcap.reader import make_reader
+
+import fake_device.__main__ as cli
 from fake_device.arm import FakeArm
 from fake_device.fake_cloud import V1_MANIFEST, FakeCloud
 from fake_device.scenarios import (
@@ -18,7 +20,6 @@ from fake_device.scenarios import (
     rules_patch,
 )
 from fake_device.sim import merge_rules
-from mcap.reader import make_reader
 from romulus_contracts import IncidentReport, replay_passes
 from romulus_contracts.codepatch import validate_code_patch
 

@@ -29,9 +29,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from romulus_contracts import IncidentReport, InstallResult, OverlayStatus, RecordingMeta
 
 from fake_device.client import DeviceClient, body
+from romulus_contracts import IncidentReport, InstallResult, OverlayStatus, RecordingMeta
 
 log = logging.getLogger(__name__)
 

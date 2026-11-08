@@ -21,6 +21,7 @@ from typing import Any
 
 import httpx
 from pydantic import BaseModel, ValidationError
+
 from romulus_contracts import (
     CONTRACT_VERSION,
     SHA256_HEADER,

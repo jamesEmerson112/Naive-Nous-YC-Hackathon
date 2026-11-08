@@ -27,10 +27,10 @@ from datetime import datetime
 from typing import Any, Protocol
 
 import httpx
-from romulus_contracts import CheckIn, CheckInResponse, FirmwareManifest, InstallResult
 
 from fake_device.client import DeviceClient, HashMismatch, InvalidPackage
 from fake_device.outbox import Outbox
+from romulus_contracts import CheckIn, CheckInResponse, FirmwareManifest, InstallResult
 
 log = logging.getLogger(__name__)
 

@@ -23,10 +23,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
-from romulus_contracts import Agent, IncidentReport, Outcome, Overlay, OverlayStatus, Running
-
 from fake_device import recordings
 from fake_device.arm import FakeArm
+from romulus_contracts import Agent, IncidentReport, Outcome, Overlay, OverlayStatus, Running
 
 HOLD_AFTER_S = 1200.0
 """When an overlay is reported `held`: 20 min without recurrence (contracts README, I0 item 2)."""

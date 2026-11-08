@@ -7,13 +7,13 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from romulus_contracts import IncidentReport, OverlayStatus
 
 from fake_device.client import DeviceClient
 from fake_device.outbox import Outbox
 from fake_device.recordings import Recording
 from fake_device.sim import SimDevice
 from fake_device.visor import TickResult, Visor
+from romulus_contracts import IncidentReport, OverlayStatus
 
 
 class FakeArm:

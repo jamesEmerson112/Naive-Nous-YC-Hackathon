@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+
 from fake_device.client import DeviceClient, HashMismatch, InvalidPackage
 from fake_device.fake_cloud import V1_MANIFEST, FakeCloud, tarball
 from romulus_contracts import (

@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from mcap.writer import Writer
+
 from romulus_contracts import RecordingMeta, Running
 from romulus_contracts.telemetry import FLEET_FEATURES, FLEET_SCHEMA_VERSION
 

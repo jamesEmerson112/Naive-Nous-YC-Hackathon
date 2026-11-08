@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+
 from fake_device.client import DeviceClient
 from fake_device.fake_cloud import FakeCloud
 from fake_device.outbox import Outbox

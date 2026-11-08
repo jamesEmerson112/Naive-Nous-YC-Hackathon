@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+
 from fake_device.arm import FakeArm
 from fake_device.fake_cloud import V1_MANIFEST, FakeCloud, tarball
 from romulus_contracts import Overlay
