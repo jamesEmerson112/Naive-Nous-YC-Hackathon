@@ -94,4 +94,10 @@ def test_the_seal_ignores_everything_after_its_end_marker():
     # A forged "passed" line can't override a real failure for the same id.
     lines = [b'{"id": "t::a", "outcome": "failed"}\n', b'{"id": "t::a", "outcome": "passed"}\n']
     assert run_agent.parse_seal([*lines, b'{"end": true}\n'])["tests"] == {"t::a": "failed"}
-    assert run_agent.parse_seal(lines) is None  # no marker: pytest never finished
+    assert run_agent.parse_seal(lines) is None  # no start marker: not a sealed pytest run
+    started = [b'{"start": true}\n', *lines]
+    assert run_agent.parse_seal(started) == {  # started, never finished
+        "tests": {"t::a": "failed"},
+        "exitstatus": None,
+        "incomplete": True,
+    }
