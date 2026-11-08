@@ -18,6 +18,7 @@ from romulus_contracts import (
     OverlayStatus,
     RecordingMeta,
     evaluate,
+    firmware_response,
     manifest_sha256,
     replay_passes,
 )
@@ -71,6 +72,11 @@ def test_device_examples_carry_supported_contract_version_when_present(name):
     assert version is None or is_supported(version)
 
 
+def test_firmware_response_example_is_what_the_builder_makes():
+    raw = load("firmware_response.json")
+    assert firmware_response(raw["manifest"]) == raw
+
+
 def test_firmware_response_hash_matches_manifest():
     raw = load("firmware_response.json")
     assert manifest_sha256(raw["manifest"]) == raw["sha256"]
@@ -84,7 +90,7 @@ def test_d1_incident_code_patch_is_well_formed():
         "control/hold.py",
         "tests/test_hold_proximity.py",
     ]
-    assert inc.outcome.model_extra["category"] == "fix-code"
+    assert inc.outcome.category == "fix-code"
     assert inc.running.code_rev == "c0de001"  # the patch's base code_rev
     assert inc.overlay.diff == {}
 
@@ -102,7 +108,7 @@ def test_park_incident_is_unresolved_hardware():
     assert inc.overlay is None
     assert inc.outcome.resolved is False
     assert inc.outcome.suspected_cause == "hardware"
-    assert inc.outcome.model_extra["category"] == "park"
+    assert inc.outcome.category == "park"
 
 
 def test_rules_incident_replays_against_merged_candidate():

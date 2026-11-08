@@ -5,12 +5,19 @@ and `EXPECTED_FORMAT` only says what each known kind normally carries.
 """
 
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import NonNegativeInt
 
-from romulus_contracts.common import CloudModel, DeviceModel, Running, Sha256, UtcDatetime
+from romulus_contracts.common import (
+    CloudModel,
+    DeviceModel,
+    NullAsEmpty,
+    Running,
+    Sha256,
+    UtcDatetime,
+)
 
 
 class RecordingKind(StrEnum):
@@ -47,7 +54,7 @@ class RecordingMeta(DeviceModel):
 
     `recording_id` is a UUID made on the device. `sha256` is the content address of
     the blob uploaded to `PUT /v1/recordings/{recording_id}/blob`. Send the incident
-    before its recordings (APIs §3).
+    before its recordings (APIs §3). `contract_version` is optional (proposed).
     """
 
     recording_id: UUID
@@ -61,9 +68,10 @@ class RecordingMeta(DeviceModel):
     overlay_id: str | None = None
     incident_id: UUID | None = None
     episode: Episode | None = None
-    streams: list[str] = []
+    streams: Annotated[list[str], NullAsEmpty] = []
     schema_version: str | None = None
-    labels: list[str] = []
+    labels: Annotated[list[str], NullAsEmpty] = []
+    contract_version: str | None = None
 
 
 class RecordingAccepted(CloudModel):

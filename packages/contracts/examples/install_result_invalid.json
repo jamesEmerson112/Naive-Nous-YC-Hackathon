@@ -1,0 +1,8 @@
+{
+  "type": "firmware",
+  "version": 3,
+  "result": "invalid",
+  "detail": "manifest rejected: rule 'tilt_guard': needs 'below' or 'above'; kept firmware 2",
+  "occurred_at": "2026-11-08T03:12:09Z",
+  "contract_version": "0.1"
+}

@@ -68,10 +68,28 @@ def manifest_sha256(manifest: Mapping[str, Any] | FirmwareManifest) -> str:
 
 
 class FirmwareResponse(CloudModel):
-    """Response of `GET /v1/firmware/{version}` (APIs §3.2)."""
+    """Response of `GET /v1/firmware/{version}` (APIs §3.2). Build it with `firmware_response`."""
 
     manifest: FirmwareManifest
     sha256: Sha256
+
+
+def firmware_response(manifest: Mapping[str, Any] | FirmwareManifest) -> dict[str, Any]:
+    """The JSON body for `GET /v1/firmware/{version}`: `{"manifest": ..., "sha256": ...}`.
+
+    **The cloud should only serve manifests built here.** The manifest is validated, dumped
+    once (`model_dump(mode="json")`: defaults filled in, "8" read as 8, extras kept), and
+    the hash is computed over that same dump, so what is served and what is hashed can
+    never diverge. The device then checks `manifest_sha256(body["manifest"]) == body["sha256"]`.
+    Store the returned `manifest` dict if you want the stored copy to hash the same.
+    """
+    model = (
+        manifest
+        if isinstance(manifest, FirmwareManifest)
+        else FirmwareManifest.model_validate(manifest)
+    )
+    dumped = model.model_dump(mode="json")
+    return {"manifest": dumped, "sha256": manifest_sha256(dumped)}
 
 
 class HarnessMeta(DeviceModel):

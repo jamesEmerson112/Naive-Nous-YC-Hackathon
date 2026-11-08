@@ -41,6 +41,9 @@ under-specified spot in APIs §2.7; they are listed in the PR and the README.
    no way to switch a rule off other than removing it.
 8. Inputs are never mutated. `signals` that is not a mapping raises `TypeError`.
 
+Skipped samples: `skipped_samples` lists every sample `evaluate` ignored and why, and
+`replay_report` bundles it with the result so the gate can explain a failed replay.
+
 Replay (APIs §2.7): a candidate passes replay for an incident when the incident's
 `resolving_action` is among the fired actions; see `replay_passes`.
 """
@@ -170,6 +173,110 @@ def evaluate(rules: Mapping[str, Mapping[str, Any]], signals: Mapping[str, Any])
 def fired_actions(fired: list[Fired]) -> list[str]:
     """The distinct actions in `fired`, in the order they first appear."""
     return list(dict.fromkeys(f.action for f in fired))
+
+
+@dataclass(frozen=True)
+class Skipped:
+    """Why a rule's signal contributed no usable sample. `index` is None for the whole signal."""
+
+    signal: str
+    index: int | None
+    reason: str
+
+
+def _skip_reason(sample: Any) -> str | None:
+    if _is_real(sample):
+        return None
+    if sample is None:
+        return "null"
+    if isinstance(sample, bool):
+        return "boolean"
+    if isinstance(sample, float):
+        return "NaN"
+    if isinstance(sample, str):
+        return "string"
+    return f"not a number ({type(sample).__name__})"
+
+
+def skipped_samples(
+    rules: Mapping[str, Mapping[str, Any]], signals: Mapping[str, Any]
+) -> list[Skipped]:
+    """Every sample `evaluate` ignored for the signals `rules` use, and why.
+
+    Sorted by signal name, then index. A missing signal or an empty list is reported once
+    with `index=None` ("missing" / "empty"). Raises like `evaluate`.
+    """
+    problems = validate_rules(rules)
+    if problems:
+        raise RulesError(problems)
+    if not isinstance(signals, Mapping):
+        raise TypeError(f"signals must be a mapping, got {type(signals).__name__}")
+    skipped: list[Skipped] = []
+    for signal in sorted({rule["signal"] for rule in rules.values()}):
+        if signal not in signals:
+            skipped.append(Skipped(signal, None, "missing"))
+            continue
+        value = signals[signal]
+        if isinstance(value, (list, tuple)):
+            if not value:
+                skipped.append(Skipped(signal, None, "empty"))
+            for i, sample in enumerate(value):
+                reason = _skip_reason(sample)
+                if reason:
+                    skipped.append(Skipped(signal, i, reason))
+        else:
+            reason = _skip_reason(value)
+            if reason:
+                skipped.append(Skipped(signal, None, reason))
+    return skipped
+
+
+@dataclass(frozen=True)
+class ReplayReport:
+    """Replay of one incident against candidate rules, with enough detail to explain it."""
+
+    passed: bool
+    resolving_action: str | None
+    fired: tuple[Fired, ...]
+    skipped: tuple[Skipped, ...]
+
+    def why(self) -> str:
+        """One plain-English sentence for the gate's replay event."""
+        if not self.resolving_action:
+            return "replay failed: the incident has no resolving_action"
+        hit = next((f for f in self.fired if f.action == self.resolving_action), None)
+        if hit:
+            op = "<" if hit.direction == "below" else ">"
+            return (
+                f"replay passed: {hit.rule} fired {hit.action} "
+                f"({hit.signal}[{hit.index}] = {hit.value} {op} {hit.threshold})"
+            )
+        fired = ", ".join(f"{f.rule}->{f.action}" for f in self.fired) or "nothing"
+        text = f"replay failed: {self.resolving_action} did not fire (fired: {fired})"
+        if self.skipped:
+            counts: dict[tuple[str, str], int] = {}
+            for s in self.skipped:
+                counts[(s.signal, s.reason)] = counts.get((s.signal, s.reason), 0) + 1
+            text += "; ignored " + ", ".join(
+                f"{signal}: {n} {reason}" for (signal, reason), n in counts.items()
+            )
+        return text
+
+
+def replay_report(
+    rules: Mapping[str, Mapping[str, Any]],
+    signals: Mapping[str, Any],
+    resolving_action: str | None,
+) -> ReplayReport:
+    """`replay_passes` plus what fired and which samples were ignored (for the event's why)."""
+    fired = evaluate(rules, signals)
+    passed = bool(resolving_action) and resolving_action in fired_actions(fired)
+    return ReplayReport(
+        passed=passed,
+        resolving_action=resolving_action,
+        fired=tuple(fired),
+        skipped=tuple(skipped_samples(rules, signals)),
+    )
 
 
 def replay_passes(

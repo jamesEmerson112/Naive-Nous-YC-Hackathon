@@ -8,7 +8,7 @@
 """
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import (
     AfterValidator,
@@ -30,6 +30,21 @@ class CloudModel(BaseModel):
     """Base for cloud-sent payloads: extra fields are ignored."""
 
     model_config = ConfigDict(extra="ignore")
+
+
+def _null_dict(value: object) -> object:
+    return {} if value is None else value
+
+
+def _null_list(value: object) -> object:
+    return [] if value is None else value
+
+
+OpenDict = Annotated[dict[str, Any], BeforeValidator(_null_dict)]
+"""A free-form JSON object; `null` reads as `{}` so it never fails a device payload."""
+
+NullAsEmpty = BeforeValidator(_null_list)
+"""Put on a list field (`Annotated[list[X], NullAsEmpty]`) so `null` reads as `[]`."""
 
 
 def _to_utc(value: datetime) -> datetime:

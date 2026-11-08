@@ -10,9 +10,12 @@ from romulus_contracts import rules as rules_module
 from romulus_contracts.rules import (
     Fired,
     RulesError,
+    Skipped,
     evaluate,
     fired_actions,
     replay_passes,
+    replay_report,
+    skipped_samples,
     validate_rules,
 )
 
@@ -343,3 +346,99 @@ def test_replay_without_resolving_action_never_passes(action):
 def test_replay_with_malformed_rules_raises():
     with pytest.raises(RulesError):
         replay_passes({"r": {"signal": "s"}}, {"s": [0]}, "a")
+
+
+# --- skipped samples and replay reports ------------------------------------------------
+
+
+def test_skipped_samples_reasons_in_order():
+    signals = {
+        "brightness": [0.5, None, "0.2", True, float("nan"), [0.1], 0.4],
+        "gripper_current_ma": 1000,
+    }
+    assert skipped_samples(APIS_RULES, signals) == [
+        Skipped("brightness", 1, "null"),
+        Skipped("brightness", 2, "string"),
+        Skipped("brightness", 3, "boolean"),
+        Skipped("brightness", 4, "NaN"),
+        Skipped("brightness", 5, "not a number (list)"),
+    ]
+
+
+def test_skipped_samples_missing_empty_and_bad_scalar():
+    rules = {
+        "a": {"signal": "x", "above": 0, "action": "a"},
+        "b": {"signal": "y", "above": 0, "action": "b"},
+        "c": {"signal": "z", "above": 0, "action": "c"},
+        "d": {"signal": "z", "below": 0, "action": "d"},
+    }
+    assert skipped_samples(rules, {"y": [], "z": "7"}) == [
+        Skipped("x", None, "missing"),
+        Skipped("y", None, "empty"),
+        Skipped("z", None, "string"),
+    ]
+
+
+def test_skipped_samples_only_for_signals_rules_use():
+    assert skipped_samples({"r": CAMERA}, {"brightness": [0.5], "other": [None]}) == []
+
+
+def test_skipped_samples_validates_like_evaluate():
+    with pytest.raises(RulesError):
+        skipped_samples({"r": {}}, {})
+    with pytest.raises(TypeError):
+        skipped_samples({"r": CAMERA}, [])
+
+
+def test_replay_report_pass():
+    candidate = {"camera_occluded": CAMERA}
+    report = replay_report(candidate, {"brightness": [0.41, 0.18]}, "safe_pose")
+    assert report.passed and report.skipped == ()
+    assert (
+        report.why()
+        == "replay passed: camera_occluded fired safe_pose (brightness[1] = 0.18 < 0.35)"
+    )
+    assert replay_report(APIS_RULES, {"gripper_current_ma": [950]}, "backoff_retry").why() == (
+        "replay passed: gripper_stall fired backoff_retry (gripper_current_ma[0] = 950 > 900)"
+    )
+
+
+def test_replay_report_explains_string_samples():
+    report = replay_report({"r": CAMERA}, {"brightness": ["0.1", "0.2"]}, "safe_pose")
+    assert not report.passed
+    assert report.why() == (
+        "replay failed: safe_pose did not fire (fired: nothing); ignored brightness: 2 string"
+    )
+
+
+def test_replay_report_lists_other_fired_rules():
+    report = replay_report(
+        APIS_RULES, {"gripper_current_ma": [1000], "brightness": [0.9]}, "safe_pose"
+    )
+    assert (
+        report.why()
+        == "replay failed: safe_pose did not fire (fired: gripper_stall->backoff_retry)"
+    )
+
+
+@pytest.mark.parametrize("action", [None, ""])
+def test_replay_report_without_resolving_action(action):
+    report = replay_report(APIS_RULES, {"brightness": [0.0]}, action)
+    assert not report.passed
+    assert report.why() == "replay failed: the incident has no resolving_action"
+
+
+@pytest.mark.parametrize(
+    ("signals", "action"),
+    [
+        ({"brightness": [0.1]}, "safe_pose"),
+        ({"brightness": [0.9]}, "safe_pose"),
+        ({"gripper_current_ma": [901]}, "safe_pose"),
+        ({}, "backoff_retry"),
+        ({"brightness": [0.1]}, None),
+    ],
+)
+def test_replay_report_agrees_with_replay_passes(signals, action):
+    assert replay_report(APIS_RULES, signals, action).passed == replay_passes(
+        APIS_RULES, signals, action
+    )

@@ -16,7 +16,7 @@
       "collect_evidence",
       "patch control/hold.py: remove proximity release",
       "add tests/test_hold_proximity.py",
-      "restart robot-app",
+      "restart_app",
       "verify d1_hand_trace"
     ]
   },

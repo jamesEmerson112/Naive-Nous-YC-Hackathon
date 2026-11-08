@@ -1,11 +1,12 @@
 """Firmware manifest, canonical-JSON hash, firmware response and harness metadata."""
 
 import hashlib
+import json
 
 import pytest
 from pydantic import ValidationError
 from romulus_contracts import FirmwareManifest, FirmwareResponse, HarnessMeta, evaluate
-from romulus_contracts.manifest import canonical_json, manifest_sha256
+from romulus_contracts.manifest import canonical_json, firmware_response, manifest_sha256
 
 
 def apis_manifest():
@@ -89,6 +90,36 @@ def test_firmware_response_parses_and_hash_verifies():
     assert resp.sha256 == manifest_sha256(m)
     with pytest.raises(ValidationError):
         FirmwareResponse.model_validate({"manifest": m, "sha256": "…"})
+
+
+def test_firmware_response_builder_hashes_its_own_dump_for_sparse_manifests():
+    sparse = {"version": "8", "device_class": "so101", "code_rev": "a1b2c3d", "note": "x"}
+    # The raw dict and the model disagree (defaults, "8" vs 8): the reason for the builder.
+    assert manifest_sha256(sparse) != manifest_sha256(FirmwareManifest.model_validate(sparse))
+    body = firmware_response(sparse)
+    assert body["manifest"] == {
+        "version": 8,
+        "device_class": "so101",
+        "code_rev": "a1b2c3d",
+        "rules": {},
+        "params": {},
+        "policy": None,
+        "note": "x",
+    }
+    # What the device receives after a JSON round trip hashes to the served sha256.
+    received = json.loads(json.dumps(body))
+    assert manifest_sha256(received["manifest"]) == received["sha256"]
+    assert FirmwareResponse.model_validate(received).sha256 == body["sha256"]
+    # Model in, same answer as dict in; and building from the served dump is stable.
+    assert firmware_response(FirmwareManifest.model_validate(sparse)) == body
+    assert firmware_response(body["manifest"]) == body
+
+
+def test_firmware_response_builder_rejects_invalid_manifests():
+    with pytest.raises(ValidationError):
+        firmware_response({"version": 1, "device_class": "so101"})
+    with pytest.raises(ValidationError):
+        firmware_response(apis_manifest() | {"rules": {"r": {"signal": "s", "action": "a"}}})
 
 
 def test_harness_meta_apis_example():

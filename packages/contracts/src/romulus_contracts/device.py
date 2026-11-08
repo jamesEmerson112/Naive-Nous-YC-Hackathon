@@ -5,10 +5,17 @@ from typing import Any, Literal, Self
 
 from pydantic import model_validator
 
-from romulus_contracts.common import CloudModel, DeviceModel, Running, UtcDatetime, Version
+from romulus_contracts.common import (
+    CloudModel,
+    DeviceModel,
+    OpenDict,
+    Running,
+    UtcDatetime,
+    Version,
+)
 
 Health = Literal["ok", "degraded", "failing"]
-"""Coarse device health (APIs §2.3). Tier detail goes in `metrics` or extra fields."""
+"""Coarse device health (APIs §2.3). Tier detail goes in `health_detail` or `metrics`."""
 
 
 class CheckIn(DeviceModel):
@@ -18,12 +25,15 @@ class CheckIn(DeviceModel):
     numbers as environmental history (`numeric_metrics`) and the whole dict raw.
     `contract_version` is not checked here; the server checks it with
     `version.is_supported` and answers with an error if it is too old or too new.
+    `health_detail` (proposed, any JSON) carries tier detail, e.g.
+    `{"tier": 3, "check": "spec_hold_violation"}`.
     """
 
     running: Running | None
     overlay_id: str | None = None
     health: Health
-    metrics: dict[str, Any] = {}
+    metrics: OpenDict = {}
+    health_detail: Any = None
     contract_version: str
 
     def numeric_metrics(self) -> dict[str, float]:
@@ -55,7 +65,9 @@ class CheckInResponse(CloudModel):
 
 
 InstallType = Literal["firmware", "harness", "code"]
-InstallOutcome = Literal["installed", "rolled_back", "hash_mismatch"]
+InstallOutcome = Literal["installed", "rolled_back", "hash_mismatch", "invalid"]
+"""`invalid`: the package or manifest downloaded fine (hash ok) but failed to parse or
+validate on the device, e.g. a newer rule shape. Nothing was installed."""
 
 
 class InstallResult(DeviceModel):
@@ -64,6 +76,8 @@ class InstallResult(DeviceModel):
     `type = "code"` is for code packages (APIs §2.10, D21): its `version` is the code
     rev string (e.g. `"a1b2c3d"`). Firmware and harness versions are integers.
     `occurred_at` is optional (APIs §1 asks for it; the §2.4 example omits it).
+    `result = "invalid"` (proposed) reports a manifest or package that failed validation;
+    put the validation error in `detail`.
     """
 
     type: InstallType
@@ -71,6 +85,7 @@ class InstallResult(DeviceModel):
     result: InstallOutcome
     detail: str | None = None
     occurred_at: UtcDatetime | None = None
+    contract_version: str | None = None
 
     @model_validator(mode="after")
     def _version_matches_type(self) -> Self:

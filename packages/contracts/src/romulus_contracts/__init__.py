@@ -4,6 +4,7 @@ The authority is docs/cloud-platform-planning/cloud-platform-apis.md §2-3; thes
 must match it. Device-sent models keep unknown fields (`extra="allow"`).
 """
 
+from romulus_contracts.codepatch import summarize_code_patch, touches_safety
 from romulus_contracts.common import SHA256_HEADER, ErrorResponse, Running
 from romulus_contracts.device import Assigned, CheckIn, CheckInResponse, InstallResult
 from romulus_contracts.incident import (
@@ -19,9 +20,18 @@ from romulus_contracts.manifest import (
     FirmwareResponse,
     HarnessMeta,
     Policy,
+    firmware_response,
     manifest_sha256,
 )
-from romulus_contracts.rules import Fired, RulesError, evaluate, replay_passes
+from romulus_contracts.rules import (
+    Fired,
+    ReplayReport,
+    RulesError,
+    evaluate,
+    replay_passes,
+    replay_report,
+    validate_rules,
+)
 from romulus_contracts.telemetry import Episode, RecordingAccepted, RecordingKind, RecordingMeta
 from romulus_contracts.version import CONTRACT_VERSION, SUPPORTED_VERSIONS, is_supported
 
@@ -49,10 +59,16 @@ __all__ = [
     "RecordingAccepted",
     "RecordingKind",
     "RecordingMeta",
+    "ReplayReport",
     "Running",
     "RulesError",
     "evaluate",
+    "firmware_response",
     "is_supported",
     "manifest_sha256",
     "replay_passes",
+    "replay_report",
+    "summarize_code_patch",
+    "touches_safety",
+    "validate_rules",
 ]

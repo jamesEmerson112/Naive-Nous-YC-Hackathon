@@ -19,7 +19,7 @@ from romulus_contracts import (
     Running,
 )
 from romulus_contracts.common import CloudModel, DeviceModel
-from romulus_contracts.incident import DEVICE_OUTCOMES
+from romulus_contracts.incident import DEVICE_OUTCOMES, SUSPECTED_CAUSES
 from romulus_contracts.telemetry import EXPECTED_FORMAT, FLEET_FEATURES, RecordingKind
 
 INCIDENT_ID = "0b6c6f3e-8d2a-4c1b-b5e3-6f7a8b9c0d1e"
@@ -152,16 +152,28 @@ def test_checkin_unsupported_contract_version_still_parses():
 
 
 def test_checkin_extra_fields_and_free_form_metrics_survive():
-    body = apis_checkin() | {"health_detail": {"tier": 2, "check": "heartbeat_age"}}
+    body = apis_checkin() | {"health_detail": {"tier": 2, "check": "heartbeat_age"}, "x": 1}
     body["metrics"] |= {"note": "fan loud", "tiers": [1, 2], "flag": True, "nan": float("nan")}
     c = CheckIn.model_validate(body)
-    assert c.model_extra == {"health_detail": {"tier": 2, "check": "heartbeat_age"}}
+    assert c.health_detail == {"tier": 2, "check": "heartbeat_age"}
+    assert c.model_extra == {"x": 1}
     assert c.model_dump()["health_detail"]["tier"] == 2
     assert c.numeric_metrics() == {
         "task_success_rate": 0.92,
         "servo_temp_c_max": 41.5,
         "bus_voltage_v": 12.1,
     }
+
+
+@pytest.mark.parametrize("detail", [None, "tier 2: heartbeat stale", [1, 2]])
+def test_checkin_health_detail_is_any_json(detail):
+    assert (
+        CheckIn.model_validate(apis_checkin() | {"health_detail": detail}).health_detail == detail
+    )
+
+
+def test_checkin_null_metrics_reads_as_empty():
+    assert CheckIn.model_validate(apis_checkin() | {"metrics": None}).metrics == {}
 
 
 def test_running_partial_and_extra():
@@ -201,7 +213,7 @@ def test_install_result_apis_example():
     assert i.version == 8 and i.occurred_at is None
 
 
-@pytest.mark.parametrize("result", ["installed", "rolled_back", "hash_mismatch"])
+@pytest.mark.parametrize("result", ["installed", "rolled_back", "hash_mismatch", "invalid"])
 def test_install_result_values(result):
     assert InstallResult(type="harness", version=4, result=result).result == result
 
@@ -228,6 +240,19 @@ def test_install_result_rejects(body):
 
 def test_install_result_numeric_string_version_reads_as_int():
     assert InstallResult(type="firmware", version="8", result="installed").version == 8
+
+
+def test_install_result_invalid_manifest():
+    i = InstallResult.model_validate(
+        {
+            "type": "firmware",
+            "version": 9,
+            "result": "invalid",
+            "detail": "rule 'x': needs 'below' or 'above'",
+            "contract_version": "0.1",
+        }
+    )
+    assert i.result == "invalid" and i.contract_version == "0.1"
 
 
 def test_install_result_code_uses_rev_string():
@@ -258,9 +283,30 @@ def test_incident_minimal():
     )
     assert inc.overlay is None and inc.agent is None and inc.signals == {}
     assert inc.outcome.suspected_cause == "unknown" and inc.outcome.resolving_action is None
+    assert inc.outcome.category is None and inc.tier is None and inc.log_tail == []
 
 
-@pytest.mark.parametrize("missing", ["incident_id", "occurred_at", "kind", "outcome"])
+@pytest.mark.parametrize("outcome", [None, "missing"])
+def test_incident_without_outcome_is_accepted(outcome):
+    body = apis_incident()
+    if outcome == "missing":
+        del body["outcome"]
+    else:
+        body["outcome"] = None
+    assert IncidentReport.model_validate(body).outcome is None
+
+
+def test_outcome_defaults():
+    o = IncidentReport.model_validate(apis_incident() | {"outcome": {}}).outcome
+    assert (o.resolved, o.resolving_action, o.suspected_cause, o.category) == (
+        False,
+        None,
+        "unknown",
+        None,
+    )
+
+
+@pytest.mark.parametrize("missing", ["incident_id", "occurred_at", "kind"])
 def test_incident_required_fields(missing):
     body = apis_incident()
     del body[missing]
@@ -273,8 +319,8 @@ def test_incident_required_fields(missing):
     [
         (("incident_id",), "0b6c6f3e-…"),
         (("occurred_at",), "yesterday"),
-        (("outcome", "suspected_cause"), "cosmic_rays"),
         (("outcome", "resolved"), "maybe"),
+        (("outcome", "suspected_cause"), 7),
         (("recordings",), ["not-a-uuid"]),
         (("overlay", "overlay_id"), None),
     ],
@@ -289,29 +335,56 @@ def test_incident_rejects_bad_values(path, value):
         IncidentReport.model_validate(body)
 
 
-@pytest.mark.parametrize("cause", ["software", "hardware", "unknown"])
-def test_incident_suspected_causes(cause):
+@pytest.mark.parametrize("cause", [*SUSPECTED_CAUSES, "mechanical"])
+def test_incident_suspected_cause_is_open(cause):
     body = apis_incident()
     body["outcome"]["suspected_cause"] = cause
     assert IncidentReport.model_validate(body).outcome.suspected_cause == cause
 
 
 @pytest.mark.parametrize("category", [*DEVICE_OUTCOMES, "something-new"])
-def test_device_outcome_category_rides_as_extra(category):
+def test_device_outcome_category_is_an_open_declared_field(category):
     body = apis_incident()
     body["outcome"]["category"] = category
     inc = IncidentReport.model_validate(body)
-    assert inc.outcome.model_extra == {"category": category}
+    assert inc.outcome.category == category and inc.outcome.model_extra == {}
     assert inc.model_dump(mode="json")["outcome"]["category"] == category
 
 
 def test_incident_extras_survive_round_trip():
-    body = apis_incident() | {"tier": 3, "log_tail": ["S HOLDING->RELEASE"]}
+    log = ["S HOLDING->RELEASE", {"level": "error", "msg": "boom"}]
+    body = apis_incident() | {"tier": 3, "log_tail": log, "audit": {"disk_pct": 41}}
     body["agent"]["model"] = "qwen3-4b"
     inc = IncidentReport.model_validate(body)
+    assert inc.tier == 3 and inc.log_tail == log and inc.model_extra == {"audit": {"disk_pct": 41}}
     dumped = inc.model_dump(mode="json")
     assert dumped["tier"] == 3 and dumped["agent"]["model"] == "qwen3-4b"
     assert IncidentReport.model_validate(dumped) == inc
+
+
+def test_agent_actions_may_be_dicts():
+    body = apis_incident()
+    body["agent"]["actions"] = ["safe_pose", {"tool": "bash", "cmd": "systemctl restart app"}]
+    inc = IncidentReport.model_validate(body)
+    assert inc.agent.actions[1] == {"tool": "bash", "cmd": "systemctl restart app"}
+
+
+def test_null_lists_and_objects_read_as_empty():
+    body = apis_incident() | {"signals": None, "recordings": None, "log_tail": None}
+    body["agent"]["actions"] = None
+    body["overlay"]["diff"] = None
+    inc = IncidentReport.model_validate(body)
+    assert (inc.signals, inc.recordings, inc.log_tail) == ({}, [], [])
+    assert inc.agent.actions == [] and inc.overlay.diff == {}
+
+
+def test_proposed_fields_are_in_the_json_schema():
+    props = IncidentReport.model_json_schema()
+    assert {"tier", "log_tail", "contract_version"} <= set(props["properties"])
+    assert "category" in props["$defs"]["Outcome"]["properties"]
+    assert "health_detail" in CheckIn.model_json_schema()["properties"]
+    for model in (InstallResult, OverlayStatus, RecordingMeta):
+        assert "contract_version" in model.model_json_schema()["properties"], model
 
 
 def test_incident_signals_are_loose():
