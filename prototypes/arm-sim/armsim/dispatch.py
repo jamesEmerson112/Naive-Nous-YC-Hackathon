@@ -19,13 +19,19 @@ the key is $ARMSIM_MANAGER_KEY), --manager-deadline 90, --fake-mode good|bad_jso
 armsim/redo.py): reverse it, the manager corrects the command, the arm redoes it, at most twice.
 
 How it works, one card at a time (there is one arm):
-1. At startup it takes the board's dispatcher lock (one dispatcher per board: a second one exits), then
-   moves any ARM JOB card left in doing to blocked: a dispatcher stopped mid-job, and re-running half a
-   physical job is unsafe.
-2. While idle it lists the todo cards that are ARM JOBs (armsim/orders.py), oldest first. Before claiming
-   one it reads the arm host's status: an incident handed off to a person, or a host that doesn't answer,
-   means wait (said once in the event log, not once per poll).
-3. Claim: the card moves to doing, with a `CLAIMED:` comment.
+1. At startup it takes the arm's dispatcher lock: `<socket>.dispatch.lock` next to the arm host's socket
+   ($ARMSIM_SOCK, else <temp dir>/armsim.sock), so one arm has one dispatcher whatever the checkout, board
+   or board id (a second one exits). Then it moves any order card this arm left in doing to blocked: a
+   dispatcher stopped mid-job, and re-running half a physical job is unsafe. A card whose latest `CLAIMED:`
+   names another arm is that arm's dispatcher's, and is left alone.
+2. While idle it lists the todo cards that orders.place made (an ARM JOB card with an order id,
+   armsim/orders.py), oldest first; a story's "ARM JOB: ..." card has no order id and is never taken.
+   Before claiming one it reads the arm host's status: an incident handed off to a person, or a host that
+   doesn't answer, means wait (said once in the event log, not once per poll).
+3. Claim: the card moves to doing only if it is still in todo (`move(expect="todo")`), then gets a
+   `CLAIMED: ... (claim <token> on arm <host>:<socket>)` comment. The job starts only once the latest
+   `CLAIMED:` on the card is ours; a later one means another dispatcher won, and the card is left to it.
+   A claim or read-back that fails goes into the unsettled set (step 6), never silently stays in doing.
 4. The commander works the card:
    - scripted (no LLM; the deterministic stand-in for Hermes, used in sim, the soak and tests): runs the
      card's steps as arm host skills. When the watchdog reports an incident it heals it the way the
@@ -35,30 +41,40 @@ How it works, one card at a time (there is one arm):
    - hermes: `hermes chat --oneshot -t so101_arm,mcp-naive_board -q <prompt naming the board and card>`.
      Hermes reads the card through its naive_board MCP and does the same with the so101_arm tools. Its
      output goes into the event log line by line and into runs/commander/<card>.log.
-5. The card is read back: if it isn't done and has no `BLOCKED:` comment from this run, the dispatcher
-   comments `BLOCKED:` itself; a card that isn't done always ends in blocked.
+5. The card is read back (with retries): if it isn't done and has no `BLOCKED:` comment from this run, the
+   dispatcher comments `BLOCKED:` itself; a card that isn't done ends in blocked. A read that gives no
+   recognisable status is unknown, not "not done": a card Hermes may have closed is never blocked on it.
+   Markers are matched leniently (`**BLOCKED:**` counts, board.marker).
+6. Unsettled cards (a failed claim, a read-back that kept failing, a block that didn't go through) are
+   re-read at the top of every poll until they are settled: done stays done, anything else is blocked, and
+   a failed claim is blocked with a note that nothing ran (or dropped if it never left todo, or if another
+   dispatcher's claim is the latest). Settling never runs a job.
 
 Stopping: the first SIGTERM or Ctrl-C lets the current skill finish, blocks the card (half a job is not
-re-run on its own) and exits; a second one stops at once. A dispatcher killed outright leaves its card in
-doing, and the next one to start moves it to blocked (step 1).
+re-run on its own) and exits; a second one stops at once. Hermes is stopped with SIGINT first (its own
+interrupt), given up to 20 s to finish the skill in flight, then SIGTERM, then SIGKILL to its process group;
+after a normal exit whatever it left in its group is stopped too. A dispatcher killed outright leaves its
+card in doing, and the next one to start on this arm moves it to blocked (step 1).
 
 Everything goes into the shared event log (armsim/events.py): src dispatch for the dispatcher (dispatcher,
-card_claimed, card_done, card_blocked, job_summary, waiting, error), src commander for the commander
-(job_started, skill, incident, heal, job_result, commander_line).
+card_claimed, card_done, card_blocked, card_unsettled, job_summary, waiting, error), src commander for the
+commander (job_started, skill, incident, heal, job_result, commander_line, stopping).
 """
 import argparse
 import fcntl
 import os
 import re
 import signal
+import socket
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 from . import events
-from .board import BoardError, comment_text, open_board
+from .board import BoardError, card_status, comment_text, marker, open_board  # noqa: F401 (card_status: soak.py)
 from .client import call as host_call
 from .client import socket_path
 from .orders import JOBS, is_arm_job, parse_card
@@ -68,6 +84,11 @@ RUNS = ROOT / "runs"
 COMMANDER_LOGS = RUNS / "commander"
 MAX_HEALS = 2
 CLAIM_RETRY_S = 60                  # a card whose claim failed is skipped this long
+READ_TRIES = 3                      # board reads after a claim or a job, before the card goes unsettled
+CLAIM_GRACE_S = 30.0                # a failed claim's card in doing with no CLAIMED: at all waits this long
+INT_WAIT_S = 20.0                   # Hermes gets this long after SIGINT to finish the skill in flight
+TERM_WAIT_S = 5.0                   # then SIGTERM, then SIGKILL, this long each
+CLAIM_TAG = re.compile(r"\(claim (clm-[0-9a-f]+) on arm (.+?)\)\s*$")
 # "The reading disagrees with the pose": the arm's own check can fire before podd flags the pod's
 # firmware (bad image 07 opens us_offset, then podd's us_mismatch), so give podd a moment first.
 MAYBE_POD_KINDS = ("us_offset", "us_scale", "us_residual")
@@ -96,20 +117,39 @@ def short(text, n=160):
     return text if len(text) <= n else text[:n - 1] + "…"
 
 
-def card_status(card):
-    return card.get("status") or card.get("column")
-
-
 def created(item):
-    return item.get("created_at") or item.get("createdAt") or ""
+    return (item.get("created_at") or item.get("createdAt") or "") if isinstance(item, dict) else ""
 
 
 def this_run(comments):
     """The comments after the last CLAIMED: one (this run's), as text, oldest first. A card a person
     moved back from blocked to todo still carries the last run's BLOCKED: comment."""
     texts = [comment_text(c).strip() for c in sorted(comments, key=created)]
-    last = max((i for i, t in enumerate(texts) if t.startswith("CLAIMED")), default=-1)
+    last = max((i for i, t in enumerate(texts) if marker(t) == "CLAIMED"), default=-1)
     return texts[last + 1:]
+
+
+def claims(comments):
+    """The CLAIMED: comments' texts, oldest first."""
+    return [t for t in (comment_text(c).strip() for c in sorted(comments, key=created)) if marker(t) == "CLAIMED"]
+
+
+def claim_of(text):
+    """(token, arm) from a CLAIMED: comment; (None, None) for one without them (an older dispatcher's)."""
+    m = CLAIM_TAG.search(text or "")
+    return (m.group(1), m.group(2)) if m else (None, None)
+
+
+def arm_key(sock=None):
+    """This arm, as a CLAIMED: comment names it: the short host name (a Mac's `Kents-MBP.lan` turns into
+    `Kents-MBP.attlocal.net` on another network) and the arm host's socket."""
+    return f"{socket.gethostname().split('.')[0]}:{os.path.realpath(sock or socket_path())}"
+
+
+def is_order_card(card):
+    """An ARM JOB card that orders.place made: it carries an order id. A story's "ARM JOB: pick up the block"
+    card (stories.py; its own Hermes works it and leaves it open) has none and is never the dispatcher's."""
+    return is_arm_job(card) and bool(parse_card(card)["order"])
 
 
 class Host:
@@ -411,9 +451,11 @@ class HermesExecutor:
 
     name = "hermes"
 
-    def __init__(self, board, *, emit=None, log_dir=COMMANDER_LOGS, argv=None):
+    def __init__(self, board, *, emit=None, log_dir=COMMANDER_LOGS, argv=None, int_wait_s=INT_WAIT_S,
+                 term_wait_s=TERM_WAIT_S):
         self.board, self.emit, self.log_dir = board, emit or events.emit, Path(log_dir)
         self.argv = list(argv or HERMES)
+        self.int_wait_s, self.term_wait_s = int_wait_s, term_wait_s
         self.stop = threading.Event()
 
     def run(self, card, timeout=600):
@@ -457,42 +499,87 @@ class HermesExecutor:
                         reason = "the dispatcher was stopped in the middle of the job, so Hermes was stopped"
                     else:
                         continue
-                    self._kill(proc)
+                    reason += f": {self._kill(proc, ctx)}"
+                    rc = proc.poll()
                     break
         finally:
             if proc.poll() is None:                 # Ctrl-C or an error while waiting: don't leave it running
-                self._kill(proc)
+                self._kill(proc, ctx)
+            self._reap_group(proc.pid)              # always, after a normal exit too (before reading the pipe out)
         reader.join(5)
         self.emit("commander", "job_result", reason, **ctx, ok=rc == 0, exit=rc, seconds=round(time.time() - t0, 1))
         return {"ok": rc == 0, "closed": None, "reason": reason, "exit": rc}
 
-    @staticmethod
-    def _kill(proc):
-        """Hermes starts MCP servers of its own: stop its whole process group."""
-        for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+    def _kill(self, proc, ctx=None):
+        """Stop Hermes gently, then firmly. SIGINT goes to Hermes itself (its documented interrupt; it exits
+        130), not to its process group: its MCP servers (the so101_arm tools among them) must not die in the
+        middle of a skill, or the arm host's reply has nowhere to go. It gets int_wait_s to finish the skill
+        in flight and close its own servers; then SIGTERM, then SIGKILL, to the whole group. Returns how it
+        ended, for the job's reason."""
+        t0, sent = time.time(), []
+        steps = (("SIGINT", lambda: proc.send_signal(signal.SIGINT), self.int_wait_s),
+                 ("SIGTERM", lambda: os.killpg(proc.pid, signal.SIGTERM), self.term_wait_s),
+                 ("SIGKILL", lambda: os.killpg(proc.pid, signal.SIGKILL), self.term_wait_s))
+        for i, (name, send, wait) in enumerate(steps):
+            if proc.poll() is not None:
+                break
+            if i:
+                self.emit("commander", "stopping", f"Hermes didn't stop {time.time() - t0:.0f} s after {sent[-1]}: "
+                                                   f"{name} to its process group", **(ctx or {}), signal=name)
             try:
-                os.killpg(proc.pid, sig)
+                send()
             except ProcessLookupError:
-                return
+                break
+            sent.append(name)
             try:
                 proc.wait(wait)
-                return
+                break
             except subprocess.TimeoutExpired:
                 continue
+        rc = proc.poll()
+        how = " then ".join(sent) or "no signal needed"
+        if rc is None:
+            return f"{how} sent, and it is still running after {time.time() - t0:.0f} s"
+        return f"{how}; it exited with code {rc} after {time.time() - t0:.0f} s"
+
+    @staticmethod
+    def _reap_group(pgid, wait=1.0):
+        """Whatever Hermes left in its process group (an MCP server, say) goes too: it would hold the output
+        pipe open, so the log reader would never end, and it might still talk to the arm."""
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pgid, sig)
+            except (ProcessLookupError, PermissionError):
+                return
+            t0 = time.time()
+            while time.time() - t0 < wait:
+                try:
+                    os.killpg(pgid, 0)
+                except (ProcessLookupError, PermissionError):
+                    return
+                time.sleep(0.05)
 
 
 class Dispatcher:
-    """Claims ARM JOB cards one at a time and hands each to the executor (scripted or hermes)."""
+    """Claims order cards one at a time and hands each to the executor (scripted or hermes)."""
 
-    def __init__(self, board, executor, *, call=None, emit=None, every=5.0, job_timeout=600.0, sleep=None, stop=None):
+    def __init__(self, board, executor, *, call=None, emit=None, every=5.0, job_timeout=600.0, sleep=None, stop=None,
+                 retry_s=1.0, read_tries=READ_TRIES, claim_settle_s=None, claim_grace_s=CLAIM_GRACE_S, sock=None):
         self.board, self.exec, self.host = board, executor, Host(call)
         self.emit = emit or events.emit
         self.stop = stop or threading.Event()        # set by SIGTERM / Ctrl-C: finish the step, block the card, exit
         executor.stop = self.stop
         self.every, self.job_timeout, self.sleep = every, job_timeout, sleep or self.stop.wait
+        # Board retries sleep for real: self.sleep is stop.wait, which returns at once during a stop.
+        self.retry_s, self.read_tries, self.claim_grace_s = retry_s, max(1, read_tries), claim_grace_s
+        # The Naïve board has no conditional update: give a rival's CLAIMED: a moment to land before reading back.
+        self.claim_settle_s = ((1.0 if getattr(board, "kind", None) == "naive" else 0.0) if claim_settle_s is None
+                               else claim_settle_s)
+        self.arm = arm_key(sock)
         self.jobs = []                    # one summary per job worked
         self.waiting = {}                 # what we already said we're waiting on: host, person, board
         self.skip = {}                    # card id -> don't try to claim it again before this time
+        self.unsettled = {}               # card id -> why it isn't settled yet; re-read at the top of each poll
 
     def _ev(self, kind, text, **fields):
         return self.emit("dispatch", kind, text, **fields)
@@ -506,29 +593,104 @@ class Dispatcher:
         if self.waiting.pop(key, None) is not None:
             self._ev("dispatcher", text)
 
+    # ---- reading the board back ----------------------------------------------------------------
+    def _read(self, cid):
+        """(card, comments, None) with retries, or (None, [], why) when the card can't be read or the read
+        gives no recognisable status (unknown, never "not done")."""
+        why = None
+        for i in range(self.read_tries):
+            if i:
+                time.sleep(self.retry_s)
+            try:
+                card = self.board.card(cid)
+                if card_status(card) is None:
+                    why = f"the read gave no status ({short(card, 80)})"
+                    continue
+                return card, list(self.board.comments(cid) or []), None
+            except BoardError as exc:
+                why = str(exc)
+        return None, [], why
+
+    def _unsettle(self, cid, stage, why, **entry):
+        """Keep a card we couldn't settle; settle_pending() re-reads it at the top of each poll."""
+        old = self.unsettled.get(cid)
+        self.unsettled[cid] = {**(old or {}), "stage": stage, "why": why,
+                               "since": (old or {}).get("since", time.time()), **entry}
+        if not old:
+            self._ev("card_unsettled", f"card {cid} isn't settled: {short(why, 200)}; it is re-read at every poll "
+                                       "until it is", **(entry.get("ctx") or {"card": cid}), stage=stage, reason=why)
+
+    def settle_pending(self):
+        """Settle what the unsettled set holds: re-read each card, then done stays done and the rest is
+        blocked (a failed claim's card is blocked with a note that nothing ran). Never runs a job."""
+        for cid, e in list(self.unsettled.items()):
+            if e["stage"] == "job":
+                outcome = self._settle(cid, e["out"], e["ctx"], e["t0"], summary=e.get("summary"))
+                settled = outcome != "unsettled"
+                if settled and e.get("summary"):
+                    e["summary"]["outcome"] = outcome
+            else:
+                settled = self._settle_orphan(cid, e)
+            if settled:
+                self.unsettled.pop(cid, None)
+                self.waiting.pop(f"settle:{cid}", None)
+                self._ev("dispatcher", f"card {cid} is settled ({time.time() - e['since']:.0f} s after: "
+                                       f"{short(e['why'], 120)})", card=cid, stage=e["stage"])
+
+    def _settle_orphan(self, cid, e):
+        """A card in doing that nothing of ours is running: a claim that failed before the job (stage claim)
+        or one a stopped dispatcher on this arm left behind (stage stale). True when settled (blocked here, or
+        not ours to settle), False to try again at the next poll."""
+        card, comments, why = self._read(cid)
+        st = card_status(card)
+        if st is None:
+            self._say_once(f"settle:{cid}", "read", "error", f"can't read card {cid} to settle it ({why}); "
+                                                            "trying again at the next poll", card=cid)
+            return False
+        if st != "doing":
+            return True                     # the claim never landed (todo), or someone already settled it
+        last = (claims(comments) or [None])[-1]
+        tok, arm = claim_of(last)
+        token = e.get("token")
+        if arm and arm != self.arm and tok != token:
+            self._ev("dispatcher", f"card {cid} is in doing for the dispatcher on another arm ({arm}): left to it",
+                     card=cid)
+            return True
+        if e["stage"] == "claim" and tok != token and time.time() - e["since"] < self.claim_grace_s:
+            return False                    # ours isn't the latest CLAIMED:: give a rival's comment time to land
+        if e["stage"] == "stale":
+            text = ("dispatcher: this card was in doing when the dispatcher started, so a dispatcher stopped in the "
+                    "middle of its job. Re-running half a physical job is unsafe: check the arm, then move the card "
+                    "back to todo to run it again.")
+            what, reason = "was left in doing by a stopped dispatcher: moved to blocked", "stale"
+        else:
+            text = (f"dispatcher: the claim didn't complete ({short(e['why'], 160)}), so nothing was run on the "
+                    "arm. Move the card back to todo to run it.")
+            what, reason = "had a claim that didn't complete (nothing ran): moved to blocked", "claim_failed"
+        try:
+            self.board.comment(cid, f"BLOCKED: {text}")
+            self.board.move(cid, status="blocked", expect="doing")
+        except BoardError as exc:
+            self._say_once(f"settle:{cid}", str(exc)[:80], "error", f"couldn't block card {cid}: {exc}; trying "
+                                                                    "again at the next poll", card=cid)
+            return False
+        self._ev("card_blocked", f"card {cid} {what}", card=cid, order=parse_card(card)["order"], reason=reason)
+        return True
+
     # ---- startup -------------------------------------------------------------------------------
     def recover(self):
-        """An ARM JOB card in doing at startup was being worked by a dispatcher that stopped mid-job
-        (only one dispatcher holds the board). Re-running half a physical job is unsafe: block it."""
+        """An order card in doing at startup whose latest CLAIMED: is this arm's (or an older dispatcher's,
+        with no arm on it) was being worked by a dispatcher that stopped mid-job: only one dispatcher holds
+        this arm. Re-running half a physical job is unsafe: block it. Another arm's card is left alone."""
         for c in self.board.show("doing"):
-            if not is_arm_job(c):
-                continue
-            why = ("dispatcher: this card was in doing when the dispatcher started, so a dispatcher stopped in the "
-                   "middle of its job. Re-running half a physical job is unsafe: check the arm, then move the card "
-                   "back to todo to run it again.")
-            try:
-                self.board.comment(c["id"], f"BLOCKED: {why}")
-                self.board.move(c["id"], status="blocked")
-                self._ev("card_blocked", f"card {c['id']} was left in doing by a stopped dispatcher: moved to blocked",
-                         card=c["id"], order=parse_card(c)["order"], reason="stale")
-            except BoardError as exc:
-                self._ev("error", f"couldn't block the stale card {c['id']}: {exc}", card=c["id"])
+            if is_order_card(c) and not self._settle_orphan(c["id"], {"stage": "stale", "since": time.time()}):
+                self._unsettle(c["id"], "stale", "a stale card in doing that couldn't be blocked at startup")
 
     # ---- the loop ------------------------------------------------------------------------------
     def run(self, *, once=False, max_jobs=None):
         self._ev("dispatcher", f"dispatcher up (pid {os.getpid()}) on the {self.board.kind} board {self.board.id} "
-                               f"with the {self.exec.name} commander; polling every {self.every:g} s",
-                 board=self.board.id, exec=self.exec.name)
+                               f"with the {self.exec.name} commander for the arm {self.arm}; polling every "
+                               f"{self.every:g} s", board=self.board.id, exec=self.exec.name, arm=self.arm)
         try:
             self.recover()
         except Exception as exc:  # a board error must not stop the dispatcher
@@ -549,24 +711,41 @@ class Dispatcher:
         except KeyboardInterrupt:
             pass
         finally:
-            self._ev("dispatcher", f"dispatcher stopped after {worked} job{'' if worked == 1 else 's'}")
+            if self.unsettled:
+                try:
+                    self.settle_pending()
+                except Exception as exc:  # noqa: BLE001 (best effort on the way out)
+                    self._ev("error", f"couldn't settle the unsettled cards: {type(exc).__name__}: {exc}")
+            left = sorted(self.unsettled)
+            self._ev("dispatcher", f"dispatcher stopped after {worked} job{'' if worked == 1 else 's'}"
+                     + (f"; {len(left)} card{'' if len(left) == 1 else 's'} still unsettled ({', '.join(left)}): "
+                        "check them on the board" if left else ""), unsettled=left)
         return self.jobs
 
     def poll(self):
-        """One pass: "job" (worked a card), "idle", "waiting" (host or person) or "error"."""
+        """One pass: "job" (worked a card), "idle", "waiting" (host or person), "lost" (another dispatcher
+        claimed it first) or "error". Unsettled cards are settled first."""
+        if self.unsettled:
+            try:
+                self.settle_pending()
+            except Exception as exc:  # an odd card must not stop the dispatcher from working the rest
+                self._say_once("settle", str(exc)[:80], "error", f"couldn't settle the unsettled cards: "
+                                                                 f"{type(exc).__name__}: {exc}")
         try:
-            todo = [c for c in self.board.show("todo") if is_arm_job(c) and card_status(c) in (None, "todo")]
+            todo = [c for c in self.board.show("todo") if is_order_card(c) and card_status(c) in (None, "todo")]
         except Exception as exc:
             self._say_once("board", str(exc)[:80], "error", f"can't read the board: {type(exc).__name__}: {exc}")
             return "error"
         self._cleared("board", "the board answers again")
         now = time.time()
-        todo = sorted((c for c in todo if self.skip.get(c["id"], 0) <= now), key=created)
+        todo = sorted((c for c in todo if self.skip.get(c["id"], 0) <= now and c["id"] not in self.unsettled),
+                      key=created)
         if not todo:
             return "idle"
         if not self.arm_ready():
             return "waiting"
-        return "job" if self.work(todo[0]) else "error"
+        out = self.work(todo[0])
+        return "job" if out in ("done", "blocked", "unsettled") else (out or "error")
 
     def arm_ready(self):
         st = self.host("status")
@@ -586,41 +765,73 @@ class Dispatcher:
         self._cleared("person", "the handed-off incident is closed: jobs resume")
         return True
 
+    def _claim_verdict(self, cid, token):
+        """"ours" when the latest CLAIMED: carries our token, "lost" when a later one came after ours, None
+        when ours can't be seen (a failed read, or a comment page that didn't reach it): never read as lost."""
+        for i in range(self.read_tries):
+            if i:
+                time.sleep(self.retry_s)
+            try:
+                tokens = [claim_of(t)[0] for t in claims(self.board.comments(cid) or [])]
+            except BoardError:
+                continue
+            if token in tokens:
+                return "ours" if tokens[-1] == token else "lost"
+        return None
+
     def work(self, card):
-        """Claim, run, check. Returns the outcome ("done" or "blocked"), or None if the claim failed."""
-        cid = card["id"]
+        """Claim, run, check. Returns the outcome ("done", "blocked" or "unsettled"), "lost" when another
+        dispatcher has the card, or None when the claim failed (the card is then unsettled)."""
+        cid, token = card["id"], f"clm-{uuid.uuid4().hex[:12]}"
         try:
-            self.board.move(cid, status="doing")
+            self.board.move(cid, status="doing", expect="todo")
         except BoardError as exc:
+            if exc.code == "conflict":      # blocked by the soak, claimed by someone else: not ours
+                self._ev("dispatcher", f"card {cid} left todo before our claim ({exc}): left alone", card=cid)
+                return "lost"
             self.skip[cid] = time.time() + CLAIM_RETRY_S
-            self._ev("error", f"couldn't claim card {cid}: {exc}; skipping it for {CLAIM_RETRY_S} s", card=cid)
+            self._unsettle(cid, "claim", f"the move to doing failed: {exc}", token=token)
             return None
         t0 = time.time()
         try:
-            full = {**card, **(self.board.card(cid) or {})}       # the listing may leave the body out
+            fresh = self.board.card(cid)                         # the listing may leave the body out
         except BoardError:
-            full = card
+            fresh = None
+        full = {**card, **fresh} if card_status(fresh) else card
         job = parse_card(full)
         ctx = {"card": cid, "order": job["order"], "job": job["job"], "exec": self.exec.name}
         try:
             self.board.comment(cid, f"CLAIMED: the dispatcher started the {self.exec.name} commander on this card "
-                                    f"at {local_time()}")
+                                    f"at {local_time()} (claim {token} on arm {self.arm})")
         except BoardError as exc:
-            self._ev("error", f"couldn't comment CLAIMED on {cid}: {exc}", **ctx)
-        self._ev("card_claimed", f"claimed card {cid} ({full.get('title')}) for the {self.exec.name} commander", **ctx)
+            self._unsettle(cid, "claim", f"the CLAIMED: comment failed: {exc}", token=token, ctx=ctx)
+            return None
+        if self.claim_settle_s:
+            time.sleep(self.claim_settle_s)
+        verdict = self._claim_verdict(cid, token)
+        if verdict is None:
+            self._unsettle(cid, "claim", "our CLAIMED: comment couldn't be read back", token=token, ctx=ctx)
+            return None
+        if verdict == "lost":
+            self._ev("dispatcher", f"card {cid}: another dispatcher's CLAIMED: came after ours, so it is theirs; "
+                                   "nothing was run", **ctx)
+            return "lost"
+        self._ev("card_claimed", f"claimed card {cid} ({full.get('title')}) for the {self.exec.name} commander", **ctx,
+                 claim=token)
+        summary = {"card": cid, "order": job["order"], "job": job["job"], "outcome": None}
         try:
             out = self.exec.run(full, timeout=self.job_timeout)
         except KeyboardInterrupt:
-            self._settle(cid, {"reason": "the dispatcher was stopped by hand in the middle of the job"}, ctx, t0)
+            self._settle(cid, {"reason": "the dispatcher was stopped by hand in the middle of the job"}, ctx, t0,
+                         summary=summary)
             raise
         except Exception as exc:  # a commander bug must not leave the card in doing
             out = {"ok": False, "reason": f"the {self.exec.name} commander crashed: {type(exc).__name__}: {exc}"}
             self._ev("error", out["reason"], **ctx)
-        outcome = self._settle(cid, out, ctx, t0)
+        outcome = self._settle(cid, out, ctx, t0, summary=summary)
         secs = time.time() - t0
         healed = [h["kind"] for h in out.get("healed") or []]
-        summary = {"card": cid, "order": job["order"], "job": job["job"], "outcome": outcome,
-                   "seconds": round(secs, 1), "healed": healed, "reason": out.get("reason")}
+        summary.update(outcome=outcome, seconds=round(secs, 1), healed=healed, reason=out.get("reason"))
         self.jobs.append(summary)
         self._ev("job_summary", f"card {cid} ({job['job']}, {job['order'] or 'no order id'}): {outcome} in {secs:.0f} s "
                                 f"by the {self.exec.name} commander"
@@ -629,45 +840,54 @@ class Dispatcher:
                  **ctx, ok=outcome == "done", outcome=outcome, ms=round(secs * 1000), healed=healed)
         return outcome
 
-    def _settle(self, cid, out, ctx, t0):
-        """Read the card back. Done: card_done. Anything else ends in blocked, with a BLOCKED: comment
-        from this run (the commander's, or the dispatcher's own)."""
-        secs = time.time() - t0
-        try:
-            card = self.board.card(cid)
-            mine = this_run(self.board.comments(cid))
-        except BoardError as exc:
-            self._ev("error", f"couldn't read card {cid} back after the job: {exc}", **ctx)
-            return "unknown"
-        if card_status(card) == "done":
-            self._ev("card_done", f"card {cid} is done ({secs:.0f} s from claim to done): {card.get('note')}",
-                     **ctx, ms=round(secs * 1000), seconds=round(secs, 1), note=card.get("note"))
-            return "done"
-        said = next((t for t in mine if t.startswith("BLOCKED")), None)
-        try:
-            if not said:
-                said = (f"BLOCKED: dispatcher: the {self.exec.name} commander ended without closing the card "
-                        f"({out.get('reason') or 'no reason given'})")
-                self.board.comment(cid, said)
-            if card_status(card) != "blocked":
-                self.board.move(cid, status="blocked")
-        except BoardError as exc:
-            self._ev("error", f"couldn't block card {cid}: {exc}", **ctx)
-        self._ev("card_blocked", f"card {cid} is blocked: {short(said, 200)}", **ctx, reason=said,
-                 ms=round(secs * 1000))
-        return "blocked"
+    def _settle(self, cid, out, ctx, t0, summary=None):
+        """Read the card back, with retries. Done: card_done. Anything else ends in blocked, with a BLOCKED:
+        comment from this run (the commander's, or the dispatcher's own), moved only if the card still has
+        the status just read. A read that fails or gives no status is unknown: the card goes into the
+        unsettled set ("unsettled") and is settled at the top of each poll, never blocked on a guess."""
+        for _ in range(3):                  # a conflict on the move: the card changed under us, read again
+            secs = time.time() - t0
+            card, comments, why = self._read(cid)
+            st = card_status(card)
+            if st is None:
+                break
+            if st == "done":
+                self._ev("card_done", f"card {cid} is done ({secs:.0f} s from claim to done): {card.get('note')}",
+                         **ctx, ms=round(secs * 1000), seconds=round(secs, 1), note=card.get("note"))
+                return "done"
+            said = next((t for t in this_run(comments) if marker(t) == "BLOCKED"), None)
+            try:
+                if not said:
+                    said = (f"BLOCKED: dispatcher: the {self.exec.name} commander ended without closing the card "
+                            f"({out.get('reason') or 'no reason given'})")
+                    self.board.comment(cid, said)
+                if st != "blocked":
+                    self.board.move(cid, status="blocked", expect=st)
+            except BoardError as exc:
+                if exc.code == "conflict":
+                    continue
+                why = f"couldn't block it: {exc}"
+                break
+            self._ev("card_blocked", f"card {cid} is blocked: {short(said, 200)}", **ctx, reason=said,
+                     ms=round(secs * 1000))
+            return "blocked"
+        else:
+            why = "the card kept changing while it was being blocked"
+        self._unsettle(cid, "job", f"after the job: {why}", out=out, ctx=ctx, t0=t0, summary=summary)
+        return "unsettled"
 
 
-def lock_path(board):
-    """Next to the file board (not its own per-call `board.lock`), or under runs/ for the Naïve board."""
-    if getattr(board, "kind", None) == "file":
-        return board.path.with_suffix(".dispatch.lock")
-    return RUNS / f"dispatch-{board.id}.lock"
+def lock_path(board=None, *, sock=None):
+    """The one-dispatcher lock, next to the arm host's socket ($ARMSIM_SOCK, else <temp dir>/armsim.sock)
+    and named after it: one arm, one dispatcher, whatever the checkout (main and a worktree share the
+    socket), the board, or how the board id was spelled. `board` is accepted for older callers (soak.py)."""
+    p = Path(sock or socket_path())
+    return p.with_name(p.name + ".dispatch.lock")
 
 
 def take_lock(path):
     """flock the dispatcher's lock file and write our pid in it. Keep the returned file open for as long
-    as the dispatcher runs; a second dispatcher on the same board gets SystemExit."""
+    as the dispatcher runs; a second dispatcher on the same arm gets SystemExit."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     f = open(path, "a+")
@@ -677,11 +897,11 @@ def take_lock(path):
         f.seek(0)
         holder = f.read().strip() or "pid unknown"
         f.close()
-        raise SystemExit(f"another dispatcher already works this board ({holder}; lock {path}). "
+        raise SystemExit(f"another dispatcher already works this board or drives this arm ({holder}; lock {path}). "
                          "There is one arm: stop that one first.")
     f.seek(0)
     f.truncate()
-    f.write(f"pid {os.getpid()} since {local_time()}\n")
+    f.write(f"pid {os.getpid()} since {local_time()} from {ROOT}\n")
     f.flush()
     return f
 

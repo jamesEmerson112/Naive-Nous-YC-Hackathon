@@ -19,6 +19,16 @@
   RESUMED, or PERSON / FIXED); the pill above says the state and its reason. Both read the arm snapshot.
   The choice is remembered in localStorage. The clock shows the viewer's own time zone;
   ?tz=America/Los_Angeles overrides it if the laptop's zone is wrong.
+  Under the beats, the worker -> manager exchange (armsim/worker.py, docs/worker-manager-healer.md), in the
+  beats' own columns: WORKER -asks-> MANAGER -answers-> PLAIN CODE -approves-> ARM, from the event log's
+  escalation / fix_plan / plan_check / plan_action lines. A packet flies each hop, one hop every 1.2 s, and
+  MANAGER shows its thinking for at least 1.6 s: pacing only, the times on the arrows are the real ones.
+  No plan (manager off, unreachable, late or refused) shows FALLBACK: scripted heal.
+  A wrong move (category 2, armsim/redo.py) is the worker's own incident, read from the event log: the
+  beats become WRONG MOVE > REVERSED > CORRECTED > REDONE (or PERSON), and the twin draws where the block
+  should be, where it is, the relocate scan and what it found.
+  Presenter keys: 1-8 (8 buttons), C clear, F freeze, W wrong move, L look. POSTs carry X-Mission-Token
+  from ?token= or the meta tag mission.py adds on loopback.
 -->
 <script>
 // The look before first paint: ?look= wins (and is remembered), then the remembered one, then mission.
@@ -113,6 +123,7 @@
   --banner-warn: rgba(50, 34, 4, 0.82);
   --banner-ok: rgba(4, 40, 30, 0.82);
   --blk-text: rgba(255, 140, 150, 0.98);
+  --xchg-bg: rgba(2, 6, 14, 0.42);     /* the worker -> manager row under the beats */
 
   /* the heal timeline (SVG, drawn in JS) */
   --tl-font: 'Inter Display', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -206,6 +217,7 @@ html[data-look="neon"] {
   --banner-warn: rgba(60, 40, 0, 0.86);
   --banner-ok: rgba(0, 52, 36, 0.86);
   --blk-text: #ff9bbd;
+  --xchg-bg: rgba(8, 0, 20, 0.5);
 
   --tl-font: 'Avenir Next Condensed', 'DIN Condensed', Bahnschrift, 'Roboto Condensed', 'Inter Display', Inter, sans-serif;
   --tl-grid: rgba(255, 43, 214, 0.1);
@@ -294,6 +306,7 @@ html[data-look="light"] {
   --banner-warn: #fffbeb;
   --banner-ok: #ecfdf5;
   --blk-text: #b91c1c;
+  --xchg-bg: rgba(255, 255, 255, 0.72);
 
   --tl-grid: rgba(15, 23, 42, 0.06);
   --tl-axis: rgba(15, 23, 42, 0.22);
@@ -404,6 +417,7 @@ header.top {
 }
 .pill .word { color: var(--pill-word); text-shadow: 0 0 calc(22px * var(--glow)) rgba(var(--c), 0.9); }
 .pill .why { font-weight: 600; letter-spacing: 0.01em; color: rgb(var(--c)); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pill .u { font-size: 0.78em; font-weight: 600; margin-left: 0.12em; }
 .pill .dot { width: 0.85rem; height: 0.85rem; border-radius: 50%; background: rgb(var(--c)); box-shadow: 0 0 calc(14px * var(--glow)) rgb(var(--c)); flex: none; animation: breathe 2.2s ease-in-out infinite; }
 .pill.ok { --c: var(--ok-rgb); }
 .pill.warn { --c: var(--warn-rgb); }
@@ -413,6 +427,8 @@ header.top {
 .pill.person { --c: var(--bad-rgb); background: linear-gradient(180deg, rgba(var(--c), 0.55), rgba(var(--c), 0.30)); }
 .pill.person .why { color: var(--pill-word); }
 .pill.off { --c: var(--off-rgb); }
+.pill.queued { --c: var(--accent-rgb); }
+.pill.queued .dot { animation-duration: 1.6s; }
 .pill.off .dot { animation: none; }
 @keyframes breathe { 50% { opacity: 0.35; transform: scale(0.8); } }
 .pillsub { font-size: 1.32rem; font-weight: 550; color: var(--text); max-width: 46vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.2em; line-height: 1.2; }
@@ -532,6 +548,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 .sensor .v.ok { color: var(--ok); }
 .sensor .v.warn { color: var(--warn); }
 .sensor .v.bad { color: var(--bad); }
+.sensor .v.calm { color: var(--text-2); }       /* out of range at home: the jaw sits in the beam, that's normal */
 .sensor .e { font-size: 0.95rem; color: var(--text-2); margin-top: 0.15rem; white-space: nowrap; }
 .sensor .e b { color: var(--text); font-weight: 650; }
 .hint { position: absolute; right: 0.8rem; bottom: 0.6rem; padding: 0.22rem 0.5rem; border-radius: 6px; background: var(--hud-bg); font-size: var(--t-cap); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); pointer-events: none; transition: opacity .4s; opacity: 0; }
@@ -543,19 +560,26 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 .banner.warn { --c: var(--warn-rgb); --bb: var(--banner-warn); }
 .banner.ok { --c: var(--ok-rgb); --bb: var(--banner-ok); }
 .banner .bwrap { min-height: 0; overflow: hidden; }
-.bin { display: flex; align-items: center; gap: 1rem; padding: 0.6rem 1.1rem 0.6rem 0.7rem; border-radius: var(--r-sm); min-width: 0;
+.bcard { border-radius: var(--r-sm); min-width: 0; overflow: hidden;
   border: 1px solid rgba(var(--c), 0.62); background: linear-gradient(90deg, rgba(var(--c), 0.24), var(--bb) 55%);
   box-shadow: 0 0 calc(36px * var(--glow)) rgba(var(--c), 0.24), inset 3px 0 0 rgb(var(--c)); }
-.banner.person .bin { background: linear-gradient(90deg, rgba(var(--c), 0.5), rgba(var(--c), 0.16) 70%), var(--bb); }
-.bin .bi { flex: none; width: 2.6rem; height: 2.6rem; border-radius: 10px; display: grid; place-items: center; background: rgba(var(--c), 0.2); color: rgb(var(--c)); }
-.banner.bad .bin .bi { animation: breathe 1.2s ease-in-out infinite; }
-.bin .bi svg { width: 1.5rem; height: 1.5rem; }
+/* The banner's two rows share one grid, so they share column lines: four columns, each a node and the arrow
+   after it. A beat spans its column; a node sits in the column's first track, its arrow in the second. */
+.bcard { --xlw: 4.6rem; --xgap: 0.55rem; }
+.bin { display: block; padding: 0.55rem 1.1rem 0.5rem; min-width: 0; }
+.banner.person .bcard { background: linear-gradient(90deg, rgba(var(--c), 0.5), rgba(var(--c), 0.16) 70%), var(--bb); }
 /* the incident as a story, all four beats on screen at once: BROKE > PARKED > HEALING > RESUMED (or PERSON / FIXED).
    One row of fixed height whatever the state, so the twin under it never changes size mid-incident */
-.beats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.9rem; flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; }
-.beats li { min-width: 0; border-top: 4px solid var(--track); padding-top: 0.38rem; color: var(--faint); transition: color .3s, border-color .3s; }
-.beats .bw { display: flex; align-items: center; gap: 0.4rem; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; line-height: 1.1; white-space: nowrap; overflow: hidden; }
+.beats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr) var(--xlw)); column-gap: var(--xgap); min-width: 0; margin: 0; padding: 0; list-style: none; }
+.beats li { grid-column: span 2; min-width: 0; border-top: 4px solid var(--track); padding-top: 0.38rem; color: var(--faint); transition: color .3s, border-color .3s; }
+.beats .bw { display: flex; align-items: center; gap: 0.42rem; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .beats .bw svg { width: 0.85em; height: 0.85em; flex: none; }
+.beats .bt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* every beat has the same 0.85em mark, so the four words start at the same offset: a dashed ring still to come,
+   a ring with a pulsing centre now, a check when done, a cross when it failed */
+.beats .bm { width: 0.85em; height: 0.85em; flex: none; box-sizing: border-box; border-radius: 50%; border: 2px dashed currentColor; opacity: 0.6; }
+.beats li.now .bm { position: relative; opacity: 1; border: 2px solid rgb(var(--c)); }
+.beats li.now .bm::after { content: ""; position: absolute; inset: 20%; border-radius: 50%; background: rgb(var(--c)); animation: breathe 1.1s ease-in-out infinite; }
 .beats small { display: block; font-size: 1.02rem; font-weight: 550; color: var(--muted); margin-top: 0.18rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
 .beats li.done { color: var(--text-2); border-color: rgba(var(--c), 0.5); }
 .beats li.done small { color: var(--text-2); }
@@ -567,6 +591,84 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 @keyframes beatnow { 50% { border-color: rgba(var(--c), 0.3); } }
 .twinempty { position: absolute; inset: 0; display: flex; pointer-events: none; }
 
+/* ---------- the worker -> manager exchange: the banner's second row ----------
+   WORKER -asks-> MANAGER -answers-> PLAIN CODE -approves-> ARM, in the beats' columns. Two lines a node: the
+   title with its role chip, then one line of what it did. Built once and updated in place (classes and text
+   only), so the packet's flight is never restarted by a re-render. Done steps go quiet (a small green badge);
+   only the step happening now, the packet and a failure carry colour. */
+.xchg { display: none; padding: 0.42rem 1.1rem 0.48rem; min-width: 0;
+  border-top: 1px solid rgba(var(--c), 0.28); background: var(--xchg-bg); }
+.xchg.on { display: block; }
+.xflow { min-width: 0; display: grid; align-items: center; column-gap: var(--xgap); grid-template-columns: repeat(4, minmax(0, 1fr) var(--xlw)); }
+.xflow .xn:last-child { grid-column: span 2; }
+.xn { --k: var(--idle-rgb); display: flex; flex-direction: column; min-width: 0; transition: opacity .35s; }
+.xn .xh1 { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.xn .xi { position: relative; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; display: grid; place-items: center;
+  color: rgb(var(--k)); background: rgba(var(--k), 0.13); border: 1.5px solid rgba(var(--k), 0.6); transition: color .3s, background .3s, border-color .3s; }
+.xn .xi > svg { width: 0.98rem; height: 0.98rem; }
+.xn .xb { position: absolute; right: -0.3rem; bottom: -0.25rem; width: 0.92rem; height: 0.92rem; border-radius: 50%; display: none; place-items: center;
+  background: rgb(var(--k)); color: var(--on-ice); box-shadow: 0 0 0 2px var(--panel); }
+.xn .xb svg { width: 0.66rem; height: 0.66rem; stroke-width: 3.4; }
+.xn.done .xb, .xn.fail .xb { display: grid; }
+.xn b { display: flex; align-items: center; gap: 0.45rem; min-width: 0; overflow: hidden; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 0.9rem; font-weight: 800; letter-spacing: 0.1em; color: rgb(var(--k)); white-space: nowrap; }
+.xn b span { flex: none; }
+.xn b i { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; font-family: var(--mono); font-size: max(0.68rem, 10px); font-weight: 700; letter-spacing: 0.02em; padding: 0.06rem 0.4rem; border-radius: 999px; border: 1px solid rgba(var(--k), 0.5); color: rgba(var(--k), 1); }
+.xn b i:empty { display: none; }
+.xn .xd { display: block; font-style: normal; font-size: 0.98rem; font-weight: 650; line-height: 1.25; color: var(--text); margin-top: 0.22rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xn.pend { opacity: 0.45; }
+.xn.pend .xd { color: var(--text-2); font-weight: 550; }
+.xn.now, .xn.think { --k: var(--accent-rgb); }
+.xn.now .xi, .xn.fall .xi, .xn.think .xi { animation: xping 1.5s ease-out infinite; }
+.xn.think .xi > svg { animation: spin 2.8s linear infinite; }
+.xn.think .xd { color: var(--accent); }
+@keyframes xping { 0% { box-shadow: 0 0 0 0 rgba(var(--k), 0.6); } 100% { box-shadow: 0 0 0 0.7rem rgba(var(--k), 0); } }
+.xn.done { --k: var(--idle-rgb); }
+.xn.done b { color: var(--text-2); }
+.xn.done .xb { background: rgb(var(--ok-rgb)); }
+.xn.fail { --k: var(--bad-rgb); }
+.xn.fail .xd { color: var(--bad); }
+.xn.fall { --k: var(--warn-rgb); }
+.xn.skip { --k: var(--off-rgb); opacity: 0.62; }
+.xn.skip .xi { border-style: dashed; background: transparent; }
+.xn.skip .xd { color: var(--muted); font-weight: 550; }
+/* the manager's answer: quoted, and it lands with a pop */
+.xn .xd.q { color: var(--text); }
+.xn.ans .xd { display: inline-block; max-width: 100%; vertical-align: top; transform-origin: 0 50%; animation: ans .9s cubic-bezier(.2, .8, .2, 1); }
+@keyframes ans { 0% { transform: scale(1.12); text-shadow: 0 0 calc(18px * var(--glow) + 2px) rgba(var(--accent-rgb), 0.8); color: var(--accent); } 100% { transform: none; } }
+.xl { --k: var(--off-rgb); display: grid; grid-template-rows: auto 0.8rem auto; align-items: center; min-width: 0; text-align: center; }
+.xl .xc { font-size: max(0.8rem, 10.5px); font-weight: 700; letter-spacing: 0.04em; color: rgba(var(--k), 0.95); white-space: nowrap; overflow: visible; }
+.xl .xw { position: relative; height: 2px; margin-right: 0.3rem; border-radius: 2px; background: repeating-linear-gradient(90deg, rgba(var(--k), 0.55) 0 5px, transparent 5px 10px); }
+.xl .xw::after { content: ""; position: absolute; right: -0.25rem; top: 50%; width: 0.42rem; height: 0.42rem; border-top: 2px solid rgba(var(--k), 0.85); border-right: 2px solid rgba(var(--k), 0.85); transform: translateY(-50%) rotate(45deg); }
+.xl .xs { font-family: var(--mono); font-size: var(--t-meta); font-weight: 600; color: var(--text-2); white-space: nowrap; min-height: 1.2em; margin-top: 0.1rem; }
+.xl.done { --k: var(--idle-rgb); }
+.xl.done .xw { background: linear-gradient(90deg, rgba(var(--k), 0.3), rgba(var(--k), 0.75)); }
+.xl.wait { --k: var(--accent-rgb); }
+.xl.wait .xw { background: repeating-linear-gradient(90deg, rgba(var(--k), 0.95) 0 6px, transparent 6px 12px); background-size: 12px 2px; animation: xflow .55s linear infinite; }
+.xl.wait .xs { color: var(--accent); }
+@keyframes xflow { to { background-position: 12px 0; } }
+.xl.fail { --k: var(--bad-rgb); }
+.xl.fail .xs { color: var(--bad); }
+.xl.skip { opacity: 0.35; }
+/* the packet: big enough to follow across a room */
+.xl .pkt { position: absolute; top: 50%; left: 0; width: 2.2rem; height: 0.7rem; margin-top: -0.35rem; border-radius: 999px; opacity: 0; pointer-events: none;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0), rgb(var(--accent-rgb)) 55%, #fff); box-shadow: 0 0 calc(14px * var(--glow) + 4px) rgba(var(--accent-rgb), 0.95); }
+.xl.fly .pkt { animation: xfly 1s cubic-bezier(.45, 0, .25, 1) both; }
+@keyframes xfly { 0% { left: -1.2rem; opacity: 0; } 14% { opacity: 1; } 86% { opacity: 1; } 100% { left: calc(100% - 1.4rem); opacity: 0; } }
+html[data-look="light"] .xl .pkt { background: linear-gradient(90deg, rgba(var(--accent-rgb), 0), rgb(var(--accent-rgb))); box-shadow: 0 2px 10px rgba(var(--accent-rgb), 0.5); }
+html[data-look="light"] .xn .xb { color: #ffffff; box-shadow: 0 0 0 2px #ffffff; }
+html[data-look="light"] .xn.pend { opacity: 0.62; }
+html[data-look="neon"] .xn.now b, html[data-look="neon"] .xn.think b, html[data-look="neon"] .xn.fail b { text-shadow: 0 0 10px rgba(var(--k), 0.7); }
+html[data-look="neon"] .xn.now .xi, html[data-look="neon"] .xn.think .xi { box-shadow: 0 0 14px rgba(var(--k), 0.45); }
+@media (max-width: 1500px) {
+  .bcard { --xlw: 4.4rem; --xgap: 0.32rem; }
+  .bin { padding: 0.5rem 0.9rem 0.45rem; }
+  .xchg { padding: 0.38rem 0.9rem 0.42rem; }
+  .xl .xs { font-size: 10px; letter-spacing: -0.02em; }
+  .xl .xc { font-size: 10.5px; letter-spacing: 0; }
+  .xn .xi { width: 1.55rem; height: 1.55rem; }
+  .xn b { letter-spacing: 0.06em; }
+  .xn b i { display: none; }               /* no room for the role chip: the titles carry the story */
+}
 /* ---------- heal timeline ---------- */
 .heal { height: clamp(150px, 24vh, 270px); }
 .healbody { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 2fr); gap: 1.1rem; padding: 0 1.2rem 1rem; }
@@ -627,8 +729,10 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 .fi.ok .ic { background: rgba(var(--ok-rgb), 0.2); color: var(--ok); }
 .fi.warn .ic { background: rgba(var(--warn-rgb), 0.18); color: var(--warn); }
 .fi.acc .ic { background: rgba(var(--accent-rgb), 0.16); color: var(--accent); }
-.fi.new { animation: slidein .55s cubic-bezier(.2,.8,.2,1); }
-@keyframes slidein { from { opacity: 0; transform: translateY(-10px); background-color: rgba(var(--accent-rgb), 0.2); } }
+/* a new row slides in highlighted, never from transparent: the feed is never blank at the moment that matters.
+   New rows are revealed one at a time, oldest first (renderFeed), so the feed tells the exchange in order */
+.fi.new { animation: slidein .6s cubic-bezier(.2,.8,.2,1); }
+@keyframes slidein { from { transform: translateX(-14px); background-color: rgba(var(--accent-rgb), 0.22); } }
 
 /* ---------- pod + fleet ---------- */
 .podbody, .fleetbody { flex: 1; min-height: 0; padding: 0 1.1rem 0.8rem; display: flex; flex-direction: column; gap: 0.45rem; overflow: hidden; }
@@ -677,7 +781,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 /* ---------- presenter bar ---------- */
 footer.bar { display: flex; align-items: center; gap: 0.8rem; min-width: 0; position: relative; }
 .barlabel { font-size: var(--t-cap); letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); writing-mode: horizontal-tb; white-space: nowrap; padding-right: 0.3rem; }
-.btns { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.6rem; flex: 1; min-width: 0; }
+.btns { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0.55rem; flex: 1; min-width: 0; }
 .pb {
   --c: var(--accent-rgb);
   position: relative; overflow: hidden;
@@ -692,6 +796,7 @@ footer.bar { display: flex; align-items: center; gap: 0.8rem; min-width: 0; posi
   transition: transform .12s, background .2s, border-color .2s, box-shadow .2s;
 }
 .pb .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pb .l .s { display: none; }
 .pb .l small { display: block; font-size: var(--t-cap); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(var(--c), 1); margin-bottom: 0.1rem; }
 .pb:hover { background: linear-gradient(180deg, rgba(var(--c), 0.22), rgba(var(--c), 0.08)), var(--card); border-color: rgba(var(--c), 0.7); }
 .pb:active, .pb.press { transform: scale(0.965); }
@@ -700,6 +805,13 @@ footer.bar { display: flex; align-items: center; gap: 0.8rem; min-width: 0; posi
 .pb.danger { --c: var(--bad-rgb); }
 .pb.fix { --c: var(--ok-rgb); }
 .pb.ice { --c: var(--ice-rgb); }
+@media (max-width: 1500px) {
+  .barlabel { display: none; }
+  .btns { gap: 0.4rem; }
+  .pb { padding: 0.75rem 0.6rem; gap: 0.45rem; }
+  .pb .l .g { display: none; }
+  .pb .l .s { display: inline; }
+}
 .pb .ripple { position: absolute; border-radius: 50%; background: rgba(var(--c), 0.45); transform: scale(0); animation: ripple .6s ease-out; pointer-events: none; }
 @keyframes ripple { to { transform: scale(4); opacity: 0; } }
 .pb .st8 { position: absolute; right: 0.6rem; top: 0.5rem; font-size: var(--t-cap); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(var(--c), 1); opacity: 0; transition: opacity .3s; }
@@ -722,7 +834,6 @@ html[data-look="neon"] .name { font-family: var(--display); font-stretch: var(--
 html[data-look="neon"] .name b { font-weight: 800; filter: drop-shadow(0 0 10px rgba(var(--accent2-rgb), 0.55)); }
 html[data-look="neon"] .phead h2 { text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.75); }
 html[data-look="neon"] .pill { border-width: 2px; border-radius: 10px; letter-spacing: 0.1em; text-transform: uppercase; max-width: 40vw; }   /* wide caps: leave the title its room */
-html[data-look="neon"] .pill .why { text-shadow: 0 0 16px rgba(var(--c), 0.8); }
 html[data-look="neon"] .panel::after {
   content: ""; position: absolute; inset: 5px; pointer-events: none; z-index: 3;
   background:
@@ -735,6 +846,11 @@ html[data-look="neon"] .panel::after {
 html[data-look="neon"] .ctr .v, html[data-look="neon"] .stat .v, html[data-look="neon"] #clock, html[data-look="neon"] .fw .v { text-shadow: 0 0 14px currentColor; }
 html[data-look="neon"] .ctr.zero .v { text-shadow: none; }
 html[data-look="neon"] .beats .bw { font-size: 1.6rem; letter-spacing: 0.1em; }
+html[data-look="neon"] .pill .why { text-shadow: none; filter: drop-shadow(0 0 8px rgba(var(--c), 0.7)); }   /* drawn after the clip: no glow box */
+html[data-look="neon"] .pill .u { text-transform: none; }
+@media (max-width: 1500px) {                       /* "WRONG MOVE" fits its column at 1280 in every look */
+  .beats .bw, html[data-look="neon"] .beats .bw { font-size: 1.28rem; letter-spacing: 0.05em; }
+}
 html[data-look="neon"] #clock { text-shadow: none; }
 html[data-look="neon"] .freeze { border-radius: 8px; text-transform: uppercase; }
 html[data-look="neon"] .freeze:not(.unfreeze):not([disabled]):hover, html[data-look="neon"] .freeze:not(.unfreeze).press { box-shadow: 0 0 26px rgba(var(--bad-rgb), 0.55), inset 0 1px 0 var(--btn-sheen); }
@@ -789,7 +905,7 @@ html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
   <section class="col left">
     <article class="panel twin" id="twin">
       <div class="phead"><h2>Digital twin</h2><span class="sub" id="twinSub">SO-101 arm</span><span class="spacer"></span><span class="live dead" id="live"><i></i><span>waiting</span></span></div>
-      <div class="banner" id="banner"><div class="bwrap"><div class="bin" id="bannerIn"></div></div></div>
+      <div class="banner" id="banner"><div class="bwrap"><div class="bcard"><div class="bin" id="bannerIn"></div><div class="xchg" id="xchg"></div></div></div></div>
       <div class="twinbody">
         <canvas id="cv"></canvas>
         <div class="vignette"></div>
@@ -818,13 +934,14 @@ html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
 <footer class="bar">
   <div class="barlabel">Presenter</div>
   <div class="btns" id="btns">
-    <button class="pb" data-act="order" data-job="pick" data-key="1"><kbd>1</kbd><span class="l"><small>New order</small>Pick up the block</span><span class="st8">sent</span></button>
-    <button class="pb" data-act="order" data-job="wave" data-key="2"><kbd>2</kbd><span class="l"><small>New order</small>Wave hello</span><span class="st8">sent</span></button>
-    <button class="pb fault" data-act="fault" data-fault="us_frozen" data-key="3"><kbd>3</kbd><span class="l"><small>Plant fault</small>Stuck sensor</span><span class="st8">sent</span></button>
-    <button class="pb fault" data-act="fault" data-fault="pod_image07" data-key="4"><kbd>4</kbd><span class="l"><small>Plant fault</small>Bad pod image 07</span><span class="st8">sent</span></button>
-    <button class="pb danger" data-act="fault" data-fault="joint_stuck" data-key="5"><kbd>5</kbd><span class="l"><small>Plant fault</small>Dead elbow servo</span><span class="st8">sent</span></button>
-    <button class="pb fix" data-act="clear" data-key="6"><kbd>6</kbd><span class="l"><small>Hands on</small>A person fixed it</span><span class="st8">sent</span></button>
-    <button class="pb ice" data-act="freeze" data-key="7" id="freezeBar"><kbd>7</kbd><span class="l"><small>Kill switch</small><span id="freezeBarLabel">Freeze fleet</span></span><span class="st8">sent</span></button>
+    <button class="pb" data-act="order" data-job="pick" data-key="1"><kbd>1</kbd><span class="l"><small>New order</small><span class="g">Pick up the block</span><span class="s">Pick block</span></span><span class="st8">sent</span></button>
+    <button class="pb" data-act="order" data-job="wave" data-key="2"><kbd>2</kbd><span class="l"><small>New order</small><span class="g">Wave hello</span><span class="s">Wave</span></span><span class="st8">sent</span></button>
+    <button class="pb fault" data-act="fault" data-fault="us_frozen" data-key="3"><kbd>3</kbd><span class="l"><small>Plant fault</small><span class="g">Stuck sensor</span><span class="s">Stuck sensor</span></span><span class="st8">sent</span></button>
+    <button class="pb fault" data-act="fault" data-fault="pod_image07" data-key="4"><kbd>4</kbd><span class="l"><small>Plant fault</small><span class="g">Bad pod image 07</span><span class="s">Pod image 07</span></span><span class="st8">sent</span></button>
+    <button class="pb danger" data-act="fault" data-fault="joint_stuck" data-key="5"><kbd>5</kbd><span class="l"><small>Plant fault</small><span class="g">Dead elbow servo</span><span class="s">Dead elbow</span></span><span class="st8">sent</span></button>
+    <button class="pb fault" data-act="fault" data-fault="block_shift" data-key="6" title="Bump the block 30 mm: the next pick misses, then the worker, the manager and plain code correct it"><kbd>6</kbd><span class="l"><small><span class="g">Plant wrong move</span><span class="s">Wrong move</span></small><span class="g">Bump the block</span><span class="s">Bump block</span></span><span class="st8">sent</span></button>
+    <button class="pb fix" data-act="clear" data-key="7"><kbd>7</kbd><span class="l"><small>Hands on</small><span class="g">A person fixed it</span><span class="s">Person fixed</span></span><span class="st8">sent</span></button>
+    <button class="pb ice" data-act="freeze" data-key="8" id="freezeBar"><kbd>8</kbd><span class="l"><small>Kill switch</small><span id="freezeBarLabel">Freeze fleet</span></span><span class="st8">sent</span></button>
   </div>
   <div class="toast" id="toast"></div>
 </footer>
@@ -874,7 +991,7 @@ function readTheme() {
   const nm = (n, d) => { const v = parseFloat(g(n)); return isFinite(v) ? v : d; };
   TH = {
     look: document.documentElement.dataset.look,
-    accent: rgb("--accent-rgb"), ok: rgb("--ok-rgb"), warn: rgb("--warn-rgb"), bad: rgb("--bad-rgb"), onBad: g("--on-bad"),
+    accent: rgb("--accent-rgb"), idle: rgb("--idle-rgb"), ok: rgb("--ok-rgb"), warn: rgb("--warn-rgb"), bad: rgb("--bad-rgb"), onBad: g("--on-bad"),
     glow: nm("--glow", 1), mono: g("--mono"), tlFont: g("--tl-font"),
     tlGrid: g("--tl-grid"), tlAxis: g("--tl-axis"), tlTick: g("--tl-tick"), tlLane: g("--tl-lane"), tlKind: g("--tl-kind"),
     tlOk: g("--tl-ok-text"), tlBad: g("--tl-bad-text"), tlWarn: g("--tl-warn-text"),
@@ -925,15 +1042,20 @@ const clean = (s) => String(s || "").replace(/\s*\(load [^)]*\)/g, "").replace(/
 function tidy(s, order) {
   const oid = order ? "#" + String(order).slice(-4) : "";
   return clean(String(s ?? "")
+    .replace(/\(fake(?:-[\w]+)?\)/g, "(stand-in)").replace(/\bfake manager(?: \([\w-]+\))?:\s*/g, "")   // the sim's stand-in manager
+    .replace(/[\s,;:(]+[^\s…]*…\)*$/, " …")                                  // a cut ends on a whole word
     .replace(/^presenter:\s*/i, "")
     .replace(/^order (ord-\S+) \(([^)]*)\) is card \S+$/, "new order $1: $2")
     .replace(/\s*\(ARM JOB [^)]*\)/g, "")
     .replace(/\s*\((?:pick|wave), (?:ord-[^)]*|no order id)\)/g, "")
-    .replace(/\s*\((?:us|pod|joint)_[a-z0-9_]+\)/g, "")
+    .replace(/\s*\((?:us|pod|joint|block)_[a-z0-9_]+\)/g, "")
     .replace(/\b(?:ARM JOB\s+)?ord-\d{8}-\d{6}-([0-9a-f]{4})\b/g, "#$1")
     .replace(/\bcard crd_[0-9a-z]+\b/g, oid ? "order " + oid : "the card")
     .replace(/\bcrd_[0-9a-z]+\b/g, oid || "the card")
     .replace(/on the file board brd_\w+/g, "on the local board")
+    .replace(/ as inc-[0-9a-f]{6,}-[\w-]+/g, "")
+    .replace(/\bredo_step\b/g, "redo").replace(/\bhandoff_human\b/g, "hand to a person").replace(/\bno_action\b/g, "no action")
+    .replace(/\bpod_rollback\b/g, "pod rollback").replace(/\brestart_sensor\b/g, "restart the sensor")
     .replace(/^the scripted commander /, "")
     .replace(/ (?:by|for|with) the scripted commander/g, "")
     .replace(/\bis blocked: BLOCKED:/g, "is blocked:").replace(/ arrived=False/g, " didn't arrive").replace(/ arrived=True/g, " arrived")
@@ -963,6 +1085,15 @@ const IC = {
   dot: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
   pod: "M7 4h10v16H7Z M10 8h4 M12 17v.3",
   park: "M6 4h8a5 5 0 0 1 0 10H6Z M6 14v6",
+  relay: "M4 8.5h14 M14.5 5 18 8.5 14.5 12 M20 15.5H6 M9.5 12 6 15.5 9.5 19",
+  chip: "M7 7h10v10H7Z M10 10h4v4h-4Z M10 3v4 M14 3v4 M10 17v4 M14 17v4 M3 10h4 M3 14h4 M17 10h4 M17 14h4",
+  hive: "M12 3.2a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8Z M5.2 15.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8Z M18.8 15.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8Z M10.8 8 6.4 15.6 M13.2 8l4.4 7.6 M7.6 18h8.8",
+  wrench: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z",
+  homeok: "M3.5 11 12 4l8.5 7 M5.5 9.5V20h13V9.5 M9 14.5l2.2 2.2 4-4.2",
+  check: "M5 12.5l4.2 4.2L19 7",
+  cross: "M6.5 6.5l11 11 M17.5 6.5l-11 11",
+  undo: "M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  scan: "M3 8V5a2 2 0 0 1 2-2h3 M16 3h3a2 2 0 0 1 2 2v3 M21 16v3a2 2 0 0 1-2 2h-3 M8 21H5a2 2 0 0 1-2-2v-3 M12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0-6 0",
 };
 const svg = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${IC[name] || IC.dot}"/></svg>`;
 const KIND = {
@@ -971,10 +1102,11 @@ const KIND = {
   card_blocked: ["blocked", "bad"], fault_planted: ["bolt", "warn"], fault_cleared: ["spark", "ok"], presenter: ["presenter", "warn"],
   soak_tick: ["soak", "dim"], soak_outcome: ["soak", "acc"], error: ["error", "bad"],
   dispatcher: ["claim", "dim"], job_summary: ["done", "acc"], waiting: ["dot", "dim"], commander_line: ["skill", "dim"],
-  escalation: ["incident", "warn"], fix_plan: ["spark", "acc"], plan_check: ["heal", "acc"], plan_action: ["heal", "ok"],
+  escalation: ["relay", "acc"], fix_plan: ["hive", "acc"], plan_check: ["heal", "acc"], plan_action: ["wrench", "ok"],
+  plan_gate: ["heal", "acc"], reverse: ["undo", "warn"], redo: ["scan", "acc"],
 };
 const SRC = { order: "order", dispatch: "dispatcher", commander: "commander", soak: "soak", mission: "presenter", host: "arm host", watchdog: "watchdog", "pod healer": "pod healer",
-  worker: "healer", manager: "manager" };
+  worker: "worker", manager: "manager" };
 
 // ---------- data ----------
 let S = null;          // /api/state
@@ -991,9 +1123,6 @@ async function pollState() {
   setTimeout(pollState, 800);
 }
 
-// ---------- what state is the arm in ----------
-// Everything about an incident comes from the arm's own snapshot (10 Hz): its open list and its history
-// (resolved_at, handed_off), so the pill, the banner and the twin change on the same frame.
 const HEAL_IDS = new Set();            // incidents that started healing: they stay HEALING until they close
 const AFTER_S = 12;                    // how long HEALED / FIXED stays up after the incident closes
 function lastIncident(arm) {
@@ -1006,7 +1135,122 @@ function jointName(i) {
   return hit ? hit[2].toLowerCase() : null;
 }
 const whyOf = (i) => { const jn = jointName(i); return jn ? `${jn} stalled` : short(i.kind); };
+// ---------- the healer's events: the worker -> manager exchange, and wrong moves (category 2) ----------
+// The worker's events chain by their `escalation` id (inc-<token>-<host id>-<n>); only the escalation itself
+// names the host incident. A wrong move is the worker's own incident (wa-<n>), never the host's: it lives in the
+// event log only, from the commander's `incident` (category wrong_action) to its `heal` (ok or not).
+const EVS = () => (S && S.events) || [];
+const BLOCK_AT = [0.21, 0, 0.015];               // where the poses expect the block (armsim/model.py BLOCK_POS)
+function mgrLabel(e) { const m = /the manager \(([\w.:-]+)\)/.exec((e && e.text) || ""); return m ? m[1] : null; }   // a label, not a reason in brackets
+function escFor(i) {
+  // the latest escalation for a host incident, and its fix plan: {esc, fix}
+  const out = { esc: null, fix: null, inc: null, heal: null };
+  if (!i || !num(i.opened_at)) return out;
+  const t0 = i.opened_at - 3;
+  const mine = (e) => e.incident && e.incident.id === i.id && e.ts >= t0 && e.category !== "wrong_action";
+  for (const e of EVS()) {
+    if (e.kind === "escalation" && e.src === "worker" && mine(e)) out.esc = e;
+    else if (e.kind === "incident" && e.src === "commander" && mine(e)) out.inc = out.inc || e;
+    else if (e.kind === "heal" && e.src === "commander" && mine(e)) out.heal = e;
+  }
+  if (out.esc) for (const e of EVS()) if (e.escalation === out.esc.escalation && e.kind === "fix_plan") out.fix = e;
+  return out;
+}
+function blockOff(arm) {
+  // [dx, dy] mm when the block sits on the table at least 8 mm from where the poses expect it, else null
+  const b = arm && arm.positions && arm.positions.block && arm.positions.block.pos;
+  if (!b || arm.holding || Math.abs(b[2] - BLOCK_AT[2]) > 0.01) return null;
+  const dx = (b[0] - BLOCK_AT[0]) * 1000, dy = (b[1] - BLOCK_AT[1]) * 1000;
+  return Math.hypot(dx, dy) >= 8 ? [dx, dy] : null;
+}
+const sgn = (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v));
+const offWords = (o) => `${sgn(o[0])}, ${sgn(o[1])} mm`;
+function wrongMove() {
+  const evs = EVS();
+  let k = -1;
+  for (let j = evs.length - 1; j >= 0; j--) if (evs[j].kind === "incident" && evs[j].category === "wrong_action") { k = j; break; }
+  if (k < 0) return null;
+  const card = evs[k].card, iid = (evs[k].incident || {}).id;
+  let a = k;                                      // back to the chain's first miss (its redos reuse the id)
+  for (let j = k - 1; j >= 0; j--) {
+    const e = evs[j];
+    if (e.card !== card) continue;
+    if (e.kind === "job_started") break;
+    if (e.kind === "incident" && e.category === "wrong_action" && (e.incident || {}).id === iid) a = j;
+  }
+  const chain = evs.slice(a).filter((e) => e.card === card);
+  const ei = chain.findIndex((e) => e.kind === "heal" && e.category === "wrong_action");
+  const end = ei >= 0 ? chain[ei] : null, live = end ? chain.slice(0, ei + 1) : chain;
+  // this attempt: from its miss. A chain that ended shows its last escalated attempt (after the last failed
+  // redo the worker logs one more miss before it hands off, with no escalation of its own)
+  let la = 0, lastEsc = -1;
+  live.forEach((e, j) => { if (e.kind === "escalation") lastEsc = j; });
+  live.forEach((e, j) => { if (e.kind === "incident" && e.category === "wrong_action" && (!end || lastEsc < 0 || j < lastEsc)) la = j; });
+  const att = live.slice(la);
+  const esc = att.filter((e) => e.kind === "escalation").pop() || null, id = esc && esc.escalation;
+  const by = (kind) => (id && att.filter((e) => e.escalation === id && e.kind === kind).pop()) || null;
+  const W = { t0: evs[a].ts, card, order: evs[a].order, iid, first: evs[a], miss: att[0], esc, label: mgrLabel(esc),
+    attempt: Math.max(1, live.filter((e) => e.kind === "escalation").length),
+    fix: by("fix_plan"), chk: by("plan_check"), act: by("plan_action"), end,
+    rev: att.filter((e) => e.kind === "reverse"), redo: att.filter((e) => e.kind === "redo" && e.step !== "locate"),
+    locate: att.filter((e) => e.kind === "redo" && e.step === "locate").pop() || null };
+  W.plan = W.fix && W.fix.plan;
+  W.corr = (W.plan && W.plan.args && W.plan.args.correction) || "none";
+  const now = Date.now() / 1000;
+  if (end) {
+    const after = evs.slice(evs.indexOf(end) + 1);
+    const fixed = after.find((e) => e.src === "mission" && e.kind === "presenter" && e.action === "clear");
+    const next = after.some((e) => e.kind === "job_started" && e.card !== card);   // a new job: the story is over
+    if (end.ok) { if (now - end.ts > AFTER_S || next) return null; W.phase = "redone"; }
+    else if (fixed) { if (now - fixed.ts > AFTER_S || next) return null; W.phase = "fixed"; }
+    else if (after.some((e) => e.kind === "job_started") || now - end.ts > 600) return null;
+    else W.phase = "person";
+  } else {
+    if (now - live[live.length - 1].ts > 240) return null;   // a chain that stopped mid-way: not a live story
+    W.phase = esc ? "correcting" : "wrong";
+  }
+  return W;
+}
+function personWhy(W) {
+  const m = /\(a wrong action\): (.*?)(?: \(\d+ s\))?$/.exec((W.end && W.end.text) || "");
+  return m ? tidy(m[1]).replace(/^The /, "the ") : "the grasp still misses";
+}
+function correctingSub(W) {
+  if (!W.fix) return "Asking the manager for one bounded correction";
+  if (W.fix.ok === false || (W.chk && !W.chk.ok)) return "No usable plan: the arm parks for a person";
+  const last = W.redo[W.redo.length - 1];
+  if (last) return `Redoing ${last.step}${last.offset_mm ? `, shifted ${offWords(last.offset_mm)}` : ""} · try ${W.attempt} of 2`;
+  if (W.corr === "relocate") {
+    const r = W.locate && W.locate.result;
+    if (!W.locate) return "Relocate: scanning for the block with the wrist sensor";
+    return r && r.found ? `Found it ${offWords(r.offset_mm)} from where the arm expected it` : "The scan found no block";
+  }
+  if (W.corr === "offset") return `Offset the approach ${offWords([W.plan.args.dx_mm || 0, W.plan.args.dy_mm || 0])}`;
+  return `Redo from ${(W.plan && W.plan.args && W.plan.args.from_step) || "the approach"} as before`;
+}
+function wrongMode(W, arm) {
+  const off = blockOff(arm);
+  const where = off ? ` · the block sits ${Math.round(Math.hypot(off[0], off[1]))} mm from where the arm expected it` : "";
+  if (W.phase === "wrong") return { cls: "bad", word: "WRONG MOVE:", why: "missed grasp", sub: `The grip closed on nothing${where}`, wrong: W };
+  if (W.phase === "correcting") return { cls: "warn", word: "CORRECTING:", why: "missed grasp", sub: correctingSub(W), wrong: W };
+  if (W.phase === "redone") return { cls: "ok", word: "REDONE", why: num(W.end.seconds) ? `in ${fmt(W.end.seconds, 0)} s` : "",
+    sub: "Missed grasp · reversed, corrected by the manager, redone, checked", wrong: W };
+  if (W.phase === "fixed") return { cls: "ok", word: "FIXED", why: "by a person", sub: "Missed grasp · a person put the block back", wrong: W, person: true };
+  return { cls: "person", word: "NEEDS A PERSON:", why: "missed grasp", sub: cap1(personWhy(W)), wrong: W };
+}
+
+// ---------- what state is the arm in ----------
+// Everything about a host incident comes from the arm's own snapshot (10 Hz): its open list and its history
+// (resolved_at, handed_off), so the pill, the banner and the twin change on the same frame. Memoized per
+// (snapshot, state) pair: the canvas asks every frame.
+let MODE = { A: undefined, S: undefined, v: null };
 function armMode(arm, st) {
+  if (MODE.v && MODE.A === arm && MODE.S === st) return MODE.v;
+  const v = armMode0(arm, st);
+  MODE = { A: arm, S: st, v };
+  return v;
+}
+function armMode0(arm, st) {
   if (!arm || arm.error) return { cls: "off", word: "OFFLINE", why: "", sub: arm && arm.error ? "Waiting for the arm host" : "Connecting to Mission Control" };
   if (arm.stale) return { cls: "off", word: "NO SIGNAL", why: "", sub: `The arm host has been silent for ${ago(arm.age_s)}` };
   const open = arm.incidents || [];
@@ -1024,25 +1268,68 @@ function armMode(arm, st) {
     else if (act.startsWith("verify")) what = "checking the fix at home";
     else if (pod.healer_busy) what = "rolling the pod firmware back";
     else if (open.some((x) => x.pod_healed)) what = "checking the fix at home";
+    if (!what) {                                  // the worker asked the manager: that is healing already
+      const ch = escFor(i);
+      if (ch.esc) what = !ch.fix ? "asking the manager" : ch.fix.ok === false ? "falling back to the scripted heal" : "running the manager's fix";
+    }
     if (what) HEAL_IDS.add(key);
     else if (HEAL_IDS.has(key)) what = "checking the fix at home";   // between two healer steps: still healing, not parked again
     if (what) return { cls: "warn", word: "HEALING:", why: whyOf(i), sub: clean(i.summary) || cap1(short(i.kind)), incident: i, healing: what };
     return { cls: "bad", word: "PARKED:", why: whyOf(i), sub: clean(i.summary), incident: i };
   }
+  const W = wrongMove();
+  if (W && (W.phase === "wrong" || W.phase === "correcting" || W.phase === "person")) return wrongMode(W, arm);
   const last = lastIncident(arm);
   if (last && num(last.resolved_at) && num(arm.ts) && arm.ts - last.resolved_at < AFTER_S) {
-    const heal_s = last.resolved_at - last.opened_at;
+    const heal_s = healSecs(last);
     if (last.handed_off) return { cls: "ok", word: "FIXED", why: "by a person", sub: `${cap1(whyOf(last))} · fixed by hand, checked at home`, done: last, person: true };
+    if (personCleared(last)) return { cls: "ok", word: "FIXED", why: "by a person", sub: `${cap1(whyOf(last))} · a person stepped in, checked at home`, done: last, person: true };
     return { cls: "ok", word: "HEALED", why: `in ${fmt(heal_s, 1)} s`, sub: `${cap1(whyOf(last))} · fixed without a person, checked at home`, done: last, heal_s };
   }
+  if (W) return wrongMode(W, arm);
   const sk = arm.skill;
-  const doing = ((st && st.board && st.board.cards) || []).filter((c) => c.status === "doing");
+  const cards = (st && st.board && st.board.cards) || [];
+  const doing = cards.filter((c) => c.status === "doing");
   if (sk && (sk.running || (num(sk.ended) && arm.ts - sk.ended < 4)) || doing.length) {
     const job = doing[0];
     const what = sk && sk.running ? sk.name.replace(/_/g, " ") : "between steps";
-    return { cls: "ok", word: "WORKING", why: "", sub: (job ? `Order #${(job.order || job.id || "").slice(-4)} · ${jobTitle(job)} · ` : "") + what };
+    const pl = planted(arm);
+    return { cls: "ok", word: "WORKING", why: "", sub: pl ? `${pl} · ${what}` : (job ? `Order #${(job.order || job.id || "").slice(-4)} · ${jobTitle(job)} · ` : "") + what };
   }
-  return { cls: "idle", word: "IDLE", why: "", sub: "Ready for orders" };
+  const todo = cards.filter((c) => c.status === "todo");
+  if (todo.length) {                              // an order waits for the dispatcher: not idle
+    const next = todo[todo.length - 1];           // newest first: the dispatcher takes the oldest
+    return { cls: "queued", word: "QUEUED", why: todo.length > 1 ? `${todo.length} orders` : "",
+      sub: `Order #${(next.order || next.id || "").slice(-4)} · ${jobTitle(next)} · waiting for the dispatcher` };
+  }
+  const pl = planted(arm);
+  return { cls: "idle", word: "IDLE", why: "", sub: pl ? `${pl} · ready for orders` : blockOff(arm) ? "Ready for orders · the block has been bumped" : "Ready for orders" };
+}
+// The heal time the timeline and the counters show (mission.py's), so the pill never says 7.3 where they say 7.2
+function healSecs(i) {
+  const d = ((S && S.derived && S.derived.incidents) || []).find((x) => x.id === i.id && Math.abs(x.opened - i.opened_at) < 0.01);
+  return d && num(d.heal_s) ? d.heal_s : Math.round((i.resolved_at - i.opened_at) * 10) / 10;
+}
+// "A person fixed it" pressed while the incident was open, and it closed after: a person fixed it, not the healer
+// (mission.py's timeline and counters say the same: by_person)
+function personCleared(i) {
+  if (!i || !num(i.opened_at)) return false;
+  const end = num(i.resolved_at) ? i.resolved_at + 0.5 : Infinity;
+  return EVS().some((e) => e.src === "mission" && e.kind === "presenter" && e.action === "clear" && e.ts >= i.opened_at - 1 && e.ts <= end);
+}
+// A fault the presenter just planted that hasn't fired yet: the screen says so at once, before the watchdog sees it
+const PLANTED = { us_frozen: "stuck sensor", us_no_echo: "sensor with no echo", pod_image07: "bad pod image 07", pod_image02: "bad pod image 02",
+  joint_stuck: "dead elbow servo" };
+function planted(arm) {
+  const evs = EVS(), now = Date.now() / 1000;
+  let p = null;
+  for (let j = evs.length - 1; j >= 0; j--) {
+    const e = evs[j];
+    if (now - e.ts > 40) break;
+    if (e.src === "mission" && e.kind === "presenter" && e.action === "fault" && PLANTED[e.fault]) { p = e; break; }
+  }
+  if (!p || (arm.history || []).some((i) => num(i.opened_at) && i.opened_at >= p.ts - 1)) return null;
+  return `${cap1(PLANTED[p.fault])} planted · the watchdog is watching`;
 }
 function jobTitle(c) {
   const t = (c.title || "").replace(/^ARM JOB\s*/, "").replace(/^ord-[0-9-]+[a-f0-9]*:\s*/, "");
@@ -1053,7 +1340,8 @@ function jobTitle(c) {
 function renderHeader(mode) {
   const pill = $("pill");
   pill.className = "pill " + mode.cls;
-  setHTML(pill, `<span class="dot"></span><span class="word">${esc(mode.word)}</span>${mode.why ? `<span class="why">${esc(mode.why)}</span>` : ""}`);
+  const why = esc(mode.why || "").replace(/(\d) s$/, '$1<small class="u">s</small>');   // "IN 7.3 s", not "IN 7.3 S" in neon caps
+  setHTML(pill, `<span class="dot"></span><span class="word">${esc(mode.word)}</span>${mode.why ? `<span class="why">${why}</span>` : ""}`);
   setText($("pillsub"), mode.sub || " ");
   document.body.classList.toggle("alarm", mode.cls === "bad" || mode.cls === "person");
   const arm = A && !A.error ? A : null;
@@ -1118,39 +1406,268 @@ function renderTwinHud(mode) {
     setHTML($("hudR"), rows);
     const s = arm.sensor || {};
     const sensorBad = (arm.incidents || []).some((i) => /^us_|^pod_/.test(i.kind || ""));
-    const st = s.st === "ok" && num(s.mm) ? (sensorBad ? "bad" : Math.abs((s.pred_mm ?? s.mm) - s.mm) > 20 ? "warn" : "ok") : "warn";
-    const exp = num(s.pred_mm) ? `pose expects <b>${fmt(s.pred_mm, 0)} mm</b>` : "no prediction";
-    setHTML($("hudBL"), `<div class="stat sensor"><div class="k">Wrist distance</div><div class="v ${st}">${s.st === "ok" && num(s.mm) ? fmt(s.mm, 0) + "<small>mm</small>" : esc((s.st || "no data").replace(/_/g, " "))}</div><div class="e">${exp}</div></div>`);
+    const reading = s.st === "ok" && num(s.mm);
+    // at home the jaw sits in the beam, so "out of range" is the normal home reading (armsim/worker.py's prompt):
+    // calm while nothing is open and nothing moves; a warning only while a skill runs or an incident is open
+    const calm = !reading && s.st === "out_of_range" && !(arm.incidents || []).length && !(sk && sk.running);
+    const st = reading ? (sensorBad ? "bad" : Math.abs((s.pred_mm ?? s.mm) - s.mm) > 20 ? "warn" : "ok") : calm ? "calm" : "warn";
+    const exp = calm ? "jaw in the beam · normal at home" : num(s.pred_mm) ? `pose expects <b>${fmt(s.pred_mm, 0)} mm</b>` : "no prediction";
+    setHTML($("hudBL"), `<div class="stat sensor"><div class="k">Wrist distance</div><div class="v ${st}">${reading ? fmt(s.mm, 0) + "<small>mm</small>" : calm ? "—<small>mm</small>" : esc((s.st || "no data").replace(/_/g, " "))}</div><div class="e">${exp}</div></div>`);
   }
   const ban = $("banner");
   const beats = arm && beatsFor(mode, arm);
   if (beats) {
     ban.className = "banner on " + (mode.cls === "person" ? "bad person" : mode.cls);
-    const icon = mode.cls === "person" ? "person" : mode.cls === "bad" ? "incident" : mode.cls === "warn" ? "heal" : "done";
-    const mark = { done: "done", now: "dot", fail: "blocked", "": "dot" };
-    setHTML($("bannerIn"), `<span class="bi">${svg(icon)}</span><ol class="beats">` +
-      beats.map(([w, s, c]) => `<li class="${c}"><span class="bw">${c === "" ? "" : svg(mark[c])}${esc(w)}</span><small>${esc(s)}</small></li>`).join("") + `</ol>`);
+    const mark = (c) => (c === "done" ? svg("done") : c === "fail" ? svg("blocked") : `<i class="bm"></i>`);
+    setHTML($("bannerIn"), `<ol class="beats">` +
+      beats.map(([w, s, c]) => `<li class="${c}"><span class="bw">${mark(c)}<span class="bt">${esc(w)}</span></span><small>${esc(s)}</small></li>`).join("") + `</ol>`);
   } else ban.classList.remove("on");
+  renderXchg(beats ? mode : {}, arm);
 }
 // The four beats of an incident: [word, small line, done | now | fail | "" (still to come)]
 function planFor(kind) {
   return /^us_/.test(kind || "") ? "restart the sensor" : /^pod_/.test(kind || "") ? "roll the pod firmware back" : "a checked retry";
 }
-function fixWords(fix) {
-  fix = fix || "";
-  return fix.startsWith("pod healed") ? "firmware rolled back" : fix.includes("restart_sensor") ? "sensor restarted" : fix.includes("verify") ? "checked retry passed" : "fixed";
-}
+// The beats' small lines say only the state, in three words or so: the plan lives on MANAGER's answer chip and
+// the result on ARM, in the row under them, so nothing is said twice.
+const HEAL_WORD = { "asking the manager": "asking the manager", "running the manager's fix": "fixing", "falling back to the scripted heal": "falling back",
+  "checking the fix at home": "checking at home", "a checked retry at home": "retrying at home", "restarting the sensor": "fixing",
+  "rolling the pod firmware back": "fixing" };
 function beatsFor(mode, arm) {
+  if (mode.wrong) return wrongBeats(mode, arm);
   const i = mode.incident || mode.done;
   if (!i || !["bad", "person", "warn", "ok"].includes(mode.cls)) return null;
   const broke = ["BROKE", `${hms(i.opened_at)} · ${whyOf(i)}`, "done"];
   const sk = arm.skill;
   const resumed = sk && sk.running ? `job resumed · ${sk.name.replace(/_/g, " ")}` : "back to work";
-  if (mode.cls === "bad") return [broke, ["PARKED", "safe, at home", "now"], ["HEALING", "next: " + planFor(i.kind), ""], ["RESUMED", "the job waits", ""]];
-  if (mode.cls === "warn") return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", mode.healing, "now"], ["RESUMED", "the job waits", ""]];
-  if (mode.cls === "person") return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", "checked retry failed", "fail"], ["PERSON", "work order opened", "now"]];
-  if (mode.person) return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", "checked retry failed", "fail"], ["FIXED", "by a person, checked", "done"]];
-  return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", `${fixWords(i.fix)} · ${fmt(mode.heal_s, 1)} s`, "done"], ["RESUMED", resumed, sk && sk.running ? "now" : "done"]];
+  if (mode.cls === "bad") return [broke, ["PARKED", "safe, at home", "now"], ["HEALING", "up next", ""], ["RESUMED", "the job waits", ""]];
+  if (mode.cls === "warn") return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", HEAL_WORD[mode.healing] || "fixing", "now"], ["RESUMED", "the job waits", ""]];
+  if (mode.cls === "person") return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", "retry failed", "fail"], ["PERSON", "work order opened", "now"]];
+  if (mode.person) return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", mode.done && !mode.done.handed_off ? "a person took over" : "retry failed", "fail"],
+    ["FIXED", "by a person, checked", "done"]];
+  return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", "no person needed", "done"], ["RESUMED", resumed, sk && sk.running ? "now" : "done"]];
+}
+
+// The wrong move's beats: WRONG MOVE > REVERSED > CORRECTED > REDONE (or PERSON / FIXED)
+function wrongBeats(mode, arm) {
+  const W = mode.wrong, ph = W.phase;
+  const over = ph === "redone" || ph === "person" || ph === "fixed";
+  const wm = ["WRONG MOVE", `${hms(W.t0)} · grip missed`, "done"];
+  const revd = !!W.esc || over;
+  const lastRev = W.rev[W.rev.length - 1];
+  const rv = ["REVERSED", revd ? "jaws open, backed off" : lastRev ? (lastRev.undo === "release" ? "jaws open" : lastRev.undo === "lift" ? "backing off" : "back over it") : "up next",
+    revd ? "done" : "now"];
+  let co;
+  const r = W.locate && W.locate.result;
+  if (!W.esc) co = ["CORRECTED", "up next", ""];
+  else if (!W.fix) co = ["CORRECTED", "asking", "now"];
+  else if (W.fix.ok === false) co = ["CORRECTED", "no answer", "fail"];
+  else if (W.chk && !W.chk.ok) co = ["CORRECTED", "plan refused", "fail"];
+  else if (W.corr === "relocate" && !W.locate) co = ["CORRECTED", "relocating", "now"];
+  else if (W.corr === "relocate" && !(r && r.found)) co = ["CORRECTED", "no block found", "fail"];
+  else co = ["CORRECTED", W.corr === "relocate" ? "relocated" : W.corr === "offset" ? "shifted" : "as before", "done"];
+  let rd;
+  if (ph === "person") rd = ["PERSON", W.attempt >= 2 ? `${W.attempt} tries missed` : "parked", "now"];
+  else if (ph === "fixed") rd = ["FIXED", "by a person", "done"];
+  else if (ph === "redone") rd = ["REDONE", "no person needed", "done"];
+  else if (W.redo.length) rd = ["REDONE", `try ${W.attempt} of 2`, "now"];
+  else rd = ["REDONE", `try ${W.attempt} of 2`, ""];
+  if (ph === "person" || ph === "fixed") { if (co[2] === "now" || co[2] === "") co[2] = "fail"; }
+  return [wm, rv, co, rd];
+}
+
+// ---------- render: the worker -> manager exchange ----------
+// Four nodes and the three hops between them, from the events, in the beats' columns. The reveal moves one hop
+// per X_STEP_MS and holds MANAGER in its thinking state for THINK_MS, so a manager that answers in 0.5 s (inside
+// one poll) is still seen to think, then answer. Pacing only: the times on the arrows are the real ones.
+const X_STEP_MS = 1200, THINK_MS = 1600, ANS_MS = 900;
+const XN = [["worker", "chip"], ["manager", "hive"], ["code", "heal"], ["arm", "wrench"]];
+const PD_FAULT = ["spots it, asks", "picks ONE fix", "checks it", "does it, checks at home"];
+const PD_WRONG = ["spots the miss, asks", "picks ONE correction", "checks it: ±40 mm", "redoes it, checks the grip"];
+let XD = null;
+const XS = { key: null, shown: 0, at: 0, ans: 0 };
+function secsTxt(s) { if (!num(s) || s < 0) return ""; return s < 1 ? `${Math.max(1, Math.round(s * 1000))} ms` : s < 10 ? `${s.toFixed(1)} s` : `${Math.round(s)} s`; }
+const isFake = (label) => /^fake/.test(label || "");
+// before this incident's ask, the manager the dispatcher used last time (so the chip doesn't flip on the ask)
+const lastMgr = () => { const evs = EVS(); for (let j = evs.length - 1; j >= 0; j--) { const m = mgrLabel(evs[j]); if (m) return m; } return null; };
+const mgrChip = (label) => (isFake(label || lastMgr()) ? "stand-in" : "Hermes");
+const mgrThink = (label) => (isFake(label) ? "Thinking…" : "Triage, analysts, critic…");
+function workerChip(esc) {
+  // the answer itself decides: a wrong move's escalation has no worker_lm field, only `worker`
+  return esc && esc.worker ? "small model" : "rules";
+}
+function noPlanWhy(fix) {
+  const m = /no plan from the manager \([^)]*\): (.*?); the scripted heal/.exec(fix.text || "") || /no plan from the manager \([^)]*\): (.*?); there is no/.exec(fix.text || "");
+  const w = m ? m[1] : "no answer";
+  return /refused|Errno 111|ConnectionRefused/i.test(w) && !/HTTP \d+/.test(w) ? "Unreachable" : /deadline|timed out|timeout|running/i.test(w) ? "No answer in time"
+    : /HTTP \d+/.test(w) ? `Error: ${w.match(/HTTP \d+/)[0]}` : tidy(w);
+}
+// the manager's answer, as the words on its chip
+function ansWords(p) {
+  if (!p || !p.action) return "A fix";
+  const a = p.args || {};
+  switch (p.action) {
+    case "restart_sensor": return "Restart the sensor";
+    case "pod_rollback": return "Roll back firmware";
+    case "verify": return "Retry it, checked";
+    case "no_action": return "No action, then check";
+    case "park": return "Keep it parked";
+    case "handoff_human": return "Hand it to a person";
+    case "redo_step": {
+      const c = a.correction || "none";
+      return c === "relocate" ? "Relocate, redo" : c === "offset" ? `Shift ${Math.round(Math.hypot(a.dx_mm || 0, a.dy_mm || 0))} mm, redo` : `Redo from ${a.from_step || "approach"}`;
+    }
+    default: return cap1(p.action.replace(/_/g, " "));
+  }
+}
+function doingWords(p) {
+  const w = { restart_sensor: "Restarting the sensor", pod_rollback: "Rolling the firmware back", verify: "Retrying, checked",
+    no_action: "Checking at home", park: "Parking", handoff_human: "Handing to a person" };
+  return (p && w[p.action]) || `${ansWords(p)}`;
+}
+const XN0 = (t, st, d, chip = "", extra = {}) => ({ t, st, d, chip, ...extra });
+function xFault(mode, arm) {
+  const i = mode.incident || mode.done;
+  const ch = escFor(i), { esc, fix, heal } = ch;
+  const id = esc && esc.escalation;
+  const by = (k) => { let r = null; if (id) for (const e of EVS()) if (e.escalation === id && e.kind === k) r = e; return r; };
+  const chk = by("plan_check"), act = by("plan_action");
+  const activity = (arm.activity && arm.activity.what) || "";
+  const closed = !!mode.done && !mode.person, person = mode.cls === "person" || !!(mode.done && mode.person);
+  const scripted = !esc && (!!heal || /^(repair|verify)/.test(activity) || !!mode.done || person);
+  const label = mgrLabel(esc || fix);
+  const now = Date.now() / 1000;
+  const doing = ((S && S.board && S.board.cards) || []).some((c) => c.status === "doing");
+  const N = [], L = [];
+  // WORKER: it spots the incident and asks
+  if (esc) N.push(XN0("WORKER", "done", "Sent 6 s of logs", workerChip(esc)));
+  else if (scripted) N.push(XN0("WORKER", "done", "Didn't ask", "rules"));
+  else N.push(XN0("WORKER", "now", ch.inc || doing ? "Incident in…" : "Waits for the next job", "rules"));
+  // MANAGER: one fix
+  const mc = mgrChip(label);
+  if (scripted) N.push(XN0("MANAGER", "skip", "Not asked", ""));
+  else if (!esc) N.push(XN0("MANAGER", "pend", "", mc));
+  else if (!fix) N.push(XN0("MANAGER", "think", mgrThink(label), mc));
+  else if (fix.ok === false) N.push(XN0("MANAGER", "fail", noPlanWhy(fix), mc, { think: mgrThink(label) }));
+  else if (!fix.plan) N.push(XN0("MANAGER", "fail", "Answer isn't a plan", mc, { think: mgrThink(label) }));
+  else N.push(XN0("MANAGER", "done", `“${ansWords(fix.plan)}”`, mc, { q: true, think: mgrThink(label) }));
+  const noPlan = fix && (fix.ok === false || !fix.plan);
+  // PLAIN CODE: the gate
+  const safety = chk && !chk.ok && /^touches_safety/.test(chk.reason || "");
+  if (scripted || noPlan) N.push(XN0("PLAIN CODE", "skip", "No plan to check", "gate"));
+  else if (!chk) N.push(XN0("PLAIN CODE", fix ? "now" : "pend", "Checking…", "gate"));
+  else if (chk.ok) N.push(XN0("PLAIN CODE", "done", "Allowed, in budget", "gate"));
+  else N.push(XN0("PLAIN CODE", "fail", safety ? "Refused: touches safety" : `Refused: ${tidy(chk.reason || "").replace(/^\w/, (c) => c.toLowerCase())}`, "gate"));
+  // ARM: does the one checked action; verify() at home decides
+  const fallback = scripted || noPlan || (chk && !chk.ok && !safety);
+  const ended = closed || person || !!heal;
+  const verifying = /^verify/.test(activity) || mode.healing === "checking the fix at home";
+  if (safety) N.push(XN0("PARK", "fail", "Stays parked: a person", ""));
+  else if (fallback) {
+    const st = closed || (heal && heal.ok) ? "done" : ended ? "fail" : "fall";
+    N.push(XN0("FALLBACK", st, st === "done" ? "Scripted heal worked" : st === "fail" ? (mode.person && mode.done && !mode.done.handed_off ? "A person took over" : "Retry failed: a person")
+      : verifying ? "Checking at home…" : `Script: ${planFor(i.kind)}`, "script"));
+  }
+  else if (!chk || !chk.ok) N.push(XN0("ARM", "pend", "", ""));
+  else if (closed) N.push(XN0("ARM", "done", "Healed, checked at home", ""));
+  else if (person || (act && !act.verified) || (heal && !heal.ok)) N.push(XN0("ARM", "fail", mode.person && mode.done && !mode.done.handed_off ? "A person took over" : "Retry failed: a person", ""));
+  else if ((act && act.verified) || (heal && heal.ok)) N.push(XN0("ARM", "done", "Checked at home", ""));
+  else if (verifying) N.push(XN0("ARM", "now", "Checking at home…", ""));
+  else N.push(XN0("ARM", "now", `${doingWords(fix.plan)}…`, ""));
+  // the hops: a verb each; times only where they mean something (the manager's, plain code's)
+  L.push({ c: "asks", st: esc ? "done" : scripted ? "skip" : "pend", s: "" });
+  L.push({ c: noPlan ? "no plan" : "answers", st: fix ? (noPlan ? "fail" : "done") : esc ? "wait" : scripted ? "skip" : "pend",
+    s: fix ? secsTxt(num(fix.seconds) ? fix.seconds : fix.ts - esc.ts) : esc ? secsTxt(now - esc.ts) : "" });
+  L.push({ c: chk && !chk.ok ? "refuses" : "approves", st: chk ? (chk.ok ? "done" : "fail") : fallback ? "skip" : "pend", s: chk && fix ? secsTxt(chk.ts - fix.ts) : "" });
+  return { key: `f/${arm.pid}/${i.id}/${i.opened_at}/${id || (scripted ? "script" : "wait")}`, nodes: N, links: L, pd: PD_FAULT,
+    final: ended || !!act };
+}
+function xWrong(mode, arm) {
+  const W = mode.wrong, { esc, fix, chk, act, end } = W;
+  const now = Date.now() / 1000;
+  const N = [], L = [];
+  if (esc) N.push(XN0("WORKER", "done", "Missed · reversed", workerChip(esc)));
+  else N.push(XN0("WORKER", "now", W.rev.length ? "Reversing the grip…" : "Grip missed", workerChip(null)));
+  const noPlan = fix && (fix.ok === false || !fix.plan);
+  const mc = W.attempt > 1 ? `ask ${W.attempt}/2` : mgrChip(W.label);
+  if (!esc) N.push(XN0("MANAGER", "pend", "", mc));
+  else if (!fix) N.push(XN0("MANAGER", "think", mgrThink(W.label), mc));
+  else if (noPlan) N.push(XN0("MANAGER", "fail", fix.ok === false ? noPlanWhy(fix) : "Answer isn't a plan", mc, { think: mgrThink(W.label) }));
+  else N.push(XN0("MANAGER", "done", `“${ansWords(fix.plan)}”`, mc, { q: true, think: mgrThink(W.label) }));
+  if (noPlan) N.push(XN0("PLAIN CODE", "skip", "No plan to check", "±40 mm"));
+  else if (!chk) N.push(XN0("PLAIN CODE", fix ? "now" : "pend", "Checking…", "±40 mm"));
+  else if (chk.ok) N.push(XN0("PLAIN CODE", "done", "In bounds, in budget", "±40 mm"));
+  else N.push(XN0("PLAIN CODE", "fail", `Refused: ${tidy(chk.reason || "").replace(/^\w/, (c) => c.toLowerCase())}`, "±40 mm"));
+  const r = W.locate && W.locate.result, lastRedo = W.redo[W.redo.length - 1];
+  const lost = W.locate && !(r && r.found);
+  if (noPlan || (chk && !chk.ok)) N.push(XN0("PARK", end ? "fail" : "fall", "No scripted redo: a person", ""));
+  else if (!chk) N.push(XN0("ARM", "pend", "", "IK"));
+  else if (W.phase === "redone" || (act && act.verified)) N.push(XN0("ARM", "done", "Holds the block, checked", "IK"));
+  else if (W.phase === "person" || W.phase === "fixed") N.push(XN0("ARM", "fail", lost ? "No block found: a person" : "Still missing: a person", "IK"));
+  else if (act && !act.ok) N.push(XN0("ARM", "fail", lost ? "No block found" : "Missed again: asks again", "IK"));
+  else if (lastRedo) N.push(XN0("ARM", "now", /grip|lift/.test(lastRedo.step) ? "Checking the grip…" : `Redo ${lastRedo.step}${lastRedo.offset_mm ? ` · ${offWords(lastRedo.offset_mm)}` : ""}…`, "IK"));
+  else if (W.corr === "relocate") N.push(XN0("ARM", "now", W.locate ? (r && r.found ? `Found it ${offWords(r.offset_mm)}` : "No block found") : "Scanning ±40 mm…", "IK"));
+  else N.push(XN0("ARM", "now", `${ansWords(fix.plan)}…`, "IK"));
+  L.push({ c: "asks", st: esc ? "done" : "pend", s: "" });
+  L.push({ c: noPlan ? "no plan" : "answers", st: fix ? (noPlan ? "fail" : "done") : esc ? "wait" : "pend", s: fix ? secsTxt(num(fix.seconds) ? fix.seconds : fix.ts - esc.ts) : esc ? secsTxt(now - esc.ts) : "" });
+  L.push({ c: chk && !chk.ok ? "refuses" : "approves", st: chk ? (chk.ok ? "done" : "fail") : noPlan ? "skip" : "pend", s: chk && fix ? secsTxt(chk.ts - fix.ts) : "" });
+  return { key: `w/${W.card}/${W.iid}/${esc ? esc.escalation : "rev"}`, nodes: N, links: L, pd: PD_WRONG, final: !!end || !!act };
+}
+function xBuild() {
+  const root = $("xchg");
+  root.innerHTML = `<div class="xflow">` + XN.map(([n, ic], k) =>
+    (k ? `<div class="xl pend"><span class="xc"></span><span class="xw"><i class="pkt"></i></span><span class="xs"></span></div>` : "") +
+    `<div class="xn pend" data-n="${n}"><span class="xh1"><span class="xi">${svg(ic)}<span class="xb"></span></span><b><span></span><i></i></b></span><em class="xd"></em></div>`).join("") + `</div>`;
+  XD = { nodes: [...root.querySelectorAll(".xn")].map((el) => ({ el, t: el.querySelector("b span"), chip: el.querySelector("b i"), d: el.querySelector(".xd"), b: el.querySelector(".xb") })),
+    links: [...root.querySelectorAll(".xl")].map((el) => ({ el, c: el.querySelector(".xc"), s: el.querySelector(".xs") })) };
+}
+function xFly(k) {
+  const L = XD && XD.links[k];
+  if (!L) return;
+  L.el.classList.remove("fly");
+  void L.el.offsetWidth;                          // restart the flight
+  L.el.classList.add("fly");
+  clearTimeout(L.t); L.t = setTimeout(() => L.el.classList.remove("fly"), 1100);
+}
+function renderXchg(mode, arm) {
+  const root = $("xchg");
+  const X = arm && (mode.wrong ? xWrong(mode, arm) : (mode.incident || mode.done) ? xFault(mode, arm) : null);
+  if (!X) { root.classList.remove("on"); XS.key = null; return; }
+  if (!XD) xBuild();
+  root.classList.add("on");
+  let stage = 0;
+  X.nodes.forEach((n, k) => { if (n.st !== "pend") stage = k; });
+  const t = performance.now();
+  if (X.key !== XS.key) { XS.key = X.key; XS.shown = X.final ? stage : 0; XS.at = t - X_STEP_MS; XS.ans = 0; }
+  const asked = X.nodes[1].st !== "skip";
+  const hold = XS.shown === 1 && asked ? THINK_MS : X_STEP_MS;      // the manager is seen to think
+  if (XS.shown > stage) XS.shown = stage;
+  else if (XS.shown < stage && t - XS.at >= hold) {
+    XS.shown++; XS.at = t; xFly(XS.shown - 1);
+    if (XS.shown === 2 && X.nodes[1].st === "done") XS.ans = t + ANS_MS;   // the answer lands
+  }
+  const holding = XS.shown === 1 && stage > 1 && asked;           // its answer is in, still shown thinking
+  X.nodes.forEach((n, k) => {
+    const D = XD.nodes[k], seen = k <= XS.shown;
+    let st = !seen ? "pend" : k === XS.shown && XS.shown < stage && n.st === "done" ? "now" : n.st;
+    let d = seen && n.st !== "pend" ? n.d : X.pd[k];
+    if (k === 1 && holding) { st = "think"; d = n.think || "Thinking…"; }
+    const cls = `xn ${st}${k === 1 && st === "done" && t < XS.ans ? " ans" : ""}`;
+    if (D.el.className !== cls) D.el.className = cls;
+    setText(D.t, n.t); setText(D.chip, n.chip || "");
+    setText(D.d, d);
+    D.d.classList.toggle("q", !!n.q && st === "done");
+    setHTML(D.b, st === "done" ? svg("check") : st === "fail" ? svg("cross") : "");
+  });
+  X.links.forEach((l, k) => {
+    const D = XD.links[k];
+    let st = k < XS.shown ? l.st : k === XS.shown && l.st === "wait" ? "wait" : "pend";
+    if (k === 1 && holding) st = "wait";
+    const cls = `xl ${st}${D.el.classList.contains("fly") ? " fly" : ""}`;
+    if (D.el.className !== cls) D.el.className = cls;
+    setText(D.c, l.c);
+    setText(D.s, st === "pend" || (k === 1 && holding) ? "" : l.s || "");
+  });
 }
 
 // ---------- render: heal timeline ----------
@@ -1212,10 +1729,11 @@ function renderHeal() {
   for (const i of incs) {
     const a = Math.min(x(i.opened), NOWX - 28), b = Math.max(a + 28, x(i.closed || now));   // the newest heal is never a sliver
     const lost = i.outcome === "lost";
-    let label = i.outcome === "healed" ? `${fmt(i.heal_s, 1)} s` : i.outcome === "person" ? "needs a person" : lost ? "host restarted" : `open ${fmt(i.open_s, 0)} s`;
+    const fixed = !!i.by_person;                 // a person fixed it while it was open: not the healer's
+    let label = fixed ? "fixed by hand" : i.outcome === "healed" ? `${fmt(i.heal_s, 1)} s` : i.outcome === "person" ? "needs a person" : lost ? "host restarted" : `open ${fmt(i.open_s, 0)} s`;
     let kind = short(i.kind), lane = -1, box = null, lx = a;
     for (const compact of [false, true]) {
-      if (compact) { kind = ""; label = i.outcome === "person" ? "person" : i.outcome === "healed" ? label : lost ? "lost" : `${fmt(i.open_s, 0)} s`; }
+      if (compact) { kind = ""; label = i.outcome === "person" || fixed ? "person" : i.outcome === "healed" ? label : lost ? "lost" : `${fmt(i.open_s, 0)} s`; }
       const lw = textW(label, FL) + (kind ? textW(" " + kind, FK) : 0);
       for (const ln of [0, 1]) {
         const R = rightOf[ln];
@@ -1228,14 +1746,14 @@ function renderHeal() {
     }
     const quiet = lane < 0;                      // no room for any label: the bar alone (its title has it)
     if (quiet) lane = laneEnd[0] <= laneEnd[1] ? 0 : 1;
-    laneEnd[lane] = Math.max(quiet ? b : box[1], b);
+    laneEnd[lane] = Math.max(laneEnd[lane], quiet ? b : box[1], b);   // a bar with no label never pulls its lane's end back
     if (!quiet && lane === 1) lane1From = Math.min(lane1From, box[0]);
     const y = laneI[lane];
-    const rgb = i.outcome === "healed" ? T.ok : i.outcome === "person" ? T.bad : T.warn;
+    const rgb = fixed ? T.idle : i.outcome === "healed" ? T.ok : i.outcome === "person" ? T.bad : T.warn;
     const fill = i.outcome === "open" ? "url(#hatch)" : lost ? T.tlLane : `rgb(${rgb})`;
-    const glow = T.glow > 0 && !lost ? ` style="filter: drop-shadow(0 0 ${(6 * T.glow).toFixed(1)}px rgba(${rgb},0.6))"` : "";
+    const glow = T.glow > 0 && !lost && !fixed ? ` style="filter: drop-shadow(0 0 ${(6 * T.glow).toFixed(1)}px rgba(${rgb},0.6))"` : "";
     out += `<rect x="${a}" y="${y - BH / 2}" width="${Math.min(b, NOWX) - a}" height="${BH}" rx="7" fill="${fill}"${glow}><title>${esc(clean(i.summary) || i.kind)}</title></rect>`;
-    if (!quiet) out += `<text x="${lx}" y="${y - BH / 2 - 5}" fill="${i.outcome === "healed" ? T.tlOk : i.outcome === "person" ? T.tlBad : lost ? T.tlKind : T.tlWarn}" font-size="${LS}" font-weight="700" font-family="${fam}">${esc(label)}${kind ? `<tspan fill="${T.tlKind}" font-weight="500" font-size="${KS}"> ${esc(kind)}</tspan>` : ""}</text>`;
+    if (!quiet) out += `<text x="${lx}" y="${y - BH / 2 - 5}" fill="${fixed || lost ? T.tlKind : i.outcome === "healed" ? T.tlOk : i.outcome === "person" ? T.tlBad : T.tlWarn}" font-size="${LS}" font-weight="700" font-family="${fam}">${esc(label)}${kind ? `<tspan fill="${T.tlKind}" font-weight="500" font-size="${KS}"> ${esc(kind)}</tspan>` : ""}</text>`;
   }
   if (lane1From > capW + 6) out += `<text x="8" y="${laneI[1] - BH / 2 - 5}" fill="${T.tlLane}" font-size="11.5" letter-spacing="1.6" font-family="${fam}">INCIDENTS</text>`;
   out += `<line x1="${NOWX}" x2="${NOWX}" y1="4" y2="${axisY + 4}" stroke="rgba(${T.accent},0.7)" stroke-dasharray="3 3"/><text x="${NOWX - 4}" y="14" fill="rgb(${T.accent})" font-size="11.5" text-anchor="end" letter-spacing="1.4" font-family="${fam}">NOW</text>`;
@@ -1265,7 +1783,8 @@ function renderJobs(mode) {
       html += `<div class="kc ${key}${parked ? " parked" : ""}${parked && mode.cls === "warn" ? " healing" : ""}"><div class="o"><span>${esc(oid)}</span><span>${esc(ago(c.age_s))}</span></div><div class="j">${esc(jobTitle(c))}</div>`;
       if (key === "doing") {
         const sk = arm && arm.skill;
-        const step = parked ? (mode.cls === "warn" ? "healing…" : "parked: " + short(mode.incident && mode.incident.kind)) : sk && sk.running ? sk.name.replace(/_/g, " ") : "working";
+        const step = parked ? (mode.wrong ? (mode.cls === "warn" ? "correcting the grasp…" : "wrong move: reversing")
+          : mode.cls === "warn" ? "healing…" : "parked: " + short(mode.incident && mode.incident.kind)) : sk && sk.running ? sk.name.replace(/_/g, " ") : "working";
         html += `<div class="step">${svg(parked ? (mode.cls === "warn" ? "heal" : "incident") : "skill").replace("<svg", '<svg width="13" height="13"')} ${esc(step)}</div>`;
       } else if (c.last && key !== "todo") html += `<div class="r ${isRes ? "res" : isBlk ? "blk" : ""}">${esc(tidy(c.last.replace(/^(RESULT|BLOCKED):\s*/i, ""), c.order))}</div>`;
       html += `</div>`;
@@ -1277,21 +1796,113 @@ function renderJobs(mode) {
 }
 
 // ---------- render: feed ----------
-let seenFeed = new Set(), feedPrimed = false;
+// The healer's own lines in words a judge reads, from the event itself (its plan, action, offsets), not its
+// machine text; one line per finished job; and new rows revealed one at a time, oldest first, FEED_STEP_MS
+// apart, so the four or five lines one poll brings (incident, ask, answer, check) read in order.
+const FEED_STEP_MS = 650, FEED_NEW_MS = 640;
+function evOf(it) {
+  if (it.synth) return null;
+  const evs = EVS();
+  for (let j = evs.length - 1; j >= 0; j--) if (evs[j].ts === it.ts && evs[j].kind === it.kind) return evs[j];
+  return null;
+}
+const UNDO = { release: "jaws open", lift: "backed off 30 mm", reach: "back over the block" };
+const DID = { restart_sensor: "Restarted the sensor", pod_rollback: "Rolled the pod firmware back", verify: "Ran a checked retry", no_action: "Checked at home" };
+function feedWords(it) {
+  const e = evOf(it) || {};
+  const wrong = e.category === "wrong_action" || /\(a wrong action\)/.test(it.text || "") || /-wa-/.test(e.escalation || "");
+  const lc = (s) => String(s || "").replace(/^\w/, (c) => c.toLowerCase());
+  const secs = num(e.seconds) ? e.seconds : +((/\((\d+(?:\.\d+)?) s\)$/.exec(it.text || "") || [])[1]);
+  const inS = num(secs) ? ` in ${fmt(secs, 0)} s` : "";
+  const kindOf = () => (wrong ? "the missed grasp" : short(((e.incident || {}).kind) || (/^(?:healed|couldn't heal|escalated) (\w+)/.exec(it.text || "") || [])[1]));
+  switch (it.kind) {
+    case "escalation":
+      return `Asked the manager about ${wrong ? "the missed grasp" : "the " + kindOf()}${e.step ? ` during ${e.step}` : ""}${e.worker ? " · written by its small model" : ""}`;
+    case "fix_plan":
+      if (it.ok === false) return `No plan from the manager (${lc(noPlanWhy(e.text ? e : it))}): ${wrong ? "the arm parks for a person" : "the scripted heal runs"}`;
+      if (!e.plan) return "The manager answered, but not with a plan";
+      return `Answered${num(e.seconds) ? ` in ${secsTxt(e.seconds)}` : ""}: ${lc(ansWords(e.plan))}${num(e.plan.confidence) ? ` (confidence ${e.plan.confidence})` : ""}`;
+    case "plan_check":
+      return it.ok ? `Plain code approved it: ${wrong ? "inside ±40 mm" : "on the allowlist"}, in budget` : `Plain code refused it: ${lc(tidy(e.reason || ""))}`;
+    case "plan_action":
+      if (e.action === "handoff_human") return "Handed to a person: the plan was refused";
+      if (e.action === "redo_step") return it.ok ? "Redone: the gripper holds the block" : "The redo missed again";
+      return `${DID[e.action] || cap1(String(e.action || "acted").replace(/_/g, " "))}${it.ok ? ": the check at home passed" : ": still failing at home"}`;
+    case "reverse":
+      return `Reversed the grip: ${UNDO[e.undo] || lc(tidy(it.text))}`;
+    case "redo":
+      if (e.step === "locate") {
+        const r = e.result || {};
+        return r.found ? `Scan found the block ${offWords(r.offset_mm)} off (${r.probes} probes, ${fmt(r.seconds, 1)} s)` : `Scan found no block${r.reason ? `: ${lc(tidy(r.reason))}` : ""}`;
+      }
+      return `Redo ${e.step}${e.offset_mm ? ` shifted ${offWords(e.offset_mm)}` : ""}: ${!it.ok ? "missed" : e.step === "grip" ? "holding the block" : "arrived"}`;
+    case "incident":
+      if (wrong) return `Wrong move during ${e.step || "grip"}: the grip closed on nothing`;
+      break;
+    case "heal":
+      if (it.src === "commander") {
+        // a fault's time is the incident's own (the timeline's number), not the commander's clock
+        const inc = !wrong && ((S && S.derived && S.derived.incidents) || []).find((x) => x.id === (e.incident || {}).id && x.opened <= it.ts && x.opened > it.ts - 300);
+        const took = inc && num(inc.heal_s) ? ` in ${fmt(inc.heal_s, 1)} s` : inS;
+        const how = /the manager \([^)]*\) planned/.test(it.text || "") ? " with the manager's plan" : /the scripted heal|no plan from the manager/.test(it.text || "") ? " with the scripted heal" : "";
+        // a wrong move's own heal line carries the why ("the grasp still missed after 2 redos"): say it once, here
+        const why = wrong && /\(a wrong action\): (.*?)(?: \(\d+ s\))?$/.exec(it.text || "");
+        return it.ok === false ? `Couldn't heal ${kindOf()}${inS}: ${why ? lc(tidy(why[1])) + ", parked for a person" : "a person takes it"}` : `Healed ${kindOf()}${took}${how}`;
+      }
+      break;
+    case "handoff":
+      if (it.src !== "watchdog") return `Handed to a person: ${lc(tidy((it.text || "").replace(/^handed to a person:\s*/i, "")))}`;
+      break;
+    case "dispatcher":
+      if (/^dispatcher up\b/.test(it.text || "")) return `Dispatcher up: takes ARM JOB cards from the ${/naive|Naïve/i.test(it.text) ? "Naïve" : "local"} board`;
+      break;
+    case "job_summary": {
+      const t = tidy(it.text, it.order), m = /^(Order #\w+): blocked in (\d+ s) \((.*)$/.exec(t);
+      if (m) return `${m[1]}: blocked in ${m[2]} · ${lc(m[3].split(/[:;(]|, the| ·/)[0].trim())}`;
+      return t;
+    }
+  }
+  return tidy(it.text, it.order);
+}
+function feedItems(items0) {
+  const items = items0.map((it, n) => [it, n]).sort((a, b) => (b[0].ts - a[0].ts) || (b[1] - a[1])).map((x) => x[0]);
+  const sums = items.filter((it) => it.kind === "job_summary");
+  const failed = items.filter((it) => it.kind === "heal" && it.ok === false && !it.synth);
+  const out = [];
+  for (const it of items) {
+    // one line per finished job: the dispatcher's summary says what the commander's result and the card's close say
+    if (["job_result", "card_done", "card_blocked"].includes(it.kind) && sums.some((s) => s.card && s.card === it.card && Math.abs(s.ts - it.ts) < 5)) continue;
+    // a failed heal is said once: by the commander's "couldn't heal" line, not by the step before it or the watchdog after
+    if (((it.kind === "plan_action" && it.ok === false) || it.kind === "handoff") && failed.some((f) => Math.abs(f.ts - it.ts) < 20)) continue;
+    out.push({ ...it, words: feedWords(it) });
+  }
+  return out;
+}
+let seenFeed = new Set(), feedPrimed = false, feedQ = [], feedAt = 0;
+const feedShown = new Map();                       // key -> when it was revealed (performance.now)
 function renderFeed() {
-  const items = (S && S.derived && S.derived.feed) || [];
+  const items = feedItems(((S && S.derived && S.derived.feed) || []).slice(0, 40));
   if (!items.length) return setHTML($("feed"), `<div class="empty-state"><b>Quiet so far</b>Orders, skills, incidents and heals show up here as they happen.</div>`);
-  const keys = new Set();
-  let html = "";
-  for (const it of items.slice(0, 30)) {
-    const key = `${it.ts}|${it.kind}|${it.text}`;
-    keys.add(key);
+  const keyOf = (it) => `${it.ts}|${it.kind}|${it.text}`;
+  const keys = new Set(items.map(keyOf));
+  const t = performance.now();
+  if (!feedPrimed) { keys.forEach((k) => seenFeed.add(k)); feedPrimed = true; }
+  feedQ = feedQ.filter((k) => keys.has(k));
+  for (const it of items.slice().reverse()) { const k = keyOf(it); if (!seenFeed.has(k) && !feedQ.includes(k)) feedQ.push(k); }
+  while (feedQ.length > 6) seenFeed.add(feedQ.shift());       // a burst (a reload, a soak): the old ones at once
+  if (feedQ.length && t - feedAt >= FEED_STEP_MS) { const k = feedQ.shift(); seenFeed.add(k); feedShown.set(k, t); feedAt = t; }
+  let html = "", n = 0;
+  for (const it of items) {
+    const key = keyOf(it);
+    if (!seenFeed.has(key)) continue;
+    if (++n > 30) break;
     let [icon, tone] = KIND[it.kind] || ["dot", "dim"];
     if (it.ok === false && tone !== "dim") { tone = "bad"; icon = "blocked"; }   // a failed heal or a blocked job is not green
-    const fresh = feedPrimed && !seenFeed.has(key);
-    html += `<div class="fi ${tone}${fresh ? " new" : ""}"><span class="ic">${svg(icon)}</span><span class="tm">${esc(hms(it.ts))}</span><span class="tx"><span class="src">${esc(SRC[it.src] || it.src || "")}</span>${esc(tidy(it.text, it.order))}</span></div>`;
+    const fresh = t - (feedShown.get(key) || -1e9) < FEED_NEW_MS;
+    html += `<div class="fi ${tone}${fresh ? " new" : ""}"><span class="ic">${svg(icon)}</span><span class="tm">${esc(hms(it.ts))}</span><span class="tx"><span class="src">${esc(SRC[it.src] || it.src || "")}</span>${esc(it.words)}</span></div>`;
   }
-  seenFeed = keys; feedPrimed = true;
+  seenFeed = new Set([...seenFeed].filter((k) => keys.has(k)));
+  for (const k of feedShown.keys()) if (!keys.has(k)) feedShown.delete(k);
   setHTML($("feed"), html);
   $("feedSub").textContent = "newest first";
 }
@@ -1410,6 +2021,13 @@ function render() {
 }
 
 // ---------- presenter actions ----------
+const TOKEN = (() => {
+  try { const t = new URLSearchParams(location.search).get("token"); if (t) return t; } catch (e) {}
+  // the meta the server adds on loopback (mission.py); the name is spelled in two parts so a page served
+  // without a token never carries the word (tests/test_mission.py checks that)
+  const m = [...document.getElementsByTagName("meta")].find((x) => x.getAttribute("name") === "mission-" + "token");
+  return (m && m.getAttribute("content")) || "";
+})();
 async function act(btn) {
   const a = btn.dataset.act;
   let url = "/api/" + a, body = {};
@@ -1427,7 +2045,9 @@ async function act(btn) {
   const twin = btn.id === "freezeBtn" ? $("freezeBar") : btn;
   btnState(twin, "sent", "sending…", 20000);
   try {
-    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const headers = { "Content-Type": "application/json" };
+    if (TOKEN) headers["X-Mission-Token"] = TOKEN;
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
     const j = await res.json();
     if (!j.ok) { btnState(twin, "failed", "refused", 5000); toast(`<b>Refused</b> · ${esc(j.error || res.status)}`, "bad"); }
     else ticketBtn.set(j.ticket.id, twin);
@@ -1438,7 +2058,8 @@ document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === "l") { e.preventDefault(); cycleLook(); return; }
-  const b = k === "f" ? $("freezeBtn") : k === "c" ? document.querySelector('[data-act="clear"]') : document.querySelector(`[data-key="${k}"]`);
+  const b = k === "f" ? $("freezeBtn") : k === "c" ? document.querySelector('[data-act="clear"]') : k === "w" ? document.querySelector('[data-fault="block_shift"]')
+    : /^[1-8]$/.test(k) ? document.querySelector(`[data-key="${k}"]`) : null;
   if (b && !b.disabled) { e.preventDefault(); act(b); }
 });
 
@@ -1462,6 +2083,7 @@ function resize() {
   W = cv.clientWidth; H = cv.clientHeight;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   FIT.safeAt = -1e9;
+  FIT.snapUntil = performance.now() + 650;        // the banner slides for .45 s: follow it, don't ease behind it
 }
 let drag = null;
 cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY, yaw: cam.yaw, pitch: cam.pitch }; cv.setPointerCapture(e.pointerId); cv.classList.add("drag"); });
@@ -1524,7 +2146,7 @@ function fitView(dt, now, m) {
   }
   const f = Math.min(s.w / (u1 - u0), s.h / (v1 - v0)) * cam.zoom;
   const cx = s.x + s.w / 2 - (f * (u0 + u1)) / 2, cy = s.y + s.h / 2 + (f * (v0 + v1)) / 2;
-  if (!FIT.F) Object.assign(FIT, { F: f, cx, cy });
+  if (!FIT.F || now < (FIT.snapUntil || 0)) Object.assign(FIT, { F: f, cx, cy });
   else { const k = 1 - Math.exp(-dt * 2.2); FIT.F += (f - FIT.F) * k; FIT.cx += (cx - FIT.cx) * k; FIT.cy += (cy - FIT.cy) * k; }
   F = FIT.F;
 }
@@ -1750,7 +2372,7 @@ function labelOff(p2) {
   const b = SM.blockScreen;
   return b && Math.abs(p2[1] - b[1]) < b[2] * 1.6 && p2[0] < b[0] + b[2] * 1.4 ? Math.max(18, b[0] + b[2] * 1.25 - p2[0]) : 18;
 }
-function drawBeam(m, color, time) {
+function drawBeam(m, color, time, quiet = false) {
   const T = TH.tw;
   const s = m.spos, a = m.saxis;
   const S2 = P(s);
@@ -1760,7 +2382,7 @@ function drawBeam(m, color, time) {
     ctx.save(); ctx.setLineDash([5, 6]); ctx.strokeStyle = T.pred; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(S2[0], S2[1]); ctx.lineTo(e[0], e[1]); ctx.stroke(); ctx.restore();
     ctx.strokeStyle = T.pred; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(e[0] - 8, e[1]); ctx.lineTo(e[0] + 8, e[1]); ctx.stroke();
-    if (m.mm > 0 && Math.abs(m.mm - m.pred) > 0.02) {
+    if (!quiet && m.mm > 0 && Math.abs(m.mm - m.pred) > 0.02) {
       const eM = P(add(s, mul(a, m.mm)));
       const dy = Math.abs(eM[1] - e[1]) < 26 ? 26 * (e[1] >= eM[1] ? 1 : -1) : 0;
       predLabel = [`pose expects ${Math.round((m.predNow > 0 ? m.predNow : m.pred) * 1000)} mm`, e[0] + labelOff(e) + 4, e[1] + 4 + dy];
@@ -1788,7 +2410,7 @@ function drawBeam(m, color, time) {
     }
     ctx.fillStyle = rgba(color, 1); ctx.beginPath(); ctx.arc(E2[0], E2[1], 3.5, 0, Math.PI * 2); ctx.fill();
     ctx.font = `700 ${Math.round(14 + W / 260)}px ${T.font}`; ctx.fillStyle = rgba(color, 1);
-    stageText(`${Math.round((m.mmNow > 0 ? m.mmNow : m.mm) * 1000)} mm`, E2[0] + labelOff(E2), E2[1] + 5);
+    if (!quiet) stageText(`${Math.round((m.mmNow > 0 ? m.mmNow : m.mm) * 1000)} mm`, E2[0] + labelOff(E2), E2[1] + 5);
   }
   if (predLabel) {
     ctx.font = `600 ${Math.round(12.5 + W / 300)}px ${T.font}`; ctx.fillStyle = T.label;
@@ -1807,13 +2429,7 @@ function stalledJoint(mode) {
   return hit ? { idx: hit[1], name: hit[2] } : null;
 }
 function drawStall(m, idx, name, time) {
-  const T = TH.tw, P2 = P(m.chain[idx]), r0 = Math.max(10, (0.03 * F) / P2[2]);
-  const ph = (time / 950) % 1;
-  for (const k of [0, 0.5]) {
-    const f = (ph + k) % 1;
-    ctx.strokeStyle = rgba(TH.bad, 0.95 * (1 - f)); ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(P2[0], P2[1], r0 * (1 + 1.1 * f), 0, Math.PI * 2); ctx.stroke();
-  }
+  const P2 = P(m.chain[idx]), r0 = Math.max(10, (0.03 * F) / P2[2]);
   // the tag goes on the side away from the joint's two links, clear of the HUD cards
   let ax = 0, ay = 0;
   for (const q of [m.chain[idx - 1], m.chain[idx + 1] || m.tip]) {
@@ -1822,7 +2438,16 @@ function drawStall(m, idx, name, time) {
   }
   const al = Math.hypot(ax, ay);
   if (al < 0.2) { ax = -1; ay = 0; } else { ax /= al; ay /= al; }
-  const text = `${name} · STALLED`;
+  drawTag(P2, r0, `${name} · STALLED`, TH.bad, time, ax, ay);
+}
+function drawTag(P2, r0, text, rgb, time, ax, ay) {
+  // pulsing rings on a point, and a pill tag on a leader line, away from (ax, ay) and clear of the HUD cards
+  const T = TH.tw, ph = (time / 950) % 1;
+  for (const k of [0, 0.5]) {
+    const f = (ph + k) % 1;
+    ctx.strokeStyle = rgba(rgb, 0.95 * (1 - f)); ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(P2[0], P2[1], r0 * (1 + 1.1 * f), 0, Math.PI * 2); ctx.stroke();
+  }
   ctx.font = `800 ${Math.round(12 + W / 300)}px ${T.font}`;
   const tw = ctx.measureText(text).width, th = Math.round(22 + W / 220), pad = 10, bw = tw + pad * 2;
   const reach = r0 * 1.9 + Math.abs(ax) * bw / 2 + Math.abs(ay) * th / 2;
@@ -1831,14 +2456,68 @@ function drawStall(m, idx, name, time) {
   for (const h of FIT.huds || []) {
     if (x < h.r + 6 && x + bw > h.l - 6 && y < h.b + 6 && y + th > h.t - 6) x = ax <= 0 && h.l < W / 2 ? h.r + 8 : Math.min(x, h.l - bw - 8);
   }
-  ctx.strokeStyle = rgba(TH.bad, 0.75); ctx.lineWidth = 1.5;
+  ctx.strokeStyle = rgba(rgb, 0.75); ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(P2[0] + ax * r0, P2[1] + ay * r0); ctx.lineTo(x + bw / 2, y + th / 2); ctx.stroke();
   ctx.save();
-  if (TH.tw.glow > 0) { ctx.shadowColor = rgba(TH.bad, 0.8); ctx.shadowBlur = 16; }
-  ctx.fillStyle = rgba(TH.bad, 0.92);
+  if (TH.tw.glow > 0) { ctx.shadowColor = rgba(rgb, 0.8); ctx.shadowBlur = 16; }
+  ctx.fillStyle = rgba(rgb, 0.92);
   ctx.beginPath(); ctx.roundRect(x, y, bw, th, th / 2); ctx.fill();
   ctx.restore();
   ctx.fillStyle = TH.onBad; ctx.textBaseline = "middle"; ctx.fillText(text, x + pad, y + th / 2 + 1); ctx.textBaseline = "alphabetic";
+}
+
+// A wrong move on the stage: where the poses expect the block (a dashed ghost), an arrow to where it really is,
+// the relocate scan sweeping its 40 mm circle, and a reticle where the scan found it. All on the table (z = 0).
+function tableRing(c, r, n = 56) { const pts = []; for (let k = 0; k <= n; k++) { const a = (k / n) * Math.PI * 2; pts.push(P([c[0] + r * Math.cos(a), c[1] + r * Math.sin(a), 0.0005])); } return pts; }
+function drawBumped(m, off, labels) {
+  const col = TH.warn, h = BLOCK_AT[2], E = BLOCK_AT;
+  const cs = [];
+  for (let i = 0; i < 8; i++) cs.push(P([E[0] + (i & 1 ? h : -h), E[1] + (i & 2 ? h : -h), i & 4 ? 2 * h : 0]));
+  ctx.save();
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = rgba(col, 0.85); ctx.lineWidth = 1.5;
+  for (const [a, b] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) {
+    ctx.beginPath(); ctx.moveTo(cs[a][0], cs[a][1]); ctx.lineTo(cs[b][0], cs[b][1]); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  const A2 = P([E[0], E[1], 0.0005]), B2 = P([m.block[0], m.block[1], 0.0005]);
+  const dx = B2[0] - A2[0], dy = B2[1] - A2[1], L = Math.hypot(dx, dy);
+  if (L > 14) {
+    const ux = dx / L, uy = dy / L, e = [B2[0] - ux * 9, B2[1] - uy * 9];
+    if (TH.tw.glow > 0) { ctx.shadowColor = rgba(col, 0.8); ctx.shadowBlur = 8; }
+    ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2.5; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(A2[0], A2[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+    ctx.fillStyle = rgba(col, 0.95); ctx.beginPath();
+    ctx.moveTo(e[0] + ux * 9, e[1] + uy * 9); ctx.lineTo(e[0] - uy * 6, e[1] + ux * 6); ctx.lineTo(e[0] + uy * 6, e[1] - ux * 6); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  if (labels) labels.push([`block moved ${Math.round(Math.hypot(off[0], off[1]))} mm`, rgba(col, 1), Math.min(A2[0], B2[0]) - 22, Math.max(A2[1], B2[1]) + 30, true]);
+}
+function drawScan(time, labels) {
+  const c = BLOCK_AT, r = 0.04, col = TH.accent;
+  ctx.save();
+  pathPts(tableRing(c, r)); ctx.setLineDash([5, 5]); ctx.strokeStyle = rgba(col, 0.75); ctx.lineWidth = 1.6; ctx.stroke(); ctx.setLineDash([]);
+  const a0 = (time / 1400) * Math.PI * 2, wedge = [P([c[0], c[1], 0.0005])];
+  for (let k = 0; k <= 16; k++) { const a = a0 - (k / 16) * 1.1; wedge.push(P([c[0] + r * Math.cos(a), c[1] + r * Math.sin(a), 0.0005])); }
+  const g = ctx.createRadialGradient(wedge[0][0], wedge[0][1], 0, wedge[0][0], wedge[0][1], Math.hypot(wedge[1][0] - wedge[0][0], wedge[1][1] - wedge[0][1]) + 1);
+  g.addColorStop(0, rgba(col, 0.05)); g.addColorStop(1, rgba(col, 0.42));
+  polyPath(wedge); ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(wedge[0][0], wedge[0][1]); ctx.lineTo(wedge[1][0], wedge[1][1]); ctx.stroke();
+  ctx.restore();
+  const ring = tableRing(c, r, 24), x0 = Math.min(...ring.map((q) => q[0])), yc = ring.reduce((a, q) => a + q[1], 0) / ring.length;
+  labels.push(["SCANNING ±40 MM", rgba(col, 1), x0 - 12, yc + 6, true]);
+}
+function drawFound(off, labels) {
+  const c = [BLOCK_AT[0] + off[0] / 1000, BLOCK_AT[1] + off[1] / 1000, 0], col = TH.ok;
+  ctx.save();
+  if (TH.tw.glow > 0) { ctx.shadowColor = rgba(col, 0.9); ctx.shadowBlur = 10; }
+  pathPts(tableRing(c, 0.026)); ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2; ctx.stroke();
+  for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const a = P([c[0] + ux * 0.019, c[1] + uy * 0.019, 0.0005]), b = P([c[0] + ux * 0.034, c[1] + uy * 0.034, 0.0005]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  ctx.restore();
+  const ring = tableRing(c, 0.034, 24), x1 = Math.max(...ring.map((q) => q[0])), yc = ring.reduce((a, q) => a + q[1], 0) / ring.length;
+  labels.push([`found it ${offWords(off)}`, rgba(col, 1), x1 + 12, yc + 6]);
 }
 
 let lastFrame = performance.now();
@@ -1884,6 +2563,14 @@ function drawFrame(now) {
   }
   const bq = P(flat(m.block)); ctx.fillStyle = T.shadow; ctx.beginPath(); ctx.ellipse(bq[0], bq[1], (0.03 * F) / bq[2], (0.014 * F) / bq[2], 0, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
+  // a wrong move, on the table: under the arm, labels drawn last
+  const WM = mode.wrong, labels = [];
+  const off = blockOff(arm);
+  const scanning = WM && WM.phase === "correcting" && WM.fix && WM.fix.ok !== false && WM.corr === "relocate" && !WM.locate && WM.chk && WM.chk.ok;
+  if (scanning) drawScan(now, labels);
+  const found = !arm.holding && WM && WM.phase === "correcting" && WM.locate && WM.locate.result && WM.locate.result.found ? WM.locate.result.offset_mm : null;
+  if (found) drawFound(found, labels);
+  if (off) drawBumped(m, off, scanning || found ? null : labels);
   // the base, always underneath
   drawBase(m, st);
   // links, servo housings, jaws and the block, far to near
@@ -1908,12 +2595,20 @@ function drawFrame(now) {
   for (const it of items) it.draw();
   const stall = alarm && stalledJoint(mode);
   if (stall) drawStall(m, stall.idx, stall.name, now);
+  if (WM && WM.phase === "wrong") {                 // the grip that closed on nothing
+    const tp = P(m.tip);
+    drawTag(tp, Math.max(9, (0.022 * F) / tp[2]), "GRIP · MISSED", TH.bad, now, -0.45, -0.9);
+  }
   // the wrist sensor's beam
   const sensorBad = (arm.incidents || []).some((i) => /^us_|^pod_/.test(i.kind || ""));
   const beamCol = sensorBad ? TH.bad : m.mm > 0 && m.pred > 0 && Math.abs(m.mm - m.pred) > 0.02 ? TH.warn : m.mm > 0 ? TH.ok : TH.warn;
   ctx.globalCompositeOperation = T.blend;
-  drawBeam(m, beamCol, now);
+  drawBeam(m, beamCol, now, !!WM);
   ctx.globalCompositeOperation = "source-over";
+  for (const [text, color, x, y, end] of labels) {
+    ctx.font = `700 ${Math.round(13 + W / 280)}px ${T.font}`; ctx.fillStyle = color;
+    stageText(text, end ? x - ctx.measureText(text).width : x, y);
+  }
 }
 
 resize();
@@ -1922,7 +2617,7 @@ resize();
 new ResizeObserver(() => { resize(); drawFrame(performance.now()); }).observe(cv);
 tickClock(); setInterval(tickClock, 1000);
 setInterval(() => { const mode = armMode(A, S); renderHeader(mode); renderTwinHud(mode); }, 100);
-setInterval(() => { const mode = armMode(A, S); renderPod(); if (S) renderJobs(mode); }, 250);
+setInterval(() => { const mode = armMode(A, S); renderPod(); if (S) { renderJobs(mode); renderFeed(); } }, 250);   // the feed reveals a row at a time
 pollArm(); pollState();
 requestAnimationFrame(frame);
 </script>

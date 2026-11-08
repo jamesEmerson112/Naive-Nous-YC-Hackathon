@@ -24,8 +24,10 @@ Where the data comes from. Each source fails on its own and reads {error: "..."}
 What the presenter bar does (POST, answered 202 at once; worker threads run them in order, so a
 skill holding the arm's socket never stalls the page). Each POST writes a `presenter` event:
   /api/order {job}            orders.place(board, job, source="mission"): a new ARM JOB card (job required)
-  /api/fault {fault}          the host's inject (joint_stuck: the elbow, params {joint: 2})
-  /api/clear                  "a person fixed it": the host's clear, then repair verify
+  /api/fault {fault}          the host's inject (joint_stuck: the elbow, params {joint: 2}; block_shift: a
+                              wrong move, the block bumped BLOCK_SHIFT_MM along x, sim only, armsim/redo.py)
+  /api/clear                  "a person fixed it": the host's clear (and, in sim, the block back where the
+                              poses expect it), then repair verify
   /api/freeze, /api/unfreeze  Romulus's kill switch, as {"by": "mission-control", "why": "presenter"}
 The same POST again while the first is still queued or running is dropped: the reply (200) carries
 the first ticket with "duplicate": true, so a double click places one order, not two.
@@ -77,7 +79,9 @@ FAULTS = {   # what the presenter can plant, and how the screen names it
     "pod_image07": "bad pod firmware (image 07: distance math cut to 16 bits)",
     "pod_image02": "bad pod firmware (image 02: half-speed clock)",
     "joint_stuck": "a dead elbow servo",
+    "block_shift": "a wrong move (the block bumped, so the grasp misses)",
 }
+BLOCK_SHIFT_MM = 30         # far enough that the jaws close on nothing, inside the 40 mm a correction may move
 
 
 def state_path():
@@ -377,7 +381,21 @@ class Derived:
         self.seen = {}
         self.pid, self.ts, self.live = None, 0.0, set()   # the latest snapshot: its host pid, ts, open ids
         self.last_ts = {}                             # host pid -> the last snapshot ts seen from it
+        self.clears = set()                           # when the presenter pressed "a person fixed it" (kept past the tail)
         self.lock = threading.Lock()                  # /api/arm and /api/state run on different threads
+
+    def note_events(self, evs):
+        """Remember the presenter's clears: an incident that closes right after one was fixed by a person."""
+        got = {e["ts"] for e in evs if e.get("src") == "mission" and e.get("kind") == "presenter"
+               and e.get("action") == "clear" and isinstance(e.get("ts"), (int, float))}
+        with self.lock:
+            self.clears |= got
+            if len(self.clears) > 200:
+                self.clears = set(sorted(self.clears)[-200:])
+
+    def _cleared(self, inc, clears):
+        end = inc.get("resolved_at")
+        return end is not None and any(inc["opened_at"] - 1 <= t <= end + 0.5 for t in clears)
 
     def note(self, arm):
         if arm.get("error"):
@@ -402,10 +420,12 @@ class Derived:
     def incidents(self, now):
         """outcome: healed, person, open (still open in the latest snapshot, from the same host) or
         lost (never closed, and its host is gone or no longer lists it: shown up to its host's last
-        snapshot, not counted as open)."""
+        snapshot, not counted as open). by_person: it closed after the presenter's "a person fixed it",
+        so a person fixed it, not the healer: not in the heal counts, and the page says "fixed by hand"."""
         out = []
         with self.lock:
             seen, pid_now, live, last_ts = list(self.seen.items()), self.pid, set(self.live), dict(self.last_ts)
+            clears = set(self.clears)
         for (pid, _), inc in seen:
             end = inc.get("resolved_at") or inc.get("handed_off")
             if inc.get("handed_off"):
@@ -421,7 +441,8 @@ class Derived:
                         "opened": inc["opened_at"], "closed": end, "outcome": outcome, "fix": inc.get("fix"),
                         "heal_s": round(inc["resolved_at"] - inc["opened_at"], 1)
                         if outcome == "healed" and inc.get("resolved_at") else None,
-                        "open_s": round(now - inc["opened_at"], 1) if outcome == "open" else None})
+                        "open_s": round(now - inc["opened_at"], 1) if outcome == "open" else None,
+                        "by_person": outcome == "healed" and self._cleared(inc, clears)})
         return sorted(out, key=lambda i: i["opened"])
 
     def jobs(self, evs):
@@ -452,7 +473,10 @@ class Derived:
                 what = (i.get("summary") or short_kind(i["kind"])).rstrip(". ")
                 items.append({"ts": i["opened"], "src": "watchdog", "kind": "incident",
                               "text": f"{what}. The arm parks.", "synth": True})
-            if i["outcome"] == "healed" and not near("heal", i["closed"]):
+            if i["outcome"] == "healed" and i.get("by_person"):
+                items.append({"ts": i["closed"], "src": "watchdog", "kind": "fault_cleared",
+                              "text": f"Fixed by a person: {short_kind(i['kind'])}, checked at home.", "synth": True})
+            elif i["outcome"] == "healed" and not near("heal", i["closed"]):
                 items.append({"ts": i["closed"], "src": "watchdog", "kind": "heal",
                               "text": f"Healed in {i['heal_s']:.1f} s: {fix_label(i.get('fix'))}, checked at home.",
                               "synth": True})
@@ -469,14 +493,14 @@ class Derived:
         return sorted(items, key=lambda i: i["ts"], reverse=True)[:80]
 
     def summary(self, incs, board, evs):
-        heals = [i["heal_s"] for i in incs if i["heal_s"] is not None]
+        heals = [i["heal_s"] for i in incs if i["heal_s"] is not None and not i.get("by_person")]
         cards = board.get("cards") or []
         done = sum(1 for c in cards if c["status"] == "done")
         if not cards:
             done = sum(1 for e in evs if e.get("kind") == "card_done")
         return {"jobs_done": done, "faults_healed": len(heals),
                 "median_heal_s": round(statistics.median(heals), 1) if heals else None,
-                "needs_person": sum(1 for i in incs if i["outcome"] == "person"),
+                "needs_person": sum(1 for i in incs if i["outcome"] == "person" or i.get("by_person")),
                 "open": sum(1 for i in incs if i["outcome"] == "open")}
 
 
@@ -507,6 +531,7 @@ class Mission:
             out["events_error"] = f"{type(exc).__name__}: {exc}"
         out["romulus"] = self.romulus.get()
         try:
+            self.derived.note_events(evs)
             incs = self.derived.incidents(now)
             out["derived"] = {"incidents": incs, "jobs": self.derived.jobs(evs),
                               "feed": self.derived.feed(evs, incs, out["arm"].get("pod")),
@@ -534,7 +559,8 @@ class Mission:
         fault = body.get("fault")
         if not isinstance(fault, str) or fault not in FAULTS:
             raise ValueError(f"unknown fault {fault!r}; faults: {sorted(FAULTS)}")
-        params = {"joint": 2} if fault == "joint_stuck" else {}
+        params = ({"joint": 2} if fault == "joint_stuck" else
+                  {"dx_mm": BLOCK_SHIFT_MM, "dy_mm": 0} if fault == "block_shift" else {})
         return self.presenter.submit("host", "fault", f"plant {FAULTS[fault]} ({fault})",
                                      lambda: host_call("inject", fault=fault, **({"params": params} if params else {})),
                                      fault=fault)
@@ -542,6 +568,10 @@ class Mission:
     def clear(self, body):
         def run():
             host_call("clear")
+            try:                                      # the person also puts a bumped block back (sim only)
+                host_call("clear", fault="block_shift")
+            except RuntimeError:
+                pass
             r = host_call("repair", action="verify")
             return {"verified": r.get("verified"), "still": r.get("still"), "open": r.get("open")}
         return self.presenter.submit("host", "clear", "a person fixed it (clear the faults, then check at home)", run)

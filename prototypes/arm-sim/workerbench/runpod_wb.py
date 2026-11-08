@@ -10,23 +10,27 @@ saved Runpod key, so pass RUNPOD_API_KEY=proxy-injected):
 
     python3 -m workerbench.runpod_wb verify-tags              # every tag in MODELS is on ollama.com/library
     python3 -m workerbench.runpod_wb plan                     # launch, pull, smoke, benchmark, terminate
+    python3 -m workerbench.runpod_wb full <tag>...            # only the full test split, all tags at once
     python3 -m workerbench.runpod_wb launch | wait | pull <tag>... | smoke <tag> | status | terminate
     python3 -m workerbench.runpod_wb pods                     # GET /pods: should be [] at the end
     python3 -m workerbench.runpod_wb report-partial <label>   # report.json/.md from a cut-off answers.jsonl
 
 Caps, so a hang can't drain the account:
 - `launch` starts a detached local watchdog that DELETEs the pod at launch + HARD_CAP_S (2 h 50 min);
-- `plan` ends in try/finally: the pod is terminated even when a step raises;
+- `plan` and `full` end in try/finally (SIGTERM included): run.py children are stopped and the pod is
+  terminated even when a step raises;
 - each benchmark run gets a wall-clock cap from the time left; a run that hits it is cut and scored on
   what it answered (the item files are shuffled, so any prefix is a random sample).
 The image has no runpodctl, so the pod cannot remove itself: the watchdog here is the backstop.
 The pod's Ollama endpoint is unauthenticated: keep its life short.
 
 The plan (docs/worker-manager-healer.md §3): every model on the quick subset with thinking off at
-concurrency 1 (the latency numbers); thinking on for the top 3 that can think; the full test split for
-the top 2 with thinking off. The last two phases run at concurrency 4, so their latency is not
-single-stream. Ranking: gap macro recall, then kind score, then message score, then fewer output tokens
-(design §4). State and logs: runs/wb/runpod/ (gitignored); each run: runs/wb/<label>/.
+concurrency 1 (the latency numbers); then, at the same time, thinking on for up to 3 models (lfm2.5:24b
+always, it can't think less) and the full test split for the top 2 with thinking off. Those two phases
+run at concurrency 4 and share the GPU, so their latency is not single-stream. Ranking: `balanced` (gap
+macro recall minus the healthy false-alarm rate), then kind score, message score, fewer output tokens;
+the design ranks by gap recall first (§4), see balanced(). Killing a phase's run.py by hand moves the
+plan on to the next run. State and logs: runs/wb/runpod/ (gitignored); each run: runs/wb/<label>/.
 Env overrides, for a dry run against fake servers: RUNPOD_API_BASE, WB_POD_URL (with {id}), WB_RUNS,
 WB_HARD_CAP_S.
 """
@@ -59,6 +63,10 @@ HARD_CAP_S = int(os.environ.get("WB_HARD_CAP_S", 2 * 3600 + 50 * 60))   # watchd
 MARGIN_S = 10 * 60                     # the plan stops starting work this long before the cap
 # Ollama tags checked on ollama.com/library/<name>/tags (Sun Nov 8): baseline first.
 MODELS = ["qwen3.5:4b", "lfm3:1.7b", "qwen3.5:2b", "qwen3.5:9b", "lfm2.5:24b"]
+# lfm2.5:24b thinks whatever we send: on Ollama 0.40.15 it returned ~1.5k chars of reasoning and hit the
+# 512-token cap with reasoning_effort none, reasoning.effort none, "think": false, and native /api/chat
+# think:false (tested on the pod, Sun Nov 8 ~5:35 AM PST). So it only runs in the thinking phase.
+ALWAYS_THINKS = {"lfm2.5:24b"}
 THINK_OFF = {"reasoning_effort": "none"}       # Ollama: "none" requests think=false (docs.ollama.com)
 THINK_ON = {"reasoning_effort": "medium"}      # boolean-only models map a known effort to think=true
 
@@ -291,12 +299,17 @@ def shuffled(which):
             items = run.quick_subset(items)
         random.Random(7).shuffle(items)
         OUT.mkdir(parents=True, exist_ok=True)
-        path.write_text("".join(json.dumps(i) + "\n" for i in items))
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("".join(json.dumps(i) + "\n" for i in items))
+        tmp.replace(path)                       # atomic: a parallel reader never sees half a file
     return [json.loads(line) for line in path.open()]
 
 
 def label(tag, think, which):
     return f"gpu-{tag.replace(':', '-')}-{'think' if think else 'nothink'}-{which}"
+
+
+CHILDREN = set()                       # run.py processes, killed when the plan stops
 
 
 def bench(tag, think, which, *, concurrency, cap_s):
@@ -313,6 +326,7 @@ def bench(tag, think, which, *, concurrency, cap_s):
     t0 = time.time()
     with open(OUT / f"{lab}.log", "a") as f:
         p = subprocess.Popen(cmd, cwd=ARMSIM, stdout=f, stderr=subprocess.STDOUT, start_new_session=True)
+        CHILDREN.add(p)
         try:
             p.wait(timeout=cap_s)
         except subprocess.TimeoutExpired:
@@ -322,7 +336,8 @@ def bench(tag, think, which, *, concurrency, cap_s):
         except BaseException:                   # the plan is stopping: don't leave run.py calling the pod
             os.killpg(p.pid, signal.SIGTERM)
             raise
-    if not (RUNS / lab / "answers.jsonl").exists():
+    ans = RUNS / lab / "answers.jsonl"
+    if not ans.exists() or not ans.read_text().strip():      # a run stopped before its first answer
         log(f"run {lab}: no answers (see {OUT / (lab + '.log')})")
         return None
     rep = report_partial(lab, meta_extra={"concurrency": concurrency, "wall_s": round(time.time() - t0, 1),
@@ -333,6 +348,19 @@ def bench(tag, think, which, *, concurrency, cap_s):
         f"p50/p95 {rep['latency_s']['p50']}/{rep['latency_s']['p95']} s, out tok {rep['completion_tokens']}")
     write_table()
     return rep
+
+
+def drop_failed(lab):
+    """Remove answers whose call failed (timeout, HTTP error, pod gone), so --resume asks again."""
+    ans = RUNS / lab / "answers.jsonl"
+    if not ans.exists():
+        return 0
+    lines = [line for line in ans.read_text().splitlines() if line.strip()]
+    keep = [line for line in lines if not json.loads(line).get("error")]
+    ans.write_text("".join(line + "\n" for line in keep))
+    if len(keep) < len(lines):
+        log(f"{lab}: dropped {len(lines) - len(keep)} failed calls; they will be asked again")
+    return len(lines) - len(keep)
 
 
 def report_partial(lab, meta_extra=None):
@@ -421,6 +449,8 @@ def plan(models=MODELS, keep=False):
         th.start()
         quick, info = {}, {}
         for tag in models:                                  # phase 1: quick, thinking off, concurrency 1
+            if tag in ALWAYS_THINKS:
+                continue
             while tag not in pulled and left() > 0:
                 time.sleep(5)
             if not pulled.get(tag):
@@ -443,41 +473,88 @@ def plan(models=MODELS, keep=False):
                 quick[tag] = rep
         top = sorted(quick, key=lambda t: rank_key(quick[t]), reverse=True)
         log(f"phase 1 ranking: {top}")
-        thinkers = [t for t in top if "thinking" in (info[t].get("capabilities") or [])][:3]
+        thinkers = [t for t in models if t in ALWAYS_THINKS and pulled.get(t)]
+        thinkers += [t for t in top if "thinking" in (info[t].get("capabilities") or [])][:3 - len(thinkers)]
         full = top[:2]
         per_item = {t: quick[t]["latency_s"]["p50"] or 2.0 for t in full}
         reserve = sum(per_item[t] * len(shuffled("full")) / 2.5 * 1.3 for t in full)   # concurrency 4 ~ 2.5x (inferred)
-        think_budget = max(left() - reserve, 8 * 60)        # at least one short thinking sample (inferred)
-        thinkers = thinkers[:max(1, min(3, int(think_budget // (5 * 60))))]
-        log(f"thinking on for {thinkers} in {think_budget / 60:.0f} min; full test for {full}, "
-            f"reserving {reserve / 60:.0f} min; {left() / 60:.0f} min left")
-        t_think = time.time()
+        log(f"thinking on for {thinkers}; full test for {full} at the same time (the GPU has room for both, "
+            f"inferred); projected full tests {reserve / 1.3 / 60:.0f} min; {left() / 60:.0f} min left")
+
+        def phase3():                                       # full test, thinking off, concurrency 4
+            for i, tag in enumerate(full):
+                cap = left() / (len(full) - i)
+                if cap < 5 * 60:
+                    log(f"skip the full test for {tag}: {cap / 60:.0f} min left")
+                    continue
+                try:
+                    bench(tag, False, "full", concurrency=4, cap_s=cap)
+                except Exception as exc:
+                    log(f"full test {tag} FAILED: {exc}")
+        th3 = threading.Thread(target=phase3, daemon=True)
+        th3.start()
         for i, tag in enumerate(thinkers):                  # phase 2: quick, thinking on, concurrency 4
-            cap = min(20 * 60, (think_budget - (time.time() - t_think)) / (len(thinkers) - i), left())
+            cap = min(25 * 60, left() / (len(thinkers) - i))
             if cap < 3 * 60:
                 log(f"skip thinking on for {tag}: {cap / 60:.0f} min left for it")
                 continue
             smoke(tag, THINK_ON, max_tokens=4096, stream=True)
             bench(tag, True, "quick", concurrency=4, cap_s=cap)
-        for i, tag in enumerate(full):                      # phase 3: full test, thinking off, concurrency 4
-            cap = left() / (len(full) - i)
-            if cap < 5 * 60:
-                log(f"skip the full test for {tag}: {cap / 60:.0f} min left")
-                continue
-            bench(tag, False, "full", concurrency=4, cap_s=cap)
+        th3.join(max(0, left() + MARGIN_S / 2))
         log("plan done")
     except BaseException as exc:
         log(f"plan stopped: {type(exc).__name__}: {exc}")
         raise
     finally:
+        for p in CHILDREN:
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGTERM)
         if not keep:
             terminate()
+
+
+def full(models):
+    """Only the full-test phase: launch (or reuse the recorded pod), pull, warm each model, then the full
+    test split for every model at once (concurrency 4 each), under the time cap; always terminate."""
+    signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
+    try:
+        if not saved().get("id"):
+            launch()
+        wait()
+        for tag in models:
+            pull(tag)
+            info = smoke(tag)
+            if not any((m.get("size_vram") or 0) > 0 for m in info["ps"]):
+                raise RuntimeError(f"{tag} is not on the GPU (size_vram 0)")
+            drop_failed(label(tag, False, "full"))
+        def one(tag, cap):
+            try:
+                bench(tag, False, "full", concurrency=4, cap_s=cap)
+            except Exception as exc:
+                log(f"full test {tag} FAILED: {exc}")
+        shuffled("full")                        # write the item file once, before the threads read it
+        threads = [threading.Thread(target=one, args=(tag, left()), daemon=True) for tag in models]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(max(0, left() + MARGIN_S / 2))
+        log("full phase done")
+    except BaseException as exc:
+        log(f"full phase stopped: {type(exc).__name__}: {exc}")
+        raise
+    finally:
+        for p in CHILDREN:
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGTERM)
+        terminate()
 
 
 if __name__ == "__main__":
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else "status"), sys.argv[2:]
     if cmd == "plan":
         plan(models=[a for a in args if not a.startswith("--")] or MODELS, keep="--keep" in args)
+    elif cmd == "full":
+        full(args)
     elif cmd == "pull":
         for t in args:
             pull(t)
