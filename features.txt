@@ -24,7 +24,7 @@ Gateway phone alerts
 Hermes plugin catalog submission
 
 DEVICE (Pi 5, STM32)
-Device side owner (D14)
+Device side owner (D14)                 <--- Ishaan
 Pi app: hold object                     <--- Ishaan
 Ultrasonic distance reading
 One serial-port owner (arm host)
