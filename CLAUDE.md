@@ -64,11 +64,11 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 9:00 PM P
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sat Nov 7, 8:12 PM PST._
-- **Now:** getting the Jetson edge box talking to the Mac. It is in the right USB-C port and the Mac saw the replug at 7:45 PM, but no USB device has come up and no prompt shows; either Linux with USB device mode isn't up on the Jetson or the cable carries no data, and there is no LAN path yet (session "Identify the connected Jetson", 20:10). The device code (B1) is still split into `device/`, `harness/` and `bench/` in his checkout and not pushed yet.
-- **Just finished:** healer benchmark progress doc with final results and the model pick, qwen3.5:4b with thinking on, harness h3 (`835c4f0`). Device test suite: 18 tests pass, and each planted fault turns it red; oracle 6/6 and baseline 0/6 still hold (test-bed session recap). Earlier: model-selection method (`b9b0f89`), `features.txt` claims (`cd54c16`, `e59093f`), device-side answers (`5cea9c2`).
-- **Blocked on:** the Jetson link (no USB data, no LAN). Owes Kent the safety and visor path list (K17), the `device/` landing (B1), a review of the code-package and `code_patch` formats in PR #3 (B2, B3), and a co-review of Fleet Doctor D23–D27, per Kent's block.
-- **Branch and files:** `main`. Untracked in his checkout: `device/` (README, pytest.ini, `tests/test_spec.py`, `tests/test_classify.py`, conftest), `harness/`, `bench/` (`run_bench.py`, `tasks.py`, README).
+_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sat Nov 7, 9:12 PM PST._
+- **Now:** the pod healer agent loop and blind eval (HARNESS.md) on `ishaan/pod-agent-loop`: `firmware/harness/agent.py` with Claude and Ollama drivers, a risk gate and `--base-url` so the demo fallback can go through Kent's server; 12 tests pass (`6915ac8`, `90dbe6e`, session "Build the pod healer agent loop and blind eval", 20:55). No PR yet. The Jetson link is paused: no USB data or LAN path as of 20:10 (session "Identify the connected Jetson").
+- **Just finished:** device code (B1), healer harness h1-h3 and benchmark merged as #31 (`6c3b006`); claimed the pod healer agent loop in `features.txt` (`023f30d`). Earlier: benchmark results and model pick, qwen3.5:4b with thinking on, h3 (`835c4f0`).
+- **Blocked on:** bench runs for the pod loop need SSH to the pod, Olir's OK and an API key (session recap). The Jetson link (no USB data, no LAN). Still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), per Kent's block.
+- **Branch and files:** `ishaan/pod-agent-loop` in worktree `naive-pod-loop` (`firmware/harness/agent.py`, `evaluate.py`, tests, README). Main checkout on `main`, clean, 11 behind origin.
 <!-- ishaan-sync:end -->
 
 ## Team status
