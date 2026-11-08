@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sat Nov 7, 9:05 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 9:19 PM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -147,12 +147,12 @@ Accelerometer (LIS3DH) on the STM32 pod   <--- Olir
 Pod healer tools: podd, triage rules, 38 heal tools <--- Olir
 Pod healer agent loop + blind eval (HARNESS.md) <--- Ishaan
 Frozen-ultrasonic triage rule (gap found)
+Teleop recording + motion primitives (arm/teleop-recording) <--- Andre
 
 DEMO AND FAULTS
 Plant demo faults D1-D3                 <--- Ishaan
 STM32 C bug demo (6 bad pod images ready, firmware/demo, 69fc292) <--- Olir
 Camera-cover hero demo
-Healer benchmark, harness versions      <--- Ishaan
 Demo script and rehearsal
 Backup demo video
 
@@ -210,3 +210,4 @@ Romulus: Fleet Doctor L3 tool contract (#30, draft) <--- Kent
 Romulus: Coding agent for code patches (M8; #19 merged, M8b in progress) <--- Kent
 Romulus: Fleet Doctor L1 advise (/doctor/ask)    <--- Kent
 Romulus: Fleet Doctor timeline ledger + digest   <--- Kent
+Demo: Healer benchmark, harness versions <--- Ishaan

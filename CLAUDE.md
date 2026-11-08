@@ -73,7 +73,7 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 9:05 PM PST_
+_Last updated: Sat Nov 7, 9:19 PM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged Fleet Doctor L1 (#34) and the timeline ledger (#33) and now has #35 (L2 consult) and #32 (device reference) open. Ishaan pushed the pod healer agent loop on `ishaan/pod-agent-loop` (no PR); Andre is recording arm primitives on `arm/teleop-recording` (no PR).
 
@@ -84,12 +84,14 @@ _Last updated: Sat Nov 7, 9:05 PM PST_
 - Kent merged #28 (`72e54c6`, 8:39 PM): M8b wires the coding agent into batch and the gate (F11), with a host worker and a 525-line F11 flow test
 
 **Open questions:**
-- Kent's only blocker is still the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor, D25), plus his own go-ahead for the live Naïve card. Ishaan's block (8:12 PM) still lists the Jetson link as blocked and B1 as unpushed, though #31 merged at 8:28 PM
+- Kent's only blocker is still the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor, D25), plus his own go-ahead for the live Naïve card. Ishaan's block (9:12 PM) still owes Kent K17 and the contracts review (B2, B3); his pod-loop bench runs need SSH to the pod, Olir's OK and an API key, and the Jetson link is paused (no USB data or LAN path)
 - #31 flags two clashes: the arm's servo bus and `podd` both default to `/dev/ttyACM0`, and `robot/` still reads the ultrasonic in cm from Pi GPIO while Olir's pod reports mm. Who picks the `/dev/serial/by-id/` paths and the one ultrasonic source?
 - Arm prototypes for tomorrow (control program with `move_to()`/`grasp()` and a servo-error watchdog, ultrasonic approach-then-grasp, predicted-vs-measured check, frozen-ultrasonic rule, labelled run logger) have no owner in a box section; they need to be ready before Kent's 9–10 AM "real arm + polish" slot *(James's session)*
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email). Should pi drive the arm at all?
 
 **Recent commits (all authors):**
+- `85ba262` Sat 21:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `a3cd256` Sat 21:06 · jamesEmerson112 · Update team status and features.txt
 - `3dc26c6` Sat 20:58 · Kent Gang · Update Kent status in CLAUDE.md
 - `b66743c` Sat 20:57 · kgang · Fleet Doctor PR 6: hypothesis ledger on the timeline, doctor metrics in the digest (#33)
 - `1c8d6bb` Sat 20:53 · kgang · Fleet Doctor L1: POST /v1/devices/{id}/doctor/ask (PR 3) (#34)
@@ -98,8 +100,6 @@ _Last updated: Sat Nov 7, 9:05 PM PST_
 - `72e54c6` Sat 20:39 · kgang · Romulus M8b: coding agent wired into batch and gate (F11) (#28)
 - `90f284a` Sat 20:39 · jamesEmerson112 · Update team status and features.txt
 - `8440ab0` Sat 20:38 · Kent Gang · Update Kent status in CLAUDE.md
-- `023f30d` Sat 20:37 · Ishaan Ranjan · features.txt: Ishaan claims the pod healer agent loop + blind eval
-- `ab18e33` Sat 20:30 · kgang · Fleet Doctor L3: typed device-tool contract (draft, not wired; PR 8, D27 deferred) (#30)
 
 **Branches on GitHub:** `main`; open PR branches `doctor/l2-consult` (#35) and `doctor/device-ref` (#32) (both Kent); `ishaan/pod-agent-loop` (Ishaan, no PR); `arm/teleop-recording` (Andre, no PR); `ishaan/device-healer` (Ishaan, merged as #31); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `doctor/l1-ask`, `doctor/timeline`, `cloud/m8b-wiring` and `doctor/l3-contract` were deleted after merging
 <!-- team-status:end -->
