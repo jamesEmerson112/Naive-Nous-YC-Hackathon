@@ -7,7 +7,7 @@ _The feature spec. Paths are under `cloud/src/romulus_cloud/` unless shown other
 - **The model proposes, code disposes.** The Naïve agent's single output is a typed report. Romulus works out the actions, checks them in plain code and executes them. Code chooses the recipient, builds the cart URL, fetches the price and enforces the caps. This is the heal gate's shape (D6). It also contains prompt injection from pages the agent reads *(inferred)*.
 - **Least privilege.** The research agent gets four read-only tools (`default_config.permission: deny`, F:14347). It holds no send, browser, money or bash tools.
 - **Fake first, recorded second, live last** (`cloud/CLAUDE.md` rule 7). One fixture-backed adapter serves both the tests and the honest replay.
-- **Additive.** One new table, one new branch in `workorders.resolve`, off by default. Never `make reset` a cloud holding real runs.
+- **Additive.** One new table, one new branch in `workorders.resolve`, live by default since Nov 8 (only `kind: real` devices open a live case on their own). Never `make reset` a cloud holding real runs.
 
 ## 1. When it fires
 `technician.open` selects work orders with `status = 'needs_human'` **and** `part = NO_PART` (`"(none)"`) that have no case yet. Two other paths:
@@ -234,7 +234,7 @@ Add the rows to APIs §4.5 and §5 (`docs/cloud-platform-planning/cloud-platform
 ## 10. Settings (each goes in `.env.example`; defaults are off or empty, per `tests/unit/test_settings_defaults.py`)
 | Setting | Default |
 |---|---|
-| `TECHNICIAN_MODE` (`off \| fake \| live`; replay is per case) | `off` |
+| `TECHNICIAN_MODE` (`off \| fake \| live`; replay is per case) | `live` (was `off` until Nov 8; tests pin `off`) |
 | `NAIVE_TECHNICIAN_AGENT`, `NAIVE_TECHNICIAN_IDENTITY`, `NAIVE_TECHNICIAN_INBOX` | empty |
 | `TECHNICIAN_EMAIL` | empty (a consenting teammate) |
 | `TECHNICIAN_VENDORS` (JSON list of `{origin, handle, variant_id, label}`) | the WowRobo servo variants in §3 |

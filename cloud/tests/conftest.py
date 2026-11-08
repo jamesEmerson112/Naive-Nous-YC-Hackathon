@@ -76,6 +76,8 @@ def make_settings(tmp_path) -> Callable[..., Settings]:
             "database_url": NO_DB_URL,
             "blob_dir": str(tmp_path / "blobs"),
             "export_dir": str(tmp_path / "exports"),
+            # Live is the app default; a test opts in to a technician mode explicitly.
+            "technician_mode": "off",
             **overrides,
             **FAKE_MODES,
         }

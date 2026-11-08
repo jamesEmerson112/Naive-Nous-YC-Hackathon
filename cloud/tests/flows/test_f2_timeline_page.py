@@ -235,7 +235,9 @@ def test_static_files_are_served(client):
     js = client.get("/static/htmx.min.js")
     assert js.status_code == 200 and "htmx 2.0.4" in js.text[:200]
     css = client.get("/static/romulus.css")
-    assert css.status_code == 200 and "prefers-color-scheme: dark" in css.text
+    # Day is the default whatever the OS says; Night is a theme of its own (the redesign).
+    assert css.status_code == 200 and '[data-theme="night"]' in css.text
+    assert "prefers-color-scheme" not in css.text
 
 
 def test_polling_pauses_when_hidden_and_reports_staleness(client, arm, example):

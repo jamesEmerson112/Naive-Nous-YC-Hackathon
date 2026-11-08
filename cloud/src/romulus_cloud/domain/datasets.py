@@ -9,6 +9,8 @@ loads rows into the plain dicts these functions take, and writes what they retur
 - `snapshot_manifest(...)`: the canonical JSON and sha256 that pin a dataset version.
 - `regression_case(inc)`: the replay case one resolved incident becomes, or None.
 - `sharegpt(lines)`: an agent-trace JSONL file as Hermes-style `conversations`.
+- `trajectory(run)` / `dataset_card(...)`: a labelled run as one Hermes Agent trajectory
+  (`completed` = the verifier's verdict) and the card that goes with the export.
 - `redact(value)`: strip obvious secrets, home-directory paths and emails (telemetry §10).
 - `canonical(obj)` / `jsonl(rows)`: byte-identical output for identical input, so the
   same snapshot always produces the same export file (F8).
@@ -25,7 +27,8 @@ from datetime import datetime
 from typing import Any
 
 PURPOSES = ("firmware", "harness", "policy")
-FORMATS = ("regression_corpus", "traces_jsonl")
+TRAJECTORIES = "trajectories"  # fleet learning: labelled runs as Hermes trajectories
+FORMATS = ("regression_corpus", "traces_jsonl", TRAJECTORIES)
 CUT_FORMATS = {"lerobot": "the LeRobot export is cut for this weekend (P2, build plan K1)"}
 FILTER_KEYS = ("kind", "labels", "device", "since", "until")
 
@@ -293,3 +296,212 @@ def redact(value: Any) -> Any:
 
 def jsonl(rows: Iterable[Any]) -> bytes:
     return b"".join(canonical(r) + b"\n" for r in rows)
+
+
+# --------------------------------------------------------------------------- trajectories
+# Fleet learning (docs/recursive-self-improvement/design.md §3): one row per labelled run a
+# verifier passed or failed, in Hermes Agent's trajectory format (docs/raw/hermes-llms-full.txt
+# "Trajectory Format"): `{conversations, timestamp, model, completed, metadata}`, roles
+# system/human/gpt/tool, calls as inline <tool_call> blocks, results as <tool_response>.
+
+LABELLED_VERDICTS = ("pass", "fail")
+CARD_VERDICTS = ("pass", "fail", "unverified", "excluded")
+HERMES_SYSTEM = (
+    "You are a function calling AI model. You are provided with function signatures within "
+    "<tools> </tools> XML tags. You may call one or more functions to assist with the user "
+    "query. If available tools are not relevant in assisting with user query, just respond "
+    "in natural conversational language. Don't make assumptions about what values to plug "
+    "into functions. After calling & executing the functions, you will be provided with "
+    "function results within <tool_response> </tool_response> XML tags. Here are the "
+    "available tools:\n<tools>\n{tools}\n</tools>\nFor each function call return a JSON "
+    "object, with the following pydantic model json schema for each:\n{{'title': "
+    "'FunctionCall', 'type': 'object', 'properties': {{'name': {{'title': 'Name', 'type': "
+    "'string'}}, 'arguments': {{'title': 'Arguments', 'type': 'object'}}}}, 'required': "
+    "['name', 'arguments']}}\nEach function call should be enclosed within <tool_call> "
+    "</tool_call> XML tags.\nExample:\n<tool_call>\n{{'name': <function-name>,'arguments': "
+    "<args-dict>}}\n</tool_call>"
+)
+
+
+def _json_type(v: Any) -> str:
+    if isinstance(v, bool):
+        return "boolean"
+    if isinstance(v, int | float):
+        return "number"
+    if isinstance(v, dict):
+        return "object"
+    if isinstance(v, list):
+        return "array"
+    return "string"
+
+
+def tools_of(steps: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The tools a run called, in order of first use, with the argument names it passed. The
+    cloud has no tool schemas, so this is what the run shows, not the healer's full list."""
+    tools: dict[str, dict[str, Any]] = {}
+    for s in steps:
+        name = str(s.get("tool") or "unknown")
+        t = tools.setdefault(
+            name,
+            {
+                "name": name,
+                "description": f"Heal-agent tool `{name}` (as called in this run)",
+                "parameters": {"type": "object", "properties": {}},
+                "required": None,
+            },
+        )
+        for k, v in sorted((s.get("args") or {}).items()):
+            t["parameters"]["properties"].setdefault(str(k), {"type": _json_type(v)})
+    return list(tools.values())
+
+
+def _think(thought: str) -> str:
+    thought = (thought or "").strip()
+    return f"<think>\n{thought}\n</think>\n" if thought else "<think>\n</think>\n"
+
+
+def _dumps(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False)
+
+
+def trajectory(run: Mapping[str, Any]) -> dict[str, Any]:
+    """One labelled run (`LabelledRun.to_dict()`) → one Hermes trajectory row.
+
+    `completed` is the verdict (pass → true, fail → false), never the agent's own word; the
+    last `gpt` turn is the agent's own final report, so the label never leaks into the text.
+    """
+    steps = list(run.get("steps") or [])
+    turns: list[dict[str, str]] = [
+        {"from": "system", "value": HERMES_SYSTEM.format(tools=_dumps(tools_of(steps)))},
+        {
+            "from": "human",
+            "value": run.get("problem")
+            or f"{run.get('device_id')} reported {run.get('kind')}. Find the cause and fix it.",
+        },
+    ]
+    for i, s in enumerate(steps, 1):
+        name = str(s.get("tool") or "unknown")
+        call = {"name": name, "arguments": dict(s.get("args") or {})}
+        turns.append(
+            {
+                "from": "gpt",
+                "value": _think(str(s.get("thought") or ""))
+                + f"<tool_call>\n{_dumps(call)}\n</tool_call>",
+            }
+        )
+        result = {"tool_call_id": f"call_{i}", "name": name, "content": str(s.get("effect") or "")}
+        turns.append(
+            {"from": "tool", "value": f"<tool_response>\n{_dumps(result)}\n</tool_response>"}
+        )
+    final = str(run.get("final") or "").strip() or "(the agent wrote no final report)"
+    turns.append({"from": "gpt", "value": _think("") + final})
+    return {
+        "conversations": turns,
+        "timestamp": run.get("started_at"),
+        "model": run.get("model") or "unknown",
+        "completed": run.get("verdict") == "pass",
+        "metadata": {
+            "labelled_run": run.get("id"),
+            "run_id": run.get("run_id"),
+            "incident_id": run.get("incident_id"),
+            "device_id": run.get("device_id"),
+            "device_class": run.get("device_class"),
+            "device_kind": run.get("device_kind"),
+            "sim_fleet": run.get("device_kind") == "sim",
+            "kind": run.get("kind"),
+            "verdict": run.get("verdict"),
+            "verifier": run.get("verifier"),
+            "versions": dict(run.get("versions") or {}),
+            "source": run.get("source"),
+        },
+    }
+
+
+def _row(cells: Iterable[Any]) -> str:
+    return "| " + " | ".join(str(c).replace("|", "\\|") for c in cells) + " |"
+
+
+VERDICT_RULES = (
+    (
+        "excluded",
+        "a rehearsal (`agent_runs.sim`), a run still going, or hardware (work order, park)",
+    ),
+    (
+        "fail",
+        "the bench check failed; the agent left it broken; the lock-in rolled back; the device "
+        "reverted the overlay; the gate rolled back a candidate built from it; the same kind "
+        "came back on the device inside the window",
+    ),
+    (
+        "pass",
+        "the bench check passed (`score.json`); the gate promoted a candidate built from it; "
+        "the overlay held on the device (mark-good timer)",
+    ),
+    ("unverified", "everything else, including a device that says fixed with nothing behind it"),
+)
+
+
+def dataset_card(name: str, n: int, snapshot_sha256: str, runs: list[Mapping[str, Any]]) -> str:
+    """`DATASET_CARD.md` for a trajectories export: what's in it, how each row was labelled,
+    what was left out and why, and a SIM FLEET notice when any run is from a sim device."""
+    total = {v: sum(1 for r in runs if r.get("verdict") == v) for v in CARD_VERDICTS}
+    sims = [r for r in runs if r.get("device_kind") == "sim"]
+    out = [f"# {name} v{n}: heal trajectories", ""]
+    if sims:
+        out += [
+            f"> **SIM FLEET.** {len(sims)} of {len(runs)} runs come from simulated devices "
+            '(device kind `sim`). Their rows say `"sim_fleet": true`; don\'t read them as '
+            "real-world behaviour.",
+            "",
+        ]
+    out += [
+        f"- Snapshot sha256: `{snapshot_sha256}`",
+        f"- `trajectories.jsonl`: {total['pass'] + total['fail']} rows in Hermes Agent's "
+        "trajectory format (`conversations`, `timestamp`, `model`, `completed`, `metadata`).",
+        "- **`completed` is a verifier's verdict** (`pass` → true, `fail` → false), never the "
+        "agent's own opinion of its run.",
+        "",
+        "## Verdicts",
+        "",
+        _row(["Verdict", "Runs", "In trajectories.jsonl"]),
+        _row(["---", "---:", "---"]),
+        _row(["pass", total["pass"], "yes, `completed: true`"]),
+        _row(["fail", total["fail"], "yes, `completed: false`"]),
+        _row(["unverified", total["unverified"], "no: nothing independent checked it"]),
+        _row(["excluded", total["excluded"], "no: rehearsal, still running, or hardware"]),
+        "",
+        "## By device",
+        "",
+        _row(["Device", "Class", "Kind", *CARD_VERDICTS]),
+        _row(["---", "---", "---", *(["---:"] * len(CARD_VERDICTS))]),
+    ]
+    devices: dict[tuple, dict[str, int]] = {}
+    kinds: dict[str, dict[str, int]] = {}
+    for r in runs:
+        key = (str(r.get("device_id")), str(r.get("device_class")), str(r.get("device_kind")))
+        devices.setdefault(key, dict.fromkeys(CARD_VERDICTS, 0))[r["verdict"]] += 1
+        kinds.setdefault(str(r.get("kind")), dict.fromkeys(CARD_VERDICTS, 0))[r["verdict"]] += 1
+    for (dev, cls, kind), c in sorted(devices.items()):
+        out.append(_row([dev, cls, "sim (SIM)" if kind == "sim" else kind, *c.values()]))
+    out += ["", "## By fault kind", "", _row(["Fault kind", *CARD_VERDICTS])]
+    out.append(_row(["---", *(["---:"] * len(CARD_VERDICTS))]))
+    for kind, c in sorted(kinds.items()):
+        out.append(_row([kind, *c.values()]))
+    out += ["", "## How a verdict is given (first matching row wins)", ""]
+    out += [_row(["Verdict", "When"]), _row(["---", "---"])]
+    out += [_row(rule) for rule in VERDICT_RULES]
+    out += ["", "## Not exported", ""]
+    left = [r for r in runs if r.get("verdict") not in LABELLED_VERDICTS]
+    if not left:
+        out.append("Nothing: every run in the snapshot has a verifier's verdict.")
+    for r in left:
+        out.append(f"- `{r.get('id')}` ({r.get('kind')}, {r['verdict']}): {r.get('verifier')}")
+    out += [
+        "",
+        "## Redaction",
+        "",
+        "Every string in every row went through `redact()`: secret-named keys, bearer tokens, "
+        "API keys, URL passwords, home-directory paths and email addresses are replaced.",
+        "",
+    ]
+    return redact_text("\n".join(out))
