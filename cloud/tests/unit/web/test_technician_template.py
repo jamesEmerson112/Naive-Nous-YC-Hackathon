@@ -150,3 +150,22 @@ def test_device_text_renders_inert():
     v["feed"].append({"t": "07:45:00", "text": "<img src=x onerror=alert(1)>"})
     html = partial(v)
     assert "<script>alert(1)" not in html and "<img src=x" not in html
+
+
+def test_none_lists_render_and_only_https_sources_are_links():
+    v = sample("waiting")
+    v.update(feed=None, stages=None)
+    v["part"]["checks"] = None
+    v["sources"] = [
+        {"title": "Datasheet", "url": "https://www.feetechrc.com/x"},
+        {"title": "Sketchy", "url": "javascript:alert(1)"},
+    ]
+    html = partial(v)
+    assert '<a href="https://www.feetechrc.com/x"' in html
+    assert 'href="javascript:' not in html and "Sketchy" in html
+
+
+def test_poll_is_paused_while_a_resolve_is_in_flight():
+    html = page(sample("waiting"))
+    assert "htmx:beforeSwap" in html and "ev.detail.shouldSwap = false" in html
+    assert "if (!btn || btn.disabled || busy) return;" in html

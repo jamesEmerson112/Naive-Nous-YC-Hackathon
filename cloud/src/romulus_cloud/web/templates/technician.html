@@ -226,9 +226,20 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toastEl.hidden = true; }, bad ? 9000 : 4000);
   };
+  // While a resolve is in flight, or the pointer is on the buttons, the 2 s poll must not swap
+  // the case: it would drop the click, or bring back enabled buttons (a second cart tab, a 409).
+  let busy = false, hold = false, forcing = false;
+  const onCase = (ev) => { const t = ev.detail && (ev.detail.target || ev.detail.elt); return !!t && t.id === "tech-case"; };
+  const paused = (ev) => (busy || hold) && !forcing && onCase(ev);
+  document.body.addEventListener("htmx:beforeRequest", (ev) => { if (paused(ev)) ev.preventDefault(); });
+  document.body.addEventListener("htmx:beforeSwap", (ev) => { if (paused(ev)) ev.detail.shouldSwap = false; });
+  document.addEventListener("pointerover", (ev) => { hold = !!(ev.target.closest && ev.target.closest(".tc-actions")); });
+  document.addEventListener("pointerout", (ev) => { if (!ev.relatedTarget) hold = false; });
   const refresh = (url) => {
-    if (window.htmx && url) htmx.ajax("GET", url, {target: "#tech-case", swap: "outerHTML"});
-    else location.reload();
+    busy = false; hold = false;
+    if (!(window.htmx && url)) { location.reload(); return; }
+    forcing = true;
+    Promise.resolve(htmx.ajax("GET", url, {target: "#tech-case", swap: "outerHTML"})).finally(() => { forcing = false; });
   };
 
   document.addEventListener("click", async (ev) => {
@@ -239,14 +250,15 @@
       return;
     }
     const btn = ev.target.closest("[data-tech-action]");
-    if (!btn || btn.disabled) return;
+    if (!btn || btn.disabled || busy) return;
+    busy = true;
     const action = btn.dataset.techAction;
     let blocked = false;
     if (action === "approve" && btn.dataset.cart) {
       const tab = window.open(btn.dataset.cart, "_blank");  // first, before any await
       if (tab) tab.opener = null; else blocked = true;
     }
-    if (action === "deny" && !confirm("Deny " + btn.dataset.what + "? The work order closes and no cart is staged.")) return;
+    if (action === "deny" && !confirm("Deny " + btn.dataset.what + "? The work order closes and no cart is staged.")) { busy = false; return; }
     const by = getBy();
     const why = action === "approve"
       ? "Approved the staged spare part, " + btn.dataset.what + ", on the Technician page; the cart opened for checkout."
