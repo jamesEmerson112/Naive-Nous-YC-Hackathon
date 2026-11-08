@@ -16,7 +16,8 @@ human actions it took (target 0). Every command runs from the repo root.
 ```bash
 caffeinate -dims                     # its own terminal tab; leave it running all night
 
-make down                            # stop whatever runs now, fake fleet included
+git switch --detach <launch-commit>  # the commit you will tag; `make test` passed on it
+docker compose --profile sim stop fake-devices   # FIRST: no chaos faults during the reset
 make up && FORCE=1 make reset        # WIPES the database and blobs: a fresh schema for this
                                      # commit (FORCE=1 because an old .env may set
                                      # OVERNIGHT_STARTED; never run this after launch)
@@ -24,7 +25,10 @@ rm -rf data/fake_device              # old outboxes and chaos.json: otherwise th
                                      # "resume" an earlier run's clock and skip hours
 cp .env .env.before-overnight        # keep your keys
 cp .env.overnight.example .env       # overnight values: NAIVE_MODE=fake, 1200 / 3600, ...
-rm -f .env.overnight                 # no stale override file
+rm -f .env.overnight                 # no stale override file (the reset above ran before
+                                     # any overnight env, so it needed no override either;
+                                     # cp .env.overnight.example .env.overnight here instead of
+                                     # the two cp lines works too: Compose loads it after .env)
 #   now copy your secrets (NAIVE_API_KEY, LLM_API_KEY, ...) from .env.before-overnight into
 #   .env, but keep every *_MODE / *_PROVIDER line from the example: all fake (K13)
 make sim                             # db, api, worker + fake-devices, --chaos=overnight
@@ -36,8 +40,7 @@ make overnight-check                 # every line PASS (a WARN is a judgment cal
 `NAIVE_MODE` must be **fake** all night: the chaos plants hardware faults, and a live work
 order could phone a real supplier at 3 AM (build plan K13). `make overnight-check` asks the
 running api and worker for the mode they actually resolved. Even in live mode, an order for
-a device that isn't registered as `real`, or whose id starts with `sim-`, is never posted
-(it waits for a person).
+a device whose kind isn't exactly `real` is never posted (it waits for a person).
 
 Then Kent, at the go/no-go: commit, tag `demo-overnight`, push the tag.
 
