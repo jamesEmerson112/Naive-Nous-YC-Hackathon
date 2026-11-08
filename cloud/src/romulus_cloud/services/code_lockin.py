@@ -423,6 +423,13 @@ def gate_replay(
                 f"configured verify dir `{settings.coder_verify_dir}` is missing: run `make "
                 "device-verify` (or fix `CODER_VERIFY_DIR`)"
             )
+        except OSError as exc:
+            # Unreadable (permission denied) or changing under us (`make device-verify`
+            # regenerating it): wait and retry next tick; never roll back or escape the tick.
+            return AwaitingVerify(
+                f"configured verify dir `{settings.coder_verify_dir}` could not be read "
+                f"({type(exc).__name__}): run `make device-verify` (or fix `CODER_VERIFY_DIR`)"
+            )
         stale = stale_verify(session, extra, parent)
         if stale:
             return g.ReplayResult(False, f"code replay failed: {stale}")

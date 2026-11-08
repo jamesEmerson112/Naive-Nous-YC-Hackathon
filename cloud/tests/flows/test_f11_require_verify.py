@@ -228,3 +228,41 @@ def test_f11_a_parked_candidate_says_why_again_after_an_unfreeze(
         "candidate.awaiting_verify",
     ]
     assert cand["events"][-1]["kind"] == "candidate.awaiting_verify"
+
+
+@pytest.mark.parametrize("error", [PermissionError, FileNotFoundError])
+def test_f11_an_unreadable_verify_dir_waits_and_the_tick_goes_on(
+    client,
+    arms,
+    tick_arms,
+    now,
+    settings,
+    bare_fleet,
+    sessions,
+    clock,
+    db_session,
+    monkeypatch,
+    tmp_path,
+    error,
+):
+    # e.g. a permission-denied file, or one deleted while `make device-verify` regenerates
+    def unreadable(directory):
+        raise error(13, "unreadable", f"{directory}/test_bench_verify.py")
+
+    monkeypatch.setattr(code_lockin, "verify_files", unreadable)
+    vdir = str(verify_dir(tmp_path))
+    rig = Rig(sessions, settings.model_copy(update={"coder_verify_dir": vdir}), clock)
+    _held(arms, tick_arms, now)
+    for t in (40, 41, 48, 55):  # `work` asserts every step of every tick finished "ok"
+        rig.work(now + t * S)
+    cand = _code(client)
+    assert cand["status"] == "replaying" and cand["replay"] is None, cand["events"][-1]
+    (wait,) = [e for e in cand["events"] if e["kind"] == "candidate.awaiting_verify"]
+    assert f"configured verify dir `{vdir}` could not be read ({error.__name__})" in wait["why"]
+    assert "candidate.rolled_back" not in _kinds(cand) and "candidate.error" not in _kinds(cand)
+    ov = db_session.get(Overlay, ("sim-3", arms["sim-3"].device.overlay.overlay_id))
+    db_session.refresh(ov)
+    assert ov.status == "locked_in"
+    # The other candidate from the same overlay (its harness skill) still moves on.
+    (harness,) = [c for c in client.get("/v1/candidates").json() if c["type"] == "harness"]
+    assert harness["status"] != "replaying" and harness["replay"]["passed"], harness
