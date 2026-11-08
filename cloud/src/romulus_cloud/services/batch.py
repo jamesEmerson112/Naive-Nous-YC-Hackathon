@@ -829,8 +829,11 @@ def _base_code(session: Session, ov: Overlay) -> CodeVersion:
 
 def _a_draft_finished(session: Session, tools: Tools, now: datetime) -> bool:
     """A held code overlay's draft is done (or failed), or its Fleet Doctor proposal checks
-    out (D24: it is its own draft), so the batch should run now rather than wait for
-    BATCH_INTERVAL_S. Reads only; polls in-memory jobs."""
+    out (D24: it is its own draft) and changed since the last run (once, not every tick), so
+    the batch should run now rather than wait for BATCH_INTERVAL_S. Reads only; polls
+    in-memory jobs."""
+    state = session.get(FleetState, tools.settings.fleet_id)
+    since = state.batch_last_run_at if state else None
     for ov in held_overlays(session, tools.settings.fleet_id):
         if not _has_code(ov):
             continue
@@ -841,7 +844,9 @@ def _a_draft_finished(session: Session, tools: Tools, now: datetime) -> bool:
             return True
         if isinstance(tools.jobs.poll(key), Done | Failed):
             return True
-        if not tools.coder_blocked and doctor_lockin.verified(session, ov, rev, now):
+        if not tools.coder_blocked and doctor_lockin.newly_verified(
+            session, ov, rev, now, since=since
+        ):
             return True
     return False
 

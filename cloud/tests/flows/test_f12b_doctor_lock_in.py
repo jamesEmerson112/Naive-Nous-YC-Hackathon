@@ -303,6 +303,33 @@ def test_f12b_a_verified_proposal_triggers_the_batch_before_its_timer(
     assert _status(db_session, ov) == "locked_in" and "sim-3" in _code_cands(client)
 
 
+def test_f12b_a_verified_overlay_a_run_left_held_triggers_one_early_run_not_one_per_tick(
+    client,
+    arms,
+    tick_arms,
+    now,
+    settings,
+    toy_fleet,
+    sessions,
+    clock,
+    db_session,
+    count_events,
+    monkeypatch,
+):
+    rig = Rig(sessions, settings, clock, agent=fakes.fix_like_a_careful_engineer)
+    _held(arms, tick_arms, now, "sim-3", rig=rig)  # the batch ran at +15 s (120 s timer)
+    ov = _propose(db_session, arms, "sim-3", now)
+    monkeypatch.setattr(batch, "_fold", lambda *a, **kw: [])  # every run leaves it held
+
+    rig.work(now + 40 * S)  # the early run: the overlay went held after the last run
+    assert count_events("batch.ran") == 1
+    for t in range(41, 135):  # stuck held and still verified: no rerun every tick
+        rig.work(now + t * S)
+    assert count_events("batch.ran") == 1 and _status(db_session, ov) == "held"
+    rig.work(now + 160 * S)  # BATCH_INTERVAL_S after the early run: the timer runs it
+    assert count_events("batch.ran") == 2
+
+
 @pytest.mark.parametrize(
     ("case", "kwargs", "said"),
     [

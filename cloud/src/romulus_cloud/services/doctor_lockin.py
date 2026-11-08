@@ -70,11 +70,26 @@ def pending(session: Session, overlay: Overlay, base_rev: str | None, now: datet
     return _assess(session, overlay, base_rev, now)[1] == _PENDING
 
 
-def verified(session: Session, overlay: Overlay, base_rev: str | None, now: datetime) -> bool:
-    """Read-only: `proposal_draft` would return a draft (for the batch's early run)."""
+def newly_verified(
+    session: Session,
+    overlay: Overlay,
+    base_rev: str | None,
+    now: datetime,
+    *,
+    since: datetime | None,
+) -> bool:
+    """Read-only, for the batch's early run: `proposal_draft` would return a draft, and the
+    overlay or its proposal changed after `since` (the last batch run). Edge-triggered, so an
+    overlay a run left held doesn't rerun the batch every tick; the timer still runs it."""
     if not claims(overlay) or _with_the_coder(session, overlay):
         return False
-    return _assess(session, overlay, base_rev, now)[1] is None
+    proposal, problem = _assess(session, overlay, base_rev, now)
+    if problem is not None or proposal is None:
+        return False
+    if since is None:
+        return True
+    stamps = (overlay.updated_at, overlay.received_at, proposal.updated_at, proposal.result_at)
+    return any(t is not None and t > since for t in stamps)
 
 
 def proposal_draft(
