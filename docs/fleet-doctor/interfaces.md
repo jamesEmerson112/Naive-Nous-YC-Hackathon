@@ -152,9 +152,9 @@ All three are device routes. They take `{device_id}` from the path with no auth,
 | `POST /v1/devices/{id}/proposals/{pid}/result` | `api/proposals.py` → `services/proposals.record_result` | `ProposalResult` → `204`, or `200` for an identical resend | `404 unknown_proposal`; `409 proposal_result_conflict` (a different result than the one recorded); `422` if `applied` has no `overlay_id` |
 
 **L1 handler rule (FR11):** `/doctor/ask` does **not** use `SessionDep`. It runs in four steps:
-1. A short session reads the device, `frozen`, the caps and the spend, then closes.
+1. A short session reads the device, `frozen`, the caps and the spend, then closes. A refusal over a cap records `doctor.blocked_over_cap` in that same session and commits before raising `429` (as built in PR 3).
 2. The LLM call runs with **no session open**. Its timeout is `min(settings.doctor_ask_timeout_s, body.budget_s - 2)`. The contract has already clamped `budget_s` to [3, 120] (non-numeric, non-finite or null reads as 20), so the timeout is at least 1 s.
-3. A second short session records `doctor.asked` and `doctor.advised`, or `doctor.blocked_over_cap`, then commits.
+3. A second short session records `doctor.asked` and then `doctor.advised`, or `doctor.declined` when the LLM timed out or failed, then commits.
 4. The handler returns.
 
 Get the sessionmaker from `request.app.state.sessionmaker`. Two asks at the same moment can each pass the cap check, so the cap can be overshot by one. That's accepted *(inferred)*.
@@ -365,8 +365,15 @@ If an `OverlayStatus` arrived first, `incidents.set_overlay_status` will have ma
 ### 6.6 `services/doctor_ask.py` (PR 3)
 
 ```python
-def ask(sessions: sessionmaker, device_id: str, body: DoctorAsk, raw: dict, now, *, settings, llm) -> DoctorAdvice   # raises ApiError per §3
+def ask(sessions: sessionmaker, device_id: str, body: DoctorAsk, raw: dict, now, *, settings, llm: Llm | None) -> DoctorAdvice   # raises ApiError per §3
 ```
+
+As built (PR 3):
+- **The LLM** comes from the FastAPI dependency `api/doctor.get_doctor_llm(settings)`: `build_doctor_llm`, cached per process for each set of LLM settings. It is `None` while `DOCTOR_MODE=off` (the service answers `503` after its `404` check), and a live LLM whose settings `build_doctor_llm` refuses answers `502 doctor_unavailable`. Tests swap it with `app.dependency_overrides[get_doctor_llm]`.
+- **Order of checks:** `404 unknown_device`, `503 doctor_off`, `409 fleet_frozen`, then the caps (`admit_ask`), then the price: a `DOCTOR_USD_PER_1K_TOKENS` that `cost_usd` rejects refuses as `429 doctor_cap` (`which="spend"`) before any call, so a bad price never spends.
+- **What counts toward a cap:** only asks that reached the LLM (`doctor.asked`, declined ones included). Refused asks record `doctor.blocked_over_cap` only, so they don't count. The incident cap counts `refs @> {"incident": id}` in this fleet; the device-day cap counts this device's `doctor.asked` events with no `incident` ref since `day_start(now, FLEET_TIMEZONE)`.
+- **The service owns its two sessions** and commits each one, the FR11 exception to "services never commit".
+- **Events** are stamped `ts=now` (the request's time). Beyond §8, `doctor.asked` also carries `budget_s`, `timeout_s` and `contract_version`, and `doctor.declined` carries `error`, `model` and `latency_ms` (reason `llm timeout` → `504`, `llm error` → `502`). Every one carries `incident_kind` once the incident is reported.
 
 ## 7. Settings (`cloud/settings.py`, PR 2)
 
