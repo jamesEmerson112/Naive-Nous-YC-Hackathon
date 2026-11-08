@@ -338,8 +338,16 @@ class Worker:
 
     # ---- the heal --------------------------------------------------------------------------------
     def heal(self, ex, inc, step):
+        self.cur = {"iid": inc.get("id"), "source": "fallback", "note": None, "plan": None, "inc_card": None}
+        try:
+            return self._heal(ex, inc, step)
+        except Exception as exc:  # a worker bug must not cost the heal: the arm is parked, the scripted heal runs
+            self._ev(ex, "worker", "error", f"the worker failed ({type(exc).__name__}: {exc}); the scripted heal runs")
+            self.cur.update(source="fallback", note=f"the worker failed ({type(exc).__name__})")
+            return None
+
+    def _heal(self, ex, inc, step):
         iid, kind = inc.get("id"), inc.get("kind") or "?"
-        self.cur = {"iid": iid, "source": "fallback", "note": None, "plan": None, "inc_card": None}
         st = ex.host("status")
         pod_side = ex._pod_side(inc, st)
         if not pod_side and kind in MAYBE_POD_KINDS:
