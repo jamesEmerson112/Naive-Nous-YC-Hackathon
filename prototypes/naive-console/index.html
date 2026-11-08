@@ -3,84 +3,187 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Naïve Console</title>
+<title>pi vs Hermes</title>
 <style>
   :root {
     --bg: #0f1216; --panel: #161a20; --panel-2: #1c2128; --ink: #e6e9ef; --muted: #9aa3ae;
     --line: #2a3039; --accent: #6ea8ff; --ok: #6fd28a; --bad: #f27f7f;
+    --naive: #6ea8ff; --hermes: #b98cff;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, system-ui, sans-serif; }
-  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; display: grid; gap: 14px; }
+  main { max-width: 1120px; margin: 0 auto; padding: 20px 16px 40px; display: grid; gap: 14px; }
   h1 { margin: 0; font-size: 1.4rem; }
   .muted { color: var(--muted); }
   .mono { font-family: var(--mono); font-size: 0.86em; }
-  .who { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.85rem; color: var(--muted); }
+  .who { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 0.82rem; color: var(--muted); }
   .chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; }
   form { display: grid; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-  label { font-size: 0.8rem; color: var(--muted); }
+  label, .label { font-size: 0.8rem; color: var(--muted); }
   select, textarea, button { font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
-  textarea { min-height: 70px; resize: vertical; }
+  textarea { min-height: 64px; resize: vertical; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  button { cursor: pointer; background: var(--accent); color: #08101c; border: 0; font-weight: 600; }
+  .presets button { background: var(--panel-2); color: var(--muted); font-weight: 500; font-size: 0.82rem; padding: 4px 10px; }
+  button.go { cursor: pointer; background: var(--accent); color: #08101c; border: 0; font-weight: 600; }
   button:disabled { opacity: 0.5; cursor: wait; }
+  button { cursor: pointer; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .reply { padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 10px; white-space: pre-wrap; min-height: 48px; }
+  .cols { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); align-items: start; }
+  .col { display: grid; gap: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 10px; }
+  .col.naive { --c: var(--naive); }
+  .col.hermes { --c: var(--hermes); }
+  .col h2 { margin: 0; font-size: 1.05rem; }
+  .col h2 small { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+  .reply { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 8px; white-space: pre-wrap; min-height: 44px; overflow-wrap: anywhere; }
   .reply.error { border-left-color: var(--bad); color: var(--bad); }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
-  .stat { padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
-  .stat b { display: block; font-size: 1.05rem; }
-  .stat span { font-size: 0.75rem; color: var(--muted); }
-  details { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
-  summary { cursor: pointer; color: var(--muted); }
-  ol { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 2px; max-height: 320px; overflow: auto; }
-  li { display: grid; grid-template-columns: 3ch 1fr auto; gap: 8px; font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; }
+  .stat { padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+  .stat b { display: block; font-size: 1rem; }
+  .stat span { font-size: 0.72rem; color: var(--muted); }
+  .tools { display: flex; flex-wrap: wrap; gap: 4px; font-family: var(--mono); font-size: 0.76rem; }
+  .tools .chip { color: var(--c); border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+  details summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+  ol { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 260px; overflow: auto; }
+  li { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-family: var(--mono); font-size: 0.74rem; color: var(--muted); }
   li .t { color: var(--ink); overflow-wrap: anywhere; }
-  li.msg .t { color: var(--ok); }
+  .locked { display: grid; gap: 10px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .locked h2 { margin: 0; font-size: 1.05rem; }
+  .locked ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+  .locked li { display: grid; grid-template-columns: 1fr; gap: 4px; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; font-family: inherit; font-size: 0.85rem; color: var(--ink); }
+  .locked .scopes { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip.off { border-style: dashed; color: var(--muted); font-family: var(--mono); font-size: 0.78rem; opacity: 0.85; }
+  .locked a { color: var(--accent); font-size: 0.78rem; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>Naïve Console</h1>
-    <p class="muted">Send a message to an agent in your Naïve org and watch the run. Every run is capped at $0.25.</p>
+    <h1>pi vs Hermes</h1>
+    <p class="muted">One message, two agent loops. <b>pi</b> runs inside Naïve's cloud. <b>Hermes</b> runs on this Mac and reaches Naïve through its MCP server. Naïve runs are capped at $1 (the agent's own per-run cap may be lower).</p>
     <div class="who" id="who">Checking sign-in…</div>
   </header>
 
   <form id="f">
-    <label for="agent">Agent</label>
+    <label for="agent">Naïve agent (pi side)</label>
     <select id="agent" required></select>
     <label for="msg">Message</label>
     <textarea id="msg" maxlength="4000" required>Reply with exactly: hello world</textarea>
+    <div class="row presets" aria-label="Test prompts">
+      <span class="label">Try:</span>
+      <button type="button" data-p="Reply with exactly: hello world">hello world</button>
+      <button type="button" data-p="How many agents are in our Naïve org, and which models do they use?">Naïve agents</button>
+      <button type="button" data-p="What is 17 × 23? Answer with the number only.">17 × 23</button>
+    </div>
     <div class="row">
-      <button id="go" type="submit">Send</button>
+      <button class="go" id="go" type="submit">Send to both</button>
       <span class="muted" id="state" aria-live="polite"></span>
     </div>
   </form>
 
-  <section aria-label="Reply">
-    <label>Reply</label>
-    <div class="reply" id="reply"></div>
-  </section>
+  <div class="cols">
+    <section class="col naive" id="c-naive" aria-label="Naïve pi"></section>
+    <section class="col hermes" id="c-hermes" aria-label="Hermes"></section>
+  </div>
 
-  <section class="stats" aria-label="Run stats">
-    <div class="stat"><b id="s-stop">–</b><span>stop reason</span></div>
-    <div class="stat"><b id="s-cost">–</b><span>cost</span></div>
-    <div class="stat"><b id="s-tok">–</b><span>tokens in / out</span></div>
-    <div class="stat"><b id="s-time">–</b><span>model time</span></div>
-  </section>
-
-  <details>
-    <summary>Event log <span id="n" class="mono"></span></summary>
-    <ol id="events"></ol>
-  </details>
-  <p class="muted mono" id="sid"></p>
+  <section class="locked" id="locked" aria-labelledby="locked-h" hidden></section>
 </main>
 
+<template id="col">
+  <h2></h2>
+  <div class="reply" data-k="reply"></div>
+  <div class="stats">
+    <div class="stat"><b data-k="wall">–</b><span>wall time</span></div>
+    <div class="stat"><b data-k="model">–</b><span>model time</span></div>
+    <div class="stat"><b data-k="tok">–</b><span>tokens in / out</span></div>
+    <div class="stat"><b data-k="cost">–</b><span data-k="costlabel">cost</span></div>
+  </div>
+  <div><span class="label">Tool calls</span> <div class="tools" data-k="tools"><span class="muted">none</span></div></div>
+  <details><summary>Events <span data-k="n"></span></summary><ol data-k="events"></ol></details>
+</template>
+
 <script>
+// Source: Naive docs, docs/api/authentication (Scopes table), copied from docs/raw/naive-llms-full.txt.
+const D = "https://usenaive.ai/docs/api/";
+const ALL_SCOPES = [
+  { scope: "agents:read", what: "Read or manage agents.", href: D + "agents" },
+  { scope: "agents:write", what: "Read or manage agents.", href: D + "agents" },
+  { scope: "sessions:read", what: "Read or run sessions.", href: D + "sessions" },
+  { scope: "sessions:write", what: "Read or run sessions.", href: D + "sessions" },
+  { scope: "computers:write", what: "Manage computers and read their command history.", href: D + "computers" },
+  { scope: "proxy:write", what: "Call the model proxy and choose a model for it, nothing else.", href: D + "proxy" },
+  { scope: "files:read", what: "Read or upload files.", href: D + "files" },
+  { scope: "files:write", what: "Read or upload files.", href: D + "files" },
+  { scope: "billing:read", what: "Read the credits balance and ledger.", href: D + "credits" },
+  { scope: "billing:write", what: "Charge a payment method to top up credits.", href: D + "credits" },
+  { scope: "webhooks:*", what: "Manage webhook endpoints, rotate secrets, read delivery logs.", href: D + "webhooks" },
+  { scope: "audit:read", what: "Read the audit log.", href: D + "audit-logs" },
+  { scope: "admin", what: "Manage members, keys, and organization settings.", href: D + "authentication" },
+];
+const SCOPE_INFO = Object.fromEntries(ALL_SCOPES.map((s) => [s.scope, s]));
+
+function renderLocked(granted) {
+  const have = new Set(granted);
+  const missing = ALL_SCOPES.filter((s) => !have.has(s.scope));
+  const el = $("locked");
+  if (!missing.length) { el.hidden = true; return; }
+  const groups = new Map(); // same description + link share one row (read/write pairs)
+  for (const s of missing) {
+    const key = s.what + "|" + s.href;
+    if (!groups.has(key)) groups.set(key, { what: s.what, href: s.href, scopes: [] });
+    groups.get(key).scopes.push(s.scope);
+  }
+  const h = document.createElement("h2");
+  h.id = "locked-h";
+  h.textContent = `Scopes this key doesn't have (${missing.length})`;
+  const ul = document.createElement("ul");
+  for (const g of groups.values()) {
+    const li = document.createElement("li");
+    const chips = document.createElement("div");
+    chips.className = "scopes";
+    for (const sc of g.scopes) chips.append(Object.assign(document.createElement("span"), { className: "chip off", textContent: sc }));
+    const what = document.createElement("div");
+    what.textContent = g.what;
+    const a = document.createElement("a");
+    a.href = g.href; a.target = "_blank"; a.rel = "noopener"; a.textContent = g.href.replace("https://", "");
+    li.append(chips, what, a);
+    ul.append(li);
+  }
+  el.replaceChildren(h, ul);
+  el.hidden = false;
+}
 const $ = (id) => document.getElementById(id);
 const usd = (micro) => "$" + (micro / 1e6).toFixed(4);
+const secs = (ms) => (ms / 1000).toFixed(1) + " s";
+
+function makeCol(id, title, sub, costLabel) {
+  const el = $(id);
+  el.replaceChildren($("col").content.cloneNode(true));
+  el.querySelector("h2").innerHTML = `${title} <small></small>`;
+  el.querySelector("h2 small").textContent = sub;
+  const k = (name) => el.querySelector(`[data-k="${name}"]`);
+  k("costlabel").textContent = costLabel;
+  const tools = [];
+  return {
+    k,
+    set: (name, v) => (k(name).textContent = v),
+    sub: (v) => (el.querySelector("h2 small").textContent = v),
+    reply: (v, append) => (k("reply").textContent = append ? k("reply").textContent + v : v),
+    error: (msg) => { k("reply").classList.add("error"); k("reply").textContent = msg; },
+    tool: (name) => {
+      tools.push(name);
+      k("tools").replaceChildren(...tools.map((t) => Object.assign(document.createElement("span"), { className: "chip", textContent: t })));
+    },
+    event: (type, detail, at) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="t"></span><span></span>`;
+      li.children[0].textContent = detail ? `${type} · ${String(detail).slice(0, 140)}` : type;
+      li.children[1].textContent = at ?? "";
+      k("events").append(li);
+      k("n").textContent = `(${k("events").children.length})`;
+    },
+  };
+}
 
 async function getJson(path) {
   const r = await fetch(path);
@@ -89,102 +192,114 @@ async function getJson(path) {
   return body;
 }
 
+let hasHermes = false;
 async function load() {
   try {
     const w = await getJson("/api/whoami");
-    $("who").innerHTML = "";
-    for (const text of [`org: ${w.org?.name}`, `signed in with: ${w.principal}`, ...w.scopes]) {
-      const s = document.createElement("span");
-      s.className = "chip";
-      s.textContent = text;
-      $("who").append(s);
-    }
-    const agents = await getJson("/api/agents");
-    for (const a of agents) {
+    hasHermes = w.hermes;
+    $("who").replaceChildren(...[`Naïve org: ${w.org?.name}`, ...w.scopes, hasHermes ? "Hermes: installed" : "Hermes: not installed"]
+      .map((t) => Object.assign(document.createElement("span"), { className: "chip", textContent: t, title: SCOPE_INFO[t]?.what ?? "" })));
+    renderLocked(w.scopes);
+    for (const a of await getJson("/api/agents")) {
       const o = new Option(`${a.name} · ${a.model} · ${a.harness}`, a.id);
+      o.dataset.model = a.model;
       if (a.name === "hello-world") o.selected = true;
       $("agent").add(o);
     }
   } catch (e) {
-    $("who").textContent = `Not signed in: ${e.message}. Run naive login, then reload.`;
+    $("who").textContent = `Not signed in to Naïve: ${e.message}. Run naive login, then reload.`;
     $("go").disabled = true;
   }
 }
 
-function addEvent(ev) {
-  const li = document.createElement("li");
-  if (ev.type.startsWith("message.")) li.className = "msg";
-  const detail = ev.data?.content ?? ev.data?.stop_reason ?? "";
-  li.innerHTML = `<span></span><span class="t"></span><span></span>`;
-  li.children[0].textContent = ev.seq;
-  li.children[1].textContent = detail ? `${ev.type} · ${String(detail).slice(0, 120)}` : ev.type;
-  li.children[2].textContent = ev.created_at?.slice(11, 19) ?? "";
-  $("events").append(li);
-  $("n").textContent = `(${$("events").children.length})`;
-}
-
-function onLine(item) {
-  if (item.kind === "event") {
-    const ev = item.event;
-    addEvent(ev);
-    if (ev.type === "message.delta") $("reply").textContent += ev.data.content ?? "";
-    if (ev.type === "message.completed" && ev.data.role === "assistant") $("reply").textContent = ev.data.content;
-    if (ev.type === "session.running") $("state").textContent = "Running…";
-    if (ev.type === "session.usage") {
-      const u = ev.data;
-      $("s-cost").textContent = usd(u.consumed_micro_usd);
-      $("s-tok").textContent = `${u.token_usage.input} / ${u.token_usage.output}`;
-      $("s-time").textContent = `${u.active_seconds} s`;
+/** POST and feed each NDJSON line to onItem. */
+async function streamTo(path, body, onItem) {
+  const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error((await r.json()).error);
+  const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (line) onItem(JSON.parse(line));
     }
-  } else if (item.kind === "session") {
-    const s = item.session;
-    $("s-stop").textContent = s.stop_reason ?? s.status;
-    $("s-cost").textContent = usd(s.consumed_micro_usd);
-    $("sid").textContent = `session ${s.id} · agent version ${s.agent_version}`;
-  } else if (item.kind === "error") {
-    $("reply").classList.add("error");
-    $("reply").textContent = item.message;
   }
 }
+
+function runNaive(message) {
+  const opt = $("agent").selectedOptions[0];
+  const c = makeCol("c-naive", "Naïve · pi", `${opt?.dataset.model ?? ""} · Naïve's cloud`, "cost (Naïve meter)");
+  c.reply("…");
+  let started = false;
+  return streamTo("/api/run", { agent: $("agent").value, message }, (item) => {
+    if (item.kind === "event") {
+      const ev = item.event;
+      c.event(ev.type, ev.data?.content ?? ev.data?.name ?? ev.data?.stop_reason ?? "", ev.created_at?.slice(11, 19));
+      if (ev.type === "message.delta") { c.reply(ev.data.content ?? "", started); started = true; }
+      if (ev.type === "message.completed" && ev.data.role === "assistant") c.reply(ev.data.content);
+      if (ev.type === "tool.started") c.tool(ev.data?.name ?? ev.data?.tool ?? "tool");
+      if (ev.type === "session.usage") {
+        c.set("model", `${ev.data.active_seconds} s`);
+        // Count cached prompt tokens too, so "in" means the whole prompt, as on the Hermes side.
+        const u = ev.data.token_usage;
+        c.set("tok", `${u.input + (u.cache_read ?? 0) + (u.cache_write ?? 0)} / ${u.output}`);
+        c.set("cost", usd(ev.data.consumed_micro_usd));
+      }
+    } else if (item.kind === "session") {
+      c.set("cost", usd(item.session.consumed_micro_usd));
+    } else if (item.kind === "wall") c.set("wall", secs(item.ms));
+    else if (item.kind === "error") c.error(item.message);
+  }).catch((e) => c.error(e.message));
+}
+
+function runHermes(message) {
+  const c = makeCol("c-hermes", "Hermes + Naïve MCP", "this Mac", "cost");
+  if (!hasHermes) return c.error("Hermes isn't installed on this machine."), Promise.resolve();
+  c.reply("…");
+  let started = false;
+  // Same brain on both sides: an `openai/<id>` pi agent makes Hermes run `<id>` on the ChatGPT plan.
+  const piModel = $("agent").selectedOptions[0]?.dataset.model ?? "";
+  const model = piModel.startsWith("openai/") ? piModel.slice("openai/".length) : undefined;
+  return streamTo("/api/hermes", { message, model }, (item) => {
+    if (item.kind === "hermes") {
+      const ev = item.event;
+      const at = ev.timestamp ? new Date(ev.timestamp).toISOString().slice(11, 19) : "";
+      if (ev.type === "system") { c.sub(`${ev.model} · this Mac (ChatGPT plan)`); c.event("system", ev.model, at); }
+      if (ev.type === "text") { c.reply(ev.text ?? "", started); started = true; }
+      if (ev.type === "tool_use") { c.tool(ev.name); c.event("tool_use", ev.name, at); }
+      if (ev.type === "tool_result") c.event("tool_result", `${ev.name} · ${ev.duration_ms} ms${ev.is_error ? " · error" : ""}`, at);
+      if (ev.type === "result") {
+        c.event("result", `exit ${ev.exit_code}`, at);
+        if (ev.exit_code !== 0) c.error(ev.text || ev.error || "Hermes run failed");
+        else c.reply(ev.text);
+        if (ev.tokens) c.set("tok", `${ev.tokens.input} / ${ev.tokens.output}`);
+        if (ev.duration_ms != null) c.set("model", secs(ev.duration_ms));
+        c.set("cost", "ChatGPT plan");
+      }
+    } else if (item.kind === "wall") c.set("wall", secs(item.ms));
+    else if (item.kind === "error") c.error(item.message);
+  }).catch((e) => c.error(e.message));
+}
+
+document.querySelectorAll("[data-p]").forEach((b) => b.addEventListener("click", () => ($("msg").value = b.dataset.p)));
 
 $("f").addEventListener("submit", async (e) => {
   e.preventDefault();
-  for (const id of ["s-stop", "s-cost", "s-tok", "s-time"]) $(id).textContent = "–";
-  $("reply").textContent = "";
-  $("reply").classList.remove("error");
-  $("events").innerHTML = "";
-  $("sid").textContent = "";
+  const message = $("msg").value;
   $("go").disabled = true;
-  $("state").textContent = "Starting session…";
-  try {
-    const r = await fetch("/api/run", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agent: $("agent").value, message: $("msg").value }),
-    });
-    if (!r.ok) throw new Error((await r.json()).error);
-    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
-    let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += value;
-      let i;
-      while ((i = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, i).trim();
-        buf = buf.slice(i + 1);
-        if (line) onLine(JSON.parse(line));
-      }
-    }
-    $("state").textContent = "Done";
-  } catch (err) {
-    onLine({ kind: "error", message: err.message });
-    $("state").textContent = "";
-  } finally {
-    $("go").disabled = false;
-  }
+  $("state").textContent = "Running both…";
+  await Promise.all([runNaive(message), runHermes(message)]);
+  $("state").textContent = "Done";
+  $("go").disabled = false;
 });
 
+makeCol("c-naive", "Naïve · pi", "Naïve's cloud", "cost (Naïve meter)");
+makeCol("c-hermes", "Hermes + Naïve MCP", "this Mac", "cost");
 load();
 </script>
 </body>
