@@ -79,13 +79,13 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 8:20 AM PST_
+_Last updated: Sun Nov 8, 8:28 AM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P3 is on: the team is on the real arm 7–10 AM (Pi with Andre: pin serial ports, teach Andre's four poses, `demo/up.sh --real`), with the 10 AM code freeze and 11 AM stop ahead. James's morning steps are in [`MORNING.md`](prototypes/arm-sim/MORNING.md) (revert the Hermes compaction setting, set up the Hermes manager profile, run the loop with the real manager); no James commits since 7:49. Kent is building **Naïve Technician** T0: the case page (#65), the Studio approval example (#66) and the Naïve session + shop adapters with a live spike (#67) are merged; the backend is open as #68 (`tech/backend`). Gates: G1 spike 8:45, go or break-glass 9:00, guaranteed sim clip 9:15, arm slot 9:30.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P3 is on: the team is on the real arm 7–10 AM (Pi with Andre: pin serial ports, teach Andre's four poses, `demo/up.sh --real`), with the 10 AM code freeze and 11 AM stop ahead. James's morning steps are in [`MORNING.md`](prototypes/arm-sim/MORNING.md) (revert the Hermes compaction setting, set up the Hermes manager profile, run the loop with the real manager); no James commits since 7:49. Kent is building **Naïve Technician** T0: the case page (#65), the Studio approval example (#66, #69) and the Naïve session + shop adapters with a live spike (#67) are merged; the backend is in review as #68 (`tech/backend`). The 29.6 s spike is well inside G1's 10 min *(inferred by Kent: G1 passes)*. Gates: G1 spike 8:45, go or break-glass 9:00, guaranteed sim clip 9:15, arm slot 9:30.
 
 **Recently done:**
 - Kent merged **#65 Naïve Technician T0 case page** (`3bdd637`, `f994212`, `2d30c76`): verdict, part card with one-click approve, email card and live feed (`cloud/src/romulus_cloud/web/templates/technician.html`, `partials/technician_case.html`, tests in `cloud/tests/unit/web/test_technician_template.py`); polling pauses during approve, source links are https-only
-- Kent merged **#66 approval in the Naïve Studio** (`60a7790`, `e66f69b`, `53cbdf1`): a working example of approving the staged part in the Studio (`cloud/scripts/technician_approval_example.py`, [`approval-in-studio.md`](docs/naive-technician/approval-in-studio.md))
+- Kent merged **#66 and #69 approval in the Naïve Studio** (`60a7790`, `e66f69b`, `53cbdf1`, `978bcd8`, `a032496`): a working example of approving the staged part in the Studio (`cloud/scripts/technician_approval_example.py`, [`approval-in-studio.md`](docs/naive-technician/approval-in-studio.md)). Session 1 was answered **Approve & open cart** on the Studio card at 16:24Z, the watcher caught it and the agent replied `DECISION: approve`; two sessions cost about $0.002
 - Kent merged **#67 Naïve session + shop adapters, live spike** (`cb3372c`…`46217e0`, `070becb`): `cloud/src/romulus_cloud/adapters/naive.py` and `shop.py`, `cloud/scripts/technician_spike.py`, recorded sessions in `cloud/tests/fixtures/technician/`. The first live session fixture is sonnet-5.5, 29.6 s, $0.072, with a valid report (`a17e257`), inside G1's ≤ 10 min run
 - Kent opened **#68 Naïve Technician T0: backend** (`tech/backend`: APIs §4.4/§4.5/§5 rows, D30 draft, F14 flow test, email after a quick approve); not merged yet
 
@@ -96,16 +96,16 @@ _Last updated: Sun Nov 8, 8:20 AM PST_
 - Team calls still open: Stripe is optional; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo; who drives the real arm. #63 (main → `full-test-2`) is still open though `full-test-2` is merged *(inferred: can be closed)*
 
 **Recent commits (all authors):**
+- `477f1ac` Sun 08:27 · Kent Gang · Update Kent status in CLAUDE.md
+- `a032496` Sun 08:25 · kgang · Merge pull request #69 from jamesEmerson112/tech/approval-example
+- `978bcd8` Sun 08:24 · Kent Gang · approval-in-studio: session 1 answered on the Studio card
+- `1108650` Sun 08:19 · jamesEmerson112 · Update team status in CLAUDE.md
 - `070becb` Sun 08:18 · kgang · Naïve Technician T0: Naïve session + shop adapters, live spike (#67)
 - `46217e0` Sun 08:18 · Kent Gang · Technician: second live fixture (agent v3, caption verdict, visible research); spike verdict maxLength 80
 - `81fda0b` Sun 08:17 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `102167e` Sun 08:16 · Kent Gang · Update Kent status in CLAUDE.md
 - `53cbdf1` Sun 08:16 · kgang · Naïve Technician: approval in the Naïve Studio example (#66)
-- `a17e257` Sun 08:15 · Kent Gang · Technician: live session fixture (sonnet-5.5, 29.6 s, $0.072, valid report); shop falls back to a stdlib read on 429
-- `60a7790` Sun 08:14 · Kent Gang · Naive Technician: example of approving the staged part in the Naive Studio
-- `2d30c76` Sun 08:12 · kgang · Naïve Technician T0: case page (#65)
-- `f994212` Sun 08:11 · Kent Gang · Technician page: pause polling during approve, https-only source links, None-safe lists
-- `bda616c` Sun 08:10 · Kent Gang · Naive adapter: retry budget is a parameter (2 s wall time by default for the worker); wrap long spike lines
+- `e66f69b` Sun 08:16 · Kent Gang · Make technician_approval_example.py ruff-clean
 
 **Branches on GitHub:** `main`; `tech/backend` (Kent, #68 open); `test-4` (no commits of its own); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
