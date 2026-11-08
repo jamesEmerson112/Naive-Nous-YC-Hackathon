@@ -1,6 +1,8 @@
 {
- "id": "j1d0hn5s5zr8xl",
+ "id": null,
  "launched": 1794135465.654196,
  "gpu": null,
- "costPerHr": 0.79
+ "costPerHr": 0.79,
+ "terminated": 1794135605.0952609,
+ "last_id": "j1d0hn5s5zr8xl"
 }

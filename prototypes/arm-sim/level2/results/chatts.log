@@ -1,0 +1,25 @@
+A new version of the following files was downloaded from https://huggingface.co/bytedance-research/ChatTS-14B:
+- configuration_qwen2.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+You are using a model of type chatts to instantiate a model of type qwen2. This is not supported for all configurations of models and can yield errors.
+A new version of the following files was downloaded from https://huggingface.co/bytedance-research/ChatTS-14B:
+- modeling_qwen2.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]Loading checkpoint shards:  17%|█▋        | 1/6 [00:00<00:02,  2.37it/s]Loading checkpoint shards:  33%|███▎      | 2/6 [00:00<00:01,  2.41it/s]Loading checkpoint shards:  50%|█████     | 3/6 [00:01<00:01,  2.57it/s]Loading checkpoint shards:  67%|██████▋   | 4/6 [00:01<00:00,  2.50it/s]Loading checkpoint shards:  83%|████████▎ | 5/6 [00:02<00:00,  2.49it/s]Loading checkpo
+A new version of the following files was downloaded from https://huggingface.co/bytedance-research/ChatTS-14B:
+- processing_qwen2_ts.py
+. Make sure to double-check they do not contain any added malicious code. To avoid downloading new versions of the code file, you can pin a revision.
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+The `seen_tokens` attribute is deprecated and will be removed in v4.41. Use the `cache_position` model input instead.
+{"test": "single", "variant": "healthy", "answer": "The baseline is stable (no trend change), and noise (SD 0.24) is within expected ranges. Thus, the sensor appears to be functioning normally. No faults detected."}
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+{"test": "single", "variant": "frozen", "answer": "The sensor appears functional. The steady readings suggest consistent operation and stable environmental conditions. No anomalies detected."}
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+{"test": "single", "variant": "dropouts", "answer": "The baseline is stable (286.00 \u00b10.00), so noise is negligible. However, recurring sharp drops indicate consistent interference or sensor misalignment. Recommend checking sensor orientation and environmental obstructions."}
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+{"test": "single", "variant": "spikes", "answer": "The baseline drift (steady increase from 286 to 466) suggests a malfunction like sensor misalignment or environmental interference. The spikes could indicate transient obstructions or sensor noise. Immediate recalibration and environmental checks are recommended."}
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+{"test": "pair", "variant": "A=healthy, B=frozen", "answer": "Sensor B is faulty. A still object should produce consistent readings, but Sensor B shows zero noise, which is unrealistic for ultrasound in a slightly noisy environment. Sensor A's 0.90 standard deviation aligns better with expected minor fluctuations."}
+EXIT 0
+
+[exited with code 0]

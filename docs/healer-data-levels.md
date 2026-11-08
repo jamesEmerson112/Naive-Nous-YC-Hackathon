@@ -8,7 +8,7 @@ The healer reads the same data at three levels. Each level only takes over what 
 | Level | What reads the trace | Where it runs | Status |
 |---|---|---|---|
 | 1 | Plain-code rules: `prototypes/arm-sim/armsim/level1.py` (arm), Olir's `firmware/healer/detect.py` (pod) | The arm host, every tick | Done |
-| 2 | A time-series model (ChatTS-14B) asked whether a trace looks wrong | One Runpod GPU, on demand | Script written, never run |
+| 2 | A time-series model (ChatTS-14B) asked whether a trace looks wrong | One Runpod GPU, on demand | Ran Sun 3 AM: catches dropouts and spikes; misses a frozen trace alone, catches it next to a healthy one |
 | 3 | A model trained on labeled traces from the fault factory plus bench recordings | CPU for a small classifier; Runpod only for a fine-tune | Data generator done; no model yet |
 
 ## James's decisions (Sun ~3 AM)
@@ -35,8 +35,29 @@ The healer reads the same data at three levels. Each level only takes over what 
 
 ## Level 2: a time-series model (next)
 - **The test:** `prototypes/arm-sim/level2/chatts_test.py`. Olir's real 300-reading ultrasonic sample, plus planted copies: frozen, dropouts, spikes. Only the 1 µs jitter separates the frozen copy from the healthy one, and Olir's rules miss it.
-- **Run:** `level2/run_on_pod.sh` on one GPU pod. It has a 2-hour `timeout`, then stops the pod itself.
-- **Done when:** the four verdicts are recorded in this doc, saying whether ChatTS tells frozen from healthy.
+- **Run:** `level2/runpod_l2.py launch | status | fetch | terminate` on one Runpod GPU, through the REST API. The job has a 2-hour `timeout`.
+- **Result** (Sun Nov 8, ~3 AM PST; `prototypes/arm-sim/level2/results/`):
+  - **Hardware and cost:** NVIDIA L40S 48 GB, community cloud, $0.79/h. The model loaded and answered in about 2 minutes. All three attempts together cost about $0.11, and every pod was terminated.
+
+  | Trace | ChatTS-14B's answer | Right? |
+  |---|---|---|
+  | Healthy | "functioning normally. No faults detected." | ✓ |
+  | Frozen (no jitter) | "The sensor appears functional … No anomalies detected." | ✗ (the fault level 1 also misses) |
+  | Dropouts (24 zero readings) | "recurring sharp drops indicate consistent interference or sensor misalignment" | ✓ |
+  | Spikes (6 large echoes) | "spikes could indicate transient obstructions or sensor noise" (it also claims a drift that isn't there) | ✓, but with a wrong detail |
+  | **Pair:** healthy A vs frozen B | "Sensor B is faulty … shows zero noise, which is unrealistic for ultrasound" | ✓ |
+
+- **What it means** *(inferred)*:
+  - Shown one trace alone, ChatTS reads "flat" as "stable" and misses the frozen sensor.
+  - Shown a healthy reference beside it, it catches it.
+  - So the worker's prompt should always include a reference window: the same pose from a healthy run, or the sensor's own recent history.
+  - The cheaper fix is a zero-variance check in plain code (level 1, `acc_frozen` ported to `us`).
+  - A 14B model is also too big for the worker: it needs a 48 GB GPU.
+- **Failed attempts, for the next person:**
+  1. torch 2.4 in the image: transformers 4.52 refuses `torch.load` below torch 2.6 (CVE-2025-32434).
+  2. torch 2.6 with the image's old torchvision: `torchvision::nms does not exist`.
+  - **Fix:** install `torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0` from the cu124 index first.
+  - **Python's user agent:** Runpod's Cloudflare blocks the default one with error 1010, so send a plain client name.
 
 ## Level 3: learned from data (next)
 - **L3a, a small classifier on CPU** *(inferred design)*:

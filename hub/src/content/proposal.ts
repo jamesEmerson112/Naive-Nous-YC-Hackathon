@@ -22,7 +22,7 @@ export const OUR_PLAN: PlanItem[] = [
   { id: "9", what: "Romulus Mission Control: one screen (3D twin, jobs, commander feed, pod health, heal timeline, fleet + Freeze, work orders) with presenter buttons (armsim/mission.py)", state: "now" },
   { id: "UI", what: "Polish Mission Control for the projector until 7 AM: screenshot every state, critique, fix, re-shoot", state: "next" },
   { id: "L1", what: "Healer level 1, plain-code rules: level1.py (arm) + Olir's detect.py (pod). Fault factory: 0 of 142 healthy runs flagged, 115 of 115 dead servos caught, subtle faults 23–54%", state: "done" },
-  { id: "L2", what: "Healer level 2, a time-series model reads the trace when the rules can't: run the written ChatTS-14B test on one Runpod GPU (≤ 2 h cap), record frozen / dropout / spike verdicts", state: "next" },
+  { id: "L2", what: "Healer level 2: ChatTS-14B ran on a Runpod L40S (~$0.11): catches dropouts and spikes, misses a frozen trace alone but catches it beside a healthy one (docs/healer-data-levels.md)", state: "done" },
   { id: "L3a", what: "Healer level 3, learned from data: regenerate the fault factory (CPU), train a small classifier on trace windows, beat level 1 on subtle faults with 0 false alarms on healthy runs", state: "next" },
   { id: "L3b", what: "Level 3 in the loop: the classifier runs beside the watchdog as a second opinion (never in the control loop); optional LoRA of Olir's qwen3.5:4b on Runpod to explain it", state: "later" },
   { id: "10", what: "The real arm and pod replace the sim (Pi check, poses, both stories with --real)", state: "later" },
