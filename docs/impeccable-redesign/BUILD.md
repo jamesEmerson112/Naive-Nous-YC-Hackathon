@@ -95,7 +95,7 @@ python3 cloud/scripts/technician_demo.py fake --base http://localhost:8012 --no-
   - `make reset`, on any shared stack
 
 ## PR checklist
-- [ ] `make test` and `make lint` are green.
+- [ ] **Targeted tests, run once before the PR:** `uv run pytest -q -x -p no:randomly cloud/tests/unit/web` plus the flow tests that fetch your pages (see `grep -rln '"/"\|/partials/' cloud/tests`), then `make lint`. Don't run the full `make test` (8 min); the coordinator runs it once on main after the last UI merge.
 - [ ] Screenshots of your pages at 1440×900, Day and Night, viewed and listed in the PR.
 - [ ] Nothing on the "Never use" list in your diff. Run `git diff origin/main | grep -nE '#[0-9a-fA-F]{3,6}\b|gradient|backdrop|border-left: *[2-9]|text-transform: *uppercase'` and justify every hit.
 - [ ] Commits: small, with a one-sentence message and **no AI co-author lines** (repo rule). Run `git pull --rebase origin main` before you push.
