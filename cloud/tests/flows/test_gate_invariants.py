@@ -29,6 +29,7 @@ from sqlalchemy import select
 
 from fake_device.arm import FakeArm
 from fake_device.scenarios import SCENARIOS
+from romulus_cloud import events
 from romulus_cloud.models import (
     Candidate,
     Device,
@@ -37,6 +38,7 @@ from romulus_cloud.models import (
     HarnessVersion,
     Overlay,
 )
+from romulus_cloud.services import registry
 
 S = timedelta(seconds=1)
 LIVE = {"replaying", "awaiting_canary", "canary", "frozen"}
@@ -116,10 +118,9 @@ def _check(db, promoted: dict[str, set], t: int) -> None:
                 assert assigned[k] in promoted[k], (t, d.id, k, assigned)
 
 
-def test_gate_invariants_over_a_mixed_overnight_run(
-    client, arms, clock, work, now, db_session, device_http, tmp_path
-):
-    fleet = {**arms, "arm-1": FakeArm(device_http, "arm-1", tmp_path / "arm-1")}
+def _run(client, fleet, clock, work, now, db_session, on_tick=None) -> dict[str, set]:
+    """The schedule, a worker tick every 10 s, the per-tick invariants (plus `on_tick(at)`,
+    with `at` the tick's worker time). Returns `promoted`."""
     scenarios = {**SCENARIOS, "params": _params_patch}
     promoted = {"firmware": {1}, "harness": {1}}
     pending = []
@@ -140,7 +141,16 @@ def test_gate_invariants_over_a_mixed_overnight_run(
             arm.tick(at)
         work(at + S)
         _check(db_session, promoted, t)
+        if on_tick:
+            on_tick(at + S)
+    return promoted
 
+
+def test_gate_invariants_over_a_mixed_overnight_run(
+    client, arms, clock, work, now, db_session, device_http, tmp_path
+):
+    fleet = {**arms, "arm-1": FakeArm(device_http, "arm-1", tmp_path / "arm-1")}
+    promoted = _run(client, fleet, clock, work, now, db_session)
     cands = client.get("/v1/candidates").json()
     statuses = Counter(c["status"] for c in cands)
     assert statuses["promoted"] >= 4, statuses
@@ -193,3 +203,72 @@ def test_gate_invariants_over_a_mixed_overnight_run(
         for d in client.get("/v1/devices").json():
             assert d["assigned"] == release, d
             assert d["running"]["firmware"] == release["firmware"], d
+
+
+RUN_START = ("candidate.created", "candidate.restarted")
+
+
+def test_gate_invariants_with_a_real_coder_and_no_held_out_verify(
+    client, arms, clock, work, now, db_session, device_http, tmp_path, monkeypatch
+):
+    """The same run, but code candidates count as the coding agent's (`source = coder`, not
+    pass-through) and nothing ships held-out verify: each one parks in `replaying`. The
+    firmware invariants hold; every live candidate's latest event says why it is where it
+    is (not just the creation why); a parked one says it waits for verify, once per run."""
+    real_create = registry.create_code
+
+    def as_coder(*args, **kw):
+        if kw.get("source") == "passthrough":
+            kw["source"] = "coder"
+        return real_create(*args, **kw)
+
+    monkeypatch.setattr(registry, "create_code", as_coder)
+    parked: set[str] = set()
+
+    def latest_events(at):
+        """Every live candidate's latest event says why it is where it is: only one the
+        batch created this very tick (the gate hasn't seen it yet) may still show its
+        creation why. A parked code candidate's latest event is its awaiting_verify."""
+        db_session.expire_all()
+        for c in db_session.scalars(select(Candidate).where(Candidate.status.in_(LIVE))):
+            found = events.find(db_session, {"candidate": c.id})
+            latest = found[-1]
+            assert latest.why, (at, c.id, latest.kind)
+            if found[0].ts == at:  # the batch built it this tick, after the gate's step
+                continue
+            assert latest.kind not in ("candidate.created", "overlay.locked_in"), (at, c.id)
+            if latest.kind == "candidate.restarted" and latest.ts == at:
+                continue  # unfrozen this tick; its replay is the next tick's step
+            if c.type == "code" and c.status == "replaying":
+                assert latest.kind == "candidate.awaiting_verify", (at, c.id, latest.kind)
+                assert "no held-out verify" in latest.why
+                parked.add(c.id)
+
+    fleet = {**arms, "arm-1": FakeArm(device_http, "arm-1", tmp_path / "arm-1")}
+    _run(client, fleet, clock, work, now, db_session, on_tick=latest_events)
+
+    cands = client.get("/v1/candidates").json()
+    code = [c for c in cands if c["type"] == "code"]
+    assert parked and {c["id"] for c in code} >= parked, (parked, code)
+    for c in cands:
+        runs = runs_of(db_session, c)
+        # At most one per run; the per-tick check saw one in every run it was parked in, so
+        # exactly one. A parked code candidate never got a replay result.
+        for run in runs:
+            assert run.count("candidate.awaiting_verify") <= 1, (c["label"], run)
+        if c["type"] == "code":
+            assert not any("candidate.replayed" in run for run in runs), c["label"]
+    restarted = [c for c in code if c["id"] in parked and len(runs_of(db_session, c)) > 1]
+    assert restarted, "the freeze/unfreeze should have restarted a parked candidate"
+    for c in restarted:  # after the unfreeze its story says again why it waits
+        assert all(r.count("candidate.awaiting_verify") == 1 for r in runs_of(db_session, c))
+
+
+def runs_of(db, c) -> list[list[str]]:
+    """A candidate's event kinds, split into runs at each created/restarted event."""
+    runs: list[list[str]] = [[]]
+    for e in events.find(db, {"candidate": c["id"]}):
+        if e.kind in RUN_START and runs[-1] and any(k in RUN_START for k in runs[-1]):
+            runs.append([])
+        runs[-1].append(e.kind)
+    return runs

@@ -173,3 +173,58 @@ def test_f11_allow_unverified_passes_on_device_tests_with_a_loud_warning(
     assert "WARNING unverified: decided by in-process tests only" in warn["why"]
     (row,) = events.find(db_session, {"candidate": cand["id"]}, kinds=["candidate.unverified"])
     assert row.data["level"] == "warning"
+
+
+def test_f11_the_default_verify_dir_missing_waits_and_never_rolls_back(
+    client,
+    arms,
+    tick_arms,
+    now,
+    settings,
+    bare_fleet,
+    sessions,
+    clock,
+    db_session,
+    monkeypatch,
+    tmp_path,
+):
+    # `.env.example`'s default, before anyone ran `make device-verify`: the dir doesn't exist.
+    monkeypatch.chdir(tmp_path)
+    default = settings.model_copy(update={"coder_verify_dir": "data/verify/device"})
+    rig = Rig(sessions, default, clock)
+    _held(arms, tick_arms, now)
+    for t in (40, 41, 48, 55):
+        rig.work(now + t * S)
+    cand = _code(client)
+    assert cand["status"] == "replaying" and cand["replay"] is None, cand["events"][-1]
+    (wait,) = [e for e in cand["events"] if e["kind"] == "candidate.awaiting_verify"]
+    assert "no held-out verify at `data/verify/device`" in wait["why"]
+    assert "run `make device-verify`" in wait["why"]
+    assert "candidate.rolled_back" not in _kinds(cand)
+    ov = db_session.get(Overlay, ("sim-3", arms["sim-3"].device.overlay.overlay_id))
+    db_session.refresh(ov)
+    assert ov.status == "locked_in"
+
+
+def test_f11_a_parked_candidate_says_why_again_after_an_unfreeze(
+    client, arms, tick_arms, now, settings, bare_fleet, sessions, clock
+):
+    rig = Rig(sessions, settings, clock)
+    _held(arms, tick_arms, now)
+    rig.work(now + 40 * S)
+    rig.work(now + 41 * S)
+    assert client.post("/v1/fleet/freeze", json={"by": "ci", "why": "test"}).is_success
+    rig.work(now + 50 * S)
+    assert _code(client)["status"] == "frozen"
+    assert client.post("/v1/fleet/unfreeze", json={"by": "ci", "why": "test"}).is_success
+    for t in (60, 61, 70, 80):  # unfrozen (restarted), then parked again
+        rig.work(now + t * S)
+    cand = _code(client)
+    waits = ("candidate.restarted", "candidate.awaiting_verify")
+    kinds = [k for k in _kinds(cand) if k in waits]
+    assert kinds == [
+        "candidate.awaiting_verify",
+        "candidate.restarted",
+        "candidate.awaiting_verify",
+    ]
+    assert cand["events"][-1]["kind"] == "candidate.awaiting_verify"

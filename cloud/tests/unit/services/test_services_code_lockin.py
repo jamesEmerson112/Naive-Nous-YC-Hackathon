@@ -234,6 +234,44 @@ def test_fake_mode_passthrough_keeps_the_stub_without_verify(db_session, setting
     assert result.stub and result.passed
 
 
+def test_the_default_verify_dir_missing_waits_with_the_dir_and_the_command(
+    db_session, settings, monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)  # no data/verify/device here: `make device-verify` never ran
+    jobs = StuckJobs()
+    store = _bare(db_session, settings)
+    tools = _tools(settings, store, jobs, coder_verify_dir="data/verify/device")
+    result = code_lockin.gate_replay(db_session, _cand("bfix001"), tools)
+    assert isinstance(result, code_lockin.AwaitingVerify), result
+    assert "no held-out verify at `data/verify/device`" in result.why
+    assert "run `make device-verify`" in result.why
+    assert jobs.submitted == []
+
+
+def test_a_missing_verify_dir_still_fails_when_the_base_has_verify(
+    db_session, settings, code_versions, tmp_path
+):
+    tools = _tools(settings, code_versions, StuckJobs(), coder_verify_dir=str(tmp_path / "no"))
+    result = code_lockin.gate_replay(db_session, _cand("fix0001"), tools)
+    assert not result.passed and "is not a directory" in result.why
+
+
+def test_a_parked_candidate_reads_its_base_once(db_session, settings, monkeypatch):
+    store = _bare(db_session, settings)
+    tools = _tools(settings, store, StuckJobs())
+    reads = []
+    real = code_lockin.read_package
+    monkeypatch.setattr(
+        code_lockin, "read_package", lambda s, cv: reads.append(cv.rev) or real(s, cv)
+    )
+    for _ in range(3):
+        assert isinstance(
+            code_lockin.gate_replay(db_session, _cand("bfix001"), tools),
+            code_lockin.AwaitingVerify,
+        )
+    assert reads == ["bare001"]
+
+
 def test_a_blocked_worker_waits_instead_of_submitting(db_session, settings, code_versions):
     jobs = StuckJobs()
     tools = _tools(settings, code_versions, jobs)

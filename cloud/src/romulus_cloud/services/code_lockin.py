@@ -36,7 +36,7 @@ import shutil
 import tarfile
 import tempfile
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -330,6 +330,17 @@ class ReplayTools:
     sandbox: Sandbox
     store: BlobStore
     blocked: str | None = None  # `coder_blocker`: replays wait instead of failing
+    # Base packages by (fleet, rev), so a candidate parked for verify doesn't re-read its
+    # base every tick. Code versions are immutable; a few entries at most.
+    _bases: dict[tuple[str, str], dict[str, bytes]] = field(default_factory=dict, repr=False)
+
+    def base_package(self, cv: CodeVersion) -> dict[str, bytes]:
+        key = (cv.fleet_id, cv.rev)
+        if key not in self._bases:
+            if len(self._bases) >= 8:
+                self._bases.clear()
+            self._bases[key] = read_package(self.store, cv)
+        return self._bases[key]
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ReplayTools:
@@ -369,6 +380,16 @@ class AwaitingVerify:
     why: str = NO_VERIFY
 
 
+def no_verify(directory: str, base_rev: str) -> AwaitingVerify:
+    """Wait for verify; the why names CODER_VERIFY_DIR when it is set (missing or empty)."""
+    if not directory:
+        return AwaitingVerify()
+    return AwaitingVerify(
+        f"no held-out verify at `{directory}` (nor in code {base_rev}'s verify/): in-process "
+        "tests alone can't be trusted; run `make device-verify`"
+    )
+
+
 def gate_replay(
     session: Session, c: Candidate, tools: ReplayTools
 ) -> g.ReplayResult | AwaitingVerify | None:
@@ -388,17 +409,22 @@ def gate_replay(
             return g.ReplayResult(
                 False, f"code replay failed: the base code {cv.parent_rev} is not registered"
             )
+        base = tools.base_package(parent)
+        base_verify = any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
         try:
             extra = verify_files(settings.coder_verify_dir)
         except CoderError as exc:
+            if not base_verify and not settings.coder_allow_unverified:
+                # e.g. the default data/verify/device before `make device-verify`: wait for
+                # it, never roll back (a single-overlay fix would go sticky)
+                return no_verify(settings.coder_verify_dir, parent.rev)
             return g.ReplayResult(False, f"code replay could not start: {exc}")
         stale = stale_verify(session, extra, parent)
         if stale:
             return g.ReplayResult(False, f"code replay failed: {stale}")
-        base = read_package(tools.store, parent)
-        has_verify = bool(extra) or any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
+        has_verify = bool(extra) or base_verify
         if not has_verify and not settings.coder_allow_unverified:
-            return AwaitingVerify()
+            return no_verify(settings.coder_verify_dir, parent.rev)
         if not settings.coder_test_cmd.strip() and not has_verify:
             return g.ReplayResult(
                 False,

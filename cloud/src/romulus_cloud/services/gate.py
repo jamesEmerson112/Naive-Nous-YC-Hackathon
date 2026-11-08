@@ -765,9 +765,12 @@ def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now)
 
 
 def _await_verify(session: Session, c: Candidate, why: str, now: datetime) -> None:
-    """The candidate waits in `replaying` for held-out verify scripts: one event per
-    candidate (not one per tick), no failure, no retry count."""
-    if not events.find(session, {"candidate": c.id}, kinds=["candidate.awaiting_verify"]):
+    """The candidate waits in `replaying` for held-out verify scripts: one event per run
+    (since its last created/restarted event, so after an unfreeze the story says again why
+    it waits), not one per tick; no failure, no retry count."""
+    kinds = ["candidate.created", "candidate.restarted", "candidate.awaiting_verify"]
+    found = events.find(session, {"candidate": c.id}, kinds=kinds)
+    if not found or found[-1].kind != "candidate.awaiting_verify":
         _record(
             session, c, "candidate.awaiting_verify", f"{label(c).capitalize()} waits: {why}", now
         )
