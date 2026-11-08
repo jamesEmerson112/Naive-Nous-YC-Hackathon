@@ -559,7 +559,7 @@ From Kent's review of the Fleet Doctor proposal v2 ([`../fleet-doctor/`](../flee
 - The kill switch stays the only *policy* control.
 **When to revisit.** When Naïve agents can pay, checkout under `ORDER_MAX_USD` goes back to automatic, per D11.
 **What this means for the build** *(inferred)*:
-- One new table (`technician_cases`), one new branch in `workorders.resolve` (approve a staged `raw.technician_part`), four event kinds (`technician.*`, APIs §5), off by default (`TECHNICIAN_MODE=off`).
+- One new table (`technician_cases`), one new branch in `workorders.resolve` (approve a staged `raw.technician_part`), four event kinds (`technician.*`, APIs §5), off by default (`TECHNICIAN_MODE=off`) until Nov 8, when Kent made `live` the default.
 - `joint_stall` and `us_no_echo` stay out of `parts.yaml` on purpose (a unit test pins it).
 
 **History:** drafted Sun Nov 8 ~7:20 AM (Kent, `docs/naive-technician/design.md` §12); built as T0 Sun Nov 8 ~8 AM.

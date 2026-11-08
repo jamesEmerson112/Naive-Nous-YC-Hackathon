@@ -191,11 +191,12 @@ class Settings(BaseSettings):
     doctor_evidence_file_bytes: int = 4000  # per file named in the log or trace
     doctor_evidence_code_bytes: int = 16000  # all code excerpts together
 
-    # Naïve Technician (docs/naive-technician/design.md §10; D30). Off by default. A
+    # Naïve Technician (docs/naive-technician/design.md §10; D30). Live by default (Kent,
+    # Nov 8); live starts sessions on its own only for `kind: real` devices (K13). A
     # `needs_human` work order with no catalogued part opens a case: one Naïve session writes
     # a typed report, Romulus emails TECHNICIAN_EMAIL and stages a checked cart a person
     # approves. off | fake (recorded test fixture) | live (HttpNaive); replay is per case.
-    technician_mode: Literal["off", "fake", "live"] = "off"
+    technician_mode: Literal["off", "fake", "live"] = "live"
     naive_technician_agent: str = ""
     naive_technician_identity: str = ""
     naive_technician_inbox: str = ""
