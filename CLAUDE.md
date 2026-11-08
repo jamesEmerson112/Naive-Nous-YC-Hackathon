@@ -63,11 +63,11 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 6:40 PM P
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 6:12 PM PST._
-- **Now:** healer model picked, testing stopped. Moving `edge/` into the repo as `device/`, updating `docs/healer-benchmark-progress.md` with the pick, and starting Kent's test suite (session "Build the edge test bed (iteration 1)"). Also reading Kent's Fleet Doctor docs for the upper-level, offline-first-then-sync harness (session "Current idea summary").
-- **Just finished:** model pick: qwen3.5:4b with thinking on, 10/12 in confirmation runs, D1 fixed both times; the queued h1/h2/no-skills runs were cancelled before starting (sessions "Current idea summary", "Build the edge test bed (iteration 1)"). Earlier: progress doc and model-selection method (`b9b0f89`), `features.txt` claims (`cd54c16`, `e59093f`), overview and fault catalog (`16c6b9c`, `38771aa`, `325a4bb`), device-side answers (`5cea9c2`).
-- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), the `edge/` to `device/` move (B1, in progress), a review of the code-package and `code_patch` formats in PR #3 (B2, B3), and a co-review of Fleet Doctor D23–D27, per Kent's block.
-- **Branch and files:** `main`. `edge/` (robot app, sim, supervisor, healer harnesses h1–h3, `bench/run_bench.py`, `bench/analyze.py`) is still local and untracked; it lands as `device/` *(inferred from the test-bed session recap)*.
+_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 6:42 PM PST._
+- **Now:** landing the device code (B1): `edge/` is split into `device/`, `harness/` and `bench/` in his checkout, not committed yet (session "Build the edge test bed (iteration 1)"). Testing is stopped; next is pushing these to main *(inferred from his 18:08–18:09 messages)*.
+- **Just finished:** healer benchmark progress doc with final results and the model pick, qwen3.5:4b with thinking on, harness h3 (`835c4f0`). Device test suite: 18 tests pass, and each planted fault turns it red; oracle 6/6 and baseline 0/6 still hold (test-bed session recap). Earlier: model-selection method (`b9b0f89`), `features.txt` claims (`cd54c16`, `e59093f`), device-side answers (`5cea9c2`).
+- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), the `device/` landing (B1, in progress), a review of the code-package and `code_patch` formats in PR #3 (B2, B3), and a co-review of Fleet Doctor D23–D27, per Kent's block.
+- **Branch and files:** `main`. Untracked in his checkout: `device/` (README, pytest.ini, `tests/test_spec.py`, `tests/test_classify.py`, conftest), `harness/`, `bench/` (`run_bench.py`, `tasks.py`, README).
 <!-- ishaan-sync:end -->
 
 ## Team status
