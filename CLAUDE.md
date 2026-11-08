@@ -76,7 +76,7 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 12:30 AM PST_
+_Last updated: Sun Nov 8, 12:39 AM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P1 minimum by 12:30 AM (a typed command moves the sim arm; a planted fault gives a spoken sentence), then P2 overnight to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), and P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). Kent's next steps: the 12:30 AM overnight go/no-go and the live Naïve card; his open PRs are #46 (B5) and #53 (replay hardening, K6). Olir's arm heal test is merged (#54); he still has the frozen-ultrasonic rule and a review of the firmware doc.
 
@@ -93,6 +93,7 @@ _Last updated: Sun Nov 8, 12:30 AM PST_
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email)
 
 **Recent commits (all authors):**
+- `f737d7e` Sun 00:28 · jamesEmerson112 · Update team status and features.txt
 - `f623b56` Sun 00:25 · Oliravan Eswaramoorthy · Merge pull request #54 from jamesEmerson112/olir/arm-ultrasonic-heal
 - `303a007` Sun 00:24 · Olir Eswar · full passthrough test
 - `e5702a1` Sun 00:18 · jamesEmerson112 · Update team status and features.txt
@@ -102,7 +103,6 @@ _Last updated: Sun Nov 8, 12:30 AM PST_
 - `b66d6fd` Sun 00:01 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `e8fcd2c` Sat 23:59 · jamesEmerson112 · Update team status and features.txt
 - `235e30d` Sat 23:50 · jamesEmerson112 · Firmware APIs and data: one cited reference for wiring the pod into Romulus, the harness and the arm
-- `e1e6561` Sat 23:49 · jamesEmerson112 · Update team status in CLAUDE.md
 
-**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent), `cloud/replay-hardening` (#53, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent), `cloud/replay-hardening` (#53, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
