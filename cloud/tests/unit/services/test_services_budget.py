@@ -60,7 +60,7 @@ def store_bytes(session) -> int:
 
 def test_under_budget_does_nothing(fleet, store, settings, now):
     episode(fleet, store, now, 1)
-    assert telemetry.enforce_budget(fleet, now, settings, store) == 0
+    assert telemetry.enforce_budget_step(fleet, now, settings, store) == 0
     assert events.find(fleet, {}, kinds=[telemetry.PRUNED]) == []
 
 
@@ -77,7 +77,7 @@ def test_over_budget_deletes_oldest_unlabeled_episodes_only(fleet, store, make_s
     two = sum(fleet.get(Blob, sha).size_bytes for _, sha in eps[2:4])
     s = make_settings(blob_budget_gb=(store_bytes(fleet) - two + 0.5) / telemetry.GB)
 
-    deleted = telemetry.enforce_budget(fleet, now + timedelta(hours=1), s, store)
+    deleted = telemetry.enforce_budget_step(fleet, now + timedelta(hours=1), s, store)
 
     assert deleted == 2
     assert store_bytes(fleet) <= s.blob_budget_gb * telemetry.GB
@@ -102,10 +102,10 @@ def test_a_pinned_unlabeled_episode_survives_the_sweep(fleet, store, make_settin
     fleet.add(DatasetVersion(dataset_id="ds_pin", n=1, recording_ids=[pinned]))
     fleet.flush()
     s = make_settings(blob_budget_gb=1 / telemetry.GB)  # 1 byte: everything is over
-    assert telemetry.enforce_budget(fleet, now, s, store) == 1
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 1
     assert store.exists(pinned_sha) and fleet.get(Blob, pinned_sha) is not None
     assert not store.exists(loose_sha)
-    assert telemetry.enforce_budget(fleet, now, s, store) == 0  # nothing else may go
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 0  # nothing else may go
 
 
 def test_a_blob_shared_with_incident_evidence_is_kept(fleet, store, make_settings, now):
@@ -122,7 +122,7 @@ def test_a_blob_shared_with_incident_evidence_is_kept(fleet, store, make_setting
     )
     upload(fleet, store, now, twin, data)
     s = make_settings(blob_budget_gb=1 / telemetry.GB)  # 1 byte: everything is over
-    assert telemetry.enforce_budget(fleet, now, s, store) == 0
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 0
     assert store.exists(sha)
     assert events.find(fleet, {}, kinds=[telemetry.PRUNED]) == []
 
@@ -130,7 +130,7 @@ def test_a_blob_shared_with_incident_evidence_is_kept(fleet, store, make_setting
 def test_still_over_budget_says_so(fleet, store, make_settings, now):
     episode(fleet, store, now, 1)
     s = make_settings(blob_budget_gb=1 / telemetry.GB)  # packages alone are over
-    assert telemetry.enforce_budget(fleet, now, s, store) == 1
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 1
     (event,) = events.find(fleet, {}, kinds=[telemetry.PRUNED])
     assert "still" in event.why and "never deleted" in event.why
     assert store_bytes(fleet) > 0  # the seed's packages are never touched
@@ -139,7 +139,7 @@ def test_still_over_budget_says_so(fleet, store, make_settings, now):
 def test_packages_are_never_pruned(fleet, store, make_settings, now):
     before = store_bytes(fleet)
     s = make_settings(blob_budget_gb=1 / telemetry.GB)
-    assert telemetry.enforce_budget(fleet, now, s, store) == 0
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 0
     assert store_bytes(fleet) == before
     for blob in fleet.scalars(select(Blob)):
         assert store.get(blob.sha256).read(1)
@@ -150,7 +150,7 @@ def test_an_automatic_label_alone_does_not_protect_an_episode(fleet, store, make
     labels = telemetry.current_labels(fleet, "recording", rid)
     assert "episode:success" in labels  # auto labels exist...
     s = make_settings(blob_budget_gb=1 / telemetry.GB)
-    assert telemetry.enforce_budget(fleet, now, s, store) == 1  # ...but don't count
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 1  # ...but don't count
     assert not store.exists(sha)
 
 
@@ -162,11 +162,54 @@ def test_a_removed_human_label_no_longer_protects(fleet, store, make_settings, n
         )
     fleet.flush()
     s = make_settings(blob_budget_gb=1 / telemetry.GB)
-    assert telemetry.enforce_budget(fleet, now, s, store) == 1
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 1
 
 
 def test_worker_runs_it_every_ten_minutes():
     from romulus_cloud import worker
 
     (step,) = [s for s in worker.STEPS if s.name == "telemetry.enforce_budget"]
-    assert step.every_s == 600 and step.fn is telemetry.enforce_budget
+    assert step.every_s == 600 and step.fn is telemetry.enforce_budget_step
+
+
+def test_files_go_only_after_the_commit(fleet, store, make_settings, now, monkeypatch):
+    """The sweep itself touches no files; a failed commit leaves them all in place."""
+    _, sha = episode(fleet, store, now, 1)
+    fleet.commit()  # the upload is in; the rollback below goes back to here
+    s = make_settings(blob_budget_gb=1 / telemetry.GB)
+    assert telemetry.enforce_budget(fleet, now, s) == [sha]
+    assert store.exists(sha)  # row dropped in the transaction, file untouched
+    fleet.rollback()
+
+    def broken_commit():
+        raise RuntimeError("db went away")
+
+    monkeypatch.setattr(fleet, "commit", broken_commit)
+    with pytest.raises(RuntimeError):
+        telemetry.enforce_budget_step(fleet, now, s, store)
+    assert store.exists(sha)  # an orphan file at worst, never a row without its file
+
+
+def test_a_snapshot_taken_after_pruning_leaves_pruned_episodes_out(
+    fleet, store, make_settings, now
+):
+    from romulus_cloud.services import datasets
+
+    kept, _ = episode(fleet, store, now, 1)
+    gone, gone_sha = episode(fleet, store, now + timedelta(minutes=1), 2)
+    fleet.add(Label(target_type="recording", target_id=kept, key="keep", source="human"))
+    fleet.flush()
+    s = make_settings(blob_budget_gb=1 / telemetry.GB)
+    assert telemetry.enforce_budget_step(fleet, now, s, store) == 1
+    assert not store.exists(gone_sha)
+    ds = datasets.create_dataset(
+        fleet,
+        name="episodes",
+        purpose="policy",
+        filter_={"kind": "episode"},
+        actor="human:test",
+        fleet_id="default",
+        now=now,
+    )
+    version = datasets.snapshot(fleet, ds.id, actor="human:test", now=now)
+    assert version.recording_ids == [kept]

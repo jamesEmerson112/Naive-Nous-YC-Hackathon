@@ -5,8 +5,9 @@ and `format` are open strings and nothing is parsed. Blobs are content-addressed
 recordings with the same sha256 share one blob. Recording events carry `recording` and,
 when known, `incident` in their refs, so the incident's story shows them as evidence.
 An incident may arrive before or after its recordings; `link_incident` catches up.
-`enforce_budget` (a worker step, M7) deletes the oldest unlabeled episode blobs once the
-store is over `BLOB_BUDGET_GB`; incident evidence is never deleted. Nothing here commits.
+`enforce_budget` (M7) drops the oldest unlabeled episode blobs once the store is over
+`BLOB_BUDGET_GB`; incident evidence is never deleted. Nothing here commits, except the
+worker step `enforce_budget_step`, which must commit before it deletes files.
 """
 
 from datetime import datetime
@@ -440,21 +441,15 @@ def _prunable(session: Session, sha256: str, pinned: set[str]) -> bool:
     return not _curated(session, [r.id for r in users])
 
 
-def enforce_budget(
-    session: Session,
-    now: datetime,
-    settings: Settings | None = None,
-    store: BlobStore | None = None,
-) -> int:
-    """Worker step (every 10 min): while the blob store is over `BLOB_BUDGET_GB`, delete
-    the oldest unlabeled `episode` blobs. Never incident evidence, labeled recordings,
-    snapshot members or packages. One event per batch; returns how many blobs went."""
-    settings = settings or get_settings()
-    store = store or build_blobstore(settings.blob_dir)
+def enforce_budget(session: Session, now: datetime, settings: Settings) -> list[str]:
+    """While the blob store is over `BLOB_BUDGET_GB`, drop the rows of the oldest unlabeled
+    `episode` blobs (never incident evidence, labeled recordings, snapshot members or
+    packages) and record one event. Returns the sha256s whose files may be deleted once
+    this commits; it touches no files and doesn't commit (see `enforce_budget_step`)."""
     budget = int(settings.blob_budget_gb * GB)
     total = int(session.scalar(select(func.coalesce(func.sum(Blob.size_bytes), 0))) or 0)
     if total <= budget:
-        return 0
+        return []
     # Imported here: services.datasets imports this module.
     from romulus_cloud.services.datasets import pinned_blob_shas
 
@@ -489,7 +484,7 @@ def enforce_budget(
             budget_bytes=budget,
             note="nothing deletable: only incident evidence, labeled or snapshot blobs left",
         )
-        return 0
+        return []
     session.flush()
     still = (
         ""
@@ -514,9 +509,26 @@ def enforce_budget(
         },
         ts=now,
     )
-    for item in deleted:  # files last, after the rows and the event are in the transaction
-        store.delete(item["sha256"])
-    return len(deleted)
+    return [item["sha256"] for item in deleted]
+
+
+def enforce_budget_step(
+    session: Session,
+    now: datetime,
+    settings: Settings | None = None,
+    store: BlobStore | None = None,
+) -> int:
+    """Worker step (every 10 min): `enforce_budget`, commit, then delete the files. It
+    commits itself so a file goes only after its row: a failed commit leaves an orphan
+    file (harmless), never a row pointing at a missing file. Returns how many went."""
+    settings = settings or get_settings()
+    store = store or build_blobstore(settings.blob_dir)
+    shas = enforce_budget(session, now, settings)
+    if shas:
+        session.commit()
+        for sha in shas:
+            store.delete(sha)
+    return len(shas)
 
 
 def size_text(n: int | None) -> str:

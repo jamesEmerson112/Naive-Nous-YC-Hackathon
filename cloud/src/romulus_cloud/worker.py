@@ -56,7 +56,7 @@ STEPS += [
 ]
 
 # M7: keep the blob store under BLOB_BUDGET_GB (oldest unlabeled episodes first).
-STEPS.append(Step("telemetry.enforce_budget", telemetry.enforce_budget, every_s=600))
+STEPS.append(Step("telemetry.enforce_budget", telemetry.enforce_budget_step, every_s=600))
 
 
 def run_tick(
