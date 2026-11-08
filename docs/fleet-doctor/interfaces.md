@@ -495,22 +495,77 @@ This is the code Ishaan copies or imports into the Pi app. It stays out of `viso
 
 ```python
 # client.py (DeviceClient)
-def ask_doctor(self, ask: dict, *, timeout_s: float) -> dict | None   # None on any error or timeout; direct call, not the outbox
-def get_proposal(self, proposal_id: str) -> tuple[dict, str]          # (body, sha256); checks X-Sha256 like pull_firmware
-# outbox.py: new kind "proposal_result" → POST …/proposals/{pid}/result
+def ask_doctor(self, ask: dict, *, timeout_s: float) -> dict | None   # None on any error, non-200 or timeout; direct call, not the outbox;
+    # timeout_s bounds the TOTAL wait (the request runs on a daemon thread; httpx.Timeout(timeout_s) per phase too)
+def get_proposal(self, proposal_id: str, *, expected_sha256: str | None = None) -> tuple[dict, str]
+    # (body, sha256); checks X-Sha256 like the packages, and the pointer's sha256 when given → HashMismatch / InvalidPackage
+def report_proposal_result(self, proposal_id: str, result: ProposalResult) -> None   # used by the outbox
+# outbox.py: Outbox.add_proposal_result(proposal_id, result), kind "proposal_result" → POST …/proposals/{pid}/result
 
-# doctor.py
-class CircuitBreaker:      # per heal: after the first failed or timed-out ask, every later ask is skipped
-class TriggerHook:         # detect(steps, *, verify_failures, budget_used, tier, skill_matched) -> str | None  (T2, T4, T5, T6, T7)
-                           # maybe_ask(...) -> str | None  (the ≤300-token text to inject, or None)
-class ProposalApplier:     # on check-in pointer: pull → sha check → parked? → base matches? → not expired? →
-                           # apply overlay (proposal_id) → verify/health → MarkGoodTimer(N=60 s) → queue the result
-class MarkGoodTimer:       # health must hold N seconds or the overlay reverts (RAUC mark-good)
+# doctor.py (as built in PR 5)
+@dataclass(frozen=True)
+class HealStep:            # command, read=(), changed=(), check="pass"|"fail"|None, build_failed=False
+class CircuitBreaker:      # allow(), trip(reason), reset(); per heal
+class TriggerHook:         # TriggerHook(client, *, k=2, budget_share=0.7, budget_s=20, max_asks_per_incident=6)
+                           # start_heal(incident_id=None); then maybe_ask([]) once (T6, T7), then after each step
+                           # detect(steps, *, verify_failures=0, budget_used=0.0, tier=None, skill_matched=True)
+                           #   -> the first trigger that holds AND hasn't asked yet this heal, or None
+                           # maybe_ask(steps, *, ...same..., question=None, context=None) -> str | None
+                           # history: [{"trigger", "ask", "advice"}]
+def triggers_holding(steps, *, ...) -> list[str]   # pure: every trigger that holds, in priority order
+class ProposalHost(Protocol):   # parked_and_idle, running, active_overlay_id,
+                                # snapshot() -> JSON handle that survives a restart, restore(handle),
+                                # apply_overlay, verify(proposal) -> (ok, detail), healthy, mark_good
+class ProposalApplier:     # ProposalApplier(client, host, outbox, *, state_path=None, mark_good_s=60, safety_paths=(),
+                           #                 clock=time.monotonic)
+                           # recover(now) -> "good"|"reverted"|"failed_verify"|"stale"|None   # at boot (handle/tick call it too)
+                           # handle(pointer, now, *, frozen=False) -> "applied"|"rejected"|"stale"|"failed_verify"|None
+                           # tick(now) -> (overlay_id, "good"|"reverted") | None      # one health sample for the watch
+class MarkGoodTimer:       # MarkGoodTimer(overlay_id, proposal_id, hold_s=60, replaced_overlay_id=None, clock=time.monotonic)
+                           # check(healthy) -> "watching"|"good"|"failed"
+def base_mismatch(base, running, active_overlay_id, code_patch) -> str   # "" when it matches
+def format_advice(advice, trigger, *, max_tokens=300) -> str | None
 ```
 
-- **New scenario:** `SCENARIOS["consult"]` sends `resolved=False`, `suspected_cause="software"`, `running.code_rev` set, and `consult={"wanted": true, "trigger": "T2", "attempts": 2}`.
-- **Chaos:** a `doctor` chaos kind with rate 0 in `overnight` and > 0 in `demo`.
-- **`fake_cloud.py`:** add the three routes to `ROUTES`.
+**How the PR 5 code settles details this section left open:**
+- **Asks.**
+  - Call `maybe_ask([])` once right after `start_heal`: T6 and T7 fire only before the first step.
+  - Each trigger asks at most once per heal, but a later one still can (T4 or T5 after T2).
+  - T4 means the same command 3 times *in a row* (whitespace collapsed), or 5 steps in a row that read no new file and change none.
+  - The 6-ask cap is per incident; asks with no `incident_id` are capped per heal, so the hook never goes silent.
+  - Empty advice injects nothing and doesn't trip the breaker.
+- **Applier check order.**
+  - Already handled or under watch → no-op. Frozen → no-op.
+  - Then: sha mismatch → `rejected`; not parked or busy → `rejected`; base mismatch → `stale`; expired → `rejected`; malformed patch or a `safety_paths` hit → `rejected`.
+  - Then snapshot, write the attempt to `doctor.json`, apply, verify plus health (on failure, restore and report `failed_verify`), then watch.
+- **Base.** `firmware` and `code_rev` always match. `harness` only when the proposal sets it, `mcu_build` only for a patch under `firmware/`. The active overlay must equal `base.overlay_id`, and both null counts as a match.
+- **GET errors.** Only 404 and 410 drop a proposal for good, with no result. 409 (frozen), 401, 429, 5xx, network and any other error retry on a later tick.
+- **One proposal at a time.** A second pointer waits until the current watch ends. Handled ids are kept in `doctor.json`, so a restart never applies one twice.
+- **Mark-good.** The timer runs on a monotonic clock, injectable for tests; `FakeArm` passes the tick's `now`. It is good once `hold_s` has passed *and* a healthy sample falls in each third of the time since apply (the check right after apply counts as the first). So one sample at ≥60 s isn't enough, and sparse sampling only lengthens the watch. One unhealthy sample means it failed, and it stays failed: later healthy samples never mark it good.
+- **After the watch.** Mark-good calls `host.mark_good`, which unparks in the sim. Only then is a replaced overlay reported `superseded`. A failure reports the proposal overlay `reverted`, drops the timer and flags the attempt `failed` *before* restoring the snapshot. A restore that raises is retried on the next tick or at boot, and a new proposal waits until it succeeds. `FakeArm` reports a marked-good proposal overlay `held` `proposal_hold_after_s` later (default 1200 s).
+- **Crash safety.**
+  - Before `apply_overlay`, `doctor.json` gets `inflight`, written with write-then-rename. It holds the proposal and overlay ids, `started_wall` (for logs; the watch never resumes after a restart), `replaced_overlay_id` and the snapshot handle.
+  - It also holds a flag for each stage reached, each set *before* the step it guards: `reported` (`applied` queued), `verify_failed`, `failed` (watch failed, `reverted` queued) and `good`.
+  - `recover(now)` runs at boot; `FakeArm` calls it on its first tick, before the check-in. It only restores while the active overlay is ours or the one we replaced, never an overlay someone else installed after the crash. What it does with the attempt:
+    - marking good: finish only if `healthy()` still passes, else revert;
+    - `failed`: retry the restore;
+    - `verify_failed`: restore, then report `failed_verify` (never `applied` + `reverted`);
+    - `reported` and still ours: queue `reverted`, then restore;
+    - nothing queued yet:
+      - still ours: queue `applied` first (never `stale` for an applied overlay), then `reverted`, then restore;
+      - the replaced overlay (or none) in force: restore, then report `failed_verify`, so it isn't retried forever;
+      - someone else's overlay: leave it alone and report `stale`;
+    - ours is gone (already reverted, or replaced by a newer version): nothing left to do.
+  - Run the applier in a separate supervisor process (the visor). Inside the app that `apply_overlay` restarts, every proposal would be reverted at boot.
+- **Sim.** `SimDevice` gains `consult_parked` (health `degraded`), `task_running`, the knobs `proposal_verify_ok` and `fault_recurs`, and snapshot handles kept on the object (it outlives a simulated restart). It implements `ProposalHost`. `FakeArm` has `doctor` (a `TriggerHook`) and `applier`.
+
+- **New scenario:** `SCENARIOS["consult"]` makes an L1 ask (T2) through `arm.doctor`, parks for the consult, and sends `resolved=False`, `suspected_cause="software"`, `running.code_rev` set, the advice in `agent.reasoning`, and `consult={"wanted": true, "trigger": "T2", "attempts": 2}`. At `hold_after_s` the arm unparks unless a fix is under watch.
+- **Chaos:** a `doctor` chaos kind (`Rates.doctor_every_s`): 0 in `overnight`, 1800 in `demo`. It lands on non-canary arms and uses its own random stream, so the overnight schedule is unchanged.
+- **`fake_cloud.py`:** the three routes are in `ROUTES`, with the real cloud's errors.
+  - The ask returns 409 while frozen.
+  - The GET returns 409 while frozen, and 410 once a result is recorded or the proposal has expired by `FakeCloud.clock`.
+  - `FakeCloud.offer(device_id, proposal=None)` makes check-ins carry the pointer until a result or expiry.
+  - `canned_proposal(now=None, ttl_s=3600)` expires relative to `now`, and `CANNED_ADVICE` mirrors the contracts example.
 
 ## 11. L3 contract only (`contracts/tools.py`, PR 8; D27 deferred)
 

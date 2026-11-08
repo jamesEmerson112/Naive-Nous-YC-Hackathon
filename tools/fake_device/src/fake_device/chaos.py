@@ -26,6 +26,12 @@ passed while the process was down, so no arm is parked twice for one scheduled f
 Park faults are capped per day (`hardware_max`, default 2) and land on distinct non-canary
 arms, so the work orders they cause stay under the cloud's `ORDERS_PER_DAY_MAX` (3) and
 `ORDERS_PER_ROBOT_DAY_MAX` (1) caps.
+
+`doctor` events run the Fleet Doctor `consult` scenario (an L1 ask, then a consult) on a
+non-canary arm. Their rate is 0 in `overnight`, which runs with no real Doctor
+(architecture §6 item 8), and above 0 in `demo`. They draw from their own random stream,
+so turning them on leaves every other fault's arrival time unchanged (an arm parked for
+a consult can still push a fault to another arm, or skip it).
 """
 
 from __future__ import annotations
@@ -83,6 +89,9 @@ class Rates:
     quiet_for_s: float = 1800
     hold_after_s: float = 1200
     """An overlay is reported `held` this long after its incident (no recurrence)."""
+    doctor_every_s: float = 0
+    """Mean gap between Fleet Doctor consults (the `consult` scenario, non-canary arms).
+    Off overnight: the unattended run uses no Doctor, or a fake or capped one (K13)."""
 
 
 PROFILES: dict[str, Rates] = {
@@ -101,6 +110,7 @@ PROFILES: dict[str, Rates] = {
         quiet_every_s=7200,
         quiet_for_s=900,
         hold_after_s=600,
+        doctor_every_s=1800,
     ),
 }
 
@@ -108,7 +118,7 @@ PROFILES: dict[str, Rates] = {
 @dataclass(frozen=True)
 class ChaosEvent:
     at_s: float
-    kind: str  # rules | code | bad | bad-late | park | offline | episode | quiet
+    kind: str  # rules | code | bad | bad-late | park | doctor | offline | episode | quiet
     device_id: str | None = None
     duration_s: float = 0.0
     """For offline and quiet: how long it lasts."""
@@ -166,12 +176,26 @@ def build_schedule(
 
     hardware = _arrivals(rng, rates.hardware_every_s, start_s, end_s)
     faults = _arrivals(rng, rates.fault_every_s, start_s, end_s)
-    timeline = sorted([(t, "park") for t in hardware] + [(t, "fault") for t in faults])
+    # Doctor consults use their own stream, so the other faults land where they always did.
+    doctor_rng = random.Random(f"chaos:{seed}:{float(start_s)}:doctor")
+    consults = _arrivals(doctor_rng, rates.doctor_every_s, start_s, end_s)
+    timeline = sorted(
+        [(t, "park") for t in hardware]
+        + [(t, "fault") for t in faults]
+        + [(t, "doctor") for t in consults]
+    )
     parks = 0
     park_pool = list(others)
     rng.shuffle(park_pool)
     for t, what in timeline:
         if is_quiet(t):
+            continue
+        if what == "doctor":
+            candidates = [d for d in others if free(d, t)]
+            if candidates:
+                device = doctor_rng.choice(candidates)
+                busy_until[device] = t + rates.hold_after_s  # parked for the consult
+                events.append(ChaosEvent(t, "doctor", device))
             continue
         if what == "park":
             candidates = [d for d in park_pool if free(d, t)]
@@ -294,6 +318,8 @@ class Chaos:
             steps = SCENARIOS[event.kind](arm, self.rates.hold_after_s)
         elif event.kind == "park":
             steps = park_hardware(arm, self.rates.repair_after_s)
+        elif event.kind == "doctor":
+            steps = SCENARIOS["consult"](arm, self.rates.hold_after_s)
         elif event.kind == "episode":
             steps = [Step(0, "episode", self._episode(arm, bool(event.success)))]
         elif event.kind == "offline":

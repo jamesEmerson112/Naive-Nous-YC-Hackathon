@@ -7,6 +7,9 @@ unreachable) or `httpx.HTTPStatusError` (the cloud answered with 4xx/5xx), and t
 decides what to do with them. Downloads are hash-checked here and raise `HashMismatch`;
 a download whose hash is fine but whose content fails validation raises `InvalidPackage`.
 
+One exception: `ask_doctor` (Fleet Doctor L1) never raises. The healer calls it mid-heal
+and must carry on without an answer, so any error, non-200 or timeout returns None.
+
 Standard library + httpx + romulus-contracts only, Python 3.11+, so it can be copied into
 the Pi app as is.
 """
@@ -16,7 +19,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import tarfile
+import threading
 from typing import Any
 
 import httpx
@@ -27,20 +32,26 @@ from romulus_contracts import (
     SHA256_HEADER,
     CheckIn,
     CheckInResponse,
+    DoctorAdvice,
+    DoctorAsk,
     FirmwareManifest,
     HarnessMeta,
     IncidentAccepted,
     IncidentReport,
     InstallResult,
     OverlayStatus,
+    Proposal,
+    ProposalResult,
     RecordingAccepted,
     RecordingMeta,
     manifest_sha256,
 )
 
+log = logging.getLogger(__name__)
+
 
 class HashMismatch(Exception):
-    """A pulled firmware manifest or package doesn't hash to the sha256 the cloud sent."""
+    """A pulled manifest, package or proposal doesn't hash to the sha256 the cloud sent."""
 
     def __init__(self, what: str, expected: str, actual: str) -> None:
         super().__init__(f"{what}: sha256 mismatch: expected {expected}, got {actual}")
@@ -160,3 +171,79 @@ class DeviceClient:
         if accepted.upload == "needed":
             self.upload_blob(str(meta.recording_id), data)
         return accepted
+
+    # 3.8 (Fleet Doctor L1)
+    def ask_doctor(self, ask: dict[str, Any], *, timeout_s: float) -> dict[str, Any] | None:
+        """Ask the Fleet Doctor for hypotheses mid-heal. A direct call, not the outbox.
+
+        `ask` is a `DoctorAsk` as a dict. Returns the `DoctorAdvice` as a dict
+        (`{"ask_id", "hypotheses": [{"claim", "how_to_check"}], "model"}`), or **None on any
+        error**: unreachable, timeout, non-200 (503 doctor off, 409 frozen, 429 cap, 5xx),
+        or a body that isn't advice. The caller's circuit breaker trips on None.
+
+        `timeout_s` (pass the ask's `budget_s`) bounds the **total** wait. httpx's own
+        timeouts are per phase (connect, write, each read), so a server that drips bytes
+        could outlast them; the request therefore runs on a daemon thread and this method
+        stops waiting at `timeout_s`. A request still running then is abandoned, and
+        httpx's per-phase timeouts (also `timeout_s`) end it soon after.
+        """
+        answer: list[dict[str, Any] | None] = []
+        worker = threading.Thread(
+            target=lambda: answer.append(self._ask_doctor(ask, timeout_s)),
+            name="doctor-ask",
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout_s)
+        if worker.is_alive() or not answer:
+            log.info("doctor ask: no answer within %.1f s", timeout_s)
+            return None
+        return answer[0]
+
+    def _ask_doctor(self, ask: dict[str, Any], timeout_s: float) -> dict[str, Any] | None:
+        path = f"/v1/devices/{self.device_id}/doctor/ask"
+        try:
+            payload = body(DoctorAsk.model_validate(ask))
+            timeout = httpx.Timeout(timeout_s)
+            resp = self.http.request("POST", path, json=payload, timeout=timeout)
+            if resp.status_code != 200:
+                log.info("doctor ask: no answer (%s %s)", resp.status_code, resp.text[:200])
+                return None
+            return DoctorAdvice.model_validate(resp.json()).model_dump(mode="json")
+        except Exception as exc:  # any error at all means "no answer"
+            log.info("doctor ask: no answer (%s: %s)", type(exc).__name__, exc)
+            return None
+
+    # 3.9 (Fleet Doctor L2)
+    def get_proposal(
+        self, proposal_id: str, *, expected_sha256: str | None = None
+    ) -> tuple[dict[str, Any], str]:
+        """Pull a proposal and check its hash before anything trusts it. Returns (body, sha256).
+
+        - `sha256(response bytes)` must equal the response's `X-Sha256` header, as for
+          harness and code packages, and also `expected_sha256` (the check-in pointer's
+          `sha256`) when given. Otherwise `HashMismatch`.
+        - A body that hashes fine but isn't a valid `Proposal` for this id: `InvalidPackage`.
+        - The cloud answering 404 or 410 (gone, expired) raises `httpx.HTTPStatusError`.
+        """
+        resp = self._send("GET", f"/v1/devices/{self.device_id}/proposals/{proposal_id}")
+        actual = sha256_hex(resp.content)
+        header = resp.headers.get(SHA256_HEADER, "").lower()
+        if actual != header:
+            raise HashMismatch(f"proposal {proposal_id}", header, actual)
+        if expected_sha256 is not None and actual != expected_sha256.lower():
+            what = f"proposal {proposal_id} (check-in pointer)"
+            raise HashMismatch(what, expected_sha256, actual)
+        try:
+            data = json.loads(resp.content)
+            proposal = Proposal.model_validate(data)
+        except ValueError as exc:  # bad JSON or a ValidationError
+            raise InvalidPackage(f"proposal {proposal_id}: {exc}") from exc
+        if proposal.proposal_id != proposal_id:
+            raise InvalidPackage(f"proposal {proposal_id}: body is {proposal.proposal_id}")
+        return data, actual
+
+    # 3.10 (Fleet Doctor L2), sent from the outbox
+    def report_proposal_result(self, proposal_id: str, result: ProposalResult) -> None:
+        path = f"/v1/devices/{self.device_id}/proposals/{proposal_id}/result"
+        self._send("POST", path, json=body(result))
