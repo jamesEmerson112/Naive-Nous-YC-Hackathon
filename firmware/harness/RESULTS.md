@@ -18,6 +18,24 @@ Report format from [`HANDOFF.md`](HANDOFF.md). One row per run. The raw runs sta
   doesn't show the bench works. The one bench run stopped at stage 1 because the HC-SR04 gets no echo
   (wiring, see HANDOFF).
 
+## Bench, hint-free: passed (Sat Nov 7, 11:22 PM PST)
+`20261107-232214-arm07-ollama`: all 9 checks, after three hints were removed. `arm/hint_audit.py` found 0
+leaks on this setup. The hints that were there before:
+- podd's `us_mismatch` hypotheses named "integer overflow/truncation" and suggested `src_search 'dist_mm'` and
+  `fw_rollback`.
+- The v1.7 commit message said "keep the distance in 16 bits".
+- The patch carried a "16-bit math" comment.
+
+| | |
+|---|---|
+| Timeline | triage on turn 1; `src_diff` on turn 2; **`fw_rollback`, verified (turn 5, +48 s)**; **`arm_test` passed (turn 6, +51 s)**; triage clean (7); report (13) |
+| Totals | 13 turns, 11 tool calls (9 read, 1 flash, 1 arm), 1 refused, 0 errors, 86.1 s |
+| Refused | turn 12: `src_commit`, which isn't in the arm tool set; refused as invalid |
+| Root cause | named the `(uint16_t)` cast on line 122 of `hcsr04.c`. Its arithmetic slipped: it put the truncated value at ~53445 where it is 30189 (882157 mod 65536), though it got 15 mm right |
+
+**Every row below, and the 11:10 PM run, ran with those hints present.** They show the plumbing and the
+model's behaviour, but they aren't hint-free evidence.
+
 ## Bench: passed (Sat Nov 7, 11:10 PM PST)
 `20261107-231033-arm07-ollama`: the real pod, the real HC-SR04 (open space at ~445 mm), qwen3.5:4b via
 the relay, v2 harness, start gate only (no arm on USB). **All 9 checks passed.**

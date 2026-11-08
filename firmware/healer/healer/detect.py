@@ -259,14 +259,11 @@ def check_ultrasonic(s):
                            "samples": [{"us": d["us"], "mm_reported": d["mm"], "mm_from_echo": round(expect(d)),
                                         "st": d.get("st")} for d in ex],
                            "mm_reported_range": [min(d["mm"] for d in bad), max(d["mm"] for d in bad)]},
-                          ["the firmware converts echo time to distance wrongly: a code or constant change in the "
-                           "distance computation (hcsr04.c), e.g. integer overflow/truncation or a units mix-up",
-                           "NOT a real obstruction: the echo time is the physical measurement, and an object at the "
+                          ["the firmware computes the distance from the echo time wrongly",
+                           "not a real obstruction: the echo time is the physical measurement, and an object at the "
                            "reported distance would return a much shorter echo"],
                           ["telemetry_recent kind=D (compare us and mm in each sample)",
-                           "src_log / src_diff rev_a=v1.0 (did the distance computation change in a release?)",
-                           "src_search 'dist_mm'",
-                           "fw_rollback to known-good if the latest release introduced it"]))
+                           "src_log / src_diff (what changed since the known-good release?)"]))
     if len(ok) >= 10:
         mm = [d["mm"] for d in ok]
         # Covered sensor: short distance AND a short echo. A short distance with a long echo is us_mismatch.

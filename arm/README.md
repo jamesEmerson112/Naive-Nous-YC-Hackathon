@@ -19,6 +19,7 @@ pod (STM32 + HC-SR04) --"D mm=.. st=.."--> Pi --(podd socket, or the probe's ser
 | `wave.json` | **default motion.** A wave recorded on this arm by hand (kinesthetic, 2026-11-07): 663 frames at 50 fps (13.2 s), in degrees |
 | `motions/svla_so101_pickplace_ep0.json` | episode 0 of [lerobot/svla_so101_pickplace](https://huggingface.co/datasets/lerobot/svla_so101_pickplace): 303 frames at 30 fps (10 s), pick-and-place from the folded rest pose and back |
 | `heal_test.py` | **self-healing bench test**: a bad pod firmware blocks the arm, the healer agent fixes it, the arm runs (below) |
+| `hint_audit.py` | captures everything the agent would read on v1.7 (prompt, tools, kickoff, every read tool through blind mode) and flags anything that gives the answer away |
 | `tests/` | offline tests for that loop: the bad image's C math, the triage rule, the gate, the agent loop (`simpod.py` is the simulated pod) |
 | `extract_motion.py` | regenerates that file (play it with `--motion arm/motions/svla_so101_pickplace_ep0.json`), or pulls another episode/dataset (`--episode 7`, `--repo ...`) |
 
@@ -148,12 +149,26 @@ cd firmware
 demo/scenario start 07                                      # plant the fault
 python3 ../arm/safe_replay.py --check-only                  # REFUSES: object at ~15 mm; samples show us≈5000+ but mm<33
 healer/bin/heal triage                                      # critical us_mismatch
-cd harness && python3 agent.py run --tools arm --ollama-url http://192.168.50.1:11434   # the agent, live
+cd harness && python3 agent.py run --tools arm --blind-since-deploy --ollama-url http://192.168.50.1:11434   # the agent, live
 cd .. && healer/bin/heal chip_status                        # known-good build running
 python3 ../arm/safe_replay.py --check-only                  # passes now
 demo/scenario reset
 ```
 Replay any run later: `python3 firmware/harness/view.py` (newest) or `view.py firmware/harness/runs/<dir>`.
+
+### No hints for the agent
+The agent sees only the harness's tools. `python3 arm/hint_audit.py` deploys v1.7, captures everything those
+tools would show it, and flags any answer term (uint16, 16-bit, truncation, overflow, cast, the scenario
+name...) outside the firmware source; exit 0 means no leaks. What keeps it clean:
+- The release is the bare one-line change, with a neutral commit message ("us: tidy the distance conversion")
+  and no explanatory comment.
+- podd's `us_mismatch` finding states only what it measured and what that rules out (not an obstruction),
+  never the bug class or the fix. Restart podd after changing `detect.py`: triage runs inside podd.
+- Blind mode hides every record from before the fault: earlier runs' notes, notifications, flash reasons
+  and deployments. Without it they give the answer away (`hint_audit.py --no-deploy --minutes 120` shows
+  them). `heal_test.py` always runs blind; for `agent.py`, pass `--blind-since-deploy`.
+- `demo/`, `firmware/pod/`, the docs, this folder and the run transcripts are out of the tools' reach (no
+  shell; the `src_*` tools are confined to the workspace).
 
 ### Offline tests (no hardware, no model)
 ```bash

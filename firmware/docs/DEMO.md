@@ -365,7 +365,7 @@ instructions. That's the trust story: it knows what it can't fix.
 
 ---
 
-## 7. v1.7: "us: keep the distance in 16 bits for the radio frame" (the arm never starts)
+## 7. v1.7: "us: tidy the distance conversion" (the arm never starts)
 
 **Start:** `demo/scenario start 07`, with the HC-SR04 pointed at open space more than 200 mm away. The whole
 loop, arm included, is `python3 arm/heal_test.py` (see `arm/README.md`, "Self-healing test").
@@ -378,6 +378,8 @@ out->dist_mm = (us * 343u + 1000u) / 2000u;             /* v1.0 */
 The cast applies to the numerator, not to the result, so `us × 343 + 1000` is cut to 16 bits before
 the divide. Every real echo (116–23300 µs) comes out as 0–32 mm (65535 / 2000 = 32). The echo time
 itself is untouched, so each `D` line contradicts itself: `us=5240` means 899 mm, but `mm=15`.
+The release has no comment explaining the cast and a neutral commit message, so nothing but the code
+change itself points at the bug.
 `arm/tests/test_bad_image.py` compiles both lines with gcc and checks every echo value.
 
 **What the logs show:**

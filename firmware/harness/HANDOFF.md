@@ -27,6 +27,9 @@ reference for flags, the gate, blind mode and scoring. This file holds the runbo
     on the sensor, not software.
 - **Arm scenario passed on the bench (11:10 PM PST, after the HC-SR04 was rewired):** all 9 checks. The agent
   rolled back on turn 16 and its `arm_test` passed on turn 17 (`RESULTS.md`).
+- **Hint-free rerun passed (11:22 PM PST):** three hints were removed (triage hypothesis text, the commit
+  message, a code comment), and `arm/hint_audit.py` finds 0 leaks. The agent rolled back on turn 5 and its
+  `arm_test` passed on turn 6. Restart podd after any `detect.py` change: triage runs inside podd.
 - **Still not verified:** steps 4–5 (not run tonight; the sensor that blocked `evaluate.py` now works). Also
   unverified: the real arm motion (`--arm-port`, no arm on USB), the SSH `--target` path and the `claude` driver.
 - **Changed for the arm scenario (see `README.md`, "The arm task"):** the live view (`console.py`,

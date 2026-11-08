@@ -138,7 +138,7 @@ class SimPod:
                 if str(args.get("command", "")).startswith("us check") else [])},
             "src_read": lambda: self.src_read(args.get("path", ""), args.get("start", 1), args.get("end")),
             "src_search": lambda: self.src_search(args.get("pattern", ""), args.get("path")),
-            "src_log": lambda: {"log": "11142a8 v1.7 us: keep the distance in 16 bits\n43566ce v1.0"},
+            "src_log": lambda: {"log": "6804c8f v1.7 us: tidy the distance conversion\n43566ce v1.0"},
             "src_diff": lambda: {"diff": (BAD_DIR / "bug.patch").read_text() if self.workspace == "v1.7" else ""},
             "fw_images": lambda: {"images": [dict(GOOD), dict(BAD)], "deployments": self.deployments},
             "chip_status": lambda: {"crc": img["crc"], "build_id": "pod " + img["version"], "running": True},

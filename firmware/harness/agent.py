@@ -692,7 +692,7 @@ def watch(bench, a):
             s = run_agent(bench, make_driver(a), out, tools=a.tools, kickoff=kickoff_text(incidents),
                           max_turns=a.max_turns, time_limit=a.time_limit, flash_cap=a.flash_cap,
                           max_result_chars=a.max_result_chars, label="watch", ui=make_ui(a), arm=make_arm(a),
-                          arm_cap=a.arm_cap)
+                          arm_cap=a.arm_cap, blind=make_blind(a, bench))
             handled |= {i["id"] for i in open_incidents(bench)}
             print("run done: %s, %d tool calls, stop %s -> %s" % (out.name, s["tool_calls"], s["stop"], out), flush=True)
         time.sleep(3)
@@ -721,6 +721,12 @@ def add_agent_args(p):
     g.add_argument("--arm-args", default="", help="more safe_replay.py flags, e.g. '--speed 0.5'")
     g.add_argument("--min-mm", type=int, default=200, help="the arm's start-gate distance limit")
     g.add_argument("--arm-cap", type=int, default=ARM_CAP, help="arm_test runs allowed per run")
+    p.add_argument("--blind-minutes", type=float,
+                   help="hide every record older than this many minutes (earlier runs' notes, fixes, notifications), "
+                        "as evaluation runs do; set it to just cover the current fault")
+    p.add_argument("--blind-since-deploy", action="store_true",
+                   help="hide every record from before the operator's last deploy (demo/scenario start), so only "
+                        "the current fault is visible: earlier runs' notes, fixes and notifications are not")
     p.add_argument("--view", choices=["full", "brief", "off", "none"], default="full",
                    help="live view: full (stream all thinking), brief (first lines of thinking), off (no thinking), "
                         "none (no live view; JSON summary only)")
@@ -730,6 +736,23 @@ def make_arm(a):
     if not (a.arm or a.arm_port or a.tools == "arm"):
         return None
     return ArmConfig(port=a.arm_port, python=a.arm_python, min_mm=a.min_mm, extra=a.arm_args)
+
+
+def make_blind(a, bench):
+    """--blind-minutes N: records older than N minutes are hidden. --blind-since-deploy: records from before the
+    operator's last deploy (30 s of margin: the deploy event is logged just before its flash) are hidden."""
+    if getattr(a, "blind_since_deploy", False):
+        rows = [json.loads(l) for l in bench.read("healer/var/deployments.jsonl").splitlines() if l.strip()]
+        deploys = [r for r in rows if str(r.get("reason") or "").startswith("operator deploy")]
+        if not deploys:
+            raise SystemExit("--blind-since-deploy: no operator deploy in healer/var/deployments.jsonl")
+        t_bench = deploys[-1]["ts"] - 30
+        t = time.time() - (bench.clock()[0] - t_bench)             # the same moment on this machine's clock
+    elif getattr(a, "blind_minutes", None):
+        t_bench = t = time.time() - a.blind_minutes * 60
+    else:
+        return None
+    return Blind(t_bench, time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t_bench)), t)
 
 
 def make_ui(a):
@@ -752,7 +775,7 @@ def main(argv=None):
     ui = make_ui(a)
     s = run_agent(bench, make_driver(a), out, tools=a.tools, max_turns=a.max_turns, time_limit=a.time_limit,
                   flash_cap=a.flash_cap, max_result_chars=a.max_result_chars, label="run", ui=ui, arm=make_arm(a),
-                  arm_cap=a.arm_cap)
+                  arm_cap=a.arm_cap, blind=make_blind(a, bench))
     print(json.dumps({k: v for k, v in s.items() if k != "final_text"}, indent=2))
     if ui is None:
         print("\n" + s["final_text"] + "\n\ntranscript: %s" % (out / "transcript.jsonl"))
