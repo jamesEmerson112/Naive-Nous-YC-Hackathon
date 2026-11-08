@@ -2,3 +2,12 @@
 hub/node_modules/
 hub/dist/
 .DS_Store
+
+# Romulus cloud platform
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+data/
