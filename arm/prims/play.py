@@ -11,6 +11,7 @@ Ctrl-C stops and disconnects (torque off, so support the arm).
 from __future__ import annotations
 
 import argparse
+import logging
 
 from .core import Arm, Primitive, list_primitives, load_poses
 
@@ -22,6 +23,8 @@ def main() -> None:
     ap.add_argument("--loop", type=int, default=1)
     ap.add_argument("--hold", type=float, default=0.0, help="seconds to hold at the end before torque off")
     args = ap.parse_args()
+    # The arm lagging the recording trips LeRobot's per-step clamp; that's expected, so keep the output readable.
+    logging.getLogger("lerobot.robots.utils").setLevel(logging.ERROR)
 
     if args.list or not args.steps:
         print("Primitives:")

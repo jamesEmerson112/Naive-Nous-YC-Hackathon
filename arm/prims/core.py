@@ -223,6 +223,7 @@ class Arm:
 
     # -- lifecycle
     def connect(self) -> Arm:
+        _goal_to_present(self.robot)  # so enabling torque holds still instead of jumping to a stale goal
         connect_calibrated(self.robot, "follower")
         self._last = self.read()
         return self
@@ -330,6 +331,21 @@ class Arm:
             else:
                 op, *args = step
                 getattr(self, op)(*args)
+
+
+def _goal_to_present(robot) -> None:
+    """With torque off, set every motor's Goal_Position to where it is now (raw ticks).
+
+    A servo keeps its last goal while limp (after kinesthetic recording or calibration), and
+    LeRobot's connect() re-enables torque, which would snap the arm back to that old goal.
+    """
+    bus = robot.bus
+    bus.connect(handshake=False)
+    try:
+        bus.disable_torque()
+        bus.sync_write("Goal_Position", bus.sync_read("Present_Position", normalize=False), normalize=False)
+    finally:
+        bus.disconnect(disable_torque=False)
 
 
 def _sleep_until(deadline: float) -> None:
