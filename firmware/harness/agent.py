@@ -35,7 +35,9 @@ RUNS = HERE / "runs"
 
 TOOL_TIMEOUT_S = 180          # HARNESS 4: at least 120 s; fw_flash with an auto-rollback takes about 60 s
 MAX_RESULT_CHARS = 30_000     # HARNESS 4: cap each result, keeping the end (triage_after, rollback info)
-FLASH_CAP = 3                 # flash-risk calls (fw_flash, fw_rollback) allowed per run
+FLASH_CAP = 5                 # flash-risk calls (fw_flash, fw_rollback) allowed per run: a rollback to stabilize, a
+                              # forward fix, a second try, a final rollback, and one spare. A call that never reaches
+                              # the chip, or that asks for the image already running, isn't counted (Gate.after).
 ALLOWED_RISKS = {"read", "runtime", "code", "notify"}   # HARNESS 5: notify is "allow" too
 DEBOUNCE_S = 10               # HARNESS 7: one fault often opens several incidents within ~5 s
 
@@ -48,13 +50,15 @@ CORE_TOOLS = ["status", "triage", "incidents", "telemetry_stats", "telemetry_rec
               "src_read", "src_search", "src_diff", "src_edit", "src_commit", "fw_build", "fw_flash",
               "fw_rollback", "notify_human", "note"]
 
-ARM_CAP = 4                   # arm_run calls allowed per run (each one may move the real arm)
+ARM_CAP = 5                   # arm_run calls allowed per run (each one may move the real arm): after the rollback,
+                              # after a forward fix, after a second try or a final rollback, and spares
 
-# The arm task's tool set: observe, read the release history and source, flash, notify, and the arm tools
-# below. No source editing or builds: in this task a firmware fault is fixed by restoring the known-good image.
+# The arm task's tool set: observe, read the release history and source, change and build the source, flash,
+# notify, and the arm tools below. The rules (SYSTEM.md "How to work", ARM_RULES) say the order: roll back to
+# known-good and check the arm first, then a forward fix (src_edit, fw_build, fw_flash) checked the same way.
 ARM_TOOLS = ["status", "triage", "incidents", "telemetry_stats", "telemetry_recent", "events", "pod_cmd",
-             "chip_status", "fw_images", "src_log", "src_read", "src_search", "src_diff", "fw_flash",
-             "fw_rollback", "notify_human", "note"]
+             "chip_status", "fw_images", "src_log", "src_read", "src_search", "src_diff", "src_edit", "src_revert",
+             "src_commit", "fw_build", "fw_flash", "fw_rollback", "notify_human", "note"]
 
 # Harness tools: implemented here (run_arm, arm_state, arm_report), not in healer/, because the arm isn't part
 # of the pod. They run arm/safe_replay.py and arm/arm_status.py on the bench exactly as an operator would.
@@ -88,18 +92,24 @@ ARM_RULES = """
 ## The robot arm (this run)
 - An SO-101 robot arm depends on this pod. Its job (arm_run) starts with a gate on the pod's ultrasonic distance: if anything reads closer than {min_mm} mm, the arm's obstacle reflex swings its base back and forth to get away from it and waits for the way to clear; if the sensor is untrustworthy, the job refuses to start. A wrong distance either keeps the arm from working, makes it move when it shouldn't, or lets it hit someone.
 - arm_state shows the arm's joints now. arm_report shows what a job did, against the motion it was supposed to play.
+- To check the arm, launch its job yourself with arm_run and read the motion report. The check passes only if the job exits 0 without the reflex, plays every planned frame, and reaches the commanded range on every joint.
 - If something really is in front of the sensor, or a wire is off, that is a person's job: notify_human with precise instructions, and don't flash.
-- If the pod's firmware is at fault, restore service first: flash the known-good image (fw_rollback). In this run that is the fix; a person will repair the release afterwards.
-- You don't have to explain the exact defect before you roll back. Telemetry that contradicts physics, plus a release since known-good that changed the code producing the wrong value, is enough: roll back, then explain what you can and say what is still unclear.
-- After a fix, launch the arm's job yourself with arm_run and check its motion report: the job must exit 0 without the reflex, play every planned frame, and reach the commanded range on every joint. You are done only when you have checked that the expected movement happened. Say in your report what you checked, with the numbers.
+- If the pod's firmware is at fault, follow "How to work" above in this order:
+  1. Stabilize: fw_rollback to known-good straight away, then check the arm. The arm must work again before you do anything else.
+  2. Repair: find the defect in what the release changed, fix it with src_edit, fw_build, and fw_flash the crc that fw_build returns. Confirm the triage finding is gone and the telemetry agrees with physics, then check the arm again on your build.
+  3. If your build fails any check, or you can't find the defect, fw_rollback to known-good and check the arm once more. Known-good is always an acceptable end state.
+- If you can't recreate the conditions that trigger the fault from here, say so in your report and name what a person must re-test.
+- You are done only when the firmware you leave running has passed the arm check after its flash. Report which firmware is running, the root cause, and what you checked, with the numbers (frames, range reached per joint).
 """
 
 OPERATING_RULES = """
 
 ## Operating rules for this run
 - You work alone: nobody will answer questions until the run ends. Don't ask for permission; decide within the rules above.
+- If you are stuck (you can't find the cause, or your fixes keep failing), call ask_expert with your question and what you tried: it goes to the team's dashboard for a stronger model or a person. Nobody answers during this run, so keep going; known-good is always an acceptable end state.
 - Your only access to the pod is the tools you were given. There is no shell and no other file access.
-- Flashing (fw_flash, fw_rollback) is limited to {flash_cap} calls in this run; further calls are refused.
+- Flashing (fw_flash, fw_rollback) is limited to {flash_cap} calls in this run; further calls are refused. A call that fails before anything is written to the chip, or that asks for the image already running, is not counted.
+- Stabilize first is enforced: while the pod runs firmware that isn't known-good, changing the source, building, and flashing anything but known-good are refused. Roll back first.
 - Tool calls run one at a time, in the order you give them.
 - Finish with a short report: the root cause and the evidence for it, what you changed, how you verified it, and anything a person must do.
 """
@@ -272,7 +282,33 @@ def run_arm(bench, arm, args=None, on_line=None):
             "log": clip_tail(log, 3000)[0], "motion_report": report}
 
 
-HARNESS_TOOLS = {"arm_run": run_arm, "arm_state": arm_state, "arm_report": arm_report}
+# Asking for help from a stronger model. Offered in every run (run_agent's `expert`). The request goes into the
+# transcript, and the edge bridge puts it on the cloud dashboard with the run's write-up (tools/edge_bridge,
+# agent_runs.py). Nothing answers during the run: the result says so, so the agent carries on.
+EXPERT_TOOL = {
+    "name": "ask_expert", "risk": "notify",
+    "input_schema": {"type": "object", "properties": {
+        "question": {"type": "string", "description": "what you can't work out, in one or two sentences"},
+        "tried": {"type": "string", "description": "what you checked or tried so far, and what you saw"}},
+        "required": ["question"]},
+    "description": ("Ask for help from a stronger model when you are stuck: you can't find the cause, or your fixes "
+                    "keep failing. Use it only after you have investigated and tried. Your question and what you "
+                    "tried go to the team's dashboard with this run's steps, for a stronger model or a person to "
+                    "pick up. Nobody answers during this run, so carry on afterwards. For something only a person "
+                    "can do (a wire, power, a part), use notify_human instead.")}
+
+
+def ask_expert(bench, arm, args=None):
+    args = args or {}
+    if not str(args.get("question") or "").strip():
+        return {"ok": False, "error": "question is required: say what you can't work out"}
+    return {"ok": True, "recorded": True, "answered": False,
+            "note": ("Your request is on the team's dashboard with this run's steps. No stronger model or person "
+                     "answers during this run: carry on with what you have. If you can't fix it, roll back to "
+                     "known-good, check it, and say in your report what is left.")}
+
+
+HARNESS_TOOLS = {"arm_run": run_arm, "arm_state": arm_state, "arm_report": arm_report, "ask_expert": ask_expert}
 
 
 # ----------------------------------------------------------------------------------------- tools
@@ -309,7 +345,8 @@ def arm_kickoff(job, incidents, note=None):
                                                                              job.get("log", "").strip()) +
             ("The operator adds: %s\n\n" % note if note else "") +
             ("podd has these open incidents:\n" + "\n".join(rows) if rows else "podd has no open incidents.") +
-            "\n\nFind out why, restore service if you can, and confirm that the arm moves as expected.")
+            "\n\nFind out why, restore service if you can, and confirm that the arm moves as expected on the firmware "
+            "you leave running.")
 
 
 def open_incidents(bench):
@@ -317,7 +354,8 @@ def open_incidents(bench):
 
 
 ARM_GOAL = ("An SO-101 robot arm depends on this pod's ultrasonic distance. When you have restored service, launch the "
-            "arm's job with arm_run and confirm from its motion report that the arm moves as expected, then report.")
+            "arm's job with arm_run and confirm from its motion report that the arm moves as expected on the firmware "
+            "you leave running, then report.")
 
 
 def kickoff_text(incidents, arm=None):
@@ -339,7 +377,8 @@ def run_tool(bench, name, args, arm=None):
         t0 = time.time()
         try:
             obj = HARNESS_TOOLS[name](bench, arm, args)
-            return obj, json.dumps(obj, ensure_ascii=False), False, time.time() - t0
+            is_error = isinstance(obj, dict) and obj.get("ok") is False
+            return obj, json.dumps(obj, ensure_ascii=False), is_error, time.time() - t0
         except Exception as e:                  # the tool broke, not the arm's job: an error result
             obj = {"ok": False, "error": "harness: %s: %s" % (type(e).__name__, e)}
             return obj, json.dumps(obj), True, time.time() - t0
@@ -385,25 +424,81 @@ def isolation_violation(name, args):
 
 class Gate:
     """read, runtime, code and notify are allowed; flash and arm are capped per run. Returns
-    (decision, reason, kind) where kind is None, "invalid" (no such tool here) or "forbidden"."""
+    (decision, reason, kind) where kind is None, "invalid" (no such tool here), "forbidden", or "redundant" (a flash
+    of the image this run already flashed and verified: refused, not counted).
 
-    def __init__(self, tools, flash_cap=FLASH_CAP, arm_cap=ARM_CAP):
+    Flash accounting (after()): a flash call that never reached the chip (an unknown image name, an image marked bad)
+    is refunded. A small model repeats flashes: one run rolled back, flashed known-good twice more and asked for
+    'v1.0' (no such crc), and spent its whole budget before it ever checked the arm (watch run, Nov 8, 02:52)."""
+
+    def __init__(self, tools, flash_cap=FLASH_CAP, arm_cap=ARM_CAP, stable=True, good=None):
         self.risk = {t["name"]: t["risk"] for t in tools}
         self.flash_cap = flash_cap
         self.flashes = 0
         self.arm_cap = arm_cap
         self.arm_runs = 0
+        self.running = None             # the image this run flashed last and fw_flash verified: crc, version, status
+        # Stabilize first (SYSTEM.md "How to work", ARM_RULES), enforced: if the run starts on an image that isn't
+        # known-good, source changes, builds and flashes of anything but known-good are refused until a verified
+        # rollback to known-good (and, with the arm tools, an arm_run that passed on it). The rules alone didn't do
+        # it: qwen3.5:4b went straight to editing near_hold() and flashed its own build (--sim rehearsal, Nov 8).
+        self.good = good or {}          # known-good crc -> version, from the registry at the start of the run
+        self.need_rollback = not stable
+        self.need_arm_check = not stable and "arm_run" in self.risk
+
+    def _is_known_good(self, name, args):
+        ref = str(args.get("image") if name == "fw_flash" else args.get("to") or "known-good").strip()
+        key = ref.upper().removeprefix("0X")
+        return (ref.lower().replace("_", "-") == "known-good" or (len(key) >= 4 and any(c.startswith(key) for c in self.good))
+                or ref.lower() in {str(v).lower() for v in self.good.values()})
+
+    def _out_of_order(self, name, args):
+        if not (self.need_rollback or self.need_arm_check):
+            return None
+        risk = self.risk[name]
+        if risk != "code" and not (risk == "flash" and not self._is_known_good(name, args)):
+            return None
+        if self.need_rollback:
+            return ("stabilize first: the pod still runs firmware that isn't known-good. Roll back with fw_rollback "
+                    "(to known-good)%s before you change, build or flash new firmware. This call was not run and "
+                    "not counted." % (" and check the arm with arm_run" if self.need_arm_check else ""))
+        return ("check the arm first: the pod runs known-good now. Run arm_run and make sure it passes (exit 0, every "
+                "frame) before you change, build or flash new firmware. This call was not run and not counted.")
 
     def check(self, name, args):
         if name not in self.risk:
             return "deny", "there is no tool named %r in this run" % name, "invalid"
         if not isinstance(args, dict):
             return "deny", "arguments must be a JSON object", "invalid"
-        why = isolation_violation(name, args)
+        why = isolation_violation(name, args) or None
         if why:
             return "deny", why, "forbidden"
+        why = self._out_of_order(name, args)
+        if why:
+            return "deny", why, "out_of_order"
+        return self._check(name, args)
+
+    def _same_as_running(self, name, args):
+        r = self.running
+        if not r:
+            return False
+        ref = str(args.get("image") if name == "fw_flash" else args.get("to") or "known-good").strip()
+        key = ref.upper().removeprefix("0X")
+        return ((ref.lower().replace("_", "-") == "known-good" and r.get("status") == "known-good")
+                or (len(key) >= 4 and str(r.get("crc", "")).upper().startswith(key))
+                or ref.lower() == str(r.get("version") or "").lower())
+
+    def _check(self, name, args):
         risk = self.risk[name]
         if risk == "flash":
+            if self._same_as_running(name, args):
+                r = self.running
+                nxt = "check the arm with arm_run" if "arm_run" in self.risk else "check the device (triage, telemetry)"
+                return "deny", ("%s (%s, %s) is already running: you flashed it at turn %s and its verification "
+                                "passed. Flashing it again changes nothing, so this call was not run and not counted. "
+                                "Next: %s, or build and flash a fix." % (r.get("crc"), r.get("version"),
+                                                                          r.get("status"), r.get("turn"), nxt)), \
+                    "redundant"
             if self.flashes >= self.flash_cap:
                 return "deny", "the flash budget for this run is used up (%d)" % self.flash_cap, "forbidden"
             self.flashes += 1
@@ -416,6 +511,71 @@ class Gate:
         if risk in ALLOWED_RISKS:
             return "allow", risk, None
         return "deny", "risk level %r is not allowed" % risk, "forbidden"
+
+    def after(self, name, obj, turn=None):
+        """Book-keeping once an allowed flash call has run. Returns a note for the model, or None.
+        fw_flash's result has `result` and `checks` once it has written the chip. An error without them (heal's
+        {"ok": false, "error": "KeyError: ..."}) means it failed before that, so it is refunded. Anything else (no
+        JSON at all: the tool died, maybe mid-flash) still counts."""
+        if self.risk.get(name) == "arm":            # an arm check that passed on known-good ends "stabilize first"
+            if (not self.need_rollback and isinstance(obj, dict) and obj.get("exit") == 0
+                    and (self.running or {}).get("status") == "known-good"):
+                self.need_arm_check = False
+            return None
+        if self.risk.get(name) != "flash":
+            return None
+        if isinstance(obj, dict) and obj.get("ok") is False and "result" not in obj and "checks" not in obj:
+            self.flashes = max(0, self.flashes - 1)
+            return "nothing was written to the chip, so this call was not counted against the flash budget"
+        if not isinstance(obj, dict):
+            self.running = None
+            return None
+        landed = obj if obj.get("ok") else (obj.get("rollback") or {})
+        img = landed.get("image") if landed.get("ok") else None
+        self.running = dict({k: img.get(k) for k in ("crc", "version", "status")}, turn=turn) if img else None
+        if img and (img.get("status") == "known-good" or img.get("crc") in self.good):
+            self.running["status"] = "known-good"
+            self.need_rollback = False
+        return None
+
+
+def device_state(bench):
+    """At the start of a run: (does the chip run a known-good image, {known-good crc: version}, what the chip runs).
+    Unknown (no crc from chip_status, or the tools fail) counts as stable, so nothing is enforced on a guess."""
+    try:
+        chip = bench.heal_json("chip_status")
+        crc = chip.get("crc")
+        imgs = bench.heal_json("fw_images").get("images", [])
+    except Exception:
+        return True, {}, None
+    good = {m["crc"]: m.get("version") for m in imgs if m.get("status") == "known-good" and m.get("crc")}
+    return (not crc or not good or crc in good), good, chip_summary(chip)
+
+
+def chip_summary(chip):
+    """The fields of chip_status worth keeping in the transcript: which image runs, and what the registry says."""
+    if not isinstance(chip, dict):
+        return None
+    img = chip.get("image") or {}
+    return {"crc": chip.get("crc"), "build_id": chip.get("build_id"), "running": chip.get("running"),
+            "version": img.get("version"), "status": img.get("status"), "origin": img.get("origin")}
+
+
+def device_check(bench):
+    """At the end of a run, for the run report (not shown to the agent): what the chip runs, what triage finds now,
+    and podd's open incidents. Each part is None if its tool failed."""
+    out = {}
+    for key, fn in (("chip", lambda: chip_summary(bench.heal_json("chip_status"))),
+                    ("findings", lambda: [{k: f.get(k) for k in ("kind", "severity", "summary")}
+                                          for f in bench.heal_json("triage").get("findings", [])]),
+                    ("open_incidents", lambda: [{k: i.get(k) for k in ("id", "kind", "severity", "summary")}
+                                                for i in open_incidents(bench)])):
+        try:
+            out[key] = fn()
+        except Exception as e:
+            out[key] = None
+            out.setdefault("errors", []).append("%s: %s: %s" % (key, type(e).__name__, e))
+    return out
 
 
 # ----------------------------------------------------------------------------------------- blind mode
@@ -534,13 +694,24 @@ class ClaudeDriver:
             for cid, _name, text, is_error in results]})
 
 
+NUM_CTX = 65536               # Ollama context window (tokens). qwen3.5:4b takes up to 262144; at 32768 the arm runs
+                              # filled it in 24-28 turns (Nov 8, 02:20 and 02:52), before the arm was checked.
+TRIM_AT = 0.75                # share of num_ctx at which the thinking of older turns is dropped from the history
+KEEP_THINKING = 4             # ... except the last this many turns'
+
+
 class OllamaDriver:
     """A local model through Ollama's /api/chat (stdlib HTTP). Ollama takes one `tool` message per
-    result, so a turn's results go back as consecutive tool messages."""
+    result, so a turn's results go back as consecutive tool messages.
+
+    The model's thinking stays in the history it is sent back (qwen's template keeps it for every turn since the
+    last user message, which in a run is all of them). It was ~40% of the prompt in the Nov 8 runs. When the prompt
+    passes TRIM_AT of num_ctx, the thinking of all but the last KEEP_THINKING turns is dropped, once: the tool
+    results it was about stay, and the run goes on instead of stopping at context_full."""
 
     name = "ollama"
 
-    def __init__(self, model="qwen3.5:4b", url="http://localhost:11434", num_ctx=32768, think=True,
+    def __init__(self, model="qwen3.5:4b", url="http://localhost:11434", num_ctx=NUM_CTX, think=True,
                  timeout=1200):
         self.model, self.url, self.num_ctx, self.think, self.timeout = model, url.rstrip("/"), num_ctx, think, timeout
         self.malformed = 0
@@ -594,8 +765,22 @@ class OllamaDriver:
             del msg["thinking"]
         return {**final, "message": msg}
 
+    def _approx_ctx(self):
+        return len(json.dumps(self.messages) + json.dumps(self.tools)) // 3     # tokens, on the high side
+
+    def _trim_thinking(self, keep=KEEP_THINKING):
+        """Drop the thinking of every assistant turn but the last `keep`. Returns how many turns lost it."""
+        turns = [m for m in self.messages if m.get("role") == "assistant" and m.get("thinking")]
+        old = turns[:-keep] if keep else turns
+        for m in old:
+            del m["thinking"]
+        return len(old)
+
     def step(self):
-        approx_ctx = len(json.dumps(self.messages) + json.dumps(self.tools)) // 3     # tokens, on the high side
+        approx_ctx, trimmed = self._approx_ctx(), 0
+        if approx_ctx > TRIM_AT * self.num_ctx:
+            trimmed = self._trim_thinking()
+            approx_ctx = self._approx_ctx()
         if approx_ctx > self.num_ctx:
             raise ContextFull("about %d tokens of prompt, num_ctx is %d" % (approx_ctx, self.num_ctx))
         for attempt in range(3):                # a malformed tool call is an HTTP error; resample
@@ -625,6 +810,7 @@ class OllamaDriver:
                     stop="tool_use" if calls else ("max_tokens" if r.get("done_reason") == "length" else "end_turn"),
                     usage={"input_tokens": r.get("prompt_eval_count", 0), "output_tokens": r.get("eval_count", 0)},
                     raw={"model": r.get("model"), "done_reason": r.get("done_reason"), "approx_ctx_tokens": approx_ctx,
+                         "num_ctx": self.num_ctx, "trimmed_thinking_turns": trimmed,
                          "malformed_retries": self.malformed,
                          "seconds": round(r.get("total_duration", 0) / 1e9, 1)})
 
@@ -659,32 +845,40 @@ class NullUI:
 
 def run_agent(bench, driver, out_dir, *, tools="all", kickoff=None, max_turns=60, time_limit=1500,
               flash_cap=FLASH_CAP, max_result_chars=MAX_RESULT_CHARS, blind=None, label="", ui=None, arm=None,
-              arm_cap=ARM_CAP, budget_notice=True):
+              arm_cap=ARM_CAP, budget_notice=True, expert=True):
     """One agent run. Returns a summary dict; transcript.jsonl and report.md go to out_dir.
-    ui: a console.Console for the live view. arm: an ArmConfig to offer the arm tools."""
+    ui: a console.Console for the live view. arm: an ArmConfig to offer the arm tools. expert: offer ask_expert.
+    The transcript also records podd's open incidents and the chip at the start, and a device check at the end, so
+    the edge bridge can tie the run to its incident and say whether the pod was left fixed."""
     ui = ui or NullUI()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     log = Transcript(out_dir / "transcript.jsonl")
-    offered = load_tools(bench, tools, extra=ARM_HARNESS_TOOLS if arm else ())
+    offered = load_tools(bench, tools, extra=(list(ARM_HARNESS_TOOLS) if arm else []) + ([EXPERT_TOOL] if expert else []))
     system = system_prompt(bench, flash_cap, arm)
     if kickoff is None:
         kickoff = kickoff_text(open_incidents(bench), arm=arm)
-    gate = Gate(offered, flash_cap, arm_cap)
+    stable, good, chip = device_state(bench)
+    try:
+        podd_open = [{k: i.get(k) for k in ("id", "kind", "severity", "summary", "opened")} for i in open_incidents(bench)]
+    except Exception:
+        podd_open = None
+    gate = Gate(offered, flash_cap, arm_cap, stable=stable, good=good)
     if hasattr(driver, "on_delta") and not isinstance(ui, NullUI):
         driver.on_delta = ui.delta              # stream thinking and text into the live view
     driver.start(system, offered, kickoff)
     start = dict(label=label, driver=driver.name, model=driver.model, target=bench.target,
                  endpoint=getattr(driver, "endpoint", None),
                  tools=[t["name"] for t in offered], system=system, kickoff=kickoff, blind=bool(blind),
-                 arm=arm.describe() if arm else None,
+                 arm=arm.describe() if arm else None, podd_incidents=podd_open, chip_at_start=chip,
                  limits={"max_turns": max_turns, "time_limit_s": time_limit, "flash_cap": flash_cap,
                          "arm_cap": arm_cap if arm else None,
                          "max_result_chars": max_result_chars, "tool_timeout_s": bench.timeout})
     log.write("run_start", **start)
     ui.run_start(start)
     s = {"label": label, "driver": driver.name, "model": driver.model, "tools_offered": len(offered),
-         "turns": 0, "tool_calls": 0, "by_risk": {}, "denied": [], "forbidden": 0, "invalid": 0,
+         "turns": 0, "tool_calls": 0, "by_risk": {}, "denied": [], "forbidden": 0, "invalid": 0, "redundant": 0,
+         "out_of_order": 0, "started_stable": stable,
          "tool_errors": 0, "truncated": 0, "usage": {}, "stop": "max_turns", "final_text": ""}
     t0 = time.time()
     for turn in range(max_turns):
@@ -705,6 +899,12 @@ def run_agent(bench, driver, out_dir, *, tools="all", kickoff=None, max_turns=60
             s["stop"] = "model_error"
             break
         s["turns"] += 1
+        if t.raw.get("trimmed_thinking_turns"):
+            note = ("[harness: the context passed %d%% of %d tokens; the thinking of %d older turns was dropped from "
+                    "the history (their tool results stay)]" % (TRIM_AT * 100, t.raw.get("num_ctx"),
+                                                                 t.raw["trimmed_thinking_turns"]))
+            log.write("harness_note", turn=turn, text=note)
+            ui.note(note)
         for k, v in t.usage.items():
             s["usage"][k] = s["usage"].get(k, 0) + (v or 0)
         turn_rec = dict(turn=turn, stop_reason=t.stop, text=t.text, thinking=t.thinking,
@@ -732,6 +932,10 @@ def run_agent(bench, driver, out_dir, *, tools="all", kickoff=None, max_turns=60
                 obj, text, is_error, secs = run_tool(bench, name, sent, arm)
                 if blind and obj is not None:
                     text = json.dumps(blind.result(name, sent, obj), ensure_ascii=False)
+                note = gate.after(name, obj, turn)
+                if note:
+                    text += "\n[harness: %s]" % note
+                    rec["reason"] = "%s; %s" % (reason, "not counted: nothing was flashed")
                 s["tool_calls"] += 1
                 s["by_risk"][rec["risk"]] = s["by_risk"].get(rec["risk"], 0) + 1
                 s["tool_errors"] += is_error
@@ -760,6 +964,7 @@ def run_agent(bench, driver, out_dir, *, tools="all", kickoff=None, max_turns=60
     s["flashes_allowed"] = gate.flashes
     s["arm_runs_allowed"] = gate.arm_runs
     s["seconds"] = round(time.time() - t0, 1)
+    log.write("device_check", **device_check(bench))
     log.write("run_end", **{k: v for k, v in s.items() if k != "final_text"})
     (out_dir / "report.md").write_text(s["final_text"] + "\n")
     ui.run_end(s, s["final_text"])
@@ -806,7 +1011,8 @@ def add_agent_args(p):
                                       "Romulus server (default: ANTHROPIC_BASE_URL or the Anthropic API)")
     p.add_argument("--tools", default="all", help="all, core (%d tools for small models), arm (%d tools plus the arm tools), or a comma list" % (len(CORE_TOOLS), len(ARM_TOOLS)))
     p.add_argument("--ollama-url", default="http://localhost:11434")
-    p.add_argument("--num-ctx", type=int, default=32768, help="Ollama context window")
+    p.add_argument("--num-ctx", type=int, default=NUM_CTX,
+                   help="Ollama context window (default %d; keep it equal to server/serve.py's)" % NUM_CTX)
     p.add_argument("--max-turns", type=int, default=60)
     p.add_argument("--time-limit", type=int, default=1500, help="seconds per run")
     p.add_argument("--flash-cap", type=int, default=FLASH_CAP)

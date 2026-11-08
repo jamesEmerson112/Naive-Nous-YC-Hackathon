@@ -1,4 +1,4 @@
-"""Device-facing routes (APIs §3): check-in, pulls, installs, incidents, overlays.
+"""Device-facing routes (APIs §3): check-in, pulls, installs, incidents, overlays, agent runs.
 
 Recordings (3.7) send metadata first, then the raw bytes, streamed and hash-checked.
 JSON bodies are read raw first, so the verbatim payload can be stored, and the contract
@@ -17,10 +17,11 @@ from pydantic import BaseModel, ValidationError
 from romulus_cloud.api.deps import BlobStoreDep, SessionDep, SettingsDep
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
-from romulus_cloud.services import devices, incidents, registry, telemetry
+from romulus_cloud.services import agent_runs, devices, incidents, registry, telemetry
 from romulus_contracts import (
     SHA256_HEADER,
     SUPPORTED_VERSIONS,
+    AgentRunReport,
     CheckIn,
     IncidentReport,
     InstallResult,
@@ -115,10 +116,34 @@ def report_incident(
     incident, created = incidents.report(
         session, device_id, body, raw, utcnow(), safety_paths=settings.safety_paths
     )
-    if created:  # recordings may have arrived first (M4)
+    if created:  # recordings and agent runs may have arrived first (M4, §3.11)
         telemetry.link_incident(session, incident, utcnow())
+        agent_runs.link_incident(session, incident)
     session.commit()
     return JSONResponse({"incident_id": incident.id}, status_code=201 if created else 200)
+
+
+@router.put("/devices/{device_id}/agent-runs/{run_id}")
+def report_agent_run(
+    device_id: str, run_id: str, session: SessionDep, raw: dict[str, Any] = RawBody
+) -> dict:
+    """3.11: the whole report of one heal-agent run, sent again whenever it changes."""
+    check_contract(raw, required=False)
+    body = parse(AgentRunReport, raw)
+    if body.run_id != run_id:
+        raise ApiError(422, "invalid_request", "run_id in the body doesn't match the URL.")
+    _, created, stored = agent_runs.report(session, device_id, body, raw, utcnow())
+    session.commit()
+    return {"run_id": run_id, "created": created, "stored": stored}
+
+
+@router.get("/devices/{device_id}/agent-runs/{run_id}")
+def get_agent_run(device_id: str, run_id: str, session: SessionDep) -> dict:
+    """One run's newest report, with the incidents the cloud tied it to."""
+    row = agent_runs.get(session, device_id, run_id)
+    if row is None:
+        raise ApiError(404, "not_found", f"No agent run {run_id!r} on {device_id!r}.")
+    return agent_runs.view(row)
 
 
 @router.post("/devices/{device_id}/overlays/{overlay_id}", status_code=204, response_model=None)

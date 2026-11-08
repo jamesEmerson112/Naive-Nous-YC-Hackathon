@@ -1,0 +1,116 @@
+{# One heal-agent run (APIs §3.11): outcome, requests for help, firmware, write-up, steps. Needs `run`. #}
+<section class="run" aria-label="Agent run {{ run.run_id }}">
+  <div class="outcome outcome-{{ run.status }}">
+    <div class="outcome-icon" aria-hidden="true">{% if run.status == 'fixed' %}✓{% elif run.status == 'broken' %}✕{% elif run.status == 'working' %}<span class="pulse"></span>{% else %}?{% endif %}</div>
+    <div class="outcome-body">
+      <p class="outcome-kicker">Heal agent · {{ run.model }}{% if run.sim %} · <span class="chip">simulated rehearsal</span>{% endif %}
+        · {{ run.day }} {{ run.clock }}{% if run.ended %} → {{ run.ended }}{% endif %}</p>
+      <h2 class="outcome-title">{{ run.headline }}</h2>
+      {% if run.verified_by %}<p class="outcome-by">Status {{ run.verified_by }}.</p>{% endif %}
+      {% if run.reasons %}
+      <ul class="reasons">
+        {% for r in run.reasons %}<li class="{{ 'bad' if r in run.problems else 'good' if run.status == 'fixed' else '' }}">{{ r }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% for c in run.caveats %}<p class="caveat">{{ c }}</p>{% endfor %}
+    </div>
+  </div>
+
+  <dl class="stats">
+    <div><dt>Steps</dt><dd>{{ run.stats.steps }}</dd></div>
+    <div><dt>Time</dt><dd>{{ run.stats.duration }}</dd></div>
+    <div><dt>Flashes</dt><dd>{{ run.flashed }}{% if run.bad_images %} <span class="stat-bad">· {{ run.bad_images }} bad</span>{% endif %}</dd></div>
+    <div><dt>Arm checks</dt><dd>{{ run.stats.arm_runs if run.stats.arm_runs is not none else '–' }}</dd></div>
+    <div><dt>Refused</dt><dd>{{ run.stats.refused }}</dd></div>
+    <div><dt>Tokens in / out</dt><dd>{{ run.stats.tokens_in }} / {{ run.stats.tokens_out }}</dd></div>
+  </dl>
+
+  {% if run.help_requests %}
+  <div class="block">
+    <h3 class="block-h">Requests for help</h3>
+    <ul class="help-list">
+      {% for h in run.help_requests %}
+      <li class="help help-{{ h.to }}">
+        <p class="help-who">{% if h.to == 'person' %}Needs a person{% else %}Needs a stronger model{% endif %}
+          <span class="muted">· {% if h.source == 'harness' %}raised by the harness when the run ended{% else %}the agent asked{% if h.step %} at step {{ h.step }}{% endif %}{% endif %}{% if h.clock %} · {{ h.clock }}{% endif %}</span>
+          {% if h.severity %}<span class="chip">{{ h.severity }}</span>{% endif %}</p>
+        <p class="help-text">{{ h.summary }}</p>
+        {% if h.detail %}<p class="help-detail"><span class="why-label">{% if h.to == 'person' %}Asks{% else %}Tried{% endif %}</span> {{ h.detail }}</p>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if run.firmware %}
+  <div class="block">
+    <h3 class="block-h">Firmware <span class="muted">every image the run touched, in order</span></h3>
+    <ol class="fw-list">
+      {% for f in run.firmware %}
+      <li class="fw{% if f.bad %} fw-bad{% elif f.error %} fw-error{% elif f.event in ('refused', 'not_flashed') %} fw-skip{% elif f.flashed %} fw-ok{% endif %}">
+        <div class="fw-head">
+          <span class="fw-event">{{ f.event_word }}</span>
+          <span class="fw-label mono">{{ f.label }}</span>
+          {% if f.image.status %}<span class="chip">{{ f.image.status }}</span>{% endif %}
+          {% if f.image.origin == 'workspace' %}<span class="chip">agent's build</span>{% endif %}
+          {% if f.bad %}<span class="chip chip-bad">bad</span>{% endif %}
+          {% if f.error %}<span class="chip chip-warn">error</span>{% endif %}
+          {% if f.running_at_end %}<span class="chip chip-good">left running</span>{% endif %}
+          <span class="fw-when muted">{% if f.step %}step {{ f.step }} · {% endif %}{{ f.clock }}</span>
+        </div>
+        <p class="fw-verdict">{{ f.verdict }}</p>
+        {% if f.reason %}<p class="fw-reason"><span class="why-label">Agent's reason</span> {{ f.reason }}</p>{% endif %}
+        {% if f.evidence %}<ul class="fw-evidence">{% for e in f.evidence %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+        {% if f.checks %}<p class="fw-checks">{% for c in f.checks %}<span class="check {{ 'ok' if c.ok else 'no' }}" title="{{ c.detail }}">{{ '✓' if c.ok else '✕' }} {{ c.check | replace('_', ' ') }}</span>{% endfor %}</p>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+  {% endif %}
+
+  {% if run.summary %}
+  <div class="block">
+    <h3 class="block-h">Write-up <span class="muted">what it did, what it noticed, how it ended</span></h3>
+    <dl class="writeup">
+      {% for p in run.summary %}
+      {% if p.label != "Agent's report" %}<div><dt>{{ p.label }}</dt><dd>{{ p.text }}</dd></div>{% endif %}
+      {% endfor %}
+    </dl>
+    {% if run.report %}
+    <details class="report" id="{{ run.dom }}-report" open>
+      <summary>The agent's own report</summary>
+      <div class="report-text">{{ run.report }}</div>
+    </details>
+    {% elif run.state == 'finished' %}
+    <p class="caveat">The agent wrote no final report{% if run.stop_text %}: {{ run.stop_text }}{% endif %}.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if run.steps %}
+  <details class="block steps-block" id="{{ run.dom }}-steps"{% if run.state == 'running' %} open{% endif %}>
+    <summary class="block-h">Every step <span class="muted">{{ run.steps | length }} tool calls; open one to read the model's thinking</span></summary>
+    <ol class="agent-steps">
+      {% for st in run.steps %}
+      <li class="astep phase-{{ st.phase }}{% if not st.ok %} astep-fail{% endif %}">
+        <span class="astep-n">{{ st.n }}</span>
+        <div class="astep-body">
+          <p class="astep-head"><span class="phase">{{ st.phase_word }}</span> <strong>{{ st.action }}</strong> <span class="muted">{{ st.clock }}</span></p>
+          <p class="astep-effect">{{ st.effect }}</p>
+          {% if st.thought or st.said or st.excerpt %}
+          <details class="astep-more" id="{{ run.dom }}-s{{ st.n }}">
+            <summary>{% if st.thought %}Thinking{% else %}Details{% endif %}</summary>
+            {% if st.said %}<p class="astep-said">{{ st.said }}</p>{% endif %}
+            {% if st.thought %}<p class="astep-thought">{{ st.thought }}</p>{% endif %}
+            {% if st.args %}<p class="astep-args mono">{{ st.tool }} {{ st.args | tojson }}</p>{% endif %}
+            {% if st.excerpt %}<pre class="astep-raw">{{ st.excerpt }}</pre>{% endif %}
+          </details>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+  </details>
+  {% endif %}
+  <p class="run-foot muted">Run <span class="mono">{{ run.run_id }}</span> on {{ run.device_id }}{% if run.updated_ago %} · report updated {{ run.updated_ago }}{% endif %} · <a href="/v1/devices/{{ run.device_id }}/agent-runs/{{ run.run_id }}">raw JSON</a></p>
+</section>

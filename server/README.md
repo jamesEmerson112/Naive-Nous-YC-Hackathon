@@ -13,12 +13,12 @@ on the Pi calls it over the direct Ethernet cable.
 `serve.py` is a raw TCP relay. Ollama keeps listening on localhost only, so local tools such as
 `bench/run_bench.py` work unchanged, and nothing is opened on Wi-Fi. The relay listens only on the
 laptop's Ethernet address and lets in only clients on that subnet. The harness's requests (`/api/chat`
-with tools, `think: true`, `num_ctx` 32768) pass through untouched, streaming included.
+with tools, `think: true`, `num_ctx` 65536) pass through untouched, streaming included.
 
 | File | Where it runs | What it does |
 |---|---|---|
 | `start.sh` | laptop | Runs `serve.py` under `caffeinate -i`, so the laptop doesn't sleep mid-run |
-| `serve.py` | laptop | Checks that Ollama has the model, loads it with `num_ctx` 32768, then relays from the Ethernet IP to Ollama. Logs one line per request |
+| `serve.py` | laptop | Checks that Ollama has the model, loads it with `num_ctx` 65536, then relays from the Ethernet IP to Ollama. Logs one line per request |
 | `pi_check.py` | Pi | Checks the model is listed, answers a plain chat, and returns a tool call with thinking on |
 
 ## Run it
@@ -47,8 +47,9 @@ The steps and the report format are in `firmware/harness/HANDOFF.md` on that bra
 ## Options
 
 - `--pi 192.168.50.x`: the Pi got a different address. `--bind` names the laptop's address directly.
-- `--num-ctx 16384`: use this if you also pass `--num-ctx 16384` to the harness. Keep the two the
-  same, or Ollama reloads the model on the first request.
+- `--num-ctx 131072`: a bigger context window, if the laptop has the memory (qwen3.5:4b takes up to 262144;
+  65536 is the default since Nov 8, after the arm runs filled 32768). Pass the same `--num-ctx` to the harness
+  and keep the two equal, or Ollama reloads the model on the first request.
 - `--model qwen2.5:7b`: serve another installed model. Pass `--model` to the harness too.
 - `--no-warm`: skip loading the model at startup.
 

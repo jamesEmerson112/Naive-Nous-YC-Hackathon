@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Romulus · {{ run.device_id }} · agent run{% endblock %}
+{% block content %}
+<p class="back"><a href="/">← all incidents</a></p>
+<h1 class="page-h">{{ run.device_id }} · agent run <span class="status tone-{{ run.tone }}">{{ run.status_words }}</span></h1>
+<div id="run" hx-get="/partials/agent-runs/{{ run.device_id }}/{{ run.run_id }}" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
+  {% include "partials/run_page.html" %}
+</div>
+{% endblock %}
