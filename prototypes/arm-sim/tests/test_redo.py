@@ -287,7 +287,9 @@ def test_a_card_run_again_gets_a_fresh_redo_budget():
     d = dispatch.Dispatcher(board, ex, call=host, emit=emit, every=0.01, sleep=lambda s: None)
     d.run(once=True)
     assert board.card(card["id"])["status"] == "blocked"
-    board.move(card["id"], status="todo")                         # a person checks the arm and runs it again
+    assert host.open() and host.open()[0]["handed_off"], host.incidents     # the host holds it for a person
+    host("repair", action="verify")                               # a person checks the arm at home...
+    board.move(card["id"], status="todo")                         # ...and runs the card again
     d.run(once=True)
     srv.shutdown()
     checks = evs(log, "plan_check")

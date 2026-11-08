@@ -32,9 +32,15 @@ Modes (what the "manager" answers):
 Like the real server: a Bearer key when `key` is set (else 401), and Idempotency-Key replay (the same
 key and body answer the same run_id with 202 and Idempotency-Replayed: true; a different body 409).
 POST /v1/runs/{id}/stop answers {"status": "stopping"} and the run ends cancelled; srv.stops records
-the run ids. GET /v1/toolsets, by `toolsets`: "clean" (delegation and memory only, the default),
-"dirty" (terminal and so101_arm on too: what a skipped config merge leaves), "garbage" (not a list),
-"missing" (404, an older server).
+the run ids. GET /v1/toolsets, by `toolsets` (tool names from the docs' table, H:L56033-56068):
+  clean    what hermes-manager/config.manager.yaml leaves on: delegation, memory and skills; the rest of
+           the api_server default (H:L56075-56077) and the so101_arm plugin off (the default mode)
+  default  the api_server default with only the first config's seven toolsets off: memory, skills,
+           vision, image_gen, todo, delegation, cronjob and session_search on (what a real install
+           showed the worker before the config listed them all)
+  dirty    terminal and so101_arm on too: what a skipped config merge leaves
+  garbage  not a list;  missing  404, an older server
+srv.toolsets can be changed while it serves (a gateway restarted with another config).
 """
 import argparse
 import json
@@ -46,16 +52,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MODES = ("good", "bad_json", "off_list", "unsafe", "slow", "429", "500", "failed", "refused", "redo_offset", "park",
          "trickle", "errstr")
+API_SERVER_DEFAULT = {      # hermes-api-server: hermes-cli minus clarify, tts, computer_use, kanban (H:L56075-56077)
+    "file": ["patch", "read_file", "search_files", "write_file"], "terminal": ["process_manage", "terminal"],
+    "web": ["web_extract", "web_search"], "browser": ["browser_cdp", "browser_dialog", "browser_exec", "browser_vault"],
+    "memory": ["memory"], "skills": ["skill_manage", "skill_view", "skills_list"], "vision": ["vision_analyze"],
+    "image_gen": ["image_generate"], "todo": ["todo_list"], "delegation": ["delegate_task"],
+    "code_execution": ["execute_code"], "cronjob": ["cronjob_manage"], "session_search": ["session_search"],
+    "so101_arm": ["arm_status", "arm_approach", "arm_restart_sensor"],        # the cloned plugin (hermes-plugin/)
+}
+FIRST_CONFIG_OFF = ("terminal", "code_execution", "file", "browser", "web", "so101_arm", "mcp-naive_board")
+
+
+def listing(on):
+    """/v1/toolsets as the real server shapes it (H:L39803-39807), with the toolsets in `on` enabled."""
+    return [{"name": n, "label": n.replace("_", " ").title(), "enabled": n in on, "configured": True, "tools": t}
+            for n, t in API_SERVER_DEFAULT.items()]
+
+
 TOOLSETS = {
-    "clean": [{"name": "delegation", "label": "Delegation", "enabled": True, "configured": True, "tools": ["delegate_task"]},
-              {"name": "memory", "label": "Memory", "enabled": True, "configured": True, "tools": ["memory"]},
-              {"name": "terminal", "label": "Terminal", "enabled": False, "configured": True, "tools": ["terminal"]},
-              {"name": "so101_arm", "label": "so101_arm", "enabled": False, "configured": True,
-               "tools": ["arm_status", "arm_approach"]}],
-    "dirty": [{"name": "delegation", "label": "Delegation", "enabled": True, "configured": True, "tools": ["delegate_task"]},
-              {"name": "terminal", "label": "Terminal", "enabled": True, "configured": True, "tools": ["terminal"]},
-              {"name": "so101_arm", "label": "so101_arm", "enabled": True, "configured": True,
-               "tools": ["arm_status", "arm_approach", "arm_restart_sensor"]}],
+    "clean": listing({"delegation", "memory", "skills"}),
+    "default": listing(set(API_SERVER_DEFAULT) - set(FIRST_CONFIG_OFF)),
+    "dirty": listing({"delegation", "memory", "skills", "terminal", "so101_arm"}),
     "garbage": {"toolsets": "all of them"},
 }
 ACTIONS = ("restart_sensor", "verify", "pod_rollback", "redo_step", "park", "handoff_human", "no_action")
@@ -154,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/v1/capabilities":        # what hermes-manager/check.sh reads (H:L39406, H:L39796)
             return self._send(200, {"object": "hermes.api_server.capabilities", "platform": "hermes-agent (fake)",
                                     "features": {"run_submission": True, "run_status": True}})
-        if self.path == "/v1/toolsets":            # H:L39803-39807; clean: delegation and memory only
+        if self.path == "/v1/toolsets":            # H:L39803-39807; clean: delegation, memory and skills
             if s.toolsets == "missing":
                 return self._send(404, {"error": {"message": "no route /v1/toolsets"}})
             return self._send(200, TOOLSETS[s.toolsets])

@@ -185,7 +185,7 @@ def test_toolsets_clean_dirty_and_unreadable():
     srv, url = fake_manager.start("good", key="k")
     try:
         bad, why = ManagerClient(url, key="k").check_tools()
-        assert bad == [] and "delegation and memory" in why, (bad, why)
+        assert bad == [] and "delegation (delegate_task), memory (memory) and skills" in why, (bad, why)
         bad, why = ManagerClient(url, key="wrong").check_tools()       # 401: can't read it, fail closed
         assert bad is None and "HTTP 401" in why, (bad, why)
     finally:
@@ -194,7 +194,7 @@ def test_toolsets_clean_dirty_and_unreadable():
     try:
         bad, why = ManagerClient(url).check_tools()
         assert bad and any("terminal is enabled" in b for b in bad) and any("so101_arm is enabled" in b for b in bad), bad
-        assert any("arm_restart_sensor" in b for b in bad) and any(b.endswith("exposes terminal") for b in bad), bad
+        assert any("arm_restart_sensor" in b and "reaches the arm" in b for b in bad), bad
     finally:
         srv.shutdown()
     for ts in ("garbage", "missing"):
@@ -207,11 +207,54 @@ def test_toolsets_clean_dirty_and_unreadable():
     bad, why = ManagerClient(fake_manager.start("refused")[1]).check_tools()
     assert bad is None and "can't be read" in why, why
     # the shapes: a {"data": [...]} wrapper is fine; a delegation toolset that sneaks in an arm tool is not
-    assert toolset_problems({"data": [{"name": "delegation", "enabled": True, "tools": ["delegate_task"]}]}) == []
+    D = {"name": "delegation", "enabled": True, "tools": ["delegate_task"]}
+    assert toolset_problems({"data": [D]}) == []
     assert toolset_problems([{"name": "delegation", "enabled": True, "tools": ["delegate_task", "arm_wave"]}]) == \
-        ["toolset delegation exposes arm_wave"]
-    assert toolset_problems([{"name": "file", "enabled": True, "tools": ["read_file", "write_file", "patch"]}]) == \
-        ["toolset file is enabled", "toolset file exposes patch, write_file"]
+        ["toolset delegation exposes arm_wave, not only its own delegate_task"]
+    assert toolset_problems([D, {"name": "file", "enabled": True, "tools": ["read_file", "write_file", "patch"]}]) == \
+        ["toolset file is enabled (patch, read_file, write_file)"]
+
+
+def test_toolsets_the_round_two_shapes_all_refuse():
+    # round 2, finding 5 (the reviewer's p4_toolsets.py): each of these passed the first rule
+    from armsim.manager import toolset_problems
+    D, M = {"name": "delegation", "enabled": True, "tools": ["delegate_task"]}, {"name": "memory", "enabled": True,
+                                                                                  "tools": ["memory"]}
+    refused = {
+        "an empty list": ([], "delegation is not on"),
+        "memory only": ([M], "delegation is not on"),
+        "so101_arm with no enabled key": ([D, M, {"name": "so101_arm", "tools": ["arm_approach"]}],
+                                          "so101_arm is not off (enabled: null)"),
+        "terminal with enabled null": ([D, {"name": "terminal", "enabled": None, "tools": ["terminal"]}],
+                                       "terminal is not off"),
+        "terminal with enabled 'false'": ([D, {"name": "terminal", "enabled": "false", "tools": ["terminal"]}],
+                                          'terminal is not off (enabled: "false")'),
+        "memory with execute_code": ([D, {**M, "tools": ["memory", "execute_code"]}], "memory exposes execute_code"),
+        "memory with process_manage": ([D, {**M, "tools": ["memory", "process_manage"]}], "exposes process_manage"),
+        "memory with cronjob_manage": ([D, {**M, "tools": ["memory", "cronjob_manage"]}], "exposes cronjob_manage"),
+        "memory with read_file": ([D, {**M, "tools": ["memory", "read_file"]}], "exposes read_file"),
+        "memory with an MCP board tool": ([D, {**M, "tools": ["memory", "mcp_naive_board_move_card"]}],
+                                          "exposes mcp_naive_board_move_card"),
+        "delegation with browser_exec": ([{**D, "tools": ["delegate_task", "browser_exec"]}, M], "exposes browser_exec"),
+        "tools as a string": ([D, {**M, "tools": "terminal"}], "tools aren't a list of names"),
+        "an upper-case arm tool": ([D, {**M, "tools": ["memory", "Arm_approach"]}], "exposes Arm_approach"),
+        "a docs-example core toolset (H:L39805)": ([D, {"name": "core", "enabled": True, "tools": ["read_file", "write_file"]}],
+                                                   "toolset core is enabled"),
+        "the api_server default with the first config": (fake_manager.TOOLSETS["default"], "toolset cronjob is enabled"),
+    }
+    for name, (data, want) in refused.items():
+        bad = toolset_problems(data)
+        assert bad and any(want in b for b in bad), (name, bad)
+    bad = toolset_problems(fake_manager.TOOLSETS["default"])
+    for ts in ("vision", "image_gen", "todo", "cronjob", "session_search"):
+        assert any(b.startswith(f"toolset {ts} is enabled") for b in bad), (ts, bad)
+    assert not any("skills" in b or "memory" in b or "delegation" in b for b in bad), bad
+    # passes: delegation alone, the three allowed ones, an enabled toolset with no tools (context_engine,
+    # H:L56049), and off toolsets whatever they list
+    for data in ([D], [D, M, {"name": "skills", "enabled": True, "tools": ["skill_manage", "skill_view", "skills_list"]}],
+                 [D, {"name": "context_engine", "enabled": True, "tools": []}],
+                 [D, {"name": "terminal", "enabled": False, "tools": ["terminal"]}], fake_manager.TOOLSETS["clean"]):
+        assert toolset_problems(data) == [], (data, toolset_problems(data))
 
 
 # ---- hermes-manager/: setup.sh, config_pairs.py, check.sh, ask.sh, in a copy of the folder ------------
@@ -219,8 +262,11 @@ HM = HERE.parent / "hermes-manager"
 
 
 def hm_copy():
+    """hermes-manager/ in a temp dir, with armsim/manager.py beside it (check.sh loads the worker's rule)."""
     d = Path(tempfile.mkdtemp(prefix="armsim-hm-test-"))
-    shutil.copytree(HM, d / "hm", ignore=shutil.ignore_patterns("manager.key.env"))
+    shutil.copytree(HM, d / "hm", ignore=shutil.ignore_patterns("manager.key.env", "__pycache__"))
+    (d / "armsim").mkdir()
+    shutil.copy(HERE.parent / "armsim" / "manager.py", d / "armsim" / "manager.py")
     return d, d / "hm"
 
 
@@ -230,9 +276,17 @@ def test_config_pairs_reads_config_manager_yaml():
     spec.loader.exec_module(cp)
     got = dict(cp.pairs((HM / "config.manager.yaml").read_text()))
     assert got["delegation.gateway_mode"] == "inline" and got["gateway.api_server.max_concurrent_runs"] == "2", got
-    assert json.loads(got["agent.disabled_toolsets"]) == ["terminal", "code_execution", "file", "browser", "web",
-                                                          "so101_arm", "mcp-naive_board"], got
-    assert got["approvals.unattended_mode"] == "deny" and len(got) == 10, got
+    off = json.loads(got["agent.disabled_toolsets"])
+    assert off == ["terminal", "code_execution", "file", "browser", "web", "vision", "image_gen", "todo", "cronjob",
+                   "session_search", "so101_arm", "mcp-naive_board"], got
+    assert json.loads(got["platform_toolsets.api_server"]) == ["delegation", "memory", "skills", "no_mcp"], got
+    assert got["skills.write_approval"] == "true", got
+    assert got["approvals.unattended_mode"] == "deny" and len(got) == 12, got
+    # round 2, finding 9: what the shipped config leaves on, out of the API server's default, passes the worker's rule
+    from armsim.manager import toolset_problems
+    left = fake_manager.listing(set(fake_manager.API_SERVER_DEFAULT) - set(off))
+    assert toolset_problems(left) == [], toolset_problems(left)
+    assert not {"coding", "safe", "debugging"} & set(off), off          # composites would strip the allowed tools
     for bad in ("a:\n   b: 1\n", "a: 'quoted'\n", "a: [x,\n", "- item\n"):
         try:
             cp.pairs(bad)
@@ -272,13 +326,17 @@ def test_setup_sh_applies_the_config_and_blanks_the_cloned_memory():
     assert r.returncode == 0, r.stdout + r.stderr
     calls = (home / "calls.log").read_text().splitlines()
     sets = [c for c in calls if c.startswith("-p manager config set ")]
-    assert len(sets) == 10 and "-p manager config set delegation.gateway_mode inline" in sets, calls
+    assert len(sets) == 12 and "-p manager config set delegation.gateway_mode inline" in sets, calls
     assert '-p manager config set agent.disabled_toolsets ["terminal", "code_execution", "file", "browser", "web", ' \
-           '"so101_arm", "mcp-naive_board"]' in sets, sets
+           '"vision", "image_gen", "todo", "cronjob", "session_search", "so101_arm", "mcp-naive_board"]' in sets, sets
+    assert '-p manager config set platform_toolsets.api_server ["delegation", "memory", "skills", "no_mcp"]' in sets
+    assert "-p manager config set skills.write_approval true" in sets, sets
+    assert "-p manager curator lock arm-incident-manager" in calls, calls      # the skill can't be changed
     p = home / "profiles" / "manager"
     assert not (p / "memories" / "MEMORY.md").exists() and not (p / "memories" / "USER.md").exists()
     assert (p / "memories" / "MEMORY.md.cloned-from-default").read_text() == "commander memory\n"
-    assert "incident manager" in (p / "SOUL.md").read_text() and (p / "SOUL.md.cloned-from-default").exists()
+    soul = (p / "SOUL.md").read_text()
+    assert "incident manager" in soul and "skill_view" in soul and (p / "SOUL.md.cloned-from-default").exists(), soul
     env = (p / ".env").read_text()
     assert "default-key" not in env and "API_SERVER_KEY=" in env and "API_SERVER_HOST=127.0.0.1" in env, env
     assert stat.S_IMODE((hm / "manager.key.env").stat().st_mode) == 0o600
@@ -287,7 +345,9 @@ def test_setup_sh_applies_the_config_and_blanks_the_cloned_memory():
 
 
 def test_check_sh_and_ask_sh_against_the_fake():
-    for toolsets, want_rc in (("clean", 0), ("dirty", 1)):
+    # round 2, finding 10: check.sh applies the worker's own rule, so "default" (the API server's default with
+    # the first config) fails check.sh exactly as it fails the preflight
+    for toolsets, want_rc in (("clean", 0), ("dirty", 1), ("default", 1)):
         srv, url = fake_manager.start("good", key="k", toolsets=toolsets, delay=0.0)
         try:
             d, hm = hm_copy()
@@ -295,6 +355,11 @@ def test_check_sh_and_ask_sh_against_the_fake():
             r = subprocess.run(["bash", str(hm / "check.sh")], capture_output=True, text=True, timeout=60)
             assert r.returncode == want_rc, (toolsets, r.stdout + r.stderr)
             assert f"GET {url}/health (H:L39505)" in r.stdout and "HTTP 200" in r.stdout, r.stdout
+            if toolsets == "default":
+                assert "NOT ALLOWED" in r.stdout and "cronjob is enabled" in r.stdout and "vision is enabled" in r.stdout, \
+                    r.stdout
+            if toolsets == "clean":
+                assert "the worker's toolset rule" in r.stdout and "passes" in r.stdout, r.stdout
             if toolsets == "clean":
                 code = [ln for ln in (hm / "ask.sh").read_text().splitlines() if not ln.lstrip().startswith("#")]
                 assert not [ln for ln in code if re.search(r"\bjq\b", ln)], "ask.sh still calls jq"   # macOS < 15 has none

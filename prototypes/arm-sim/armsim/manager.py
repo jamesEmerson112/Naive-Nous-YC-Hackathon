@@ -26,10 +26,16 @@ Giving up returns (None, why): the caller then runs today's scripted heal. A run
 (H:L39698-39703) with a 2 s budget, so an orphaned run doesn't hold one of the profile's
 max_concurrent_runs slots (2 in config.manager.yaml) and 429 the next incident.
 
-`ManagerClient.check_tools()` is the startup check for `--manager hermes` (armsim/worker.py make): GET
-/v1/toolsets (H:L39794-39809) and refuse to start when the manager can do more than think: any enabled
-toolset other than delegation and memory, or any arm_*, terminal, write_file or patch tool. A
-/v1/toolsets that can't be read refuses too (fail closed).
+`ManagerClient.check_tools()` is the check for `--manager hermes` at startup (armsim/worker.py preflight)
+and again before every ask (Worker.tools_problem): GET /v1/toolsets (H:L39794-39809, "resolved for the
+api_server platform with the concrete tools list each one expands to") and refuse when the manager can
+do more than think (`toolset_problems`, an allowlist): delegation must be on (its analysts are
+delegate_task children), memory and skills may be on (it loads arm-incident-manager with skill_view,
+H:L12660-12664), each with only its own tools (H:L56042, H:L56057, H:L56060), and nothing else may be on.
+A toolset counts as on unless its `enabled` is false; one with no tools exposes nothing and is skipped
+(context_engine is "empty until a plugin populates it", H:L56049; the next check sees it if it fills). A
+/v1/toolsets that can't be read refuses too (fail closed). hermes-manager/check.sh applies this same rule
+(it loads this file by path with the Mac's own python3, so its top level stays standard library only).
 
 `url` is the API server's base, with the profile prefix when the gateway multiplexes profiles
 (`/p/manager`, H:L39846-39860). The key comes from the caller (the dispatcher reads $ARMSIM_MANAGER_KEY),
@@ -48,12 +54,19 @@ INSTRUCTIONS = ("Use skill arm-incident-manager. The input is one arm-escalation
                 "arm-fixplan/v1 JSON object whose action is in the packet's allowed_actions.")
 TERMINAL_BAD = ("failed", "cancelled", "interrupted", "unknown")    # unknown is not terminal, but won't finish
 STOP_S = 2.0                # the best-effort stop of a run we gave up on (H:L39698-39703)
-# The manager's tools: it only thinks. Its analysts are delegate_task children (delegation), memory is
-# allowed; anything else that is enabled (terminal, file, browser, web, so101_arm, mcp-naive_board, ...)
-# could act, and the so101_arm plugin's socket reaches the arm host in sim (hermes-plugin/so101-arm).
-MANAGER_TOOLSETS = ("delegation", "memory")
-BAD_TOOLS = ("terminal", "write_file", "patch")
+# The manager's tools: it only thinks. An allowlist, each toolset with exactly the tools the docs' table
+# gives it (H:L56033-56068): its analysts are delegate_task children (delegation, required), memory is
+# allowed, and skills, because the manager reads its own skill with skill_view (skill_manage comes with the
+# toolset; config.manager.yaml stages its writes, skills.write_approval, and setup.sh locks the skill).
+# Anything else that is on (terminal, file, browser, web, code_execution, cronjob, so101_arm,
+# mcp-naive_board, ...) could act, and the so101_arm plugin's socket reaches the arm host in sim
+# (hermes-plugin/so101-arm). Children get only the parent's toolsets (H:L19519), so the parent's list is
+# the one to check.
+MANAGER_TOOLSETS = {"delegation": ("delegate_task",), "memory": ("memory",),
+                    "skills": ("skill_manage", "skill_view", "skills_list")}
+REQUIRED_TOOLSETS = ("delegation",)
 ARM_TOOLSETS = ("so101_arm", "mcp-naive_board")
+ALLOWED_WORDS = "delegation (delegate_task), memory (memory) and skills (skill_view, skills_list, skill_manage)"
 # The manager and the laptop's Ollama sit on the bench LAN: never send those calls through a proxy (inferred).
 DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -64,21 +77,38 @@ class _Deadline(TimeoutError):
 
 def toolset_problems(data):
     """What makes /v1/toolsets' answer (H:L39803-39807: a list of {name, enabled, tools}; a {"data": [...]}
-    wrapper is tolerated) unsafe for the manager: a list of strings, [] when only delegation and memory
-    are on and no arm_*, terminal, write_file or patch tool is exposed."""
+    wrapper is tolerated) unsafe for the manager, as sentences; [] when it may be asked. The rule, an
+    allowlist: an entry is on unless `enabled` is false (missing, null or "false" count as on); every
+    entry that is on must carry `tools` as a list of names; one with no tools exposes nothing and is
+    skipped; one that is on must be in MANAGER_TOOLSETS and expose only that toolset's own tools; and
+    delegation must be on."""
     sets = data.get("data", data) if isinstance(data, dict) else data
-    if not isinstance(sets, list) or not all(isinstance(t, dict) and t.get("name") for t in sets):
+    if not isinstance(sets, list) or not all(isinstance(t, dict) and isinstance(t.get("name"), str) and t["name"]
+                                             for t in sets):
         return [f"/v1/toolsets didn't answer a list of toolsets ({str(data)[:120]})"]
-    out = []
+    out, on = [], set()
     for t in sets:
-        if not t.get("enabled"):
+        name, enabled, tools = t["name"], t.get("enabled"), t.get("tools")
+        if enabled is False:
             continue
-        name, tools = str(t["name"]), [str(x) for x in t.get("tools") or []]
-        if name not in MANAGER_TOOLSETS:
-            out.append(f"toolset {name} is enabled" + (" (it reaches the arm or the board)" if name in ARM_TOOLSETS else ""))
-        bad = [x for x in tools if x.startswith("arm_") or x in BAD_TOOLS]
-        if bad:
-            out.append(f"toolset {name} exposes {', '.join(sorted(bad))}")
+        state = "enabled" if enabled is True else f"not off (enabled: {json.dumps(enabled)})"
+        if not isinstance(tools, list) or not all(isinstance(x, str) for x in tools):
+            out.append(f"toolset {name} is {state} and its tools aren't a list of names ({str(tools)[:80]})")
+            continue
+        if not tools:
+            continue                                # exposes nothing (context_engine before a plugin fills it)
+        allowed = MANAGER_TOOLSETS.get(name)
+        if allowed is None:
+            out.append(f"toolset {name} is {state} ({', '.join(sorted(tools))})"
+                       + (": it reaches the arm or the board" if name in ARM_TOOLSETS else ""))
+            continue
+        on.add(name)
+        extra = sorted(set(tools) - set(allowed))
+        if extra:
+            out.append(f"toolset {name} exposes {', '.join(extra)}, not only its own {', '.join(allowed)}")
+    for name in REQUIRED_TOOLSETS:
+        if name not in on:
+            out.append(f"toolset {name} is not on: the manager's analysts are its delegate_task children")
     return out
 
 
@@ -154,9 +184,9 @@ class ManagerClient:
             return f"{type(exc).__name__}: {exc}"
 
     def check_tools(self, *, timeout=10.0):
-        """(problems, why) from the manager's /v1/toolsets (see toolset_problems): [] when only delegation
-        and memory are on; a list of what can act otherwise; None when /v1/toolsets can't be read (the
-        caller fails closed: armsim/worker.py preflight)."""
+        """(problems, why) from the manager's /v1/toolsets (see toolset_problems): [] when it may be asked;
+        a list of what's wrong otherwise; None when /v1/toolsets can't be read (the caller fails closed:
+        armsim/worker.py preflight and Worker.tools_problem)."""
         try:
             code, _, data = self._http("GET", "/v1/toolsets", timeout=timeout)
         except OSError as exc:
@@ -167,7 +197,7 @@ class ManagerClient:
         bad = toolset_problems(data)
         if bad and bad[0].startswith("/v1/toolsets didn't answer"):
             return None, bad[0]
-        return bad, ("; ".join(bad) if bad else "only " + " and ".join(MANAGER_TOOLSETS) + " are on")
+        return bad, ("; ".join(bad) if bad else f"only {ALLOWED_WORDS} can be on, and delegation is")
 
     def ask(self, esc, *, deadline_s=None):
         """(output text, why) when the run completed; (None, why) when it didn't in time or failed."""

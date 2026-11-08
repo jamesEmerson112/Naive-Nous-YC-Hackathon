@@ -158,9 +158,13 @@ def story_stall(real):
 
 
 def story_redo(real, manager, shift_mm, fake_mode):
-    """Category 2 (armsim/redo.py), through the dispatcher: an order, a bumped block, a missed grasp."""
+    """Category 2 (armsim/redo.py), through the dispatcher: an order, a bumped block, a missed grasp.
+    --manager hermes checks the manager's tools before anything moves (the dispatcher's own preflight would
+    refuse later, after the block moved and the order was placed), and whatever the dispatcher does, the block
+    goes back and a card it never ran is blocked, so the next story or dispatcher doesn't inherit either.
+    When the redo handed the arm to a person, the story plays the person: block back, then the check at home."""
     from . import events
-    from .board import open_board
+    from .board import BoardError, open_board
     from .dispatch import main as dispatch_main
     from .orders import is_arm_job, place
     if real:
@@ -171,6 +175,11 @@ def story_redo(real, manager, shift_mm, fake_mode):
     if waiting:
         raise SystemExit(f"the file board {getattr(board, 'path', '')} has ARM JOB cards waiting ({', '.join(waiting)}): "
                          "the dispatcher would work those first. Use a fresh ARMSIM_FILE_BOARD.")
+    if manager == "hermes":                                   # before anything moves (armsim/worker.py preflight)
+        from .manager import ManagerClient
+        from .worker import preflight
+        preflight(ManagerClient(os.environ.get("ARMSIM_MANAGER_URL", "http://127.0.0.1:8642"),
+                                key=os.environ.get("ARMSIM_MANAGER_KEY"), label="hermes"))
     say("STORY REDO: the arm does the wrong thing -> it is told -> it reverses -> the manager corrects the command "
         "-> the arm redoes it")
     skill("go_home")
@@ -178,23 +187,40 @@ def story_redo(real, manager, shift_mm, fake_mode):
     r = call("inject", fault="block_shift", params={"dx_mm": shift_mm, "dy_mm": 0})
     if not r.get("ok"):
         raise SystemExit(f"couldn't move the block: {r.get('error')}")
-    order, card = place(board, "pick", source="story")
-    say(f"order {order['id']} is card {card['id']}; the dispatcher takes it"
-        + (f" (manager {manager}, wrong actions redone)" if manager != "off" else " (manager off: today's behaviour)"))
-    since = time.time() - 0.5
-    argv = ["--board", "file", "--exec", "scripted", "--once"]
-    if manager != "off":
-        argv += ["--manager", manager, "--wrong-action", "redo", "--fake-mode", fake_mode]
-    dispatch_main(argv)
-    say("the run's event lines:")
-    for e in events.read(since=since):
-        if e.get("card") in (None, card["id"]) and e.get("src") != "order":
-            print(f"{time.strftime('%H:%M:%S', time.localtime(e['ts']))} {e['src']:9s} {e['kind']:12s} {e['text']}",
-                  flush=True)
-    final = board.card(card["id"]) or {}
-    say(f"card {card['id']} is {final.get('status')}: {final.get('note') or ''}")
-    call("clear", fault="block_shift")
-    say("a person puts the block back where the poses expect it")
+    card = None
+    try:
+        order, card = place(board, "pick", source="story")
+        say(f"order {order['id']} is card {card['id']}; the dispatcher takes it"
+            + (f" (manager {manager}, wrong actions redone)" if manager != "off" else " (manager off: today's behaviour)"))
+        since = time.time() - 0.5
+        argv = ["--board", "file", "--exec", "scripted", "--once"]
+        if manager != "off":
+            argv += ["--manager", manager, "--wrong-action", "redo", "--fake-mode", fake_mode]
+        dispatch_main(argv)
+        say("the run's event lines:")
+        for e in events.read(since=since):
+            if e.get("card") in (None, card["id"]) and e.get("src") != "order":
+                print(f"{time.strftime('%H:%M:%S', time.localtime(e['ts']))} {e['src']:9s} {e['kind']:12s} {e['text']}",
+                      flush=True)
+        final = board.card(card["id"]) or {}
+        say(f"card {card['id']} is {final.get('status')}: {final.get('note') or ''}")
+    finally:
+        call("clear", fault="block_shift")
+        say("a person puts the block back where the poses expect it")
+        if card is not None:
+            try:                                              # never left for a dispatcher with the block shifted
+                if (board.card(card["id"]) or {}).get("status") == "todo":
+                    board.comment(card["id"], "BLOCKED: story redo: the dispatcher didn't run this card, so nothing "
+                                              "ran on the arm; the block was put back. Move it to todo to run it.")
+                    board.move(card["id"], status="blocked", expect="todo")
+                    say(f"card {card['id']} was never run: blocked, so no dispatcher takes it later")
+            except BoardError as exc:
+                say(f"couldn't block card {card['id']} ({exc}): move it out of todo by hand")
+        held = call("status").get("handed_off") or []
+        if held:                                              # the redo handed the arm to a person: be the person
+            r = call("repair", action="verify")
+            say(f"the person checks the arm at home (it held {', '.join(i['id'] for i in held)} for them): "
+                f"verified={r.get('verified')}")
 
 
 def main():

@@ -39,6 +39,15 @@ class Host(FakeHost):
             return {"ok": True, "pos": {"shoulder_pan.pos": 0.2, "shoulder_lift.pos": -92.8, "elbow_flex.pos": 87.9,
                                         "wrist_flex.pos": 56.3, "wrist_roll.pos": 90.8, "gripper.pos": 2.0}}
         if op == "handoff":
+            if f.get("open"):                      # host.py Watchdog.hold: open one for a person, or take the open one
+                o = f["open"]
+                self.calls.append((op, f"open:{o.get('kind')}"))
+                was_open = bool(self.open())
+                held = self.open()[0] if was_open else self._open(o.get("kind") or "person_needed",
+                                                                  o.get("summary") or "", held_for=o.get("of"))
+                held.update(handed_off=1.0, handoff_reason=f.get("reason"))
+                return {"ok": True, "id": held["id"],
+                        "held": "an incident was already open" if was_open else "opened for a person"}
             self.calls.append((op, f.get("id")))
             for i in self.open():
                 if i["id"] == f.get("id"):
@@ -130,10 +139,14 @@ def test_a_slow_manager_falls_back_at_the_deadline():
 
 
 def test_an_unreachable_manager_falls_back_at_once():
+    # its /v1/toolsets is read before the ask (finding 6 of round 2): unreadable, so it isn't asked at all
     board, card, host, log, d, srv = bench("refused", "refused", fail={"reach": "us_stuck"})
     d.run(once=True)
     assert board.card(card["id"])["status"] == "done"
-    assert "isn't reachable" in evs(log, "fix_plan")[0]["text"]
+    err = next(e for e in evs(log, "error") if e["src"] == "worker")
+    assert "didn't ask the manager" in err["text"] and "can't be read" in err["text"], err["text"]
+    assert not evs(log, "escalation") and not evs(log, "fix_plan")
+    assert "no plan from the manager (it wasn't asked" in texts(board, card["id"])[-1]
 
 
 def test_a_plan_that_touches_safety_parks_and_hands_off():
@@ -500,8 +513,12 @@ def test_execute_never_fakes_a_redo_step():
     ex = dispatch.ScriptedExecutor(board, call=host, emit=emit)
     ex.ctx = {"card": "crd_x"}
     w = Worker(Plan("verify"), emit=emit, packet_dir=TMP / "dead-redo-packets")
+    plan = {"action": "redo_step", "args": {"from_step": "approach"}, "why": "w"}
     w.cur = {}
-    ok, action, detail = w.execute({"action": "redo_step", "args": {"from_step": "approach"}, "why": "w"}, ex, inc, "grip")
+    assert w.execute(plan, ex, inc, "grip") is None          # round 2, finding 7: not on a us_stuck incident's list
+    assert w.cur["stale"][0] == "stale" and "redo_step is no longer on inc-1's list" in w.cur["stale"][1], w.cur
+    w.cur, w._recheck = {}, lambda *a, **k: None              # past the recheck, the branch itself runs nothing
+    ok, action, detail = w.execute(plan, ex, inc, "grip")
     assert ok is False and action == "redo_step" and "nothing ran" in detail, detail
     assert not [c for c in host.calls if c[0] == "skill"], host.calls
 
@@ -541,6 +558,272 @@ def test_manager_hermes_refuses_to_start_unless_its_tools_are_off():
         finally:
             if srv:
                 srv.shutdown()
+
+
+# ---- round 2 of the review (three verifiers on the fixes) ---------------------------------------------
+class Thinking:
+    """A manager client that, while it "thinks", lets `meanwhile(host)` change the host, then answers:
+    "bad" (not JSON), "none" (no plan in time) or an action (a plan for it)."""
+    label = "stub"
+
+    def __init__(self, host, answer, meanwhile):
+        self.host, self.answer, self.meanwhile, self.asks = host, answer, meanwhile, []
+
+    def ask(self, esc, deadline_s=None):
+        self.asks.append(esc["incident_id"])
+        self.meanwhile(self.host)
+        if self.answer == "bad":
+            return "Sure! {not json", "completed"
+        if self.answer == "none":
+            return None, "no answer within the 10 s deadline"
+        return json.dumps({"schema": "arm-fixplan/v1", "incident_id": esc["incident_id"], "action": self.answer,
+                           "args": {}, "kind": "us_stuck", "confidence": 0.5, "touches_safety": False,
+                           "why": "stub"}), "completed"
+
+
+def person_takes_it(host):
+    for i in host.open():
+        i.update(handed_off=1.0, handoff_reason="Mission Control: a person took it during the think")
+
+
+def test_a_person_who_takes_the_incident_while_the_manager_thinks_keeps_it():
+    # round 2, finding 1 (blocker): after a refused, missing or late plan the scripted fallback must not repair
+    # an incident a person took meanwhile (the reviewer's p1_handoff_then_fallback.py, made a test)
+    for answer in ("bad", "none", "pod_rollback", "verify"):     # not JSON, no plan, off the list, a checked plan
+        host = Host(fail={"approach": "us_stuck"})
+        board, cards, host, log, d = rig(f"think-{answer}", Thinking(host, answer, person_takes_it), orders_n=2,
+                                         host=host)
+        d.run(once=True)
+        d.run(once=True)
+        assert [board.card(c["id"])["status"] for c in cards] == ["blocked", "todo"], (answer, host.calls)
+        assert not [c for c in host.calls if c[0] == "repair"], (answer, host.calls)      # nothing repaired it
+        assert host.incidents[0]["state"] == "open" and host.incidents[0]["handed_off"], host.incidents
+        blocked = texts(board, cards[0]["id"])[-1]
+        assert "a person took it during the think" in blocked and "it needs a person" in blocked, (answer, blocked)
+
+
+def test_an_incident_that_closes_while_the_manager_thinks_needs_nothing_more():
+    # the fixer's open item: a closed incident found after the manager's round trip runs no scripted fix
+    def close(host):
+        for i in host.open():
+            i["state"] = "resolved"
+    host = Host(fail={"approach": "us_stuck"})
+    board, cards, host, log, d = rig("think-closed", Thinking(host, "bad", close), host=host)
+    d.run(once=True)
+    assert board.card(cards[0]["id"])["status"] == "done"
+    assert not [c for c in host.calls if c[0] == "repair"], host.calls
+    heal = evs(log, "heal")[0]
+    assert heal["ok"] and heal["action"] == "none" and "closed on the arm host while the manager thought" in heal["text"]
+
+
+def test_a_worker_that_fails_after_the_action_runs_nothing_else():
+    # round 2, finding 3: an exception after execute() issued the plan's action must not become a second,
+    # unplanned action (the reviewer's p2_exception_after_action.py: the plan_action event raises OSError)
+    def disk_full(src, kind, f):
+        if src == "worker" and kind == "plan_action":
+            raise OSError(28, "No space left on device")
+    for action, fixable, want_cards in (("restart_sensor", True, ["blocked", "done"]),     # it verified: closed
+                                        ("restart_sensor", False, ["blocked", "todo"]),    # still open: a person
+                                        ("park", True, ["blocked", "todo"]),
+                                        ("handoff_human", True, ["blocked", "todo"])):
+        board, cards, host, log, d = rig(f"fails-{action}-{fixable}", Plan(action), orders_n=2, emit_hook=disk_full,
+                                         fail={"approach": "us_stuck"}, fixable=fixable)
+        d.run(once=True)
+        d.run(once=True)
+        statuses = [board.card(c["id"])["status"] for c in cards]
+        assert statuses == want_cards, (action, fixable, statuses, host.calls)
+        repairs = [n for op, n in host.calls if op == "repair"]
+        assert repairs == (["restart_sensor"] if action == "restart_sensor" else []), (action, repairs)
+        if want_cards[1] == "todo":
+            assert host.incidents[0]["state"] == "open" and host.incidents[0]["handed_off"], host.incidents
+        assert "the worker failed after the manager's" in texts(board, cards[0]["id"])[-1]
+
+
+def test_a_full_disk_on_a_plan_comment_does_not_cost_the_park():
+    # round 2, finding 3: a FileBoard write that raises OSError (not BoardError) is logged, never fatal
+    board, cards, host, log, d = rig("flaky-board", Plan("park"), orders_n=2, fail={"approach": "us_stuck"})
+    base = board.comment
+
+    def comment(cid, text, **kw):
+        if text.startswith("PLAN:"):
+            raise OSError(28, "No space left on device")
+        return base(cid, text, **kw)
+    board.comment = comment
+    d.run(once=True)
+    d.run(once=True)
+    assert [board.card(c["id"])["status"] for c in cards] == ["blocked", "todo"], host.calls
+    assert not [c for c in host.calls if c[0] == "repair"], host.calls
+    assert any("couldn't comment PLAN" in e["text"] and "OSError" in e["text"] for e in evs(log, "error"))
+
+
+def test_a_park_whose_incident_closed_first_is_held_for_a_person():
+    # round 2, finding 4: the incident closes after the last check and before the hand-off lands (the host's
+    # queued verify ran in between); the hand-off fails, so the host opens one, already handed off
+    class Race(Host):
+        def __call__(self, op, **f):
+            if op == "handoff" and f.get("id") and not f.get("open"):
+                for i in self.open():
+                    i["state"] = "resolved"
+            return super().__call__(op, **f)
+    board, cards, host, log, d = rig("park-race", Plan("park"), orders_n=2, host=Race(fail={"approach": "us_stuck"}))
+    d.run(once=True)
+    d.run(once=True)
+    assert [board.card(c["id"])["status"] for c in cards] == ["blocked", "todo"], host.calls
+    assert ("handoff", "inc-1") in host.calls and ("handoff", "open:us_stuck") in host.calls, host.calls
+    held = host.incidents[-1]
+    assert held["id"] == "inc-2" and held["state"] == "open" and held["handed_off"] and held["held_for"] == "inc-1"
+    assert "so the host opened inc-2 for the person" in evs(log, "plan_action")[0]["text"]
+    host("repair", action="verify")                               # the person checks the arm at home
+    d.run(once=True)
+    assert board.card(cards[1]["id"])["status"] == "done"
+
+
+def test_a_hand_off_the_host_does_not_take_is_kept_until_it_does():
+    # round 2, finding 4: the host doesn't answer the hand-off; no job starts until it has it, then the
+    # dispatcher waits for the person as for any hand-off
+    class Deaf(Host):
+        down = True
+
+        def __call__(self, op, **f):
+            if op == "handoff" and self.down:
+                self.calls.append((op, "unreachable"))
+                return {"ok": False, "unreachable": True, "error": "the arm host isn't answering"}
+            return super().__call__(op, **f)
+    host = Deaf(fail={"approach": "us_stuck"})
+    board, cards, host, log, d = rig("deaf", Plan("handoff_human"), orders_n=2, host=host)
+    d.run(once=True)
+    assert d.exec.holds and d.exec.holds[0]["incident"] == "inc-1", d.exec.holds
+    d.run(once=True)                                              # still deaf: no job
+    assert board.card(cards[1]["id"])["status"] == "todo"
+    assert any(e["kind"] == "waiting" and "didn't take yet" in e["text"] for e in evs(log)), evs(log, "waiting")
+    host.down = False
+    d.run(once=True)                                              # delivered: now it waits for the person
+    assert not d.exec.holds and host.incidents[0]["handed_off"], host.incidents
+    assert board.card(cards[1]["id"])["status"] == "todo"
+    host("repair", action="verify")
+    d.run(once=True)
+    assert board.card(cards[1]["id"])["status"] == "done"
+
+
+def test_the_manager_is_not_asked_once_its_tools_can_act():
+    # round 2, finding 6 (the reviewer's p8_preflight_once.py): the toolsets are read before every ask, not
+    # only at startup; a manager whose gateway came back with terminal and so101_arm on isn't asked
+    from armsim.worker import preflight
+    srv, url = fake_manager.start("good", delay=0.05)
+    try:
+        client = ManagerClient(url, label="fake-hermes", poll_s=0.05)
+        preflight(client)                                         # clean at startup
+        srv.toolsets = "dirty"                                    # the gateway restarted with another config
+        board, cards, host, log, d = rig("tools-turned", client, fail={"approach": "us_stuck"})
+        d.run(once=True)
+        assert not [r for r in srv.requests if r["method"] == "POST" and r["path"] == "/v1/runs"], srv.requests
+        assert board.card(cards[0]["id"])["status"] == "done"     # the scripted heal ran
+        err = next(e for e in evs(log, "error") if "didn't ask the manager" in e["text"])
+        assert "terminal is enabled" in err["text"] and "so101_arm is enabled" in err["text"], err["text"]
+        assert len([r for r in srv.requests if r["path"] == "/v1/toolsets"]) == 2      # startup, then the ask
+    finally:
+        srv.shutdown()
+
+
+def test_a_plan_whose_action_left_the_list_meanwhile_falls_back_to_the_pod_wait():
+    # round 2, finding 7 (the reviewer's p5_action_no_longer_allowed.py): podd flags the pod while the manager
+    # thinks; restart_sensor was allowed in the packet but isn't for the incident as it is now
+    def pod_flags(host):
+        host.pod_crit = [{"kind": "us_mismatch", "severity": "critical", "summary": "distance disagrees with its echo"}]
+        host.pod_polls = 6                                        # the pod's own healer fixes it a little later
+        for i in host.open():
+            i["pod_incidents"] = ["us_mismatch-1"]
+    host = Host(fail={"approach": "us_stuck"})
+    board, cards, host, log, d = rig("left-list", Thinking(host, "restart_sensor", pod_flags), host=host)
+    d.run(once=True)
+    assert ("repair", "restart_sensor") not in host.calls, host.calls
+    late = [e for e in evs(log, "plan_check") if e.get("stage") == "before_action"]
+    assert late and "restart_sensor is no longer on inc-1's list" in late[0]["reason"], evs(log, "plan_check")
+    assert board.card(cards[0]["id"])["status"] == "done"
+    assert evs(log, "heal")[0]["action"].startswith("wait_for_pod"), evs(log, "heal")
+
+
+def test_the_pod_healing_itself_does_not_give_a_parked_arm_back():
+    # round 2, finding 2 (blocker), the dispatcher's side: a manager park on bad image 07's incident; the pod's
+    # own healer then rolls back, and the next order still waits for the person (FakeHost mirrors host.py)
+    # 6 status polls: 4 come before the action (the heal, the worker, the check's state, the recheck), so the
+    # pod heals after the park, while the dispatcher polls for the next order
+    board, cards, host, log, d = rig("park-pod", Plan("park"), orders_n=2, pod_on={"approach": 6})
+    for _ in range(6):
+        d.run(once=True)
+    assert evs(log, "plan_action")[0]["action"] == "park", evs(log, "plan_action")
+    assert [board.card(c["id"])["status"] for c in cards] == ["blocked", "todo"], host.calls
+    assert host.pod_crit == [] and host.pod_polls is None, (host.pod_crit, host.pod_polls)     # the pod healed
+    assert host.incidents[0]["state"] == "open" and host.incidents[0]["handed_off"], host.incidents
+    host("repair", action="verify")                               # a person's check at home closes it
+    d.run(once=True)
+    assert board.card(cards[1]["id"])["status"] == "done"
+
+
+class TinyArm:
+    """What host.Watchdog touches on an arm: rows, a clock, halt_reason, and the home move (recorded)."""
+
+    def __init__(self):
+        self.watchers, self.d_rows, self.t, self.halt_reason, self._parking, self.moves = [], [], 100.0, None, False, []
+
+    def goto(self, pose, **kw):
+        self.moves.append(pose)
+        return {"arrived": True}
+
+    def hold(self, seconds):
+        for i in range(int(seconds * 10)):                       # healthy rows: the echo time jitters
+            self.t += 0.1
+            self.d_rows.append({"ts": round(self.t, 2), "t": int(self.t * 1000), "mm": 103, "us": 600 + i % 3, "st": "ok"})
+
+    def status(self):
+        return [0] * 6
+
+    def grasp_check(self, **kw):
+        return {"holding": False, "gripper": 0.0, "load_nm": 0.0}
+
+
+class TinyPod:
+    open = []
+
+    def note(self, *a, **k):
+        pass
+
+
+def test_the_host_never_moves_the_arm_on_its_own_for_a_handed_off_incident():
+    # round 2, finding 2 (blocker), host.py itself: no verify is queued for a handed-off incident once its pod
+    # incidents clear, a verify queued before the hand-off is skipped (auto), and a person's repair still works
+    import os
+    import types
+    os.environ.setdefault("ARMSIM_SPEAK", "off")
+    from armsim.host import Watchdog
+    arm = TinyArm()
+    dog = Watchdog(arm, types.SimpleNamespace(run_id="test"), clock=lambda: arm.t, pod=TinyPod())
+    dog.home = "HOME"
+    crit = [{"id": "us_mismatch-1", "kind": "us_mismatch", "severity": "critical", "summary": "echo disagrees"}]
+    dog.on_pod_incidents(crit)                                    # podd flags the pod: inc-1 opens, tied to it
+    (inc,) = dog.open()
+    assert inc["kind"] == "pod_us_mismatch" and inc["pod_incidents"] == ["us_mismatch-1"], inc
+    assert dog.handoff("inc-1", "the manager chose to keep the arm parked")["ok"]
+    dog.on_pod_incidents([])                                      # the pod's own healer rolled back
+    assert dog.verify_pending is None and not inc.get("pod_healed"), (dog.verify_pending, inc)
+    dog.verify_pending = "pod healed: echo disagrees"            # queued just before the hand-off landed
+    r = dog.verify(dog.verify_pending, auto=True)                 # what the host's chores run
+    assert r["verified"] is False and "handed to a person" in r["skipped"] and arm.moves == [], (r, arm.moves)
+    assert inc["state"] == "open" and dog.verify_pending is None
+    r = dog.verify("repair: verify")                              # a person's check at home (not auto)
+    assert r["verified"] and r["resolved"] == ["inc-1"] and arm.moves == ["HOME"], (r, arm.moves)
+    # and an incident nobody handed off still heals on its own, as before
+    dog.on_pod_incidents(crit + [{**crit[0], "id": "us_mismatch-2"}])
+    (inc2,) = dog.open()
+    dog.on_pod_incidents([])
+    assert dog.verify_pending and dog.verify(dog.verify_pending, auto=True)["resolved"] == [inc2["id"]]
+    # the hold op: a person is needed with nothing open (a wrong action); it opens one, handed off at once
+    r = dog.hold({"kind": "grasp_missed", "summary": "grip closed on nothing", "src": "dispatcher"}, "the redo gave up")
+    (held,) = dog.open()
+    assert r["ok"] and r["held"] == "opened for a person" and held["kind"] == "grasp_missed" and held["handed_off"], r
+    assert arm.halt_reason == "grasp_missed" and held["severity"] == "warn"
+    r = dog.hold({"kind": "x", "summary": "y"}, "again")          # one already open: that one is handed off
+    assert r["id"] == held["id"] and len(dog.open()) == 1, r
 
 
 def test_a_bad_manager_deadline_refuses_to_start():

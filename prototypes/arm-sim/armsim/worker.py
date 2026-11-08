@@ -14,26 +14,36 @@ One incident, in order (the arm is already parked: the watchdog parked it when t
    heal does, so a bad pod image escalates with the pod's allowlist.
 2. Worker model (`--worker-lm ollama`): `worker_answer()` asks the laptop's Ollama for the six-key answer
    (OpenAI-compatible /chat/completions, a JSON-schema response_format, 30 s cap). None -> `worker: null`.
-3. Ask: `ManagerClient.ask()` (armsim/manager.py), inside the packet's deadline (90 s).
+3. Ask: `ManagerClient.ask()` (armsim/manager.py), inside the packet's deadline (90 s). Just before it,
+   the manager's /v1/toolsets is read again (`tools_problem`, the startup preflight's rule): a gateway
+   restarted with another config could have given it tools that act. Tools that act, or a listing that
+   can't be read, and the manager isn't asked: the scripted heal runs.
 4. Check: `escalation.check_plan()`. A refused plan falls back to the scripted heal, except a plan that
    touches safety: the arm stays parked and the incident goes to a person. A plan refused for repeating
    a fix that already failed its check makes the scripted heal skip that fix too (cur["skip"]).
 5. Act: plain code issues the one checked action (`execute()`; `--exec-via lm` lets the model issue
    it, gated to that exact call, step 8). Just before the action it reads the host's status again: an
    incident that closed meanwhile runs nothing, one handed to a person runs nothing and stays with the
-   person, anything else that no longer fits falls back. verify() on the host decides whether it worked.
+   person, and a plan whose action is no longer on the incident's list as it is now (podd flagged the
+   pod meanwhile, say) or anything else that no longer fits falls back. verify() on the host decides
+   whether it worked.
    - pod_rollback: plain code can't flash the pod. The pod's own healer rolls back on its own once podd
      flags it (bench: Olir's `agent.py watch` with `heal fw_rollback`; sim: armsim/podheal_sim.py), so
      the plan is carried out as a wait for that healer and the host's check at home, and what ran is
      recorded as wait_for_pod (or wait_for_pod+verify), on the events and the cards.
-   - park: the arm stays parked and the incident is handed to a person (the host's handoff op), so the
-     next order can't un-park it through the scripted heal: the dispatcher waits for the person.
+   - park: the incident is handed to a person first, then the park skill, so the next order can't
+     un-park it through the scripted heal: the dispatcher waits for the person. handoff_human and a
+     refused plan that touches safety hand off the same way (ScriptedExecutor.hand_to_person: an
+     incident that closed first is held by the host for the person; a hand-off the host didn't take
+     is delivered before the next job).
    - the PLAN: comments go on the cards after the action, so no board call sits between the last check
      and the action.
 Fallback: no plan, a late plan or a refused plan -> today's scripted heal (dispatch.py ScriptedExecutor).
 A checked plan that ran and failed its check is final for this heal (the card is blocked and the arm
 stays parked), except a sensor restart that failed because podd now flags the pod: then the scripted
-heal waits for the pod's own healer, as it would have.
+heal waits for the pod's own healer, as it would have. A worker that fails (raises) before the action
+leaves the heal to the scripted heal; after it (cur["acted"]), nothing else runs: the incident goes to
+a person if it is still open, and the card is blocked.
 
 Events (armsim/events.py, through the executor's emit, with the job's card/order/job fields):
   src worker:  escalation (the packet went out), plan_check (the check's verdict), plan_action (what ran:
@@ -57,6 +67,7 @@ from pathlib import Path
 
 from . import events
 from .board import BoardError
+from .dispatch import held_words
 from .escalation import (ESCALATION_SCHEMA, MAYBE_POD_KINDS, SAFETY, allowed_actions, check_plan, parse_plan,
                          repeat_refused, validate)
 
@@ -65,6 +76,7 @@ PACKETS = Path(os.environ.get("ARMSIM_PACKETS") or ROOT / "runs" / "escalations"
 WINDOW_S = 6.0
 WORKER_CAP_S = 30.0         # the worker model's budget (p90 turn 10.2 s, firmware/harness/RESULTS.md:67-68)
 EXEC_VIA_LM_S = 15.0        # step 8: the model gets this long to issue the call, then plain code does
+TOOLS_CHECK_S = 5.0         # the /v1/toolsets read before each ask (tools_problem)
 
 # The worker's answer: exactly six keys (docs/research/worker-benchmark-data.md §1.3), kinds from its list.
 KINDS = ("none", "us_frozen", "us_offset", "us_scale", "us_noisy", "us_no_echo", "us_intermittent", "us_out_of_range",
@@ -353,12 +365,34 @@ class Worker:
     def _ev(self, ex, src, kind, text, **fields):
         return self.emit(src, kind, text, **ex.ctx, **fields)
 
+    def _quiet(self, ex, kind, text, **fields):
+        """A worker event that must not raise (the failure path: the emit may be what failed)."""
+        try:
+            self._ev(ex, "worker", kind, text, **fields)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _board(self, ex, what, fn, *args, **kw):
+        """A board call; a failure is logged, never fatal: a FileBoard write on a full disk raises OSError,
+        and the naive CLI's subprocess can fail to start (BoardError is the board's own)."""
         try:
             return fn(*args, **kw)
-        except BoardError as exc:
-            self._ev(ex, "worker", "error", f"couldn't {what}: {exc}")
+        except (BoardError, OSError) as exc:
+            self._quiet(ex, "error", f"couldn't {what}: {type(exc).__name__}: {exc}")
             return None
+
+    def tools_problem(self):
+        """None when the manager may be asked now, else why not. Its /v1/toolsets is read again before every
+        ask, with the startup preflight's rule (armsim/manager.py toolset_problems): a gateway restarted with
+        another config could have given it tools that act (in sim the so101_arm plugin reaches this arm).
+        A client without check_tools (a test stub) isn't checked."""
+        check = getattr(self.client, "check_tools", None)
+        if check is None:
+            return None
+        bad, why = check(timeout=TOOLS_CHECK_S)
+        if bad is None:
+            return f"its tools couldn't be checked ({why})"
+        return f"its toolsets fail the check ({why})" if bad else None
 
     def _tried(self, iid, full):
         """What already ran for this incident: the host's own repairs (an open incident means each failed
@@ -373,10 +407,35 @@ class Worker:
         self.cur = {"iid": inc.get("id"), "source": "fallback", "note": None, "plan": None, "inc_card": None}
         try:
             return self._heal(ex, inc, step)
-        except Exception as exc:  # a worker bug must not cost the heal: the arm is parked, the scripted heal runs
-            self._ev(ex, "worker", "error", f"the worker failed ({type(exc).__name__}: {exc}); the scripted heal runs")
-            self.cur.update(source="fallback", note=f"the worker failed ({type(exc).__name__})")
+        except Exception as exc:  # a worker bug must not cost the heal, nor add a second action
+            return self._failed(ex, inc, exc)
+
+    def _failed(self, ex, inc, exc):
+        """The worker raised. Before the plan's action, the scripted heal runs (None): the arm is parked.
+        After it (cur["acted"]: the action ran, or may have), nothing else runs: a second, unplanned action
+        could un-park an arm the manager parked for a person, or restart the sensor twice. The incident,
+        if still open (or if the host can't say), goes to a person; the card is blocked either way."""
+        cur = self.cur if self.cur is not None else {}
+        what = f"{type(exc).__name__}: {exc}"
+        if not cur.get("acted"):
+            self._quiet(ex, "error", f"the worker failed ({what}); the scripted heal runs")
+            cur.update(source="fallback", note=f"the worker failed ({type(exc).__name__})")
             return None
+        iid, planned = inc.get("id"), (cur.get("plan") or {}).get("action") or "?"
+        st = ex.host("status")
+        if not st.get("ok") or any(i.get("id") == iid for i in st.get("incidents") or []):
+            r = ex.hand_to_person(iid, f"the worker failed after the manager's {planned} plan ran ({what})",
+                                  kind=inc.get("kind"), summary=inc.get("summary"))
+            action = "handoff_human"
+            detail = (f"the worker failed after the manager's {planned} plan ran ({what}): nothing else runs, "
+                      "the arm stays parked for a person" + held_words(r))
+        else:
+            action = "error"
+            detail = (f"the worker failed after the manager's {planned} plan ran ({what}); {iid} closed on the arm "
+                      "host (its check passed), so nothing else runs")
+        cur.update(source="failed", note=detail)
+        self._quiet(ex, "error", detail, action=action, planned=planned)
+        return False, action, detail
 
     def _heal(self, ex, inc, step):
         iid, kind = inc.get("id"), inc.get("kind") or "?"
@@ -389,6 +448,11 @@ class Worker:
         if not any(i.get("id") == iid for i in st.get("incidents") or []):
             self.cur["note"] = "the incident closed before the worker asked the manager"
             return None
+        why_not = self.tools_problem()
+        if why_not:                                   # the startup preflight's rule, again, before each ask
+            self._ev(ex, "worker", "error", f"the worker didn't ask the manager ({self.label}): {why_not}; the "
+                                            "scripted heal runs", tools=why_not, step=step)
+            return self._fallback(ex, f"no plan from the manager (it wasn't asked: {why_not})")
         self.n += 1
         esc_id = f"inc-{self.token}-{str(iid).removeprefix('inc-')}-{self.n}"
         job = {"card_id": ex.ctx.get("card") or "", "steps": list(getattr(ex, "job_steps", None) or []),
@@ -484,11 +548,12 @@ class Worker:
         self._comment_inc(ex, f"PLAN: {said}. Plain code's check: ok, but just before it ran {why}: nothing ran.")
         return ok, ("none" if ok else "handoff_human"), detail
 
-    def _recheck(self, ex, inc):
+    def _recheck(self, ex, inc, plan=None):
         """Just before the action: does the host still fit the plan? None, or (how, why): "closed" (the
-        incident closed: its own check passed), "handed" (a person has it), "stale" (anything else). The
-        arm is halted exactly while an incident is open (host.py `skill` op), so closed covers "no longer
-        halted"."""
+        incident closed: its own check passed), "handed" (a person has it), "stale" (anything else: the
+        host didn't answer, or the plan's action is no longer on the incident's list as it is now, e.g.
+        podd flagged the pod meanwhile, so restart_sensor would fight the pod's own healer). The arm is
+        halted exactly while an incident is open (host.py `skill` op), so closed covers "no longer halted"."""
         iid = inc.get("id")
         st = ex.host("status")
         if st.get("unreachable") or st.get("ok") is False:
@@ -498,6 +563,12 @@ class Worker:
             return "handed", f"the host handed {iid} to a person ({short(handed.get('handoff_reason'), 120)})"
         if not any(i.get("id") == iid for i in st.get("incidents") or []):
             return "closed", f"incident {iid} closed on the arm host (its own check passed)"
+        if plan:
+            full = next((i for i in ex.host("incidents").get("incidents") or [] if i.get("id") == iid), None) or dict(inc)
+            now = allowed_actions(full, {"category": "fault", "pod_side": ex._pod_side(inc, st)})
+            if plan["action"] not in now:
+                return "stale", (f"{plan['action']} is no longer on {iid}'s list as it is now ({', '.join(now)})"
+                                 + ("; the sensor pod is behind it now" if "pod_rollback" in now else ""))
         return None
 
     def _fallback(self, ex, note):
@@ -507,8 +578,9 @@ class Worker:
         return None
 
     def _hand_off(self, ex, inc, esc_id, reason):
-        r = ex.host("handoff", id=inc.get("id"), reason=f"the healer refused a plan: {reason}")
-        detail = f"the manager's plan was refused ({reason}); the arm stays parked and a person takes it"
+        r = ex.hand_to_person(inc.get("id"), f"the healer refused a plan: {reason}", kind=inc.get("kind"),
+                              summary=inc.get("summary"))
+        detail = f"the manager's plan was refused ({reason}); the arm stays parked and a person takes it" + held_words(r)
         self.cur.update(source="plan", note=detail)
         self._ev(ex, "worker", "plan_action", f"handoff_human: {detail}", ok=False, action="handoff_human",
                  verified=False, escalation=esc_id, host=r)
@@ -530,12 +602,14 @@ class Worker:
                                                  if ok else f"the gate refused the model's call ({why_gate if call else why_call}); "
                                                  f"plain code issues {plan['action']} itself"),
                      ok=ok, call=call, reason=why_gate if call else why_call)
-        stale = self._recheck(ex, inc)
+        stale = self._recheck(ex, inc, plan)
         if stale:
             if self.cur is not None:
                 self.cur["stale"] = stale
             return None
         a, why = plan["action"], short(plan.get("why"), 160)
+        if self.cur is not None:
+            self.cur["acted"] = True      # from here on a failure must not lead to a second action (heal, _failed)
         if a == "restart_sensor":
             r = ex.host("repair", action="restart_sensor")
             if r.get("verified"):
@@ -555,15 +629,18 @@ class Worker:
             # What ran is the wait (wait_for_pod, or wait_for_pod+verify), and that is what is recorded.
             return ex._wait_for_pod(inc)
         if a == "park":
-            # Sticky: a person takes the incident, so the dispatcher waits for them and the next order's
-            # scripted heal can't un-park the arm (host.py handoff, dispatch.py Dispatcher.arm_ready).
+            # Sticky: a person takes the incident first, so the dispatcher waits for them and the next order's
+            # scripted heal can't un-park the arm (dispatch.py hand_to_person, Dispatcher.arm_ready); a verify
+            # the host queued meanwhile can't close a handed-off incident (host.py Watchdog.verify auto). The
+            # watchdog parked the arm when the incident opened; the park skill makes sure of it.
+            r = ex.hand_to_person(inc.get("id"), f"the manager chose to keep the arm parked: {why}",
+                                  kind=inc.get("kind"), summary=inc.get("summary"))
             ex.host("skill", name="park")
-            r = ex.host("handoff", id=inc.get("id"), reason=f"the manager chose to keep the arm parked: {why}")
-            return False, "park", (f"the manager chose to keep the arm parked for a person ({why})"
-                                   + ("" if r.get("ok") else f"; the host's handoff failed: {short(r.get('error'), 100)}"))
+            return False, "park", f"the manager chose to keep the arm parked for a person ({why})" + held_words(r)
         if a == "handoff_human":
-            ex.host("handoff", id=inc.get("id"), reason=f"the manager handed it to a person: {why}")
-            return False, "handoff_human", f"the manager handed it to a person ({why})"
+            r = ex.hand_to_person(inc.get("id"), f"the manager handed it to a person: {why}", kind=inc.get("kind"),
+                                  summary=inc.get("summary"))
+            return False, "handoff_human", f"the manager handed it to a person ({why})" + held_words(r)
         if a == "redo_step":
             # Not reachable through check_plan: redo_step is allowed for wrong_action incidents only, and those
             # run in armsim/redo.py (--wrong-action redo), with the reversal, the correction and the check.
@@ -580,6 +657,8 @@ class Worker:
         if cur.get("source") == "plan" and cur.get("plan"):
             planned = cur["plan"]["action"]
             detail = f"the manager ({self.label}) planned {planned}, plain code checked it and {ran_words(planned, action)}: {detail}"
+        elif cur.get("source") == "failed":
+            pass                                  # _failed's detail says what ran and that nothing else did
         elif cur.get("note"):
             detail = f"{cur['note']}; the scripted heal: {detail}"
         if cur.get("inc_card"):
@@ -630,20 +709,22 @@ class Worker:
 
 
 def preflight(client):
-    """--manager hermes, before the first ask: the manager may only think (delegation and memory). Its
-    /v1/toolsets (H:L39794-39809) is read and anything that can act refuses to start, as does a
-    /v1/toolsets that can't be read (fail closed). The YAML merge is the only other thing keeping the
-    manager's terminal and so101_arm tools off (hermes-manager/README.md step 3)."""
+    """--manager hermes, before the first ask: the manager may only think. Its /v1/toolsets (H:L39794-39809)
+    is read with armsim/manager.py toolset_problems (delegation on; memory and skills allowed; each with
+    only its own tools), and anything else refuses to start, as does a /v1/toolsets that can't be read
+    (fail closed). The same check runs again before every ask (Worker.tools_problem). The config
+    (hermes-manager/config.manager.yaml, README step 3) is what turns the rest off."""
     bad, why = client.check_tools()
     if bad is None:
         raise SystemExit(f"--manager hermes won't start: {why}, so plain code can't confirm the manager has no "
                          "tools that act (it fails closed). Check the URL and $ARMSIM_MANAGER_KEY with "
                          "hermes-manager/check.sh, then start again.")
     if bad:
-        raise SystemExit(f"--manager hermes won't start: the manager at {client.url} has tools that can act: "
-                         f"{'; '.join(bad)}. Only delegation and memory may be on: apply hermes-manager/"
-                         "config.manager.yaml (setup.sh does it; hermes-manager/README.md step 3), restart its "
-                         "gateway, and check with hermes-manager/check.sh.")
+        raise SystemExit(f"--manager hermes won't start: the manager at {client.url} fails the toolset check (it may "
+                         f"only think): {'; '.join(bad)}. Only delegation (delegate_task), memory (memory) and skills "
+                         "(skill_view, skills_list, skill_manage) may be on: apply hermes-manager/config.manager.yaml "
+                         "(setup.sh does it; hermes-manager/README.md step 3), restart its gateway, and check with "
+                         "hermes-manager/check.sh, which applies this same rule.")
 
 
 def make(args, emit=None):

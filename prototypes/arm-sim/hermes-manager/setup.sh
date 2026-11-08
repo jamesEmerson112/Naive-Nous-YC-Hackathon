@@ -11,13 +11,14 @@
 # blank memory and its own SOUL.md (--clone copies the default profile's, H:L9028), installs the skill,
 # writes a fresh API_SERVER_KEY into the profile's .env, writes ./manager.key.env (chmod 600) for the worker,
 # and applies config.manager.yaml with `hermes -p manager config set` (H:L54590, H:L3858-3872; lists go as
-# inline literals, H:L7581-7585). It does NOT touch the default profile's .env (branch a prints what it must
-# hold). The worker checks the result itself: `--manager hermes` won't start unless /v1/toolsets shows only
-# delegation and memory (armsim/worker.py preflight). Needs python3 (to read config.manager.yaml).
+# inline literals, H:L7581-7585), and locks the skill (`curator lock`, H:L13186-13190). It does NOT touch the
+# default profile's .env (branch a prints what it must hold). The worker checks the result itself:
+# `--manager hermes` won't start, or ask, unless /v1/toolsets shows delegation on and nothing but memory and
+# skills beside it (armsim/worker.py preflight; check.sh applies the same rule). Needs python3.
 set -euo pipefail
 branch=${1:-}; ip=${2:-}; port=${PORT:-8642}
 if [[ "$branch" != a && "$branch" != b || -z "$ip" ]]; then
-  sed -n '2,16p' "$0"; exit 2
+  sed -n '2,17p' "$0"; exit 2
 fi
 HERE=$(cd "$(dirname "$0")" && pwd)
 HOME_H=${HERMES_HOME:-$HOME/.hermes}
@@ -43,8 +44,9 @@ else
   cat > "$P/SOUL.md" <<'SOUL'
 You are the arm company's incident manager. You never act on anything yourself: you read one
 arm-escalation/v1 packet and answer with exactly one arm-fixplan/v1 JSON object, using the skill
-arm-incident-manager. Your only tools are delegate_task (your analysts and the critic) and memory. Plain
-code checks your answer and carries it out; if you are unsure, answer park or handoff_human.
+arm-incident-manager. Your only tools are delegate_task (your analysts and the critic), memory, and the
+skill tools, to read your skill with skill_view; never change a skill. Plain code checks your answer and
+carries it out; if you are unsure, answer park or handoff_human.
 SOUL
   echo "   wrote the manager's own SOUL.md (the cloned one is SOUL.md.cloned-from-default)"
 fi
@@ -53,6 +55,15 @@ echo "== 2. the skill"
 mkdir -p "$P/skills/arm-incident-manager"
 cp "$HERE/skills/arm-incident-manager/SKILL.md" "$P/skills/arm-incident-manager/SKILL.md"
 echo "   $P/skills/arm-incident-manager/SKILL.md"
+# The manager has the skills toolset (to read the skill), and with it skill_manage: lock this skill so no
+# session can change it ("A locked skill stays readable and auto-loadable, but skill_manage, write_file, patch
+# and terminal all refuse to change it", H:L13186-13190). config.manager.yaml also stages every skill write.
+if hermes -p manager curator lock arm-incident-manager >/dev/null 2>&1; then
+  echo "   locked arm-incident-manager (hermes -p manager curator lock)"
+else
+  echo "   WARNING: couldn't lock the skill (hermes -p manager curator lock arm-incident-manager); skills.write_approval"
+  echo "   still stages every skill write. Lock it by hand (or in Desktop) once the profile works."
+fi
 
 echo "== 3. the API server key in $P/.env"
 # --clone copies the default profile's .env (H:L9028), so drop any API_SERVER_* it brought along: a named
