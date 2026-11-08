@@ -76,14 +76,14 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 2:08 AM PST_
+_Last updated: Sun Nov 8, 2:20 AM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P2 overnight runs to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), then P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). With #55 on main, James's session is planning what to build next in sim (an autonomous loop first, then a product screen), and the Pi with Andre comes at 7 AM (pin serial ports, teach Andre's four poses, `demo/up.sh --real`). Kent now has three Romulus PRs open: #57 (Doctor repro seal), #58 (new: the gate waits for a held-out verify) and #46 (B5, review fixes now pushed); next are the overnight go/no-go and the live Naïve card. Olir is on `full-test-2`: a new bad image for the heal test, then a laptop-side Romulus cloud the Pi's edge bridge reports to over Ethernet.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P2 overnight runs to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), then P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). With #55 on main, James's session is planning what to build next in sim (an autonomous loop first, then a product screen), and the Pi with Andre comes at 7 AM (pin serial ports, teach Andre's four poses, `demo/up.sh --real`). Kent now has three Romulus PRs open: #57 (Doctor repro seal, a third fix pushed), #58 (the gate waits for a held-out verify) and #46 (B5, re-review now approves with nits); next are the overnight go/no-go and the live Naïve card. Olir is on `full-test-2`: a new bad image for the heal test, then a laptop-side Romulus cloud the Pi's edge bridge reports to over Ethernet.
 
 **Recently done:**
+- Kent's reviewer agent re-reviewed #46 (B5) at `5d9376e` (2:17 AM): **APPROVE_WITH_NITS**; all five reproductions re-run against real containers and every claimed fix holds, leaving one minor finding on how far the prune reaches plus one nit, per the PR comment
+- Kent pushed `c4d07b5` to #57 (2:13 AM): the Doctor's held-out set is now the lock-in gate's (base `verify/` plus `CODER_VERIFY_DIR`; a stale or unreadable dir is left out with a `verify_note`), so `make device-verify` gives real devices the decisive step; verify scripts that collect no test count as none (`advised`), and the offer stage re-checks `DOCTOR_OFFER_UNVERIFIED`. Earlier on #57: the repro check reads only a complete result seal and fails closed without one
 - Kent opened #58 (2:00 AM, `cloud/gate-require-verify`, `3557e0a`): a `coder`- or `doctor`-sourced code candidate with no held-out verify scripts no longer passes on in-process device tests alone (those can forge the seal); it waits in `replaying` with one `candidate.awaiting_verify` event and replays once verify exists. New `CODER_ALLOW_UNVERIFIED` (default false) lets it pass with a `candidate.unverified` warning. 2631 tests pass, per the PR
-- Kent pushed the B5 review fixes to #46 (1:58 AM, replacing the WIP commit `fb5314a`): `eb8e221` the egress proxy rebuilds the request body and no orphan process keeps the key; `5d9376e` the integration test adds DNS and IPv6 probes and lifecycle checks
-- Kent opened #57 (1:50 AM, `doctor/repro-seal`, supersedes #56): the Doctor's repro check reads only a complete result seal and fails closed without one; with no held-out `verify/` scripts a real check closes `advised` unless the new `DOCTOR_OFFER_UNVERIFIED` (default false) is on
 - Olir pushed two commits to `full-test-2` (not yet a PR): bad image 08 `us-near-hold` with harness and DEMO.md updates (1:35 AM, `5bb006b`), then "cloud setup" (1:57 AM, `5b28194`): `server/cloud_up.sh` starts the Romulus cloud on the laptop with the API on its Ethernet IP and registers pod-1 as a sensor pod, `server/pi/install_bridge.sh` installs the edge bridge on the Pi, plus `compose.ethernet.yaml` and the `server/` README
 
 **Open questions:**
@@ -93,6 +93,8 @@ _Last updated: Sun Nov 8, 2:08 AM PST_
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo (live texts a teammate's phone)
 
 **Recent commits (all authors):**
+- `bc65a3f` Sun 02:09 · jamesEmerson112 · Update team status and features.txt
+- `a0b26e2` Sun 02:08 · Kent Gang · Update Kent status in CLAUDE.md
 - `a16170c` Sun 01:59 · jamesEmerson112 · Update team status and features.txt
 - `c37ea17` Sun 01:58 · Kent Gang · Update Kent status in CLAUDE.md
 - `379acbb` Sun 01:49 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -101,8 +103,6 @@ _Last updated: Sun Nov 8, 2:08 AM PST_
 - `3694e27` Sun 01:42 · kgang · Romulus: harden code replay against test gaming (#53)
 - `34d04e4` Sun 01:39 · jamesEmerson112 · Update team status and features.txt
 - `0871be7` Sun 01:32 · jamesEmerson112 · Merge pull request #55 from jamesEmerson112/james/arm-sim
-- `4afd6c5` Sun 01:29 · jamesEmerson112 · Update team status and features.txt
-- `07b52e6` Sun 01:28 · Kent Gang · Update Kent status in CLAUDE.md
 
-**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent, B5 review fixes pushed), `doctor/repro-seal` (#57, Kent) and `cloud/gate-require-verify` (#58, Kent, new), and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `full-test-2` (Olir, 2 commits ahead of main, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent, re-review approves with nits), `doctor/repro-seal` (#57, Kent, 4 commits) and `cloud/gate-require-verify` (#58, Kent), and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `full-test-2` (Olir, 2 commits ahead of main, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
