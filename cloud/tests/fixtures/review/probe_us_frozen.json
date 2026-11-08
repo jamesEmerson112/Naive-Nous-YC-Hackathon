@@ -1,0 +1,167 @@
+{
+  "probe": "us-frozen-port",
+  "kind": "us_frozen",
+  "description": "Port the arm-sim watchdog's frozen-echo check (zero echo-time jitter over 4 s of ok rows) into the pod's detect.py and the arm's start gate",
+  "port": {
+    "from": "prototypes/arm-sim/armsim/level1.py:30-44 (check_ultrasonic_frozen)",
+    "to": [
+      "firmware/healer/healer/detect.py",
+      "arm/safe_replay.py"
+    ]
+  },
+  "before": {
+    "caught": 0,
+    "of": 120,
+    "false_alarms": 0,
+    "healthy": 410
+  },
+  "after": {
+    "caught": 120,
+    "of": 120,
+    "false_alarms": 0,
+    "healthy": 410
+  },
+  "sets": {
+    "frozen_windows": {
+      "source": "cloud/tests/fixtures/review/us_frozen_windows.json",
+      "n": 120,
+      "before": 0,
+      "after": 120,
+      "frozen_s_min": 4.0
+    },
+    "gen_pod_test": {
+      "seed": 99,
+      "items": 600,
+      "healthy": 150,
+      "false_alarms_before": 0,
+      "false_alarms_after": 0,
+      "hard_negative_families": [
+        "08-dormant",
+        "hn-covered",
+        "hn-reflash",
+        "hn-sparse-no-echo",
+        "hn-ts-batch"
+      ],
+      "port_only_alarms_on_other_faults": 0,
+      "other_faults": 360,
+      "by_variant": {
+        "01": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "02-early": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "02-real": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "02-sim": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "03": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "04": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "05": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "06": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "07": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "08-dormant": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "08-held": {
+          "n": 30,
+          "before": 15,
+          "after": 15
+        },
+        "frozen-at-no_echo": {
+          "n": 30,
+          "before": 30,
+          "after": 30
+        },
+        "frozen-at-out_of_range": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "frozen-early": {
+          "n": 30,
+          "before": 0,
+          "after": 4
+        },
+        "hn-covered": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "hn-reflash": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "hn-sparse-no-echo": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "hn-ts-batch": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "spikes": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        },
+        "stuck-max": {
+          "n": 30,
+          "before": 0,
+          "after": 0
+        }
+      }
+    },
+    "real_sample": {
+      "source": "firmware/ultrasonic-sample.json",
+      "windows": 260,
+      "false_alarms_before": 0,
+      "false_alarms_after": 0
+    }
+  },
+  "definitions": "caught / false alarm = any warn or critical finding in the window; before = detect.py RULES, after = detect.py RULES + check_ultrasonic_frozen",
+  "limits": [
+    "a 3.5 s freeze (gen_pod 'frozen-early') is caught 4 of 30 times with the port (0 of 30 today): the check needs the whole 4 s window frozen",
+    "a freeze on out-of-range rows (the jaw in the beam at home) is caught 0 of 30 times: the check reads only st=ok rows",
+    "every freeze here is simulated (gen_pod, >= 4.0 s); the real recording (300 rows, 30 s) checks false alarms only"
+  ],
+  "command": "python3 cloud/scripts/lesson_probe.py",
+  "rev": "6a10f1e",
+  "generated_at": "2026-11-08T17:03:27+00:00",
+  "seconds": 0.83
+}
