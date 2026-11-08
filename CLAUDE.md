@@ -72,33 +72,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 6:38 PM PST_
+_Last updated: Sat Nov 7, 6:48 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged M3b (#12, batch, gate, kill switch, worker), so only PR #16 (M7 overnight kit, F10) is open ahead of the 12:30 AM go/no-go. Ishaan is moving `edge/` into the repo as `device/`. James is picking the arm's motor layer: plan A is Whisper → Hermes picks scripted skills, plus a small translator that turns arm telemetry into sentences the healer can read; SmolVLA or Instant Policy are upgrades *(James's session)*.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has three Romulus PRs open: #16 (M7 overnight kit, F10) ahead of the 12:30 AM go/no-go, #18 (gate edge cases, regression replay) and the new #19 (M8a coding-agent sandbox). Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). James is running a pi vs Hermes fault lab on Ishaan's six faults *(James's session)*.
 
 **Recently done:**
-- Kent merged M3b (#12, `f177c68`, 6:19 PM): batch service, gate, fleet kill switch and worker, with flow tests F3 lock-in, F4 rollback, F5 kill switch and gate invariants (~3K lines in `cloud/`)
-- Ishaan picked the healer model (`835c4f0`): **qwen3.5:4b with thinking on, harness h3**, 10/12 trials and the only config to pass D1, the live demo fault (2/2); 3.3 GB, fits the Pi 5 (`docs/healer-benchmark-progress.md`)
-- James researched Instant Policy for the motor layer: weights are released but the code ships compiled, there's no training code, the licence is PolyForm Noncommercial, and it needs depth cameras (2× RealSense in the paper) *(James's session, [repo](https://github.com/vv19/instant_policy))*. Fine for a research demo, not for the business *(inferred)*
-- James researched how an LLM can read the arm's telemetry: (1) code turns the numbers into sentences, tonight, no training ([AURA](https://www.arxiv.org/pdf/2511.03075)); (2) ChatTS-14B reads time series directly, a RunPod experiment ([paper](https://arxiv.org/abs/2412.03104)); (3) fine-tune a small model on our own logged incidents, after the hackathon ([SysDiagBench](https://arxiv.deeppaper.ai/papers/2410.09084v1)). A fixed outside camera (e.g. a taped-down laptop webcam) is the standard SmolVLA setup on the SO-101 *(James's session)*
+- Kent merged #17 (`ef7614e`, 6:39 PM): fake arms register as `sim`, an unlabelled device is never treated as `real`, and the incident chain gets readable labels (new flow test F1 device kind)
+- Kent opened #19, M8a: a `coder` image with mini-swe-agent 2.4.6, proven on a toy gripper repo with a D1-like fault; not wired into the batch or gate yet, `FakeCoder` stays the default (PR #19)
+- Ishaan's device test suite: 18 tests pass and each planted fault turns it red; oracle 6/6, baseline 0/6 (Ishaan's block). Not pushed yet
+- James built a fault lab (`prototypes/fault-lab/`, uncommitted): six faults (D1–D3, S1, S2, A5) with a hidden check the agents never see, which also catches the D2 wrong fix. Smoke test on S1: pi and Hermes both fixed it, pi in 41 s for $0.11, Hermes in 23 s. The full run (6 faults × 2 agents × 2) is going *(James's session)*
 
 **Open questions:**
-- Kent is blocked on: device code and tests in `device/` (B1, Ishaan's move in progress), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17, also gates Fleet Doctor), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which probably also holds up M0's live Naïve card and LLM call *(inferred, Kent's block)*. Olir's `firmware/toolkit/` may be the quickest fix for B8 *(inferred)*
-- The healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it (`docs/healer-benchmark-progress.md`). Worth adding a lift check before the demo *(inferred)*
+- Kent is blocked on: device code in the repo (B1, Ishaan landing it), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17, also gates Fleet Doctor), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which also holds up M0's live Naïve card and LLM call (Kent's block). Olir's `firmware/toolkit/` may be the quickest fix for B8 *(inferred)*
+- The healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it (`docs/healer-benchmark-progress.md`). James's fault-lab hidden check catches it; worth reusing before the demo *(inferred)*
 - Motor layer for the arm: scripted skills (doable tomorrow), SmolVLA (~50 demos per task + ~4 h A100 training) or Instant Policy (needs a depth camera, noncommercial). A flat sheet of paper is a hard grasp for a two-finger gripper *(James's session)*
 - Hermes compaction fails because its summarizer can't load the ChatGPT (`openai-codex`) login; start `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`). Should pi drive the arm at all, and does the ultrasonic sensor go through the STM32 or Pi GPIO? Both still team calls
 
 **Recent commits (all authors):**
+- `f449f96` Sat 18:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `ef7614e` Sat 18:39 · kgang · Romulus: fake arms register as sim; readable chain labels (#17)
+- `a9a72ac` Sat 18:38 · jamesEmerson112 · Update team status in CLAUDE.md
+- `f462ed2` Sat 18:38 · Kent Gang · Update Kent status in CLAUDE.md
 - `7325210` Sat 18:29 · jamesEmerson112 · Update team status and features.txt
 - `fcd5bc2` Sat 18:28 · Kent Gang · Update Kent status in CLAUDE.md
 - `f177c68` Sat 18:19 · kgang · Romulus M3b: batch, gate, kill switch and worker (flows F3, F4, F5) (#12)
 - `0bf3fa7` Sat 18:19 · jamesEmerson112 · Update team status and features.txt
 - `ab1c379` Sat 18:18 · Kent Gang · Update Kent status in CLAUDE.md
 - `835c4f0` Sat 18:18 · Ishaan Ranjan · Update healer benchmark progress: final results, model pick, new layout
-- `b306df5` Sat 18:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `e4fd0b9` Sat 18:09 · jamesEmerson112 · Update team status and features.txt
-- `7354d99` Sat 18:08 · Kent Gang · Update Kent status in CLAUDE.md
-- `2330efe` Sat 18:08 · Kent Gang · Update Kent status in CLAUDE.md
 
-**Branches on GitHub:** `main`, `firmware` (Olir, not merged), `cloud/m7-overnight` (Kent, PR #16 open), `cloud/m3b-batch-gate` (#12 merged, branch not yet deleted)
+**Branches on GitHub:** `main`, `firmware` (Olir, not merged), `cloud/m7-overnight` (#16 open), `cloud/gate-followups` (#18 open), `cloud/m8a-coder` (#19 open), `cloud/m8-coder-wip`, `cloud/m3b-followup`, `cloud/m3b-batch-gate` (#12 merged, branch not yet deleted); all Kent's
 <!-- team-status:end -->
