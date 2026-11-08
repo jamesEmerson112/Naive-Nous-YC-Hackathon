@@ -38,12 +38,15 @@ _From James's cloud session, Sun Nov 8, ~9 AM PST. For a Claude Code session on 
 2. Python 3.12 venv in `prototypes/arm-sim`:
    - `lerobot[feetech]==0.7.0`, `-r requirements.txt`;
    - the two editable installs from the README's "Everything together";
-   - `uv sync --all-packages` at the root, for the edge bridge.
+   - `uv sync --all-packages` at the root, for the edge bridge;
+   - `prototypes/arm-sim/setup.sh`, which fetches the SO-101 MuJoCo model. The real arm host needs it for its kinematics mirror and won't start without it.
 3. **Pin both serial ports** by `/dev/serial/by-id`:
    - `ARM_PORT` in `arm/arm.env`;
-   - the pod's port for `podd`.
-   Only `podd` may open the pod's port (`firmware/healer/README.md:36`).
-4. Start `podd` from `firmware/`: `healer/bin/podd &` (`firmware/healer/README.md:31`).
+   - the pod's port for `podd`, as `POD_PORT`.
+   Only `podd` may open the pod's port (`firmware/healer/README.md:36`). With `POD_PORT=auto`, `podd` falls back to the first `/dev/ttyACM*` when the J-Link is missing, and that can be the arm's port (`firmware/healer/healer/serialport.py:24-28`).
+4. Start `podd` from `firmware/`: `POD_PORT=/dev/serial/by-id/<J-Link> healer/bin/podd &` (`firmware/healer/README.md:31`).
+   - If an edge bridge is already running, start the arm host on its own instead of with `up.sh --real`: `up.sh` starts a second bridge that also reports as `pod-1`.
+   - The command: `PYTHONPATH=. .venv/bin/python -m armsim.host --arm real --pod real --var <repo>/firmware/healer/var --romulus http://192.168.50.1:8000`.
 5. Teach the poses with Andre: `arm/bin/prim-record.sh --pose rest home above_block pick`.
 
 **R1. The Mac:**
@@ -98,3 +101,4 @@ PYTHONPATH=. .venv/bin/python -m armsim.mission --board file --host 0.0.0.0 --ro
 | Time | Story or step | Result | Notes and log paths |
 |---|---|---|---|
 | Sun 9:14 AM | Setup on James's Mac. The arm and pod will plug into the Mac by USB, so no Pi. | Backend and frontend up. Arm not plugged in yet; nothing moved. | Romulus rebuilt on main (`make up && make seed`, `/healthz` ok). Mission Control on `localhost:8765` (`runs/logs/mission.log`). LeRobot 0.7.0 in the arm-sim venv, and `arm/.venv` made. Pose guard `0e18ee8` on main. All 8 test files pass, run with `TMPDIR=/tmp` and a venv path with no spaces (two macOS path issues in the tests). Stopped 5 leftover sim edge bridges. Still to do: Andre's poses, the ports, podd (`HEALER_VAR=$TMPDIR/pod-real`). |
+| Sun 9:44 AM | Setup on Olir's Pi (`olirpi`), cabled to the Mac. The Mac is `192.168.50.1` on its USB Ethernet adapter, the Pi `192.168.50.2`. The arm and pod are on the Pi. | Ready, no motion. `status` answers through the forwarded socket. `arm-1` and `pod-1` check in to the Mac's Romulus. Mission Control draws the real arm's joints and the pod's distance. | The Pi's repo is on main `29cdc17`. Arm-sim venv on the Pi (Python 3.13, LeRobot 0.7.0); `setup.sh` run. `ARM_PORT=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5AB9069018-if00`. `podd` restarted with `POD_PORT=/dev/serial/by-id/usb-SEGGER_J-Link_000772067452-if00`. The arm host was started on its own because Olir's bridge was already running; its log is `runs/logs/host.log` on the Pi. Servos read 12 V, 31–33 °C, calibration matching the file. Mission Control on the Pi at `:8765`, tunnelled to the Mac's `localhost:8765` with the socket (`runs/logs/tunnel.pid` on the Mac). Still to do: Andre's poses (the guard refuses every move until they exist), then the stories on James's go. |
