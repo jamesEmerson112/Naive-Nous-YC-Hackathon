@@ -472,9 +472,9 @@ def test_shop_429_falls_back_to_one_stdlib_read(monkeypatch):
     assert shop.product(WOWROBO, HANDLE)["variants"][0]["id"] == C018
 
 
-def test_live_fixture_replays_with_a_valid_report():
-    live = FIXTURES / "joint_stall_live.json"
-    data = json.loads(live.read_text())
+@pytest.mark.parametrize("name", ["joint_stall_live.json", "joint_stall_live2.json"])
+def test_live_fixture_replays_with_a_valid_report(name):
+    data = json.loads((FIXTURES / name).read_text())
     fx = FixtureNaive(data, now=Clock())
     s = fx.create_session(data["request"], idempotency_key="tc_replay")
     assert s.state == "idle" and s.stop_reason == "end_turn" and s.id.startswith("ses_")
