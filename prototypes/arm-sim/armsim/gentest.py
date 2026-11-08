@@ -208,6 +208,7 @@ def run(max_trials):
 
 SPEEDS = (0.5, 1.0)                                  # the slowest and fastest replay Hermes may ask for
 PLAN_LOG = OUT / "hermes-trials.jsonl"
+GOAL = os.environ.get("ARMSIM_GOAL", "the red bag of chips")      # the bag the demo uses
 
 
 def last_json(text):
@@ -248,8 +249,8 @@ def plan(history, before, after):
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "context.json").write_text(json.dumps(context, indent=1) + "\n")
     rows = json.dumps(context, indent=1)
-    q = ("You are debugging a robot arm on a bench. The task: pick up a bag of chips and put it in the open cardboard "
-         "box. The arm can only replay one of three motions taught by hand (recordings: wave, recording_2, "
+    q = (f"You are debugging a robot arm on a bench. The task: pick up {GOAL} and put it in the open cardboard "
+         "box. Other bags on the bench don't count. The arm can only replay one of three motions taught by hand (recordings: wave, recording_2, "
          "recording_3), each a pick-and-place, optionally rotated at the base by pan degrees (-10 to +10; which way "
          "positive turns as seen from the camera is unknown, so infer it from the history) and slowed by speed "
          "(0.5 to 1.0, lower is slower). The gripper data per try: holding_s is how long the jaws were stopped open "
@@ -259,8 +260,9 @@ def plan(history, before, after):
          "The structured context, all tries oldest first (also saved as context.json):\n" + rows + "\n"
          f"Use your vision tool on both camera images of the last try: BEFORE {before} and AFTER {after}. The camera "
          "faces the arm from the front at about table height, so it may not see inside the box. Then reply with ONE "
-         'JSON object and nothing else: {"verdict": "INSIDE" or "NOT" or "UNSURE" (is a bag of chips inside the box '
-         'in the AFTER image), "debug": "one or two sentences: what happened on the last try and why", '
+         'JSON object and nothing else: {"verdict": "INSIDE" or "NOT" or "UNSURE" (is ' + GOAL + ' inside the box '
+         'in the AFTER image: it counts as INSIDE when it sits within the box walls, even if part of it sticks out '
+         'above the rim), "debug": "one or two sentences: what happened on the last try and why", '
          '"next": {"recording": "wave" or "recording_2" or "recording_3", "pan": number, "speed": number, '
          '"why": "one sentence"}}. Use the coordinates: say where the grasp point was relative to where the bag '
          'appears in the images, and move it toward the bag. Design the next test to fix what went wrong; do not repeat a try that failed '
@@ -290,16 +292,21 @@ def guided(max_trials):
     """One Hermes-designed test per trial until the eye says INSIDE (or the cap, or a servo alarm)."""
     OUT.mkdir(parents=True, exist_ok=True)
     history = []
-    old = OUT / "trials.jsonl"                      # what the fixed run already learned
-    if old.exists():
+    for old in (OUT / "trials.jsonl", PLAN_LOG):      # what the earlier runs already learned
+        if not old.exists():
+            continue
         for line in old.read_text().splitlines():
             try:
                 h = json.loads(line)
                 history.append({**h, "pan_offset": h.get("pan_offset"), "speed": h.get("speed", 1.0)})
             except json.JSONDecodeError:
                 pass
+    for k, h in enumerate(history):                  # each guided try's diagnosis was written with the next try
+        if str(h.get("try", "")).startswith("g") and k + 1 < len(history) and history[k + 1].get("hermes_debug_before"):
+            history[k]["debug"] = history[k + 1]["hermes_debug_before"]
     before = after = snap("now")
-    print(f"Hermes-guided generate and test: up to {max_trials} tries, {len(history)} earlier tries as data; "
+    print(f"Hermes-guided generate and test, goal: {GOAL} into the box; up to {max_trials} tries, "
+          f"{len(history)} earlier tries as data; "
           f"log {PLAN_LOG}", flush=True)
     rc, out, err = ssh(HOST_DOWN)
     print("arm host:", out.strip() or err.strip(), flush=True)
