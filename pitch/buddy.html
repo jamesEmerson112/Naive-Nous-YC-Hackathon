@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hardware Buddy</title>
+<style>
+:root{
+  --bg:#FFF8EE; --ink:#1F1B2E; --mute:#6E6A7C; --faint:#C9C1B4; --line:#E8DECF;
+  --v:#6D5DF6; --v2:#9A8FFF; --vd:#5546E0;
+  --g:#22B07D; --gd:#0F7A54; --g2:#DDF4EA; --r:#F0556A; --rd:#C8243C; --r2:#FDE3E6; --a:#F7B23B; --a2:#FDF0D5;
+  --round: ui-rounded,"SF Pro Rounded",-apple-system,BlinkMacSystemFont,sans-serif;
+  --text: -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+  --mono: ui-monospace,"SF Mono",Menlo,monospace;
+  --spring: cubic-bezier(.3,1.3,.6,1);
+}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden}
+body{-webkit-font-smoothing:antialiased;user-select:none;-webkit-user-select:none}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;background:var(--bg);overflow:hidden;font-family:var(--text);color:var(--ink)}
+.scene{position:absolute;inset:0;opacity:0;visibility:hidden;transition:opacity 220ms ease,visibility 0s linear 220ms}
+.scene.on{opacity:1;visibility:visible;transition:opacity 320ms ease 180ms,visibility 0s}
+#stage.instant .scene,#stage.instant .scene *{transition:none!important}
+.art{position:absolute;left:0;top:0;width:1920px;height:1080px;overflow:visible}
+.abs{position:absolute}
+.rnd{font-family:var(--round);font-weight:700}
+.mono{font-family:var(--mono)}
+.tb{transform-box:fill-box;transform-origin:center}
+.ctr{left:0;right:0;text-align:center}
+.mute{color:var(--mute)}
+svg text{font-family:var(--round);font-weight:700}
+svg text.t{font-family:var(--text);font-weight:600}
+.card{background:#fff;border-radius:34px;box-shadow:0 18px 40px rgba(31,27,46,.09),0 3px 8px rgba(31,27,46,.06);transition:box-shadow .4s ease}
+.card.pulse{animation:okp 1.3s ease-in-out infinite}
+@keyframes okp{0%,100%{box-shadow:0 0 0 0 rgba(34,176,125,0),0 18px 40px rgba(31,27,46,.09)}50%{box-shadow:0 0 0 9px rgba(34,176,125,.45),0 18px 40px rgba(31,27,46,.09)}}
+.card.ok{box-shadow:0 0 0 5px var(--g),0 18px 40px rgba(31,27,46,.09),0 3px 8px rgba(31,27,46,.06)}
+.ctitle{font-family:var(--round);font-weight:700;font-size:58px;line-height:1.1;letter-spacing:-.01em}
+.li{display:flex;align-items:flex-start;gap:18px;font-size:38px;line-height:1.22;font-weight:500;color:var(--ink)}
+.li i{flex:none;width:14px;height:14px;border-radius:7px;background:var(--mute);margin-top:19px}
+.res{display:flex;align-items:center;gap:18px;font-family:var(--round);font-weight:700;font-size:42px;color:var(--gd)}
+.res svg{flex:none}
+.term{background:#1F1B2E;border-radius:30px;color:#FFF8EE;font-family:var(--mono);box-shadow:0 18px 40px rgba(31,27,46,.16)}
+.term .hd{display:flex;gap:12px;padding:24px 30px 6px}
+.term .hd b{width:14px;height:14px;border-radius:7px;background:#4A4560}
+.tl{display:flex;align-items:center;gap:22px;font-size:36px;padding:10px 34px;color:#8F8AA3;transition:color .3s}
+.tl.done{color:#FFF8EE}
+.tl .bx{position:relative;width:46px;height:46px;flex:none}
+.tl .bx:before{content:"";position:absolute;inset:3px;border-radius:50%;border:4px solid #4A4560}
+.tl .bx svg{position:absolute;inset:0}
+/* Buddy character */
+.buddy .b-float{animation:bfloat 3.8s ease-in-out infinite}
+@keyframes bfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-3.5px)}}
+.buddy .b-open{transform-box:fill-box;transform-origin:center;animation:blink 5.2s infinite;transition:opacity .2s ease}
+@keyframes blink{0%,90%,96%,100%{transform:scaleY(1)}93%{transform:scaleY(.08)}}
+.buddy .b-eyes{transition:transform .5s var(--spring)}
+.buddy[data-look=up] .b-eyes{transform:translate(4px,-8px)}
+.buddy[data-look=right] .b-eyes{transform:translate(6px,0)}
+.buddy[data-look=down] .b-eyes{transform:translate(0,4px)}
+.buddy .x{opacity:0;transition:opacity .22s ease}
+.buddy[data-e=content] .m-smile,
+.buddy[data-e=worried] .m-wavy,.buddy[data-e=worried] .b-brows,
+.buddy[data-e=sad] .m-frown,.buddy[data-e=sad] .b-brows,
+.buddy[data-e=happy] .m-smile,.buddy[data-e=happy] .b-happy,
+.buddy[data-e=joy] .m-open,.buddy[data-e=joy] .b-happy,
+.buddy[data-e=proud] .m-open,
+.buddy[data-e=sleep] .b-closed,.buddy[data-e=sleep] .m-flat{opacity:1}
+.buddy[data-e=happy] .b-open,.buddy[data-e=joy] .b-open,.buddy[data-e=sleep] .b-open{opacity:0}
+.buddy[data-e=worried] .b-open,.buddy[data-e=sad] .b-open{animation-duration:3.4s}
+.bandL{transform-box:fill-box;transform-origin:0 50%}
+#dl6.gone #dlt6{text-decoration:line-through;text-decoration-thickness:4px}
+/* HUD */
+#hud{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);display:flex;gap:14px;opacity:.5;transition:opacity .3s ease;pointer-events:none}
+#hud i{display:block;width:12px;height:12px;border-radius:6px;background:var(--faint);transition:width .3s ease,background .3s ease}
+#hud i.on{width:34px;background:var(--mute)}
+#hud.hide{opacity:0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <filter id="sh" x="-30%" y="-30%" width="160%" height="180%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#1F1B2E" flood-opacity=".10"/></filter>
+</defs></svg>
+<div id="stage">
+  <section class="scene" id="s1"></section>
+  <section class="scene" id="s2"></section>
+  <section class="scene" id="s3"></section>
+  <section class="scene" id="s4"></section>
+  <section class="scene" id="s5"></section>
+  <section class="scene" id="s6"></section>
+  <section class="scene" id="s7"></section>
+  <section class="scene" id="s8"></section>
+  <section class="scene" id="s9"></section>
+  <div id="hud"></div>
+</div>
+<script>
+"use strict";
+/* ============ palette, easing, helpers ============ */
+const C={ink:'#1F1B2E',mute:'#6E6A7C',faint:'#C9C1B4',line:'#E8DECF',bg:'#FFF8EE',v:'#6D5DF6',v2:'#9A8FFF',vd:'#5546E0',
+  g:'#22B07D',gd:'#0F7A54',g2:'#DDF4EA',r:'#F0556A',r2:'#FDE3E6',a:'#F7B23B',a2:'#FDF0D5',kraft:'#F3E3C7',sky:'#D3E8F6',skyd:'#8CC6EC'};
+const EASE='cubic-bezier(.22,.8,.3,1)', SPRING='cubic-bezier(.3,1.3,.6,1)', INOUT='cubic-bezier(.45,0,.25,1)', LIN='linear';
+const ST=`stroke="${C.ink}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"`;
+const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const sstep=t=>t*t*(3-2*t);
+const eOut=t=>1-Math.pow(1-t,3);
+const eInOut=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+const D2R=Math.PI/180;
+
+/* ============ the Buddy mark (logo + character) ============ */
+function buddy(o){
+  const s=(o.size||120)/120;
+  let pins='';
+  for(const p of [-24,0,24]){
+    pins+=`<rect class="tb" x="${p-5.5}" y="-61" width="11" height="20" rx="5.5"/><rect class="tb" x="${p-5.5}" y="41" width="11" height="20" rx="5.5"/>`+
+          `<rect class="tb" x="-61" y="${p-5.5}" width="20" height="11" rx="5.5"/><rect class="tb" x="41" y="${p-5.5}" width="20" height="11" rx="5.5"/>`;
+  }
+  return `<g transform="translate(${o.x} ${o.y}) scale(${s})"><g class="buddy" ${o.id?`id="${o.id}"`:''} data-e="${o.e||'content'}" data-look="${o.look||''}"><g class="b-jump tb"><g class="b-float">
+  <g class="b-pins" fill="${C.vd}">${pins}</g>
+  <rect class="b-body" x="-46" y="-46" width="92" height="92" rx="27" fill="${C.v}"/>
+  <path class="b-hi" d="M-31 -35 H-12" stroke="${C.v2}" stroke-width="6" stroke-linecap="round"/>
+  ${o.draw?`<rect class="b-outline" x="-46" y="-46" width="92" height="92" rx="27" fill="none" stroke="${C.v}" stroke-width="5" pathLength="1" stroke-dasharray="1 1"/>`:''}
+  <g class="b-face" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <g class="b-eyes">
+      <g class="b-open" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g>
+      <path class="x b-happy" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
+      <path class="x b-closed" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
+    </g>
+    <path class="x b-brows" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
+    <path class="x m-smile" d="M-10 18 Q0 26 10 18"/>
+    <path class="x m-open" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
+    <path class="x m-wavy" d="M-12 22 Q-6 17 0 22 Q6 27 12 22"/>
+    <path class="x m-frown" d="M-10 25 Q0 17 10 25"/>
+    <path class="x m-flat" d="M-7 21 H7"/>
+  </g></g></g></g></g>`;
+}
+
+/* ============ icons (inline SVG, centred on 0,0) ============ */
+const I={
+  check:(r=26)=>`<circle r="${r}" fill="${C.g}"/><path d="M${-r*.42} ${r*.02} L${-r*.12} ${r*.32} L${r*.44} ${-r*.3}" fill="none" stroke="#fff" stroke-width="${r*.2}" stroke-linecap="round" stroke-linejoin="round"/>`,
+  warn:(col=C.r)=>`<path d="M0 -30 L32 25 H-32 Z" fill="${col}" stroke="${col}" stroke-width="12" stroke-linejoin="round"/><path d="M0 -10 V5" stroke="#fff" stroke-width="7" stroke-linecap="round"/><circle cy="16" r="4.5" fill="#fff"/>`,
+  env:()=>`<rect x="-36" y="-25" width="72" height="50" rx="9" fill="#fff" ${ST}/><path d="M-29 -17 L0 5 L29 -17" fill="none" ${ST}/>`,
+  factory:()=>`<path d="M-62 52 V-4 L-30 -26 V-4 L2 -26 V-4 L34 -26 V-54 H54 V52 Z" fill="#fff" ${ST}/>
+    <rect x="-48" y="12" width="20" height="18" rx="5" fill="${C.sky}" ${ST}/><rect x="-16" y="12" width="20" height="18" rx="5" fill="${C.sky}" ${ST}/><rect x="16" y="12" width="20" height="18" rx="5" fill="${C.sky}" ${ST}/>`,
+  chat:()=>`<path d="M-48 -40 H48 A18 18 0 0 1 66 -22 V16 A18 18 0 0 1 48 34 H-4 L-30 56 V34 H-48 A18 18 0 0 1 -66 16 V-22 A18 18 0 0 1 -48 -40 Z" fill="#fff" ${ST}/>
+    <circle cx="-26" cy="-3" r="7.5" fill="${C.ink}"/><circle cy="-3" r="7.5" fill="${C.ink}"/><circle cx="26" cy="-3" r="7.5" fill="${C.ink}"/>`,
+  code:()=>`<rect x="-68" y="-50" width="136" height="100" rx="16" fill="#fff" ${ST}/><path d="M-68 -24 H68" ${ST}/>
+    <circle cx="-50" cy="-37" r="4.5" fill="${C.mute}"/><circle cx="-36" cy="-37" r="4.5" fill="${C.mute}"/><circle cx="-22" cy="-37" r="4.5" fill="${C.mute}"/>
+    <path d="M-22 -4 L-40 12 L-22 28 M22 -4 L40 12 L22 28 M9 -10 L-9 34" fill="none" stroke="${C.ink}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>`,
+  cloud:(fill='#fff')=>{const sh=`<circle cx="-52" cy="12" r="36"/><circle cx="0" cy="-14" r="50"/><circle cx="52" cy="10" r="38"/><rect x="-52" y="0" width="104" height="48"/>`;
+    return `<g stroke="${C.ink}" stroke-width="8" fill="${fill}">${sh}</g><g fill="${fill}">${sh}</g>`;},
+  sat:()=>`<path d="M-54 0 H-26 M26 0 H54" ${ST}/>
+    <rect x="-112" y="-21" width="58" height="42" rx="7" fill="${C.sky}" ${ST}/><path d="M-83 -21 V21" ${ST}/>
+    <rect x="54" y="-21" width="58" height="42" rx="7" fill="${C.sky}" ${ST}/><path d="M83 -21 V21" ${ST}/>
+    <rect x="-26" y="-26" width="52" height="52" rx="13" fill="#fff" ${ST}/><path d="M0 26 V38 M-14 50 Q0 34 14 50" fill="none" ${ST}/>`,
+  wrench:()=>`<g transform="rotate(45)"><rect x="-8" y="-6" width="16" height="50" rx="8" fill="${C.ink}"/><circle cy="-18" r="20" fill="${C.ink}"/><rect x="-7.5" y="-46" width="15" height="28" rx="4" fill="#fff"/></g>`,
+  ticket:()=>`<path d="M-44 -28 H44 V-11 A11 11 0 0 0 44 11 V28 H-44 V11 A11 11 0 0 0 -44 -11 Z" fill="#fff" ${ST}/><path d="M16 -20 V20" stroke="${C.ink}" stroke-width="4" stroke-dasharray="1 9" stroke-linecap="round"/><path d="M-28 -8 H2 M-28 8 H-6" ${ST}/>`,
+  gear:()=>{let t='';for(let i=0;i<8;i++)t+=`<rect x="-7" y="-33" width="14" height="16" rx="3" fill="${C.ink}" transform="rotate(${i*45})"/>`;
+    return t+`<circle r="24" fill="${C.ink}"/><circle r="9" fill="#fff"/>`;},
+  pin:(col=C.ink)=>`<path d="M0 0 C-8 -14 -26 -30 -26 -52 A26 26 0 0 1 26 -52 C26 -30 8 -14 0 0 Z" fill="${col}"/><circle cy="-52" r="9.5" fill="#fff"/>`,
+  play:(col=C.v)=>`<path d="M-9 -14 L15 0 L-9 14 Z" fill="${col}" stroke="${col}" stroke-width="7" stroke-linejoin="round"/>`,
+  cross:(col='#fff',s=11)=>`<path d="M${-s} ${-s} L${s} ${s} M${s} ${-s} L${-s} ${s}" stroke="${col}" stroke-width="6" stroke-linecap="round"/>`,
+};
+const svgIcon=(inner,size,vb=70)=>`<svg width="${size}" height="${size}" viewBox="${-vb/2} ${-vb/2} ${vb} ${vb}" style="overflow:visible">${inner}</svg>`;
+/* pill: <g class="pill" data-cx|data-x data-cy data-h data-fs> rect, optional g.pi icon, text */
+function pill(o){
+  return `<g class="pill${o.cls?' '+o.cls:''}" ${o.id?`id="${o.id}" style="opacity:0"`:''} ${o.cx!=null?`data-cx="${o.cx}"`:`data-x="${o.x}"`} data-cy="${o.cy}" data-h="${o.h||72}" data-fs="${o.fs||36}">
+    <rect fill="${o.fill||'#fff'}" ${o.stroke?`stroke="${o.stroke}" stroke-width="4"`:''} ${o.shadow?'filter="url(#sh)"':''}/>
+    ${o.icon?`<g class="pi">${o.icon}</g>`:''}
+    <text fill="${o.color||C.ink}" font-size="${o.fs||36}" ${o.mono?'class="t"':''}>${o.text}</text></g>`;
+}
+function fitPills(root){
+  root.querySelectorAll('g.pill').forEach(g=>{
+    const r=g.querySelector('rect'), t=g.querySelector('text'), ic=g.querySelector('.pi');
+    const h=+g.dataset.h, fs=+g.dataset.fs, cy=+g.dataset.cy, pad=h*.42, iw=ic?h*.62:0, gap=ic?14:0;
+    const tw=t.getComputedTextLength(); const w=pad*2+iw+gap+tw;
+    const x0=g.dataset.cx!=null?(+g.dataset.cx)-w/2:+g.dataset.x;
+    r.setAttribute('x',x0);r.setAttribute('y',cy-h/2);r.setAttribute('width',w);r.setAttribute('height',h);r.setAttribute('rx',h/2);
+    if(ic) ic.setAttribute('transform',`translate(${x0+pad+iw/2} ${cy})`);
+    t.setAttribute('x',x0+pad+iw+gap);t.setAttribute('y',cy+fs*.35);
+  });
+}
+
+/* ============ beat runtime: everything tracked so it can be cancelled ============ */
+const RUN={timers:[],ticks:[],anims:[],named:{}};
+let rafOn=false, carry={};
+function kick(){if(!rafOn){rafOn=true;requestAnimationFrame(frame);}}
+function frame(now){RUN.ticks=RUN.ticks.filter(f=>f(now));if(RUN.ticks.length)requestAnimationFrame(frame);else rafOn=false;}
+function mkCtx(sec,si,o){
+  const base=o.base||0, snap=!!o.snap, final=!!o.final;
+  const qa=s=>typeof s==='string'?[...sec.querySelectorAll(s)]:(Array.isArray(s)?s:[s]);
+  const c={snap,final,sec,carry,q:s=>typeof s==='string'?sec.querySelector(s):s,qa};
+  c.anim=(t,kf,p={})=>{let out;qa(t).forEach((el,i)=>{const it=p.it??1;
+    const a=el.animate(kf,{duration:p.d??600,delay:base+(p.at??0)+(p.st??0)*i,easing:p.e??EASE,fill:p.fill||'both',iterations:it,direction:p.dir||'normal'});
+    RUN.anims.push({a,si});if(p.name)RUN.named[p.name]=a;if(snap&&it!==Infinity)a.finish();out=a;});return out;};
+  c.fade=(t,at=0,d=500,dy=0)=>c.anim(t,[{opacity:0,transform:`translateY(${dy}px)`},{opacity:1,transform:'translateY(0px)'}],{at,d});
+  c.pop=(t,at=0,d=520,st=0)=>c.anim(t,[{opacity:0,transform:'scale(.5)'},{opacity:1,transform:'scale(1)'}],{at,d,e:SPRING,st});
+  c.bump=(t,at=0,k=1.06)=>c.anim(t,[{transform:'scale(1)'},{transform:`scale(${k})`},{transform:'scale(1)'}],{at,d:520,e:'ease-in-out'});
+  c.hop=(t,at=0,h=12)=>c.anim(t,[{transform:'translateY(0px)'},{transform:`translateY(${-h}px)`,offset:.4},{transform:'translateY(0px)'}],{at,d:560,e:'ease-in-out'});
+  c.at=(ms,fn)=>{if(snap)fn();else RUN.timers.push(setTimeout(fn,base+ms));};
+  c.tween=(at,d,fn,ease=eOut)=>{if(snap){fn(1,1);return;}fn(ease(0),0);const t0=performance.now()+base+at;
+    RUN.ticks.push(now=>{if(now<t0)return true;const u=clamp((now-t0)/d);fn(ease(u),u);return u<1;});kick();};
+  c.loop=fn=>{const t0=performance.now();fn(0);if(!final)return;RUN.ticks.push(now=>{fn(now-t0);return true;});kick();};
+  c.stop=name=>{const a=RUN.named[name];if(a){a.cancel();delete RUN.named[name];}};
+  c.expr=(sel,e,ms=0)=>c.at(ms,()=>qa(sel).forEach(el=>el.dataset.e=e));
+  c.look=(sel,l,ms=0)=>c.at(ms,()=>qa(sel).forEach(el=>el.dataset.look=l));
+  c.cls=(sel,cl,on,ms=0)=>c.at(ms,()=>qa(sel).forEach(el=>el.classList.toggle(cl,on)));
+  c.attr=(sel,k,v,ms=0)=>c.at(ms,()=>qa(sel).forEach(el=>el.setAttribute(k,v)));
+  return c;
+}
+const SC=[];
+
+/* ============ Scene 1 · Downtime ============ */
+const S1={L1:250,L2:230,SX:150,SY:660,T:4600,
+  K:[[0,-250,480,0],[.12,-250,615,0],[.2,-250,615,1],[.32,-250,470,1],[.55,-70,490,1],[.64,-70,600,1],[.7,-70,600,0],[.8,-70,490,0],[1,-250,480,0]]};
+function ik1(x,y){
+  const {L1,L2,SX,SY}=S1, dx=x-SX, dy=y-SY;
+  const d=clamp(Math.hypot(dx,dy),Math.abs(L1-L2)+1,L1+L2-1);
+  const q2=Math.acos(clamp((d*d-L1*L1-L2*L2)/(2*L1*L2),-1,1));
+  const k=Math.atan2(L2*Math.sin(q2),L1+L2*Math.cos(q2));
+  const t1=(Math.atan2(dy,dx)+k)/D2R, t2=-q2/D2R;
+  return [t1,t2,90-(t1+t2)];
+}
+function pose1(p){
+  const K=S1.K;let i=0;while(i<K.length-2&&p>K[i+1][0])i++;
+  const a=K[i],b=K[i+1],u=sstep(clamp((p-a[0])/(b[0]-a[0])));
+  let y=lerp(a[2],b[2],u);if(Math.abs(b[1]-a[1])>50)y-=50*Math.sin(Math.PI*u);
+  return {x:lerp(a[1],b[1],u),y,g:lerp(a[3],b[3],u)};
+}
+function fk1(a){
+  const t1=a[0]*D2R,t12=(a[0]+a[1])*D2R,t3=(a[0]+a[1]+a[2])*D2R;
+  const wx=S1.SX+S1.L1*Math.cos(t1)+S1.L2*Math.cos(t12), wy=S1.SY+S1.L1*Math.sin(t1)+S1.L2*Math.sin(t12);
+  return {x:wx+60*Math.cos(t3),y:wy+60*Math.sin(t3),r:a[0]+a[1]+a[2]-90};
+}
+const box1=()=>`<rect x="-30" y="-25" width="60" height="50" rx="8" fill="${C.kraft}" ${ST}/><path d="M-30 -10 H30" stroke="${C.ink}" stroke-width="3" opacity=".22"/><rect x="-7" y="-25" width="14" height="15" fill="${C.ink}" opacity=".14"/>`;
+function world1(c){
+  const j=[...c.sec.querySelectorAll('#j1,#j2,#j3,#fa,#fb')], bx=[0,1,2,3].map(k=>c.q('#bx'+k)), fall=c.q('#fall1'), belt=c.q('#belt1');
+  const put=(el,x,y,r=0,o=1)=>{el.setAttribute('transform',`translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${r.toFixed(2)})`);el.setAttribute('opacity',o.toFixed(3));};
+  return (P,a,g,carried,frozen)=>{
+    const p=P-Math.floor(P), cyc=Math.floor(P), s=130*sstep(clamp((p-.32)/.6));
+    belt.setAttribute('stroke-dashoffset',(-((cyc*130+s)%34)).toFixed(1));
+    j[0].setAttribute('transform',`translate(${S1.SX} ${S1.SY}) rotate(${a[0].toFixed(2)})`);
+    j[1].setAttribute('transform',`translate(${S1.L1} 0) rotate(${a[1].toFixed(2)})`);
+    j[2].setAttribute('transform',`translate(${S1.L2} 0) rotate(${a[2].toFixed(2)})`);
+    const gap=46-10*g;j[3].setAttribute('transform',`translate(0 ${-gap})`);j[4].setAttribute('transform',`translate(0 ${gap})`);
+    for(let k=1;k<4;k++){const x=-250-130*k+s;put(bx[k],x,675,0,clamp((x+600)/80));}
+    const held=carried??(p>=.2&&p<.68);
+    if(held){const f=fk1(a);put(bx[0],f.x,f.y,f.r);}
+    else if(p<.2)put(bx[0],-250,675);else put(bx[0],0,0,0,0);
+    if(!frozen&&p>=.68&&p<.8){const u=(p-.68)/.12;put(fall,-70,660+105*u*u,0,1);}else put(fall,-70,660,0,0);
+  };
+}
+SC.push({html:()=>`<svg class="art" viewBox="0 0 1920 1080"><g transform="translate(1120 0)"><g id="w1">
+  <g id="m1">
+    <path d="M-640 800 H330" stroke="${C.line}" stroke-width="6" stroke-linecap="round"/>
+    <path d="M-500 740 V800 M-232 740 V800" ${ST}/>
+    <rect x="-545" y="700" width="360" height="40" rx="20" fill="#fff" ${ST}/>
+    <path id="belt1" d="M-520 720 H-210" stroke="${C.faint}" stroke-width="5" stroke-dasharray="14 20" stroke-linecap="round"/>
+    <circle cx="-525" cy="720" r="9" fill="${C.ink}"/><circle cx="-205" cy="720" r="9" fill="${C.ink}"/>
+    ${[3,2,1,0].map(k=>`<g id="bx${k}">${box1()}</g>`).join('')}
+    <g transform="translate(-112 737)">${box1()}</g><g transform="translate(-30 742) rotate(6)">${box1()}</g>
+    <g id="fall1" opacity="0">${box1()}</g>
+    <rect x="-152" y="725" width="164" height="75" rx="14" fill="#fff" ${ST}/>
+    <path d="M-110 762 H-28" stroke="${C.faint}" stroke-width="6" stroke-linecap="round"/>
+    <rect x="80" y="738" width="140" height="62" rx="16" fill="${C.ink}"/>
+    <rect x="114" y="640" width="72" height="104" rx="22" fill="#fff" ${ST}/>
+    <g id="j1" transform="translate(150 660)">
+      <rect x="-27" y="-27" width="${S1.L1+54}" height="54" rx="27" fill="#fff" ${ST}/>
+      <circle r="23" fill="${C.ink}"/><circle r="8" fill="${C.bg}"/>
+      <g id="j2" transform="translate(${S1.L1} 0)">
+        <rect x="-23" y="-23" width="${S1.L2+46}" height="46" rx="23" fill="#fff" ${ST}/>
+        <circle r="20" fill="${C.ink}"/><circle r="7" fill="${C.bg}"/>
+        <g id="j3" transform="translate(${S1.L2} 0)">
+          <g id="fa"><rect x="24" y="-6.5" width="64" height="13" rx="6.5" fill="${C.ink}"/></g>
+          <g id="fb"><rect x="24" y="-6.5" width="64" height="13" rx="6.5" fill="${C.ink}"/></g>
+          <rect x="8" y="-30" width="28" height="60" rx="10" fill="${C.ink}"/>
+          <circle r="16" fill="${C.ink}"/><circle r="6" fill="${C.bg}"/>
+        </g>
+      </g>
+    </g>
+  </g>
+  <g id="st1">
+    ${buddy({x:-330,y:300,size:116,id:'b1'})}
+    <g id="pill1" class="tb">
+      <g id="p1run">${pill({x:-250,cy:300,h:80,fs:42,fill:C.g2,color:C.gd,text:'RUNNING',icon:`<circle r="12" fill="${C.g}"/>`})}</g>
+      <g id="p1down" style="opacity:0">${pill({x:-250,cy:300,h:80,fs:42,fill:C.r,color:'#fff',text:'DOWN',icon:`<circle r="12" fill="#fff"/>`})}</g>
+    </g>
+  </g>
+</g></g></svg>
+<div class="abs" id="n1" style="left:880px;top:232px;width:990px;opacity:0">
+  <div class="rnd" style="font-size:250px;line-height:.92;letter-spacing:-.035em;font-variant-numeric:tabular-nums">$<span id="cnt1">1.4</span></div>
+  <div class="rnd" style="font-size:124px;line-height:1;letter-spacing:-.02em">trillion</div>
+  <div id="n1c" style="font-size:50px;font-weight:600;margin-top:34px;line-height:1.2">lost every year to unplanned downtime</div>
+  <div id="n1f" class="mute" style="font-size:24px;margin-top:24px">World's 500 largest companies · Siemens, <i>The True Cost of Downtime</i> 2024</div>
+</div>`,
+beats:[
+  c=>{
+    const W=world1(c), ph0=c.carry.ph??0;
+    c.loop(t=>{const P=ph0+t/S1.T;c.carry.ph=P;const po=pose1(P%1);W(P,ik1(po.x,po.y),po.g);});
+    c.pop('#pill1',250,600);
+  },
+  c=>{
+    const W=world1(c), P=c.carry.ph??0.05, p=P%1, po=pose1(p), a0=ik1(po.x,po.y);
+    const aF=ik1(-150,522);aF[0]+=5;aF[2]-=4;
+    const held=p>=.2&&p<.68;
+    c.tween(0,1150,(e,u)=>{const uq=Math.floor(u*15)/15, j=(1-u)*5*Math.sin(uq*58);
+      W(P,[lerp(a0[0],aF[0],e)+j,lerp(a0[1],aF[1],e)-j*.8,lerp(a0[2],aF[2],e)],lerp(po.g,held?1:.35,e),held,true);},eOut);
+    c.anim('#p1run',[{opacity:1},{opacity:0}],{at:650,d:220});
+    c.anim('#p1down',[{opacity:0},{opacity:1}],{at:650,d:220});
+    c.bump('#pill1',650,1.1);
+    c.expr('#b1','worried',650);c.hop('#b1 .b-jump',650,12);
+    c.anim('#m1',[{opacity:1},{opacity:.3}],{at:1150,d:700});
+    c.anim('#w1',[{transform:'translateX(0px)'},{transform:'translateX(-540px)'}],{at:1150,d:950,e:INOUT});
+    c.fade('#n1',1750,650,30);
+    const cnt=c.q('#cnt1');c.tween(1850,1500,e=>{cnt.textContent=(1.4*e).toFixed(1);},eOut);
+    c.fade('#n1c',2750,550,16);
+    c.fade('#n1f',3200,550,10);
+  }
+]});
+
+/* ============ Scene 2 · Out of reach ============ */
+const sp2=th=>[960+1150*Math.sin(th*D2R),1500-1150*Math.cos(th*D2R)];
+const arc2=(a,b)=>{const p=sp2(a),q=sp2(b);return `M${p[0].toFixed(1)} ${p[1].toFixed(1)} A1150 1150 0 0 1 ${q[0].toFixed(1)} ${q[1].toFixed(1)}`;};
+const earthY=x=>2620-Math.sqrt(1820*1820-(x-960)*(x-960));
+const ISL=[[540,earthY(540)],[600,earthY(600)-62],[900,earthY(900)-62],[965,earthY(965)]];
+function islY(x){let best=1e9,y=0;for(let i=0;i<=200;i++){const t=i/200,m=1-t;
+  const px=m*m*m*ISL[0][0]+3*m*m*t*ISL[1][0]+3*m*t*t*ISL[2][0]+t*t*t*ISL[3][0];
+  const py=m*m*m*ISL[0][1]+3*m*m*t*ISL[1][1]+3*m*t*t*ISL[2][1]+t*t*t*ISL[3][1];
+  if(Math.abs(px-x)<best){best=Math.abs(px-x);y=py;}}return y;}
+const ANT={x:790,y:0};ANT.y=islY(790)+4;
+const FOC=[ANT.x+42*Math.sin(-22*D2R),ANT.y-64-42*Math.cos(-22*D2R)];
+const SAT0=sp2(-14);
+const PROT=Math.atan2(SAT0[0]-FOC[0],FOC[1]-SAT0[1])/D2R;
+function setSat2(c){const s=c.q('#sat2');return th=>{const p=sp2(th);s.setAttribute('transform',`translate(${p[0].toFixed(1)} ${p[1].toFixed(1)}) rotate(${th.toFixed(2)})`);};}
+const PUL=['l','r'].map(side=>{const k=side==='l'?-1:1;return [{transform:'translate(0px,0px)',opacity:0},{transform:'translate(0px,-14px)',opacity:1,offset:.1},
+  {transform:'translate(0px,-126px)',opacity:1,offset:.64},{transform:`translate(${22*k}px,-144px) rotate(${38*k}deg)`,opacity:0}];});
+SC.push({html:()=>{
+  const wl=sp2(-6);
+  let pulses='';for(let i=0;i<3;i++)pulses+=`<path class="pu l tb" style="opacity:0" d="M-30 0 Q-16 -12 0 -14"/><path class="pu r tb" style="opacity:0" d="M0 -14 Q16 -12 30 0"/>`;
+  return `<svg class="art" viewBox="0 0 1920 1080">
+  <path d="${arc2(-66,66)}" fill="none" stroke="${C.faint}" stroke-width="4" stroke-dasharray="1 16" stroke-linecap="round"/>
+  <path class="win" d="${arc2(-24,12)}" fill="none" stroke="${C.skyd}" stroke-width="44" stroke-linecap="round" opacity=".22" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1"/>
+  <path class="win" d="${arc2(-24,12)}" fill="none" stroke="${C.skyd}" stroke-width="14" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1"/>
+  <text id="winl2" x="${wl[0].toFixed(0)}" y="${(wl[1]-48).toFixed(0)}" text-anchor="middle" font-size="36" fill="${C.mute}" style="opacity:0">contact window</text>
+  <g id="sat2" transform="translate(-200 1100)">${I.sat()}</g>
+  <circle cx="960" cy="2620" r="1820" fill="#E3EEF6" ${ST}/>
+  <path d="M${ISL.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ').replace(/^(\S+ \S+) /,'$1 C')}" fill="${C.kraft}" ${ST}/>
+  <g transform="translate(${ANT.x} ${ANT.y.toFixed(1)})">
+    <path d="M-30 0 L0 -50 L30 0 M0 0 V-58" fill="none" ${ST}/>
+    <g transform="translate(0 -64) rotate(-22)"><path d="M-52 -8 Q0 40 52 -8 Z" fill="#fff" ${ST}/><path d="M0 13 V-36" ${ST}/><circle cy="-42" r="7.5" fill="${C.ink}"/></g>
+  </g>
+  <g transform="translate(905 ${(islY(905)+2).toFixed(1)}) scale(.95)">${I.pin()}</g>
+  <text x="948" y="${(islY(905)-36).toFixed(0)}" font-size="48" fill="${C.ink}">GUAM</text>
+  ${buddy({x:620,y:islY(620)-54,size:112,id:'b2'})}
+  <g transform="translate(${FOC[0].toFixed(1)} ${FOC[1].toFixed(1)}) rotate(${PROT.toFixed(2)})" fill="none" stroke="${C.mute}" stroke-width="5.5" stroke-linecap="round">
+    <path id="sig2" d="M0 -26 V-118" stroke-dasharray="1 14" style="opacity:0"/>
+    ${pulses}
+    <g transform="translate(0 -146)"><g id="brk2" class="tb" style="opacity:0">${I.cross(C.r,13)}</g></g>
+  </g>
+  ${pill({id:'nolink2',cls:'tb',x:785,cy:530,h:72,fs:38,fill:C.r,color:'#fff',text:'NO LINK · no internet',icon:I.cross('#fff',10)})}
+  </svg>
+  <div class="abs ctr rnd" id="h2" style="top:112px;font-size:70px;letter-spacing:-.01em;opacity:0">One failure out of reach can cost millions.</div>`;},
+beats:[
+  c=>{const S=setSat2(c);c.tween(0,3000,e=>S(lerp(-64,-14,e)),eOut);
+    c.anim('.win',[{strokeDashoffset:1},{strokeDashoffset:0}],{at:1200,d:1000,e:INOUT});
+    c.fade('#winl2',1800,500,8);c.look('#b2','up',900);},
+  c=>{const S=setSat2(c);
+    c.fade('#sig2',0,400);
+    c.anim('.pu.l',PUL[0],{at:100,d:1100,st:380,e:LIN});c.anim('.pu.r',PUL[1],{at:100,d:1100,st:380,e:LIN});
+    c.pop('#brk2',760,420);c.pop('#nolink2',950,560);
+    c.expr('#b2','sad',1050);c.look('#b2','',1050);
+    c.tween(1500,2300,e=>S(lerp(-14,66,e)),eInOut);
+    c.anim('.win',[{strokeDashoffset:0},{strokeDashoffset:-1}],{at:2000,d:1300,e:INOUT});
+    c.anim('#winl2',[{opacity:1},{opacity:0}],{at:2200,d:500});},
+  c=>{c.fade('#h2',0,700,20);}
+]});
+
+/* ============ Scene 3 · Reveal ============ */
+SC.push({html:()=>`<svg class="art" viewBox="0 0 1920 1080">${buddy({x:960,y:366,size:300,id:'b3',e:'sleep',draw:true})}</svg>
+<div class="abs ctr rnd" id="wm3" style="top:566px;font-size:136px;letter-spacing:-.025em;opacity:0">Hardware <span style="color:${C.v}">Buddy</span></div>
+<div class="abs ctr rnd" id="tg3" style="top:752px;font-size:58px;opacity:0">The self-healing OS for hardware</div>
+<div class="abs ctr mute" id="sb3" style="top:840px;font-size:40px;font-weight:500;opacity:0">for manufacturing &amp; robotics</div>`,
+beats:[c=>{
+  c.anim('#b3 .b-outline',[{strokeDashoffset:1},{strokeDashoffset:0}],{d:1000,e:INOUT});
+  c.anim('#b3 .b-pins rect',[{transform:'scale(0)'},{transform:'scale(1)'}],{at:420,d:420,st:45,e:SPRING});
+  c.anim('#b3 .b-body',[{opacity:0},{opacity:1}],{at:950,d:450});
+  c.anim('#b3 .b-outline',[{opacity:1},{opacity:0}],{at:1300,d:300});
+  c.anim('#b3 .b-hi,#b3 .b-face',[{opacity:0},{opacity:1}],{at:1150,d:400});
+  c.expr('#b3','content',1750);
+  c.anim('#b3 .b-open',[{transform:'scaleY(1)'},{transform:'scaleY(.08)',offset:.5},{transform:'scaleY(1)'}],{at:2250,d:300,e:'ease-in-out',fill:'none'});
+  c.hop('#b3 .b-jump',2250,18);
+  c.fade('#wm3',2500,700,26);c.fade('#tg3',3100,600,16);c.fade('#sb3',3500,600,12);
+}]});
+
+/* ============ Scene 4 · Onboarding ============ */
+const tile4=(id,x,icon,name)=>`<g transform="translate(${x} 420)"><g id="${id}" class="tb"><rect x="-110" y="-110" width="220" height="220" rx="46" fill="#fff" filter="url(#sh)"/><g transform="scale(1.3)">${icon}</g></g><text y="168" text-anchor="middle" font-size="42" fill="${C.ink}">${name}</text></g>`;
+SC.push({html:()=>`<svg class="art" viewBox="0 0 1920 1080">
+  <path id="ln4a" d="M452 420 H838" stroke="${C.mute}" stroke-width="5" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1"/>
+  <path id="ln4b" d="M1468 420 H1082" stroke="${C.mute}" stroke-width="5" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1"/>
+  ${tile4('t4n',330,I.chat(),'Naïve agents')}
+  ${tile4('t4c',960,I.factory(),'Hardware company')}
+  ${tile4('t4k',1590,I.code(),'Coding agents')}
+  <g transform="translate(0 420)"><g class="envm"><g class="envs tb" style="opacity:0">${I.env()}</g></g></g>
+  <g id="bdg4" class="tb" style="opacity:0">${buddy({x:1060,y:320,size:88,id:'b4',e:'joy'})}</g>
+  ${pill({id:'st4a',cls:'tb',cx:645,cy:214,h:80,fs:40,shadow:true,text:'1 · Reach out',icon:`<g transform="scale(.62)">${I.env()}</g>`})}
+  ${pill({id:'st4b',cls:'tb',cx:1275,cy:214,h:80,fs:40,shadow:true,text:'2 · Set up, autonomously',icon:`<g transform="scale(.42)">${I.code()}</g>`})}
+</svg>
+<div class="term abs" id="term4" style="left:650px;top:664px;width:620px;opacity:0">
+  <div class="hd"><b></b><b></b><b></b></div>
+  ${['connect machines','install local model','link to cloud'].map((t,i)=>`<div class="tl" id="tl4${i}"><span class="bx"><svg class="ck4" viewBox="-23 -23 46 46" width="46" height="46" style="opacity:0">${I.check(22)}</svg></span>${t}</div>`).join('')}
+  <div style="height:20px"></div>
+</div>`,
+beats:[
+  c=>{c.pop('#st4a',100);
+    c.anim('#ln4a',[{strokeDashoffset:1},{strokeDashoffset:0}],{at:150,d:700,e:INOUT});
+    c.anim('.envm',[{transform:'translate(452px,0px)'},{transform:'translate(645px,-44px)',offset:.5},{transform:'translate(838px,0px)'}],{at:400,d:1400,e:INOUT});
+    c.anim('.envs',[{opacity:0,transform:'scale(.6)'},{opacity:1,transform:'scale(1)',offset:.15},{opacity:1,transform:'scale(1)',offset:.82},{opacity:0,transform:'scale(.35)'}],{at:400,d:1700,e:LIN});
+    c.bump('#t4c',1950,1.07);},
+  c=>{c.anim('#ln4b',[{strokeDashoffset:1},{strokeDashoffset:0}],{d:700,e:INOUT});
+    c.pop('#st4b',150);
+    c.fade('#term4',450,600,30);
+    for(let i=0;i<3;i++){const t=1150+600*i;c.pop(`#tl4${i} .ck4`,t,480);c.cls('#tl4'+i,'done',true,t);}
+    c.pop('#bdg4',2950,600);c.bump('#t4c',2950,1.05);c.expr('#b4','content',4300);}
+]});
+
+/* ============ Scene 5 · Two parts ============ */
+const card5=(id,x,title,art,lines)=>`<div class="card abs" id="${id}" style="left:${x}px;top:190px;width:560px;height:660px;opacity:0">
+  <div class="ctitle abs" style="left:50px;top:42px">${title}</div>
+  <svg class="abs" style="left:0;top:118px;overflow:visible" width="560" height="320" viewBox="0 0 560 320">${art}</svg>
+  <div class="abs" style="left:50px;top:470px;right:40px;display:flex;flex-direction:column;gap:16px">${lines.map(l=>`<div class="li"><i></i><span>${l}</span></div>`).join('')}</div></div>`;
+const local5=`<g transform="translate(280 0)">
+  <rect x="-122" y="286" width="44" height="16" rx="6" fill="${C.ink}"/><rect x="78" y="286" width="44" height="16" rx="6" fill="${C.ink}"/>
+  <rect x="-152" y="150" width="304" height="142" rx="24" fill="#fff" ${ST}/>
+  <rect x="-124" y="176" width="132" height="66" rx="12" fill="${C.g2}" ${ST}/>
+  <path d="M-110 210 H-86 L-76 192 L-64 228 L-54 210 H-6" fill="none" stroke="${C.g}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle id="led5" class="tb" cx="108" cy="194" r="12" fill="none" stroke="${C.g}" stroke-width="4"/><circle cx="108" cy="194" r="12" fill="${C.g}"/>
+  <path d="M40 236 H130 M40 258 H130" stroke="${C.faint}" stroke-width="6" stroke-linecap="round"/>
+  ${buddy({x:0,y:96,size:118,id:'b5'})}</g>`;
+const cloud5=`<g transform="translate(280 182) scale(1.55)">${I.cloud()}
+  <g fill="${C.sky}" stroke="${C.ink}" stroke-width="3"><rect x="-34" y="-12" width="68" height="14" rx="7"/><rect x="-34" y="8" width="68" height="14" rx="7"/><rect x="-34" y="28" width="68" height="14" rx="7"/></g></g>`;
+SC.push({html:()=>`${card5('c5l',160,'Local',local5,['on-device LLM','works offline'])}
+${card5('c5r',1200,'Cloud',cloud5,['fleet memory','Naïve agents for<br>parts &amp; people'])}
+<svg class="art" viewBox="0 0 1920 1080" style="pointer-events:none">
+  <path id="lk5off" d="M742 500 H1178" stroke="${C.faint}" stroke-width="6" stroke-dasharray="3 17" stroke-linecap="round" style="opacity:0"/>
+  <path id="lk5" d="M742 500 H1178" stroke="${C.mute}" stroke-width="6" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1"/>
+  ${[0,1,2].map(()=>`<circle class="pk5" cx="752" cy="500" r="12" fill="${C.v}" style="opacity:0"/>`).join('')}
+  ${[0,1,2].map(i=>`<g class="q5m"><circle class="q5 tb" cx="${770+34*i}" cy="500" r="12" fill="${C.v}" style="opacity:0"/></g>`).join('')}
+  ${pill({id:'off5',cls:'tb',cx:960,cy:426,h:70,fs:36,fill:'#fff',stroke:C.faint,color:C.mute,text:'offline'})}
+  ${pill({id:'sync5',cls:'tb',cx:960,cy:426,h:70,fs:36,fill:C.g2,color:C.gd,text:'syncs when online',icon:`<circle r="10" fill="${C.g}"/>`})}
+</svg>`,
+beats:[
+  c=>{c.fade('#c5l',0,700,40);
+    c.anim('#b5 .b-jump',[{transform:'translateY(-70px)',opacity:0},{transform:'translateY(0px)',opacity:1}],{at:550,d:700,e:SPRING});
+    c.anim('#c5l .li',[{opacity:0,transform:'translateY(12px)'},{opacity:1,transform:'translateY(0px)'}],{at:1100,d:500,st:300});
+    c.anim('#led5',[{transform:'scale(1)',opacity:.8},{transform:'scale(2.6)',opacity:0}],{it:Infinity,d:1600,e:'ease-out'});},
+  c=>{c.fade('#c5r',0,700,40);
+    c.anim('#c5r .li',[{opacity:0,transform:'translateY(12px)'},{opacity:1,transform:'translateY(0px)'}],{at:700,d:500,st:300});},
+  c=>{c.anim('#lk5',[{strokeDashoffset:1},{strokeDashoffset:0}],{d:380});
+    c.anim('.pk5',[{transform:'translateX(0px)',opacity:0},{opacity:1,offset:.12},{opacity:1,offset:.86},{transform:'translateX(420px)',opacity:0}],{at:280,d:820,st:260,e:LIN});
+    c.anim('#lk5',[{opacity:1},{opacity:0}],{at:1650,d:250});
+    c.anim('#lk5off',[{opacity:0},{opacity:1}],{at:1650,d:250});
+    c.pop('#off5',1700);c.cls('#c5l','pulse',true,1700);c.cls('#c5l','pulse',false,2850);
+    c.pop('.q5',1950,420,280);
+    c.anim('#lk5',[{opacity:0},{opacity:1}],{at:2850,d:250,fill:'forwards'});
+    c.anim('#lk5off',[{opacity:1},{opacity:0}],{at:2850,d:250,fill:'forwards'});
+    c.anim('#off5',[{opacity:1},{opacity:0}],{at:2850,d:200,fill:'forwards'});
+    c.pop('#sync5',2900);
+    c.anim('.q5m',[{transform:'translateX(0px)',opacity:1},{opacity:1,offset:.82},{transform:'translateX(392px)',opacity:0}],{at:3000,d:560,st:110,e:'cubic-bezier(.5,0,.3,1)'});
+    c.bump('#c5r',3550,1.025);
+    c.expr('#b5','joy',3100);c.hop('#b5 .b-jump',3100,12);c.expr('#b5','content',4300);}
+]});
+
+/* ============ Scene 6 · Alive ============ */
+const ecg=x=>`H${x} L${x+22} 338 L${x+36} 318 L${x+50} 338 H${x+70} L${x+90} 246 L${x+112} 414 L${x+130} 338 H${x+150}`;
+const chk=(r=26,sz=58)=>svgIcon(I.check(r),sz,r*2+4);
+SC.push({html:()=>`<div class="abs ctr rnd" id="h6" style="top:92px;font-size:94px;letter-spacing:-.02em;opacity:0">Make your hardware alive.</div>
+<svg class="art" viewBox="0 0 1920 1080">
+  <path id="ecg6" d="M0 338 ${ecg(330)} ${ecg(1380)} H1920" fill="none" stroke="${C.g}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1"/>
+  ${buddy({x:960,y:338,size:136,id:'b6'})}
+</svg>
+<div class="card abs" id="c6a" style="left:140px;top:482px;width:800px;height:440px;opacity:0">
+  <div class="ctitle abs" style="left:52px;top:40px">Need a part?</div>
+  <div class="abs" style="left:52px;top:136px;display:flex;align-items:center;gap:20px;font-size:40px;font-weight:600">${svgIcon(I.gear(),56,72)}gripper servo</div>
+  <div class="abs mute" style="left:52px;top:220px;font-size:34px;font-weight:500">wear</div>
+  <div class="abs" style="left:150px;top:228px;width:480px;height:30px;border-radius:15px;background:#F1EBE1;overflow:hidden"><div id="bar6" style="height:100%;width:84%;border-radius:15px;background:${C.a}"></div></div>
+  <div class="abs rnd" id="pct6" style="left:652px;top:216px;font-size:40px;color:#B7790F;font-variant-numeric:tabular-nums">84%</div>
+  <div class="abs res" id="r6a" style="left:52px;top:318px;opacity:0">${chk()}Ordered by agents</div>
+</div>
+<div class="card abs" id="c6b" style="left:980px;top:482px;width:800px;height:440px;opacity:0">
+  <div class="ctitle abs" style="left:52px;top:40px">Firmware issue?</div>
+  <div class="abs mono" style="left:40px;top:126px;width:720px;font-size:34px;line-height:52px;border-radius:18px;background:#FBF6EE;padding:10px 0;white-space:pre"><div id="dl6" style="padding:0 16px;background:${C.r2};color:#A3283B;transition:opacity .4s ease">- <span id="dlt6">if (dist_cm &lt; STOP_CM)</span></div><div id="al6" style="padding:0 16px;background:${C.g2};color:#0E6545;height:0;opacity:0;overflow:hidden">+ if (median3(dist_cm) &lt; STOP_CM)</div><div style="padding:0 16px;color:${C.mute}">      halt();</div></div>
+  <div class="abs res" id="r6b" style="left:52px;top:334px;opacity:0">${chk()}Fixed by the local LLM</div>
+</div>`,
+beats:[
+  c=>{c.fade('#h6',0,600,18);
+    c.anim('#ecg6',[{strokeDashoffset:1},{strokeDashoffset:0}],{at:250,d:1500,e:LIN});
+    c.expr('#b6','joy',1000);c.hop('#b6 .b-jump',1000,14);c.expr('#b6','content',2300);},
+  c=>{c.fade('#c6a',0,600,36);
+    c.anim('#bar6',[{width:'0%',backgroundColor:C.g},{width:'46%',backgroundColor:C.g,offset:.55},{width:'84%',backgroundColor:C.a}],{at:500,d:1400,e:'ease-in-out'});
+    const pc=c.q('#pct6');c.tween(500,1400,e=>{pc.textContent=Math.round(84*e)+'%';},eInOut);
+    c.anim('#pct6',[{opacity:0},{opacity:1}],{at:500,d:300});
+    c.cls('#c6a','ok',true,2250);c.pop('#r6a',2250,560);
+    c.expr('#b6','happy',2300);c.hop('#b6 .b-jump',2300,14);},
+  c=>{c.expr('#b6','content',0);c.fade('#c6b',0,600,36);
+    c.cls('#dl6','gone',true,750);c.anim('#dlt6',[{textDecorationColor:'rgba(163,40,59,0)'},{textDecorationColor:'rgba(163,40,59,1)'}],{at:750,d:300});
+    c.anim('#dl6',[{opacity:1},{opacity:.5}],{at:750,d:400});
+    c.anim('#al6',[{height:'0px',opacity:0},{height:'52px',opacity:1}],{at:1150,d:600,e:EASE});
+    c.cls('#c6b','ok',true,2150);c.pop('#r6b',2150,560);
+    c.expr('#b6','happy',2200);c.hop('#b6 .b-jump',2200,14);}
+]});
+
+/* ============ Scene 7 · Before / after ============ */
+const node7=(cls,x,y,inner,label,fill='#fff')=>`<g transform="translate(${x} ${y})"><g class="${cls} tb" style="opacity:0"><circle r="58" fill="${fill}" filter="url(#sh)"/>${inner}<text y="104" text-anchor="middle" font-size="36" fill="${C.ink}">${label}</text></g></g>`;
+const arr7=(cls,x1,x2,y,col=C.mute)=>`<path class="${cls}" d="M${x1} ${y} H${x2} M${x2-14} ${y-14} L${x2} ${y} L${x2-14} ${y+14}" fill="none" stroke="${col}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1 1" stroke-dashoffset="1"/>`;
+SC.push({html:()=>{const X=[840,1120,1400,1680];return `<svg class="art" viewBox="0 0 1920 1080">
+  <text id="lb7a" x="120" y="318" font-size="58" fill="${C.ink}" style="opacity:0">Today</text>
+  ${node7('n7a',X[0],298,`<g transform="scale(1.05)">${I.warn(C.r)}</g>`,'fault',C.r2)}
+  ${node7('n7a',X[1],298,`<g transform="scale(.95)">${I.ticket()}</g>`,'ticket')}
+  ${node7('n7a',X[2],298,`<g transform="scale(1.05)">${I.wrench()}</g>`,'technician')}
+  ${node7('n7a',X[3],298,`<g transform="scale(1.55)">${I.check(26)}</g>`,'fixed',C.g)}
+  ${arr7('a7a',X[0]+76,X[1]-76,298)}${arr7('a7a',X[1]+76,X[2]-76,298)}${arr7('a7a',X[2]+76,X[3]-76,298)}
+  <g id="bd7a" class="bandL" style="opacity:0"><rect x="${X[0]-58}" y="458" width="${X[3]-X[0]+116}" height="72" rx="36" fill="${C.r}"/></g>
+  <text id="bt7a" x="${(X[0]+X[3])/2}" y="507" text-anchor="middle" font-size="38" fill="#fff" style="opacity:0">line stopped · hours of human work</text>
+  <path d="M120 612 H1800" stroke="${C.line}" stroke-width="4" stroke-linecap="round"/>
+  <g id="lb7b" style="opacity:0">${buddy({x:166,y:700,size:92,id:'b7'})}<text x="232" y="718" font-size="48" fill="${C.ink}">With Hardware Buddy</text></g>
+  ${node7('n7b',X[0],700,`<g transform="scale(1.05)">${I.warn(C.r)}</g>`,'fault',C.r2)}
+  ${arr7('a7b',X[0]+76,X[1]-76,700,C.v)}
+  ${node7('n7b',X[1],700,`<g transform="scale(1.55)">${I.check(26)}</g>`,'fixed on the device',C.g)}
+  <g id="bd7b" class="bandL" style="opacity:0"><rect x="${X[0]-58}" y="860" width="${X[1]-X[0]+186}" height="72" rx="36" fill="${C.g}"/></g>
+  <text id="bt7b" x="${X[0]-58+(X[1]-X[0]+186)/2}" y="909" text-anchor="middle" font-size="38" fill="#fff" style="opacity:0">line keeps running</text>
+</svg>`;},
+beats:[
+  c=>{c.fade('#lb7a',0,500,10);
+    c.pop('.n7a',200,520,450);c.anim('.a7a',[{strokeDashoffset:1},{strokeDashoffset:0}],{at:430,d:300,st:450});
+    c.anim('#bd7a',[{opacity:1,transform:'scaleX(0)'},{opacity:1,transform:'scaleX(1)'}],{at:300,d:1700,e:'cubic-bezier(.4,0,.6,1)'});
+    c.fade('#bt7a',1800,500);},
+  c=>{c.fade('#lb7b',0,500,10);
+    c.pop('.n7b',300,520,520);c.anim('.a7b',[{strokeDashoffset:1},{strokeDashoffset:0}],{at:560,d:260});
+    c.anim('#bd7b',[{opacity:1,transform:'scaleX(0)'},{opacity:1,transform:'scaleX(1)'}],{at:900,d:450,e:EASE});
+    c.fade('#bt7b',1250,450);
+    c.expr('#b7','joy',850);c.hop('#b7 .b-jump',850,12);c.expr('#b7','happy',2000);}
+]});
+
+/* ============ Scene 8 · Demo bridge ============ */
+SC.push({html:()=>`<svg class="art" viewBox="0 0 1920 1080"><g id="bw8" class="tb" style="opacity:0">${buddy({x:960,y:282,size:150,id:'b8',look:'right'})}</g></svg>
+<div class="abs ctr" id="k8" style="top:404px;opacity:0"><span style="display:inline-flex;align-items:center;gap:16px;padding:12px 30px 12px 22px;border-radius:40px;background:#fff;box-shadow:0 10px 26px rgba(31,27,46,.08);font-family:var(--round);font-weight:700;font-size:38px;letter-spacing:.14em;color:${C.ink}">${svgIcon(I.play(),40,40)}LIVE DEMO</span></div>
+<div class="abs ctr rnd" id="t8" style="top:494px;font-size:132px;letter-spacing:-.025em;opacity:0">A chip-packing line</div>
+<div class="abs ctr mute" id="u8" style="top:672px;font-size:44px;font-weight:500;opacity:0">SO-101 arm · ultrasonic sensor · STM32 firmware</div>`,
+beats:[c=>{c.pop('#bw8',0,640);c.fade('#k8',300,500,12);c.fade('#t8',500,650,24);c.fade('#u8',850,600,14);}]});
+
+/* ============ Scene 9 · Closing ============ */
+SC.push({html:()=>`<div class="abs" id="g9a" style="left:0;right:0;top:0">
+  <div class="abs ctr rnd mute" id="l9a" style="top:404px;font-size:64px;font-weight:600;opacity:0">Software is automating everything.</div>
+  <div class="abs ctr rnd" id="l9b" style="top:500px;font-size:108px;letter-spacing:-.02em;opacity:0">Hardware has to get smarter.</div></div>
+<svg class="art" viewBox="0 0 1920 1080"><g id="bw9" class="tb" style="opacity:0">${buddy({x:960,y:366,size:300,id:'b9',e:'joy'})}</g></svg>
+<div class="abs ctr rnd" id="wm9" style="top:566px;font-size:136px;letter-spacing:-.025em;opacity:0">Hardware <span style="color:${C.v}">Buddy</span></div>
+<div class="abs ctr rnd mute" id="tg9" style="top:756px;font-size:52px;font-weight:600;opacity:0">Self-healing hardware for robotics &amp; manufacturing</div>`,
+beats:[
+  c=>{c.fade('#l9a',0,700,14);c.fade('#l9b',1000,700,20);},
+  c=>{c.anim('#g9a',[{opacity:1,transform:'translateY(0px)'},{opacity:0,transform:'translateY(-24px)'}],{d:420,e:'ease-in'});
+    c.anim('#bw9',[{opacity:0,transform:'scale(.6)'},{opacity:1,transform:'scale(1)'}],{at:380,d:750,e:SPRING});
+    c.hop('#b9 .b-jump',1150,18);
+    c.fade('#wm9',800,700,26);c.fade('#tg9',1250,650,16);
+    c.expr('#b9','proud',2100);}
+]});
+
+/* ============ engine: state machine of (scene, beat) ============ */
+const BEATS=[[2500,4500],[4000,4000,3500],[5000],[3500,4000],[3000,3000,4000],[2500,3500,3500],[3000,3000],[4000],[3500,null]];
+const stage=document.getElementById('stage'), secs=[...document.querySelectorAll('.scene')], hud=document.getElementById('hud');
+hud.innerHTML=BEATS.map(()=>'<i></i>').join('');
+let cur={s:-1,b:0}, auto=false, autoT=null, hudOff=false, lastBase=0;
+function cancelRun(s){
+  RUN.timers.forEach(clearTimeout);RUN.timers=[];RUN.ticks=[];
+  RUN.anims.forEach(({a,si})=>{try{if(si===s)a.cancel();else a.pause();}catch(e){}});
+  RUN.anims=[];RUN.named={};
+}
+function render(s,b,mode,instant){
+  const changed=s!==cur.s;
+  if(instant)stage.classList.add('instant');
+  cancelRun(s);
+  if(changed)carry={};
+  const sec=secs[s];
+  sec.innerHTML=SC[s].html();
+  fitPills(sec);
+  for(let i=0;i<b;i++)SC[s].beats[i](mkCtx(sec,s,{snap:true,final:false}));
+  lastBase=(changed&&!instant&&mode==='play')?200:0;
+  SC[s].beats[b](mkCtx(sec,s,{snap:mode==='snap',final:true,base:lastBase}));
+  if(changed){
+    secs.forEach((el,i)=>el.classList.toggle('on',i===s));
+    try{history.replaceState(null,'',location.pathname+location.search+'#'+(s+1));}catch(e){}
+  }
+  if(instant){void stage.offsetWidth;stage.classList.remove('instant');}
+  cur={s,b};
+  updHud();schedule();
+}
+function next(){const n=BEATS[cur.s].length;if(cur.b+1<n)render(cur.s,cur.b+1,'play');else if(cur.s<8)render(cur.s+1,0,'play');}
+function prev(){if(cur.b>0)render(cur.s,cur.b-1,'snap');else if(cur.s>0)render(cur.s-1,BEATS[cur.s-1].length-1,'snap');}
+function schedule(){
+  clearTimeout(autoT);autoT=null;if(!auto)return;
+  const d=BEATS[cur.s][cur.b];if(d==null)return;
+  autoT=setTimeout(()=>{autoT=null;next();},d+lastBase);
+}
+function updHud(){
+  [...hud.children].forEach((el,i)=>el.classList.toggle('on',i===cur.s));
+  hud.classList.toggle('hide',hudOff||auto);
+}
+function toggleFs(){
+  const d=document,el=d.documentElement;
+  try{if(d.fullscreenElement||d.webkitFullscreenElement)(d.exitFullscreen||d.webkitExitFullscreen).call(d);
+  else (el.requestFullscreen||el.webkitRequestFullscreen).call(el);}catch(e){}
+}
+window.addEventListener('keydown',e=>{
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
+  const k=e.key;
+  if(k==='ArrowRight'||k===' '||k==='PageDown'||k==='Enter'){e.preventDefault();next();}
+  else if(k==='ArrowLeft'||k==='PageUp'){e.preventDefault();prev();}
+  else if(/^[1-9]$/.test(k)){e.preventDefault();render(+k-1,0,'play');}
+  else if(k==='Home'){e.preventDefault();render(0,0,'play');}
+  else if(k==='a'||k==='A'){auto=!auto;updHud();schedule();}
+  else if(k==='f'||k==='F'){toggleFs();}
+  else if(k==='h'||k==='H'){hudOff=!hudOff;updHud();}
+});
+window.addEventListener('click',()=>next());
+window.addEventListener('hashchange',()=>{const h=parseInt(location.hash.slice(1),10);if(h>=1&&h<=9&&h-1!==cur.s)render(h-1,0,'play');});
+function fit(){const k=Math.min(innerWidth/1920,innerHeight/1080);stage.style.transform=`translate(${(innerWidth-1920*k)/2}px,${(innerHeight-1080*k)/2}px) scale(${k})`;}
+window.addEventListener('resize',fit);fit();
+window.__pitch={
+  go(s,b){s=clamp(Math.round(s)||1,1,9);b=clamp(Math.round(b)||1,1,BEATS[s-1].length);render(s-1,b-1,'snap',true);return this.state();},
+  state(){return {scene:cur.s+1,beat:cur.b+1,beats:cur.s>=0?BEATS[cur.s].length:0,auto};}
+};
+auto=new URLSearchParams(location.search).get('auto')==='1';
+{const h=parseInt(location.hash.slice(1),10);render(h>=1&&h<=9?h-1:0,0,'play',true);}
+</script>
+</body>
+</html>
