@@ -117,6 +117,15 @@ class PoddVar:
         self.event(ts, "agent_note", text=text)
         self.call("note", ts, {"text": text}, duration=0.01)
 
+    def pod_cmd(self, command: str, ts: float, ok: bool = True) -> None:
+        """tools.pod_cmd(command): podd sends `@<id> <command>`, the pod answers with `R`
+        lines ending `R id=<id> end=1 ok=1` (or `ok=0 err="…"`), which podd logs as events."""
+        end = {"type": "R", "id": 1001, "end": 1, "ok": 1 if ok else 0, "ts": ts + 0.1}
+        if not ok:
+            end["err"] = "unknown command"
+        self._append(self.paths.log("events"), end)
+        self.call("pod_cmd", ts, {"command": command}, duration=0.2)
+
     def notify(self, summary: str, ts: float, actions: str | None = None) -> None:
         rec = {"ts": ts, "severity": "warn", "summary": summary, "actions": actions}
         self._append(self.paths.notifications, rec)

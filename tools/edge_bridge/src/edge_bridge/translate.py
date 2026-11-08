@@ -16,9 +16,11 @@ what each one means to the cloud. In one place:
 - **`outcome`:**
   - a verified flash (`deployments.jsonl` result `ok`) resolves it by `fw_flash` when the
     image was built from the workspace (`fix-code`), else by `fw_rollback` (`ops`);
-  - otherwise a runtime tool (`pod_cmd`, `chip_reset`, …) resolves it (`ops`);
-  - `notify_human` with instructions for a person means `suspected_cause: hardware`, and a
-    fault still unresolved with that cause becomes a work order in the cloud.
+  - otherwise a runtime tool that the logs show took effect (`pod_cmd`, `chip_reset`, …;
+    not `fw_mark`, which only edits the image registry) resolves it (`ops`);
+  - `notify_human` with instructions for a person means `suspected_cause: hardware`,
+    unless a fix of the healer's own then resolved the fault. A fault still unresolved
+    with a hardware cause becomes a work order in the cloud.
 - **`firmware_patch`**: the flashed image's source diff and the workspace commits, as
   evidence only. Never an `overlay`, so the gate and the coding agent never try to roll a
   pod patch out to the arms (D29).
@@ -194,6 +196,8 @@ class Evidence:
     images: dict[str, dict[str, Any]]
     """CRC → registry entry, for the images flashed in the window."""
     workspace_log: str | None = None
+    until: float | None = None
+    """Where the fault's own activity ends (the next fault's start, if sooner than `hi`)."""
 
 
 @dataclass(frozen=True)
@@ -202,9 +206,12 @@ class Report:
     recordings: list[tuple[RecordingMeta, bytes]]
 
 
-def window(fault: Fault, now: float) -> tuple[float, float]:
-    """The evidence window: from `PRE_S` before the fault to `POST_S` after it (not past now)."""
-    return fault.start - PRE_S, min(fault.end(now) + POST_S, now)
+def window(fault: Fault, ready_at: float, now: float) -> tuple[float, float]:
+    """The evidence window: from `PRE_S` before the fault to when it was over, never past
+    the moment it became ready. A resolved fault was over at its last activity, and the
+    window runs `POST_S` past that; an unresolved one was over when it became ready."""
+    end = ready_at if fault.unresolved else min(ready_at, fault.last_activity + POST_S)
+    return fault.start - PRE_S, min(end, now)
 
 
 def report(device_id: str, fault: Fault, reason: Reason, ev: Evidence) -> Report:
@@ -251,22 +258,49 @@ def report(device_id: str, fault: Fault, reason: Reason, ev: Evidence) -> Report
     return Report(incident, recordings)
 
 
+BOOKKEEPING = {"fw_mark"}
+"""Runtime-risk tools that change the image registry, not the pod: never the fix."""
+
+
 class _During:
-    """The evidence that falls inside the fault itself (from its start to the window's end)."""
+    """The evidence that belongs to the fault itself: from its start to `until`."""
 
     def __init__(self, fault: Fault, ev: Evidence) -> None:
+        end = min(ev.hi, ev.until) if ev.until is not None else ev.hi
+
         def inside(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            return [r for r in rows if fault.start <= float(r["ts"]) <= ev.hi]
+            return [r for r in rows if fault.start <= float(r["ts"]) <= end]
 
         self.risks = ev.risks
         self.images = ev.images
+        self.events = ev.logs.get("events", [])
         self.calls = inside(ev.audit)
-        self.notes = [e for e in inside(ev.logs.get("events", [])) if e.get("ev") == "agent_note"]
+        self.notes = [e for e in inside(self.events) if e.get("ev") == "agent_note"]
         self.notifications = inside(ev.notifications)
         self.deployments = inside(ev.deployments)
         self.acted = [c for c in self.calls if c.get("ok") and self.risk(c) != "read"]
         self.flashed = [d for d in self.deployments if d.get("result") == "ok"]
         self.asks = [n for n in self.notifications if str(n.get("actions") or "").strip()]
+        self.runtime = [
+            c
+            for c in self.acted
+            if self.risk(c) == "runtime" and c.get("tool") not in BOOKKEEPING and self.took(c)
+        ]
+
+    def took(self, call: dict[str, Any]) -> bool:
+        """Whether the healer's logs show a runtime action took effect. The audit's `ok`
+        only means the call didn't raise: `pod_cmd` and `link_set_baud` report failure in
+        their result instead (podd answers `{"ok": false}` when the serial port is closed).
+        A pod command took when the pod's reply ends `R … end=1 ok=1`; a baud change when
+        podd logs `baud_changed`. Other tools raise on failure, so `ok` is enough."""
+        start = float(call["ts"])
+        end = start + float(call.get("duration_s") or 0) + 1
+        near = [e for e in self.events if start <= float(e["ts"]) <= end]
+        if call.get("tool") == "pod_cmd":
+            return any(e.get("type") == "R" and "end" in e and bool(e.get("ok")) for e in near)
+        if call.get("tool") == "link_set_baud":
+            return any(e.get("ev") == "baud_changed" for e in near)
+        return True
 
     def risk(self, call: dict[str, Any]) -> str:
         """Unknown tools count as actions."""
@@ -278,13 +312,17 @@ class _During:
 
 
 def _outcome(reason: Reason, d: _During) -> Outcome:
-    """How it ended. `ok` in the audit means the call didn't raise, not that it worked, so
-    a flash counts only when `deployments.jsonl` says it verified."""
-    runtime = [c for c in d.acted if d.risk(c) == "runtime"]
-    changed = [c for c in d.acted if d.risk(c) != "notify"]
-    if d.asks:
+    """How it ended. A flash counts only when `deployments.jsonl` says it verified, and a
+    runtime action only when the logs show it took (`_During.took`). Asking a person to act
+    means hardware, unless a fix of the healer's own then resolved the fault (a note like
+    "check the cable if it comes back" doesn't make a code fix a hardware fault)."""
+    fixed = bool(d.flashed or d.runtime)
+    # Changes that happened: a verified flash, a runtime action that took, or a code edit
+    # (risk `code`, or a tool tools.json doesn't know).
+    edited = [c for c in d.acted if d.risk(c) not in ("runtime", "flash", "notify")]
+    if d.asks and not (reason == "resolved" and fixed):
         cause = "hardware"
-    elif d.flashed or changed:
+    elif fixed or edited:
         cause = "software"
     else:
         cause = "unknown"
@@ -292,12 +330,12 @@ def _outcome(reason: Reason, d: _During) -> Outcome:
     action: str | None = None
     category: str | None = None
     if d.flashed:
-        fixed = d.built_here(d.flashed[-1])
-        action, category = ("fw_flash", "fix-code") if fixed else ("fw_rollback", "ops")
-    elif runtime:
-        last = runtime[-1]
-        line = (last.get("args") or {}).get("line") if last.get("tool") == "pod_cmd" else None
-        action, category = (f"pod_cmd: {line}" if line else str(last.get("tool"))), "ops"
+        built = d.built_here(d.flashed[-1])
+        action, category = ("fw_flash", "fix-code") if built else ("fw_rollback", "ops")
+    elif d.runtime:
+        last = d.runtime[-1]
+        cmd = (last.get("args") or {}).get("command") if last.get("tool") == "pod_cmd" else None
+        action, category = (f"pod_cmd: {cmd}" if cmd else str(last.get("tool"))), "ops"
     elif d.asks:
         action = "notify_human"
     if cause == "hardware":

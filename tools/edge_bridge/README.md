@@ -26,7 +26,7 @@ Rather than ask the device team for more work, the bridge adapts on our side (de
 | podd `status`: link state, open incidents, last boot | a **check-in** every 10 s: `kind: real`, `health` (`failing` if podd is down, the link is down, silent or garbled, or a critical incident is open; `degraded` for a warning), `running.mcu_build` such as `v1.1@32ACFDAF`, and `pod_*` metrics |
 | the podd incidents of one fault (scenario 01 opens `crash`, `reboot_loop` and `safe_mode` together) | **one incident**, once the fault is over (below), named after its most severe incident |
 | heal-tool calls that change something, agent notes | `agent.actions` and `agent.reasoning` |
-| a verified flash, a runtime command, a request for a person | the `outcome`: `fw_flash` (`fix-code`) or `fw_rollback` (`ops`), `pod_cmd: …` (`ops`), or `suspected_cause: hardware`. Still unresolved with a hardware cause, the cloud **opens a Naïve work order** |
+| a verified flash, a runtime command the pod accepted, a request for a person | the `outcome`: `fw_flash` (`fix-code`) or `fw_rollback` (`ops`), `pod_cmd: …` (`ops`), or `suspected_cause: hardware` (unless the healer's own fix then resolved it). Still unresolved with a hardware cause, the cloud **opens a Naïve work order** |
 | the flashed image's source diff, the workspace commits | `firmware_patch`, **as evidence only** (D29): never an `overlay`, so the gate and the coding agent never try to roll a pod patch out to the arms |
 | telemetry, health and event logs from 30 s before to 10 s after | a **`log_window`** recording (JSONL) |
 | the heal-tool calls and notes during the fault | an **`agent_trace`** recording (JSONL: tool calls and arguments; no model messages yet) |
@@ -37,6 +37,8 @@ The exact rules are in one place, the docstring of [`translate.py`](src/edge_bri
 - **resolved:** every podd incident resolved, and 15 s passed with no new heal-tool call;
 - **handed off:** still open, the healer asked a person to act (`notify_human` with instructions), and 60 s passed quietly (`--quiet`);
 - **timed out:** still open after 15 min (`--max-open`).
+
+A flash in progress (podd's `flash_start` without its `flash_done`) holds the report, because a heal tool's audit record is written only when the call returns. Once ready, a fault is final: anything later belongs to the next fault or to none, so the report is the same however late the bridge ticks. The incident's MCU build is the one running when the fault opened, read from the pod's boot records in time order.
 
 ## Run it on the Pi
 

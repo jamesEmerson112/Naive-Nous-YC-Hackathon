@@ -1,12 +1,15 @@
 """The bridge: follow the pod healer and report to the cloud. `tick(now)` does it all.
 
 Each tick:
-1. asks podd for `status` and `stats` (None while podd is down) and tracks the MCU build;
-2. reads what's new in `incidents.jsonl`, `audit.jsonl` and `notifications.jsonl` and
-   feeds it to the fault tracker in time order;
+1. asks podd for `status` and `stats` (None while podd is down);
+2. reads what's new in four streams and feeds it to the fault tracker in time order:
+   `incidents.jsonl`, `audit.jsonl` (each call placed where it ended), `notifications.jsonl`,
+   and from `events.jsonl` only the pod's boot records and podd's flash start and end.
+   Boot records keep the MCU build current in stream time, so each fault is tagged with
+   the build that was running when it opened, not when the bridge happened to look;
 3. for each fault that's ready, gathers its evidence, builds the report and queues it in
    the outbox: the incident first, then its recordings (APIs §3);
-4. saves its state: file cursors, faults in progress, the MCU build;
+4. saves its state: file cursors, faults in progress, the MCU builds;
 5. checks in live (a check-in isn't queued: an old one is worthless) and drains the outbox.
 
 At least once: a report is queued before the state that says it was sent is saved, so a
@@ -24,18 +27,21 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from edge_bridge import podd, translate
-from edge_bridge.faults import DEFAULT_TIMING, Fault, FaultTracker, Reason, Timing
+from edge_bridge.faults import DEFAULT_TIMING, Fault, FaultTracker, Ready, Timing
 from edge_bridge.podd import Cursor, PoddPaths, PoddSocket
 from fake_device.client import DeviceClient
 from fake_device.outbox import Outbox, atomic_write
 
 log = logging.getLogger(__name__)
 
-STREAMS = ("incidents", "audit", "notifications")
 REPORTED_KEEP = 1000
-BOOT_LOOKBACK_S = 24 * 3600
+AUDIT_DISORDER_S = 300.0
+"""How far out of order audit records can be: a call is written when it returns."""
+EVENTS_KEEP = (b'"boot"', b'"flash_start"', b'"flash_done"')
+"""A cheap filter for the event-log lines the tracker needs; `_observe` checks `ev` exactly."""
 
 
 @dataclass
@@ -47,6 +53,9 @@ class State:
     cursors: dict[str, Cursor] = field(default_factory=dict)
     faults: list[dict[str, Any]] = field(default_factory=list)
     build: str | None = None
+    """The MCU build for check-ins: what's running now."""
+    stream_build: str | None = None
+    """The MCU build as of the last boot record read from the event log."""
     reported: list[str] = field(default_factory=list)
     """podd incident ids already reported (the newest `REPORTED_KEEP`)."""
 
@@ -65,7 +74,8 @@ class State:
             "cursors": {k: c.to_dict() for k, c in self.cursors.items()},
             "faults": self.faults,
             "build": self.build,
-            "reported": self.reported[-REPORTED_KEEP:],
+            "stream_build": self.stream_build,
+            "reported": self.reported,
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(path, json.dumps(data, indent=1).encode())
@@ -112,28 +122,24 @@ class Bridge:
         state, tracker = self._load(now)
         status = self.sock.call("status")
         stats = self.sock.call("stats", seconds=10) if status else None
-        self._track_build(state, status, now)
 
         for kind, rec in self._new_records(state):
-            if kind == "incidents":
-                tracker.observe_incident(rec, mcu_build=state.build)
-            elif kind == "audit":
-                tracker.observe_activity(float(rec["ts"]) + float(rec.get("duration_s") or 0))
-            else:
-                asks = bool(str(rec.get("actions") or "").strip())
-                tracker.observe_activity(float(rec["ts"]), handoff=asks)
+            self._observe(state, tracker, kind, rec)
+        self._track_build(state, status)
 
-        reported = [self._queue(fault, reason, now) for fault, reason in tracker.pop_ready(now)]
-        for _, fault in reported:
-            state.reported.extend(i.id for i in fault.incidents)
+        reported = []
+        for ready in tracker.pop_ready(now):
+            reported.append(self._queue(ready, now))
+            state.reported.extend(i.id for i in ready.fault.incidents)
+        state.reported = state.reported[-REPORTED_KEEP:]
         state.faults = tracker.to_list()
         state.save(self.state_path)
 
         health, checked_in = self._check_in(status, stats, state.build)
         sent = self.outbox.drain(self.client, translate.utc(now))
-        return TickResult(health, checked_in, [i for i, _ in reported], sent)
+        return TickResult(health, checked_in, reported, sent)
 
-    # -- steps --------------------------------------------------------------------------
+    # -- reading ------------------------------------------------------------------------
 
     def _load(self, now: float) -> tuple[State, FaultTracker]:
         if self.state is None or self.tracker is None:
@@ -142,54 +148,62 @@ class Bridge:
             self.tracker = FaultTracker(self.timing, faults)
         return self.state, self.tracker
 
-    def _track_build(self, state: State, status: dict[str, Any] | None, now: float) -> None:
-        """The MCU build: podd's last boot record; on a first start without one, the newest
-        boot in the event log, else the newest deployment."""
-        build = translate.build_from_boot((status or {}).get("last_boot"))
+    def _new_records(self, state: State) -> list[tuple[str, dict[str, Any]]]:
+        """New records from the four streams, oldest first. Boot records count even before
+        `since`, because they say what's running; everything else from before is ignored."""
+        streams = {
+            "incidents": (self.paths.log("incidents"), None),
+            "audit": (self.paths.log("audit"), None),
+            "notifications": (self.paths.notifications, None),
+            "events": (self.paths.log("events"), EVENTS_KEEP),
+        }
+        out = []
+        for kind, (path, keep) in streams.items():
+            records, cursor = podd.read_new(path, state.cursors.get(kind), keep)
+            if cursor is not None:
+                state.cursors[kind] = cursor
+            for rec in records:
+                is_boot = kind == "events" and rec.get("ev") == "boot"
+                if float(rec["ts"]) < state.since and not is_boot:
+                    continue
+                if kind == "incidents" and rec.get("id") in state.reported:
+                    continue
+                out.append((kind, rec))
+        return sorted(out, key=_stream_time)
+
+    def _observe(self, state: State, tracker: FaultTracker, kind: str, rec: dict) -> None:
+        if kind == "incidents":
+            tracker.observe_incident(rec, mcu_build=state.stream_build or state.build)
+        elif kind == "audit":
+            tracker.observe_activity(_stream_time((kind, rec)))
+        elif kind == "notifications":
+            asks = bool(str(rec.get("actions") or "").strip())
+            tracker.observe_activity(float(rec["ts"]), handoff=asks)
+        elif rec.get("ev") == "boot":
+            state.stream_build = translate.build_from_boot(rec) or state.stream_build
+        elif rec.get("ev") in ("flash_start", "flash_done"):
+            tracker.observe_flash(float(rec["ts"]), started=rec.get("ev") == "flash_start")
+
+    def _track_build(self, state: State, status: dict[str, Any] | None) -> None:
+        """The MCU build for check-ins: podd's last boot record; else the newest boot read
+        from the event log; on a first start without either, the newest deployment."""
+        build = translate.build_from_boot((status or {}).get("last_boot")) or state.stream_build
         if build:
             state.build = build
         elif state.build is None and not self._looked_for_build:
             self._looked_for_build = True
-            events = podd.read_window(self.paths.log("events"), now - BOOT_LOOKBACK_S, now)
-            boots = [e for e in events if e.get("ev") == "boot"]
             deployed = [
                 d
                 for d in podd.read_all(self.paths.deployments)
                 if d.get("result") in ("ok", "unverified")
             ]
-            state.build = translate.build_from_boot(boots[-1] if boots else None) or (
-                translate.build_from_deployment(deployed[-1] if deployed else None)
-            )
+            state.build = translate.build_from_deployment(deployed[-1] if deployed else None)
 
-    def _new_records(self, state: State) -> list[tuple[str, dict[str, Any]]]:
-        """New records from the three streams, oldest first. An audit record is placed at
-        the end of its call (podd writes it then), the others at their `ts`."""
-        out = []
-        files = {
-            "incidents": self.paths.log("incidents"),
-            "audit": self.paths.log("audit"),
-            "notifications": self.paths.notifications,
-        }
-        for kind in STREAMS:
-            records, cursor = podd.read_new(files[kind], state.cursors.get(kind))
-            if cursor is not None:
-                state.cursors[kind] = cursor
-            for rec in records:
-                if float(rec["ts"]) < state.since:
-                    continue
-                if kind == "incidents" and rec.get("id") in state.reported:
-                    continue
-                out.append((kind, rec))
+    # -- reporting ----------------------------------------------------------------------
 
-        def at(item: tuple[str, dict[str, Any]]) -> float:
-            kind, rec = item
-            end = float(rec.get("duration_s") or 0) if kind == "audit" else 0.0
-            return float(rec["ts"]) + end
-
-        return sorted(out, key=at)
-
-    def _queue(self, fault: Fault, reason: Reason, now: float) -> tuple[str, Fault]:
-        report = translate.report(self.device_id, fault, reason, self._evidence(fault, now))
+    def _queue(self, ready: Ready, now: float) -> str:
+        ev = self._evidence(ready, now)
+        report = translate.report(self.device_id, ready.fault, ready.reason, ev)
         self.outbox.add_incident(report.incident)
         for meta, data in report.recordings:
             self.outbox.add_recording(meta, data)
@@ -197,14 +211,15 @@ class Bridge:
         log.info(
             "queued %s (%s, %s): %s",
             incident.kind,
-            reason,
+            ready.reason,
             incident.outcome.suspected_cause if incident.outcome else "unknown",
             incident.summary,
         )
-        return str(incident.incident_id), fault
+        return str(incident.incident_id)
 
-    def _evidence(self, fault: Fault, now: float) -> translate.Evidence:
-        lo, hi = translate.window(fault, now)
+    def _evidence(self, ready: Ready, now: float) -> translate.Evidence:
+        fault = ready.fault
+        lo, hi = translate.window(fault, ready.at, now)
 
         def within(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             return [r for r in rows if lo <= float(r["ts"]) <= hi]
@@ -223,12 +238,13 @@ class Bridge:
             lo=lo,
             hi=hi,
             logs=logs,
-            audit=podd.read_window(self.paths.log("audit"), lo, hi),
+            audit=podd.read_window(self.paths.log("audit"), lo, hi, AUDIT_DISORDER_S),
             notifications=within(podd.read_all(self.paths.notifications)),
             deployments=deployments,
             risks=self.risks,
             images=images,
-            workspace_log=podd.workspace_log(self.paths, fault.start, hi),
+            workspace_log=podd.workspace_log(self.paths, fault.start, min(hi, ready.until)),
+            until=ready.until,
         )
 
     def _check_in(
@@ -240,8 +256,8 @@ class Bridge:
             self._last_health = body.health
         try:
             response = self.client.checkin(body)
-        except httpx.HTTPError as exc:
-            log.info("check-in not sent: %s", exc)
+        except (httpx.HTTPError, ValidationError, ValueError) as exc:
+            log.info("check-in not sent or not understood: %s", exc)
             return body.health, False
         # The bridge pulls and installs nothing: the healer manages the pod's firmware.
         # Firmware is assigned per device class, so firmware here means the cloud took the
@@ -255,3 +271,10 @@ class Bridge:
                 self.device_id,
             )
         return body.health, True
+
+
+def _stream_time(item: tuple[str, dict[str, Any]]) -> float:
+    """Where a record sits in time: an audit record at the end of its call, others at `ts`."""
+    kind, rec = item
+    end = float(rec.get("duration_s") or 0) if kind == "audit" else 0.0
+    return float(rec["ts"]) + end

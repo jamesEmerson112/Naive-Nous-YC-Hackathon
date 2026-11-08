@@ -162,3 +162,45 @@ def test_the_incident_id_is_stable_across_devices_and_runs():
     a = translate.incident_uuid("pod-1", "crash-1794105660")
     assert a == translate.incident_uuid("pod-1", "crash-1794105660")
     assert a != translate.incident_uuid("pod-2", "crash-1794105660")
+
+
+def test_a_check_in_reply_it_cant_read_doesnt_stop_the_tick(make_bridge, pod):
+    import httpx
+
+    def garbled(request):
+        if request.url.path.endswith("/checkin"):
+            return httpx.Response(200, json={"unexpected": True})
+        return httpx.Response(404, json={"error": "not_found", "detail": ""})
+
+    http = httpx.Client(transport=httpx.MockTransport(garbled), base_url="http://cloud")
+    result = make_bridge(http=http).tick(T0)
+    assert result.checked_in is False
+
+
+def test_the_cli_keeps_going_after_a_failed_tick(pod, tmp_path, monkeypatch):
+    from edge_bridge import __main__ as cli
+    from edge_bridge.bridge import Bridge
+
+    calls = []
+
+    def flaky(self, now):
+        calls.append(now)
+        if len(calls) == 1:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(Bridge, "tick", flaky)
+    cli.main(
+        [
+            "--healer",
+            str(pod.healer),
+            "--state-dir",
+            str(tmp_path / "s"),
+            "--url",
+            "http://127.0.0.1:9",
+            "--interval",
+            "0",
+            "--ticks",
+            "2",
+        ]
+    )
+    assert len(calls) == 2

@@ -43,8 +43,13 @@ def test_one_fault_opens_several_incidents_and_is_reported_once_settled():
     for kind, at in (("crash", T), ("reboot_loop", T + 2), ("safe_mode", T + 4)):
         t.observe_incident(resolved(kind, at, T + 60))
     assert t.pop_ready(T + 74) == []  # settle_s (15 s) not over yet
-    ((ready, reason),) = t.pop_ready(T + 75)
-    assert (ready.key, reason) == ("crash-1000", "resolved")
+    (ready,) = t.pop_ready(T + 75)
+    assert (ready.fault.key, ready.reason, ready.at, ready.until) == (
+        "crash-1000",
+        "resolved",
+        T + 75,
+        T + 75,
+    )
     assert t.faults == []
 
 
@@ -72,7 +77,7 @@ def test_tool_calls_keep_a_fault_in_progress():
     t.observe_incident(resolved("crash", T, T + 10))
     t.observe_activity(T + 20)  # the healer is still verifying
     assert t.pop_ready(T + 30) == []
-    assert [r for _, r in t.pop_ready(T + 35)] == ["resolved"]
+    assert [r.reason for r in t.pop_ready(T + 35)] == ["resolved"]
 
 
 def test_activity_after_a_fault_was_ready_belongs_to_no_fault():
@@ -83,7 +88,7 @@ def test_activity_after_a_fault_was_ready_belongs_to_no_fault():
     t.observe_incident(resolved("crash", T, T + 10))
     t.observe_activity(T + 40)
     assert t.faults[0].last_activity == T + 10
-    assert [r for _, r in t.pop_ready(T + 41)] == ["resolved"]
+    assert [r.reason for r in t.pop_ready(T + 41)] == ["resolved"]
 
 
 def test_a_fault_ready_at_a_records_time_takes_no_new_incidents_or_resolves():
@@ -94,7 +99,7 @@ def test_a_fault_ready_at_a_records_time_takes_no_new_incidents_or_resolves():
     t.observe_incident(opened("acc_error", T + 151, "warn"))
     assert len(t.faults) == 2
     assert t.faults[0].unresolved
-    assert [r for _, r in t.pop_ready(T + 152)] == ["timed_out"]
+    assert [r.reason for r in t.pop_ready(T + 152)] == ["timed_out"]
 
 
 def test_asking_a_person_hands_an_unresolved_fault_off_after_quiet():
@@ -104,8 +109,8 @@ def test_asking_a_person_hands_an_unresolved_fault_off_after_quiet():
     t.observe_activity(T + 70, handoff=True)  # notify_human with instructions
     assert t.faults[0].handoff_at == T + 70
     assert t.pop_ready(T + 129) == []
-    ((fault, reason),) = t.pop_ready(T + 130)
-    assert (reason, fault.unresolved) == ("handed_off", True)
+    (ready,) = t.pop_ready(T + 130)
+    assert (ready.reason, ready.fault.unresolved, ready.at) == ("handed_off", True, T + 130)
 
 
 def test_a_notification_without_instructions_is_not_a_handoff():
@@ -114,7 +119,7 @@ def test_a_notification_without_instructions_is_not_a_handoff():
     t.observe_activity(T + 70, handoff=False)
     assert t.faults[0].handoff_at is None
     assert t.pop_ready(T + 899) == []
-    assert [r for _, r in t.pop_ready(T + 900)] == ["timed_out"]
+    assert [r.reason for r in t.pop_ready(T + 900)] == ["timed_out"]
 
 
 def test_a_busy_resolved_fault_is_still_reported_after_max_open():
@@ -123,7 +128,7 @@ def test_a_busy_resolved_fault_is_still_reported_after_max_open():
     t.observe_incident(resolved("crash", T, T + 5))
     for s in range(10, 60, 5):
         t.observe_activity(T + s)  # someone keeps calling tools
-    assert [r for _, r in t.pop_ready(T + 60)] == ["resolved"]
+    assert [r.reason for r in t.pop_ready(T + 60)] == ["resolved"]
 
 
 def test_a_resolve_for_an_unknown_incident_is_ignored():
@@ -146,3 +151,40 @@ def test_faults_survive_a_round_trip_through_json():
 def test_settle_must_cover_merge():
     with pytest.raises(ValueError):
         Timing(merge_s=20, settle_s=15)
+
+
+def test_a_flash_in_progress_holds_a_resolved_fault():
+    t = FaultTracker()
+    t.observe_incident(opened("crash", T))
+    t.observe_flash(T + 10, started=True)
+    t.observe_incident(resolved("crash", T, T + 25))  # rebooted into the fix mid-flash
+    assert t.pop_ready(T + 50) == []  # settle would have passed at T + 40
+    t.observe_flash(T + 55, started=False)
+    assert t.pop_ready(T + 69) == []
+    assert [r.reason for r in t.pop_ready(T + 70)] == ["resolved"]
+
+
+def test_a_flash_that_never_reports_back_holds_only_busy_max():
+    t = FaultTracker(Timing(busy_max_s=100))
+    t.observe_incident(opened("crash", T))
+    t.observe_flash(T + 10, started=True)
+    t.observe_incident(resolved("crash", T, T + 25))
+    assert t.pop_ready(T + 109) == []
+    assert [r.reason for r in t.pop_ready(T + 110)] == ["resolved"]
+
+
+def test_a_ready_fault_ends_where_the_next_one_starts():
+    t = FaultTracker()
+    t.observe_incident(opened("crash", T))
+    t.observe_incident(resolved("crash", T, T + 5))
+    t.observe_activity(T + 8)
+    t.observe_incident(opened("supply", T + 19, "warn"))  # 11 s later: its own fault
+    (ready,) = t.pop_ready(T + 23)
+    assert (ready.fault.key, ready.at, ready.until) == ("crash-1000", T + 23, T + 19)
+
+
+def test_an_open_record_read_twice_is_ignored():
+    t = FaultTracker()
+    t.observe_incident(opened("crash", T))
+    t.observe_incident(opened("crash", T))
+    assert len(t.faults[0].incidents) == 1

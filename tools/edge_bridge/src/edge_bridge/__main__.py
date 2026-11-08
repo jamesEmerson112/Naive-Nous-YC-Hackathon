@@ -97,7 +97,10 @@ def main(argv: list[str] | None = None) -> None:
         try:
             while args.ticks is None or ticks < args.ticks:
                 started = time.time()
-                bridge.tick(started)
+                try:
+                    bridge.tick(started)
+                except Exception:  # keep reporting: one bad tick mustn't stop the pod's link
+                    log.exception("tick failed; trying again in %.0f s", args.interval)
                 ticks += 1
                 if args.ticks is None or ticks < args.ticks:
                     time.sleep(max(0.0, args.interval - (time.time() - started)))

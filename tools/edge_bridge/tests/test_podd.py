@@ -126,3 +126,46 @@ def test_socket_speaks_podds_protocol(tmp_path, monkeypatch):
         server.shutdown()
         server.server_close()
     assert PoddSocket(Path("missing.sock")).call("status") is None
+
+
+def test_read_new_finishes_a_file_podd_rotated_away(tmp_path):
+    path = tmp_path / "incidents.jsonl"
+    _write(path, {"ts": 1.0, "n": 1})
+    _, cursor = podd.read_new(path, None)
+    _write(path, {"ts": 2.0, "n": 2})  # written just before the rotation
+    os.replace(path, tmp_path / "incidents.jsonl.1")  # podd's RotatingLog
+    _write(path, {"ts": 3.0, "n": 3})
+    recs, _ = podd.read_new(path, cursor)
+    assert [r["n"] for r in recs] == [2, 3]
+
+
+def test_read_new_can_parse_only_the_lines_it_needs(tmp_path):
+    path = tmp_path / "events.jsonl"
+    _write(path, {"ts": 1.0, "type": "E", "ev": "boot"}, {"ts": 2.0, "type": "A", "x": 1})
+    with open(path, "a") as f:
+        f.write('{"ts":3.0,"type":"host","ev":"flash_start"}\n')
+    recs, _ = podd.read_new(path, None, keep=(b'"boot"', b'"flash_start"'))
+    assert [r["ts"] for r in recs] == [1.0, 3.0]
+
+
+def test_read_window_seeks_into_large_files_and_handles_long_lines(tmp_path):
+    base = tmp_path / "audit.jsonl"
+    with open(base, "w") as f:
+        f.write(json.dumps({"ts": 0.0, "args": {"content": "x" * 50_000}}) + "\n")
+        for i in range(1, 40_000):
+            f.write(json.dumps({"ts": float(i), "pad": "y" * 40}) + "\n")
+        f.write(json.dumps({"ts": 40_000.0, "args": {"content": "z" * 50_000}}) + "\n")
+    got = podd.read_window(base, 20_000.0, 20_010.0)
+    assert [r["ts"] for r in got] == [float(t) for t in range(20_000, 20_011)]
+    assert [r["ts"] for r in podd.read_window(base, 0.0, 0.5)] == [0.0]
+    assert [r["ts"] for r in podd.read_window(base, 39_999.5, 40_000.0)] == [40_000.0]
+
+
+def test_read_window_widens_for_a_log_written_slightly_out_of_order(tmp_path):
+    base = tmp_path / "audit.jsonl"
+    rows = [{"ts": float(t)} for t in range(0, 30_000)]
+    rows.insert(25_000, {"ts": 10_000.5, "tool": "fw_flash"})  # a long call, logged late
+    _write(base, *rows)
+    assert {"ts": 10_000.5, "tool": "fw_flash"} not in podd.read_window(base, 10_000, 10_001)
+    widened = podd.read_window(base, 10_000, 10_001, disorder_s=20_000)
+    assert {"ts": 10_000.5, "tool": "fw_flash"} in widened

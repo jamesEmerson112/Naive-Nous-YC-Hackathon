@@ -1,21 +1,64 @@
-"""The mapping from the healer's records to the contract (translate.py). Pure."""
+"""What the cloud receives for each kind of fault (translate.py's mapping).
+
+The check-in tests call translate directly. The incident tests run the real bridge over a
+healer `var/` folder and read what reached the fake cloud, so they cover the mapping as
+the bridge applies it (grouping, stream order, evidence windows) with no copy of its
+pipeline here.
+"""
 
 import hashlib
 import json
 import math
 
-from edge_bridge import podd, translate
+from edge_bridge import translate
+from edge_bridge.bridge import Bridge
 from edge_bridge.fake_healer import (
     BAD_CRC,
     FIXED_CRC,
     GOOD_CRC,
     T0,
     FakeSocket,
+    PoddVar,
     scenario_01_fixed,
     scenario_06_handed_off,
 )
-from edge_bridge.faults import FaultTracker
+from fake_device.client import DeviceClient
+from fake_device.fake_cloud import FakeCloud
+from fake_device.outbox import Outbox
 from romulus_contracts import CheckIn, IncidentReport, RecordingMeta
+
+
+def _reported(pod: PoddVar, now: float) -> list[dict]:
+    """Run the bridge once over `pod` (every record counts) and return what it sent: the
+    incidents in time order, each with its recordings by kind (`_recordings`)."""
+    cloud, state = FakeCloud(), pod.healer.parent / "bridge"
+    bridge = Bridge(
+        pod.paths,
+        "pod-1",
+        DeviceClient(cloud.http(), "pod-1"),
+        Outbox(state / "outbox"),
+        FakeSocket(),
+        state / "state.json",
+        backfill_s=10**6,
+    )
+    bridge.tick(now)
+    incidents = sorted(cloud.incidents.values(), key=lambda i: i["occurred_at"])
+    for incident in incidents:
+        IncidentReport.model_validate(incident)
+        incident["_recordings"] = {
+            r["kind"]: (r, cloud.blobs[r["sha256"]])
+            for r in cloud.recordings.values()
+            if r["incident_id"] == incident["incident_id"]
+        }
+    return incidents
+
+
+def _only(pod: PoddVar, now: float) -> dict:
+    (incident,) = _reported(pod, now)
+    return incident
+
+
+# -- check-ins -----------------------------------------------------------------------------
 
 
 def test_mcu_build_reads_like_the_registry():
@@ -30,8 +73,7 @@ def test_mcu_build_reads_like_the_registry():
 
 def test_health_follows_podd():
     sock = FakeSocket()
-    status = sock.call("status")
-    assert translate.health(status)[0] == "ok"
+    assert translate.health(sock.call("status"))[0] == "ok"
     assert translate.health(None) == (
         "failing",
         {"check": "podd_unreachable", "source": "edge_bridge"},
@@ -62,96 +104,62 @@ def test_checkin_is_a_real_device_with_pod_metrics():
     CheckIn.model_validate(payload)
 
 
-def _fault_and_evidence(pod, t, now):
-    """Run the tracker over the var/ folder and gather evidence like the bridge does."""
-    tracker = FaultTracker()
-    rows = [("i", r) for r in podd.read_all(pod.paths.log("incidents"))]
-    rows += [("a", r) for r in podd.read_all(pod.paths.log("audit"))]
-    rows += [("n", r) for r in podd.read_all(pod.paths.notifications)]
-    rows.sort(key=lambda kr: kr[1]["ts"] + (kr[1].get("duration_s", 0) if kr[0] == "a" else 0))
-    for kind, rec in rows:
-        if kind == "i":
-            tracker.observe_incident(rec, mcu_build="v1.1@32ACFDAF")
-        elif kind == "a":
-            tracker.observe_activity(rec["ts"] + rec["duration_s"])
-        else:
-            tracker.observe_activity(rec["ts"], handoff=bool(rec.get("actions")))
-    ((fault, reason),) = tracker.pop_ready(now)
-    lo, hi = translate.window(fault, now)
-    deployments = [d for d in podd.read_all(pod.paths.deployments) if lo <= d["ts"] <= hi]
-    images = {d["crc"]: podd.image(pod.paths, d["crc"]) for d in deployments}
-    ev = translate.Evidence(
-        lo=lo,
-        hi=hi,
-        logs={
-            n: podd.read_window(pod.paths.log(n), lo, hi) for n in ("telemetry", "health", "events")
-        },
-        audit=podd.read_window(pod.paths.log("audit"), lo, hi),
-        notifications=[n for n in podd.read_all(pod.paths.notifications) if lo <= n["ts"] <= hi],
-        deployments=deployments,
-        risks=podd.tool_risks(pod.paths),
-        images=images,
-        workspace_log=None,
-    )
-    return fault, reason, ev
+# -- incidents -----------------------------------------------------------------------------
 
 
 def test_scenario_01_becomes_one_resolved_software_fix(pod):
     t = T0 + 100
     scenario_01_fixed(pod, t)
-    fault, reason, ev = _fault_and_evidence(pod, t, now=t + 200)
-    report = translate.report("pod-1", fault, reason, ev)
-    inc = report.incident
-    IncidentReport.model_validate(inc.model_dump(mode="json"))
+    inc = _only(pod, t + 200)
+    incident_id = translate.incident_uuid("pod-1", f"crash-{int(t)}")
 
-    assert inc.incident_id == translate.incident_uuid("pod-1", f"crash-{int(t)}")
-    assert inc.kind == "crash"
-    assert inc.summary == "HardFault at pc 0x08002B9A (frame_pack) (also: reboot_loop, safe_mode)"
-    assert inc.running.mcu_build == "v1.1@32ACFDAF"
-    assert inc.overlay is None  # evidence only: never rolled out by the gate
-    assert inc.outcome.model_dump() == {
+    assert inc["incident_id"] == str(incident_id)
+    assert inc["kind"] == "crash"
+    assert inc["summary"] == (
+        "HardFault at pc 0x08002B9A (frame_pack) (also: reboot_loop, safe_mode)"
+    )
+    assert inc["running"]["mcu_build"] == "v1.1@32ACFDAF"  # what crashed, not the fix
+    assert inc["overlay"] is None  # evidence only: never rolled out by the gate
+    assert inc["outcome"] == {
         "resolved": True,
         "resolving_action": "fw_flash",
         "suspected_cause": "software",
         "category": "fix-code",
     }
     # Only the calls that change something are actions; the notes are the reasoning.
-    assert [a["tool"] for a in inc.agent.actions] == ["src_edit", "fw_build", "fw_flash"]
-    assert inc.agent.reasoning.startswith("Unaligned halfword store in frame_pack")
-    assert inc.agent.model_dump()["tool_calls"] == 7
+    assert [a["tool"] for a in inc["agent"]["actions"]] == ["src_edit", "fw_build", "fw_flash"]
+    assert inc["agent"]["reasoning"].startswith("Unaligned halfword store in frame_pack")
+    assert inc["agent"]["tool_calls"] == 7
+    assert [p["kind"] for p in inc["podd_incidents"]] == ["crash", "reboot_loop", "safe_mode"]
+    assert inc["firmware_patch"]["image"]["crc"] == FIXED_CRC
+    assert inc["firmware_patch"]["uncommitted_at_build"] == "--- a/src/frame.c\n"
+    assert inc["deployments"][0]["result"] == "ok"
+    assert inc["bridge"]["reason"] == "resolved"
+    assert inc["signals"]["pod_distance_mm"][0] == 480.0
+    assert inc["signals"]["pod_acc_mag_mg"][0] == round(math.sqrt(12**2 + 8**2 + 1002**2), 1)
+    assert len(inc["signals"]["pod_acc_mag_mg"]) == translate.MAX_SIGNAL_SAMPLES
+    assert any(e.get("ev") == "flash_done" for e in inc["log_tail"])
 
-    extra = inc.model_dump(mode="json")
-    assert [p["kind"] for p in extra["podd_incidents"]] == ["crash", "reboot_loop", "safe_mode"]
-    assert extra["firmware_patch"]["image"]["crc"] == FIXED_CRC
-    assert extra["firmware_patch"]["uncommitted_at_build"] == "--- a/src/frame.c\n"
-    assert extra["deployments"][0]["result"] == "ok"
-    assert extra["bridge"]["reason"] == "resolved"
-    assert inc.signals["pod_distance_mm"][0] == 480.0
-    assert inc.signals["pod_acc_mag_mg"][0] == round(math.sqrt(12**2 + 8**2 + 1002**2), 1)
-    assert len(inc.signals["pod_acc_mag_mg"]) == translate.MAX_SIGNAL_SAMPLES
-    assert any(e.get("ev") == "flash_done" for e in inc.log_tail)
+    recordings = inc["_recordings"]
+    assert sorted(recordings) == ["agent_trace", "log_window"]
+    assert sorted(inc["recordings"]) == sorted(m["recording_id"] for m, _ in recordings.values())
+    for meta, data in recordings.values():
+        RecordingMeta.model_validate(meta)
+        assert meta["sha256"] == hashlib.sha256(data).hexdigest()
+        assert meta["size_bytes"] == len(data)
+        assert meta["labels"] == ["crash", "reboot_loop", "safe_mode"]
+        assert meta["recording_id"] == str(translate.recording_uuid(incident_id, meta["kind"]))
 
-    kinds = {m.kind: (m, data) for m, data in report.recordings}
-    assert sorted(kinds) == ["agent_trace", "log_window"]
-    assert inc.recordings == [m.recording_id for m, _ in report.recordings]
-    for meta, data in report.recordings:
-        RecordingMeta.model_validate(meta.model_dump(mode="json"))
-        assert meta.sha256 == hashlib.sha256(data).hexdigest()
-        assert meta.size_bytes == len(data)
-        assert meta.incident_id == inc.incident_id
-        assert meta.labels == ["crash", "reboot_loop", "safe_mode"]
-        assert meta.recording_id == translate.recording_uuid(inc.incident_id, meta.kind)
-
-    meta, data = kinds["log_window"]
+    meta, data = recordings["log_window"]
     rows = [json.loads(line) for line in data.splitlines()]
-    assert meta.streams == ["events", "health", "telemetry"]
+    assert meta["streams"] == ["events", "health", "telemetry"]
     assert [r["ts"] for r in rows] == sorted(r["ts"] for r in rows)
     assert {r["log"] for r in rows} == {"telemetry", "health", "events"}
-    assert rows[0]["ts"] >= ev.lo and rows[-1]["ts"] <= ev.hi
+    assert rows[0]["ts"] >= t - translate.PRE_S
 
-    meta, data = kinds["agent_trace"]
+    meta, data = recordings["agent_trace"]
     rows = [json.loads(line) for line in data.splitlines()]
-    assert meta.model_dump()["trace_source"] == translate.TRACE_SOURCE
+    assert meta["trace_source"] == translate.TRACE_SOURCE
     assert [r["source"] for r in rows].count("note") == 2
     assert rows[0]["tool"] == "triage"
 
@@ -159,41 +167,69 @@ def test_scenario_01_becomes_one_resolved_software_fix(pod):
 def test_scenario_06_hands_off_as_unresolved_hardware(pod):
     t = T0 + 100
     scenario_06_handed_off(pod, t)
-    fault, reason, ev = _fault_and_evidence(pod, t, now=t + 131)
-    assert reason == "handed_off"
-    inc = translate.report("pod-1", fault, reason, ev).incident
+    inc = _only(pod, t + 131)
+    assert inc["bridge"]["reason"] == "handed_off"
     # Unresolved + hardware is what the cloud's triage turns into a work order.
-    assert inc.outcome.model_dump() == {
+    assert inc["outcome"] == {
         "resolved": False,
         "resolving_action": "fw_flash",
         "suspected_cause": "hardware",
         "category": None,
     }
-    assert inc.kind == "acc_error"
-    assert inc.model_dump(mode="json")["notifications"][0]["actions"].startswith("Reseat")
+    assert inc["kind"] == "acc_error"
+    assert inc["notifications"][0]["actions"].startswith("Reseat")
 
 
-def test_a_rollback_to_a_release_image_is_ops_not_a_code_fix(pod):
+def test_a_precautionary_request_doesnt_make_a_verified_fix_hardware(pod):
     t = T0 + 100
-    pod.image(BAD_CRC, "v1.1", "release")
-    pod.image(GOOD_CRC, "v1.0", "release", status="known-good")
+    pod.image(FIXED_CRC, "v1.1-1-gabc1234", "workspace", patch="--- a/src/frame.c\n")
     crash = pod.open("crash", t)
-    pod.call("fw_rollback", t + 10, {"to": "known-good"}, duration=0.1)
-    pod.flash(GOOD_CRC, "v1.0", t + 10)
+    pod.call("src_edit", t + 5, {"path": "src/frame.c"})
+    pod.notify("If the pod crashes again, check the USB cable", t + 8, actions="Check the cable")
+    pod.flash(FIXED_CRC, "v1.1-1-gabc1234", t + 10)
     pod.resolve(crash, t + 45)
-    fault, reason, ev = _fault_and_evidence(pod, t, now=t + 100)
-    outcome = translate.report("pod-1", fault, reason, ev).incident.outcome
-    assert (outcome.resolving_action, outcome.category) == ("fw_rollback", "ops")
+    outcome = _only(pod, t + 120)["outcome"]
+    assert (outcome["suspected_cause"], outcome["category"]) == ("software", "fix-code")
 
 
-def test_a_runtime_mitigation_is_ops(pod):
+def test_the_build_is_the_one_running_when_the_fault_opened(pod):
+    # A bad image boots and crashes, and the healer rolls back before the bridge looks.
+    t = T0 + 100
+    pod.image(GOOD_CRC, "v1.0", "release", status="known-good")
+    pod.boot(t - 20, "v1.3", BAD_CRC)
+    crash = pod.open("crash", t)
+    pod.call("fw_rollback", t + 2, {"to": "known-good"}, duration=0.1)
+    pod.flash(GOOD_CRC, "v1.0", t + 3)
+    pod.resolve(crash, t + 40)
+    inc = _only(pod, t + 120)
+    assert inc["running"]["mcu_build"] == "v1.3@32ACFDAF"
+    assert (inc["outcome"]["resolving_action"], inc["outcome"]["category"]) == (
+        "fw_rollback",
+        "ops",
+    )
+
+
+def test_a_long_flash_holds_the_report_until_it_finishes(pod):
+    # The pod reboots into the fix early in the flash and its incidents resolve while
+    # fw_flash is still watching; the audit and deployment records come only at the end.
+    t = T0 + 100
+    pod.image(FIXED_CRC, "v1.1-1-gabc1234", "workspace", patch="--- a/src/frame.c\n")
+    crash = pod.open("crash", t)
+    pod.call("src_edit", t + 5, {"path": "src/frame.c"})
+    pod.flash(FIXED_CRC, "v1.1-1-gabc1234", t + 10, duration=45)  # flash_done at t + 55
+    pod.resolve(crash, t + 25)
+    inc = _only(pod, t + 200)
+    assert inc["outcome"]["resolving_action"] == "fw_flash"
+    assert [a["tool"] for a in inc["agent"]["actions"]] == ["src_edit", "fw_flash"]
+    assert inc["deployments"][0]["result"] == "ok"
+
+
+def test_a_runtime_command_counts_only_when_the_pod_accepted_it(pod):
     t = T0 + 100
     stale = pod.open("acc_stale", t, severity="warn")
-    pod.call("pod_cmd", t + 8, {"line": "acc init"})
+    pod.pod_cmd("acc init", t + 8)
     pod.resolve(stale, t + 20)
-    fault, reason, ev = _fault_and_evidence(pod, t, now=t + 60)
-    outcome = translate.report("pod-1", fault, reason, ev).incident.outcome
-    assert outcome.model_dump() == {
+    assert _only(pod, t + 60)["outcome"] == {
         "resolved": True,
         "resolving_action": "pod_cmd: acc init",
         "suspected_cause": "software",
@@ -201,18 +237,45 @@ def test_a_runtime_mitigation_is_ops(pod):
     }
 
 
+def test_a_refused_command_or_registry_bookkeeping_is_not_the_fix(pod):
+    t = T0 + 100
+    stale = pod.open("acc_stale", t, severity="warn")
+    pod.pod_cmd("acc init", t + 8, ok=False)  # the pod answered ok=0
+    pod.call("fw_mark", t + 10, {"image": BAD_CRC, "status": "bad"})  # registry only
+    pod.resolve(stale, t + 20)
+    inc = _only(pod, t + 60)
+    assert inc["outcome"]["resolving_action"] is None
+    assert inc["outcome"]["suspected_cause"] == "unknown"
+    assert [a["tool"] for a in inc["agent"]["actions"]] == ["pod_cmd", "fw_mark"]
+
+
+def test_activity_belongs_to_its_own_fault(pod):
+    # Fault A's window would reach into fault B; B's request for a person is B's alone.
+    t = T0 + 100
+    a = pod.open("us_intermittent", t, severity="warn")
+    pod.resolve(a, t + 5)
+    pod.call("triage", t + 10)
+    b = pod.open("acc_error", t + 17, severity="warn")  # 12 s after A's last record
+    pod.notify("LIS3DH not responding", t + 20, actions="Reseat the LIS3DH")
+    pod.resolve(b, t + 200)
+    first, second = _reported(pod, t + 400)
+    assert (first["kind"], second["kind"]) == ("us_intermittent", "acc_error")
+    assert first["outcome"]["suspected_cause"] == "unknown"
+    assert first["notifications"] == []
+    assert second["outcome"]["suspected_cause"] == "hardware"
+
+
 def test_a_fault_that_clears_by_itself_has_no_agent_and_no_trace(pod):
     t = T0 + 100
     pod.telemetry(t - 5, t + 5)
     blip = pod.open("us_intermittent", t, severity="warn")
     pod.resolve(blip, t + 12)
-    fault, reason, ev = _fault_and_evidence(pod, t, now=t + 60)
-    report = translate.report("pod-1", fault, reason, ev)
-    assert report.incident.agent is None
-    assert report.incident.outcome.suspected_cause == "unknown"
-    assert report.incident.outcome.resolving_action is None
-    assert "firmware_patch" not in report.incident.model_dump()
-    assert [m.kind for m, _ in report.recordings] == ["log_window"]
+    inc = _only(pod, t + 60)
+    assert inc["agent"] is None
+    assert inc["outcome"]["suspected_cause"] == "unknown"
+    assert inc["outcome"]["resolving_action"] is None
+    assert "firmware_patch" not in inc
+    assert sorted(inc["_recordings"]) == ["log_window"]
 
 
 def test_long_log_windows_keep_both_ends_and_say_what_was_left_out():
