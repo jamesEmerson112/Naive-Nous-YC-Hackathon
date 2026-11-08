@@ -182,9 +182,9 @@ def test_f7_incident_with_all_evidence(client, arm, example, count_events, db_se
 
     # The story shows every piece of evidence: kind, format, size and a download link.
     s = story(client, inc["incident_id"])
-    assert s["chain"].startswith("camera_occluded → agent acted → overlay ov-12 → evidence ")
-    assert s["chain"].count("evidence ") == 5
-    assert "evidence audit" in s["chain"] and "stored" not in s["chain"]
+    assert s["chain"].startswith("camera_occluded → agent acted → overlay ov-12 → evidence: ")
+    assert s["chain"].count("evidence: ") == 5
+    assert "evidence: audit" in s["chain"] and "stored" not in s["chain"]
     by_id = {e["recording"]: e for e in s["evidence"]}
     assert set(by_id) == {m["recording_id"] for m, _ in files}
     for m, data in files:
@@ -279,8 +279,8 @@ def test_f7_recording_before_incident(client, arm, example, count_events, db_ses
         assert count_events("recording.linked", {"recording": m["recording_id"]}) == 1
     s = story(client, inc["incident_id"])
     # The named recording shows from its `received` step, the listed one from its link.
-    assert s["chain"].count("evidence log_window") == 1
-    assert s["chain"].count("evidence audit") == 1
+    assert s["chain"].count("evidence: log window") == 1
+    assert s["chain"].count("evidence: audit") == 1
     assert {e["recording"] for e in s["evidence"]} == {
         named_meta["recording_id"],
         listed_meta["recording_id"],

@@ -38,7 +38,7 @@ What the system does: [`cloud-platform-v0-plan.md`](cloud-platform-v0-plan.md). 
 | `db` | `postgres:17` | default | Volume `pgdata`. Health check is `pg_isready`. |
 | `api` | built from `cloud/Dockerfile` | `uvicorn romulus_cloud.main:app --host 0.0.0.0 --port 8000` | Port `8000` on the LAN. Mounts `./data/blobs`. Starts after `db` is healthy. |
 | `worker` | same image as `api` | `python -m romulus_cloud.worker` | One instance. Runs the background loops (§5). Mounts `./data/blobs`. |
-| `fake-devices` | built from `tools/fake_device/Dockerfile` | `python -m fake_device --n 4` | Profile `sim`. Depends only on the contracts package (§3). |
+| `fake-devices` | built from `tools/fake_device/Dockerfile` | `python -m fake_device --n 3` | Profile `sim`. Depends only on the contracts package (§3). |
 | `coder` | built from `cloud/coder/Dockerfile` | started by the worker for each code patch | **M8 (D21).** Holds a scratch copy of `device/`, the open-source coding agent, and the STM32 toolchain if patches touch C firmware. Network: the LLM endpoint only |
 | `tunnel` | `cloudflare/cloudflared` | quick tunnel to `api:8000` | Profile `tunnel`. **Off by default.** Only if Naïve agents must call us (open question N3). |
 

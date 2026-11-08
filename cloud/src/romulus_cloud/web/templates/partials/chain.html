@@ -1,0 +1,2 @@
+{# One incident's chain: readable labels, each with its raw event kind in a tooltip. Needs `links`. #}
+{% for label, kind in links %}{% if not loop.first %} → {% endif %}<span class="link" title="{{ kind }}">{{ label }}</span>{% endfor %}

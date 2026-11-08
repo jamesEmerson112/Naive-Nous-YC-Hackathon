@@ -5,7 +5,7 @@
   <p class="meta">Happened {{ story.day }} at {{ story.clock }}
     · suspected cause: {{ inc.suspected_cause or 'unknown' }}
     · {{ 'resolved on the device' if inc.resolved else 'not resolved on the device' }}{% if inc.resolving_action %} ({{ inc.resolving_action }}){% endif %}</p>
-  <p class="chain">{{ story.chain }}</p>
+  {% set links = story.links %}<p class="chain">{% include "partials/chain.html" %}</p>
   {% if story.touches_safety %}
   <p class="safety-banner">⚠ Touches safety: this incident's patch changes the safety layer or visor. Any candidate made from it goes to a simulated canary first and stays under the kill switch (K17).</p>
   {% endif %}

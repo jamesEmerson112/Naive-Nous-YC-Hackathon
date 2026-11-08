@@ -10,12 +10,12 @@ Acts like N robot arms against the Romulus cloud's device API ([APIs §3](../../
 
 ```bash
 uv sync --all-packages
-uv run python -m fake_device --n 4 --url http://localhost:8000 --scenario all
+uv run python -m fake_device --n 3 --url http://localhost:8000 --scenario all
 ```
 
 | Flag | Default | What |
 |---|---|---|
-| `--n` | `4` | number of arms, named `sim-1` … `sim-N` |
+| `--n` | `3` | number of arms, named `sim-1` … `sim-N`; 3 matches `make seed` (`arm-1` + `sim-1…3`, A18). Each check-in sends `kind: "sim"`, so an unseeded arm registers as sim |
 | `--url` | `$CLOUD_URL`, else `http://localhost:8000` | cloud base URL (Compose sets `CLOUD_URL=http://api:8000`) |
 | `--interval` | `10` | seconds between check-ins |
 | `--scenario` | none | `rules`, `code`, `bad`, `bad-late`, `park` or `all`; repeatable; each runs once |

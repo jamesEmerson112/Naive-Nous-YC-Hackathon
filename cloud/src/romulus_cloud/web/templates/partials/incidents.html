@@ -8,7 +8,7 @@
         <span class="headline"><strong>{{ i.device }}</strong> · {{ i.kind }}
           {% if i.touches_safety %}<span class="safety">touches safety</span>{% endif %}</span>
         {% if i.summary %}<span class="summary">{{ i.summary }}</span>{% endif %}
-        <span class="chain">{{ i.chain }}</span>
+        {% set links = i.links %}<span class="chain">{% include "partials/chain.html" %}</span>
       </span>
       <span class="status tone-{{ i.tone }}">{{ i.status }}</span>
     </a>

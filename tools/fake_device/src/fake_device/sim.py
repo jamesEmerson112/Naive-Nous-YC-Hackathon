@@ -101,6 +101,9 @@ class SimDevice:
             health=self.health(),
             metrics=self.metrics(),
             contract_version=CONTRACT_VERSION,
+            # An optional extra field: a fake arm the cloud hasn't seeded registers as `sim`,
+            # never as a real arm (the cloud defaults a silent device to `unknown`).
+            kind="sim",
         )
 
     def install(self, kind: str, version: Any, payload: Any) -> None:

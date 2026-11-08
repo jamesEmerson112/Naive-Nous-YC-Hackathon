@@ -158,6 +158,7 @@ class DevicePatch(BaseModel):
     assigned: AssignedPatch | None = None
     role: str | None = None
     device_class: str | None = None
+    kind: str | None = None  # e.g. classify an auto-registered `unknown` device
     by: str | None = None
     why: str = ""
 
@@ -198,6 +199,7 @@ def update_device(device_id: str, body: DevicePatch, session: SessionDep) -> dic
         harness=assigned.harness,
         role=body.role,
         device_class=body.device_class,
+        kind=body.kind,
         actor=_actor(body.by),
         actor_class="human",
         why=body.why,

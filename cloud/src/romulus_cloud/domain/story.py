@@ -54,17 +54,23 @@ class Story:
     steps: tuple[Step, ...]
 
     @property
-    def chain(self) -> str:
-        """One line for the timeline: `camera_occluded → agent acted → overlay ov-12 → held`.
+    def links(self) -> tuple[tuple[str, str], ...]:
+        """The chain as (label, raw kind) pairs; pages show the label and keep the kind
+        in a tooltip.
 
         Steps with an empty label (follow-ups and acknowledgments, not news) are left out,
         and a label that repeats the one before it is shown once (two candidates promoted
         together read "→ fleet", not "→ fleet → fleet")."""
-        labels: list[str] = []
+        links: list[tuple[str, str]] = []
         for s in self.steps:
-            if s.label and (not labels or labels[-1] != s.label):
-                labels.append(s.label)
-        return " → ".join(labels)
+            if s.label and (not links or links[-1][0] != s.label):
+                links.append((s.label, s.kind))
+        return tuple(links)
+
+    @property
+    def chain(self) -> str:
+        """One line for the timeline: `camera_occluded → agent acted → overlay ov-12 → held`."""
+        return " → ".join(label for label, _ in self.links)
 
     @property
     def evidence(self) -> tuple[dict[str, Any], ...]:
@@ -107,6 +113,7 @@ class Story:
         return {
             "incident_id": self.incident_id,
             "chain": self.chain,
+            "links": [{"label": label, "kind": kind} for label, kind in self.links],
             "steps": steps,
             "evidence": list(self.evidence),
         }
@@ -209,10 +216,21 @@ def _wo_changed_line(e: EventLike) -> str:
     )
 
 
+def _words(s: Any) -> str:
+    """`log_window` → `log window`: a raw identifier as words for the chain."""
+    return str(s).replace("_", " ")
+
+
 def _wo_changed_label(e: EventLike) -> str:
     to = str(e.refs.get("to") or "updated")
     note = _data(e).get("note")
-    return f"{to}: {note}" if note and to in ("done", "stopped", "needs_human") else to
+    return (
+        f"{_words(to)}: {note}" if note and to in ("done", "stopped", "needs_human") else _words(to)
+    )
+
+
+def _evidence_label(e: EventLike) -> str:
+    return f"evidence: {_words((_evidence(e) or {}).get('kind', 'recording'))}"
 
 
 # Plain-English line per kind. Unknown kinds fall back to `_default_line`.
@@ -242,7 +260,9 @@ LINES: dict[str, Callable[[EventLike], str]] = {
     "workorder.card_updated": lambda e: f"The card for {_wo(e)} changed on Naïve.",
 }
 
-# Short label per kind for the one-line chain. Unknown kinds use the kind itself.
+# Short label per kind for the one-line chain. Every kind that can carry `refs.incident`
+# needs one (a test checks the APIs doc §5 list and the kinds the services record); an
+# unknown kind falls back to its words (`_default_label`), never the dotted raw kind.
 LABELS: dict[str, Callable[[EventLike], str]] = {
     "incident.reported": lambda e: str(_data(e).get("kind", "incident")),
     "incident.agent_acted": lambda e: "agent acted",
@@ -252,17 +272,15 @@ LABELS: dict[str, Callable[[EventLike], str]] = {
     "overlay.locked_in": lambda e: "locked in",
     "overlay.dropped": lambda e: "dropped",
     "overlay.superseded": lambda e: "" if _acknowledged(e) else "superseded",
-    "recording.received": lambda e: f"evidence {(_evidence(e) or {}).get('kind', 'recording')}",
+    "recording.received": _evidence_label,
     "recording.blob_stored": lambda e: "",  # a follow-up; kept out of the chain
     # A recording the incident listed but that didn't name it: its `received` step isn't in
     # this story, so the link is where it first shows.
-    "recording.linked": lambda e: (
-        f"evidence {(_evidence(e) or {}).get('kind', 'recording')}"
-        if _data(e).get("linked")
-        else ""
-    ),
+    "recording.linked": lambda e: _evidence_label(e) if _data(e).get("linked") else "",
     "workorder.created": lambda e: (
-        _wo(e) if e.refs.get("status") in (None, "pending") else f"{_wo(e)} ({e.refs['status']})"
+        _wo(e)
+        if e.refs.get("status") in (None, "pending")
+        else f"{_wo(e)} ({_words(e.refs['status'])})"
     ),
     "workorder.card_posted": lambda e: "card posted",
     "workorder.post_retried": lambda e: "post retried",
@@ -342,6 +360,72 @@ LABELS.update(
     }
 )
 
+# --- M6 data, D21 coding agent, and kinds that never reach a chain ----------------------
+
+
+def _labels_changed(e: EventLike) -> str:
+    d = _data(e)
+    parts = [f"+{x}" for x in d.get("added") or []] + [f"-{x}" for x in d.get("removed") or []]
+    return "labels " + " ".join(map(str, parts)) if parts else "labels changed"
+
+
+def _code_rev(e: EventLike) -> str:
+    return str(e.refs.get("code_rev") or _data(e).get("code_rev") or "?")
+
+
+LINES.update(
+    {
+        "regression.case_added": lambda e: (
+            f"The incident joined the regression corpus: every future candidate must fire "
+            f"{_data(e).get('expected_action', 'the same action')} on its signals."
+        ),
+        "label.changed": lambda e: f"Labels on recording {e.refs.get('recording')} changed.",
+        "coder.started": lambda e: "The coding agent started on a code fix.",
+        "coder.drafted": lambda e: "The coding agent drafted a code patch.",
+        "coder.tests_passed": lambda e: "The coding agent's patch passed the device tests.",
+        "coder.tests_failed": lambda e: "The coding agent's patch failed the device tests.",
+        "code.version_created": lambda e: f"Code version {_code_rev(e)} was created.",
+    }
+)
+LABELS.update(
+    {
+        "regression.case_added": lambda e: "added to regression corpus",
+        "label.changed": _labels_changed,
+        "coder.started": lambda e: "coder started",
+        "coder.drafted": lambda e: "coder drafted patch",
+        "coder.tests_passed": lambda e: "coder tests ✓",
+        "coder.tests_failed": lambda e: "coder tests ✗",
+        "code.version_created": lambda e: f"code {_code_rev(e)}",
+    }
+)
+
+# Kinds about a device, a version, the fleet or a dataset, never one incident: their
+# events don't carry `refs.incident`, so they need no chain label. A kind that starts
+# carrying an incident moves into `LABELS` (the label test checks both lists).
+NOT_IN_CHAINS: frozenset[str] = frozenset(
+    {
+        "device.first_seen",
+        "device.registered",
+        "device.assigned",
+        "device.updated",
+        "device.running_changed",
+        "device.health_changed",
+        "device.overlay_changed",
+        "install.reported",
+        "firmware.version_created",
+        "harness.version_created",
+        "fleet.frozen",
+        "fleet.unfrozen",
+        "batch.requested",
+        "batch.ran",
+        "dataset.created",
+        "dataset.snapshotted",
+        "export.requested",
+        "export.built",
+        "export.failed",
+    }
+)
+
 # Where an incident stands after a step of this kind: (words for a badge, tone), with tone
 # one of good / bad / wait / info. Kinds not listed don't change the status.
 STATUS: dict[str, tuple[str, str]] = {
@@ -416,8 +500,12 @@ STAGE: dict[str, int] = {
 _DEFAULT_STAGE = 50
 
 
+def _default_label(e: EventLike) -> str:
+    return e.kind.replace(".", " ").replace("_", " ")
+
+
 def _default_line(e: EventLike) -> str:
-    return f"{e.actor}: {e.kind.replace('.', ' ').replace('_', ' ')}."
+    return f"{e.actor}: {_default_label(e)}."
 
 
 def build_story(events: Iterable[EventLike], incident_id: str) -> Story:
@@ -432,7 +520,7 @@ def build_story(events: Iterable[EventLike], incident_id: str) -> Story:
             kind=e.kind,
             line=LINES.get(e.kind, _default_line)(e),
             why=e.why,
-            label=LABELS.get(e.kind, lambda ev: ev.kind)(e),
+            label=LABELS.get(e.kind, _default_label)(e),
             refs=dict(e.refs),
             evidence=_evidence(e) if "recording" in e.refs else None,
         )

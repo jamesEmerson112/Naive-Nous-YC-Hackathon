@@ -23,8 +23,8 @@ def _tick_all(arms, now):
 
 
 def _loop(chain):
-    """The chain without its `evidence <kind>` steps, whose place depends on device clocks."""
-    return " → ".join(p for p in chain.split(" → ") if not p.startswith("evidence "))
+    """The chain without its `evidence: <kind>` steps, whose place depends on device clocks."""
+    return " → ".join(p for p in chain.split(" → ") if not p.startswith("evidence: "))
 
 
 def _story(client, device_id):
