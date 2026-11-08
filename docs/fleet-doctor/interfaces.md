@@ -265,7 +265,32 @@ These refine §5.1–§5.2 and §8; where they differ, this section wins.
   - The serve-time gate (§6.5) re-checks everything on each pointer and pull.
 - **`consult` shorthand:** `open_new` reads `incidents.raw.consult` with the contract's own leniency (`IncidentReport`), so `"consult": true` counts as wanted, not only `{"wanted": true}`.
 - **Extra event data:** `doctor.consult_opened` adds `retry_of` on retries; `doctor.consult_closed` adds `attempt`; `doctor.declined` adds `which`; `doctor.diagnosed` adds `removed_for_safety`, `usage_estimated` and `latency_ms`; `doctor.proposal_discarded` adds `paths`; `doctor.proposal_result` adds `overlay_id` and `late`. `overlay.applied` and `doctor.proposal_result` both carry refs `consult` and `proposal`.
-- **`doctor_consults.raw` keys:** `proposal_id`, `job_tries`, `job_error`, `retry_of`, `next`.
+- **`doctor_consults.raw` keys:** `proposal_id`, `job_tries`, `job_error`, `retry_of`, `next`; PR 7 adds `retry_at`.
+
+### 5.4 As built (PR 7): real draft, real check, traces
+
+Both stay behind settings whose defaults don't change behavior (`DOCTOR_DRAFT=fake`, `DOCTOR_CHECK=stub`). Where this differs from §5.1–§5.3, this section wins.
+
+- **Draft (`DOCTOR_DRAFT=coder`).** Job `draft:{id}` calls `coder.draft(patch="", incident=<case summary>, code_rev=<base>, files=<package minus verify/>, task=domain.doctor.draft_task(case, ledger, safety_paths=…, test_cmd=CODER_TEST_CMD))`.
+  - The task asks for a reproduction test under `tests/` (relative to `CODE_ROOT`) that fails on the base, then the minimal fix, and never touches the safety layer, the visor, existing tests or test config. The case file and the hypotheses go inside the untrusted evidence block; only settings are trusted text.
+  - From the `CodeDraft`: `consult.draft = {code_patch, repro_test, why, stub: False, coder_passed, flags, notes, coder_tests}`. `repro_test` is `domain.doctor.find_repro_test(diff)`: the first test file the patch **adds** under `tests/`, else the first one it modifies.
+  - `doctor.drafted` is always recorded once the coder ran, with `cost_usd`: the coder's own counts when its notes carry `tokens N in / M out` (`LocalAgent` does), else `DOCTOR_DRAFT_ESTIMATE_USD` with `usage_estimated: true`. Extra data: `repro_test`, `coder_passed`, `flags`, `prompt_tokens`, `completion_tokens`, `task_chars`, `base_code_rev`.
+  - Closes `failed_checks` (retried within the cap) when the diff is empty, `coder_runs.patch_refusal` refuses it (format problems, or it touches `verify/`), the coder's own test run failed, or there is **no repro test**. Otherwise → `check`.
+  - Spend is checked before each submit with `DOCTOR_DRAFT_ESTIMATE_USD`, like diagnose.
+  - Without a registered package for the base rev, the consult closes `advised`.
+  - With `CODER_PROVIDER=local_agent` and no `docker` CLI in the worker (`code_lockin.coder_blocker`), the consult waits in `draft` and the worker logs why once; an injected coder (tests) is never blocked.
+- **The coder budget is shared with the batch.** `CODER_MAX_DRAFTS_PER_HOUR` counts `coder.started` events fleet-wide with `ts > now - 1h`, as `batch._drafts_this_hour` does. `doctor_code.coder_budget` runs the same query: it is copied, not imported, because `batch.py` belongs to another PR right now. Every Doctor submit records `coder.started` (actor `fleet-doctor`, refs `device`, `incident`, `consult`; `data.source = "doctor"`, `job`, `base_code_rev`), so the batch's count sees the Doctor's drafts and the Doctor's sees the batch's.
+  - **Over budget, the consult waits; it doesn't fail.** It stays in `draft` (status `waiting`) with `raw.retry_at`, the time enough of the oldest starts leave the window (an hour from now for a budget of 0), and records `doctor.declined` with `which: coder_budget`, `stage: draft`, `drafts_started`, `budget`, `retry_at` and `cost_usd: 0`. Before `retry_at` the tick writes nothing; after it, the budget is read again. No job try is counted while held.
+- **Check (`DOCTOR_CHECK=sandbox`).** The safety discard runs first, as before. Then job `check:{id}` (`doctor_code.check_job`) runs two `coder_runs.replay_code_patch` replays in the coder image with no network, on the package **minus `verify/`**:
+  1. `domain.doctor.split_patch(patch, repro_test)` (only the file sections of the repro test) with the test command narrowed to that file (`CODER_TEST_CMD <file>`, when the command is pytest). It must **fail**: an exit code other than 0, 4 (no such file) or 5 (no tests collected), no timeout.
+  2. Only if it did: the full patch with `CODER_TEST_CMD`. It must **pass**, and must not change how its tests are judged (a `test_harness:` or `verify_scripts:` flag fails it; `existing_test:` is recorded only).
+
+  `domain.doctor.check_verdict` decides. `consult.checks = {stub: False, fails_before, passes_after, device_tests, repro_test, summary}` (that is what the proposal carries). `doctor.checked` adds `reason`, `repro_test`, `flags` and `before` / `after` (exit code, test counts, failing ids, a 2,000-character output tail, all redacted). A pass goes to `offer`; it needs no `DOCTOR_OFFER_STUB_CHECKED`, since the check is real. Anything else closes `failed_checks`.
+  - The check calls no model, so it skips the spend check, and a failed or lost run records `doctor.declined` at $0.
+  - No repro test inside the patch closes `failed_checks`. An empty `CODER_TEST_CMD` closes `advised`. A worker without `docker` waits (logged once); an injected sandbox is never blocked.
+  - **Hidden checks stay hidden** (architecture §6 item 7). The package's `verify/` scripts and `CODER_VERIFY_DIR` are never in the replays' files. The optional single pass/fail verify run at the end is skipped in v0.
+- **Every close writes a trace.** `_close` calls `doctor_trace.write` before `doctor.consult_closed` (§9), and the event carries `refs.recording` and `data.trace_recording`. If the blob store can't take the bytes, the close still happens, with no recording.
+- **Jobs:** `services/doctor_jobs.py` is now a thin adapter over `services/jobs.py` (§6.2).
 
 ## 6. Seams
 
@@ -310,6 +335,19 @@ def estimate_tokens(chars: int) -> int                                      # le
 def diagnose_estimate_usd(max_completion_tokens: int, usd_per_1k_tokens: float) -> float  # largest prompt + budget
 def failed_run_cost_usd(prompt_chars: int, usd_per_1k_tokens: float) -> tuple[int, float]  # a failed run's prompt
 # admit(..., estimate_usd: float = 0.0) passes the estimate to check_spend
+# PR 7:
+def split_patch(patch: str, path: str) -> str            # the file sections touching `path` (device/ prefix tolerated), or ""
+def find_repro_test(patch: str) -> str | None             # first test file added under tests/, else first modified; never deleted
+def is_test_path(path: str) -> bool                       # tests/**/test_*.py or tests/**/*_test.py
+def draft_task(case: dict, ledger, *, safety_paths=(), test_cmd="python -m pytest -q") -> str  # repro first, then the fix; evidence fenced
+def repro_failed(run: Mapping | None) -> bool             # a real failure: applied, ran, exit not in {0, 4, 5}, no timeout
+def check_verdict(before, after, repro_test) -> dict      # {passed, fails_before, passes_after, device_tests, reason, summary, flags}
+def package_rel(files: Mapping[str, bytes]) -> dict[str, bytes]   # relative to CODE_ROOT, verify/ dropped
+def code_rel(name: str) -> str                            # "./device/x.py" → "x.py"
+def named_paths(texts, paths, *, limit=5) -> list[str]    # package files the logs/trace name, first mention first
+def code_excerpts(files, paths, *, file_bytes, total_bytes) -> list[dict]
+def tail_lines(data: bytes, *, max_lines, max_bytes, partial=False) -> list[str]
+def coder_usage(notes: str | None) -> tuple[int, int] | None      # "tokens N in / M out" from CodeDraft.notes
 ```
 
 **Prompt rule:** device text (logs, traces, files, the question) goes inside a fenced `<evidence untrusted="true">` block. The system prompt says to treat it as data and answer only in the JSON shape (§6 item 6 of the architecture doc).
@@ -340,6 +378,7 @@ def default_jobs(settings) -> Jobs                         # process-wide single
 
 - A job function gets plain inputs (the case-file dict and an adapter) and returns plain data. **It never opens a DB session.** The tick submits, polls, and applies results in its own transaction.
 - Diagnose and draft both use it. `Coder.draft(..., task=...)` (a from-scratch prompt) comes from M8b; the Doctor PRs don't add `task` themselves.
+- **As built (PR 7): the swap is done.** `doctor_jobs.py` re-exports `Pending`, `Done`, `Failed`, `Missing`, `Jobs`, `JobState` (= `Status`), `InlineJobs` and `ThreadPoolJobs` from `services/jobs.py`, and `default_jobs(settings)` returns `jobs.default_jobs(max(1, DOCTOR_JOB_WORKERS), "doctor")`. That is the Doctor's own named pool, so its drafts and checks never queue behind the batch's `"coder.draft"` or the gate's `"coder.replay"`, and the reverse. Tests count submitted keys with `InlineJobs.submitted` (the stand-in's `.calls` is gone). Pruning works as the shared module does it (TTLs, not `MAX_FINISHED`). Keys: `diagnose:{id}`, `draft:{id}`, `check:{id}`.
 
 ### 6.3 `adapters/llm.py` (PR 2)
 
@@ -368,6 +407,11 @@ def case_file(session, store, consult, incident, *, settings) -> dict
   - the trace tail from `agent_trace` recordings (`Recording.kind == "agent_trace"`, read through `BlobStore.get`), last N lines;
   - code at the base rev (`registry.get_code` → `open_package`), the files named in the log or trace, capped by bytes.
 - **MCAP stays a labeled "not wired"**, because `mcap` isn't a dependency.
+- **As built (PR 7):**
+  - **Shape:** `{"incident", "log_tail", "trace_tail": [str], "trace_recordings": [id], "code": {"rev", "files": [{path, excerpt, size_bytes, truncated}], "tree": [path]}, "tried", "untrusted": True, "notes"}`. `notes` says what's missing, e.g. `trace: no agent_trace recording stored for this incident`, `code: code X is not registered (POST /v1/code)`, `code: the log and trace name no file in the package`, and always ends with `mcap: not wired`.
+  - **Trace tail:** reads the newest 3 `agent_trace` recordings on the incident whose bytes are stored (a `blobs` row), oldest first. Each is read from its end (seek to `size - DOCTOR_TRACE_TAIL_BYTES`, the partial first line dropped; a store that can't seek is read whole). Then the last `DOCTOR_TRACE_TAIL_LINES` (40) non-blank lines, at most `DOCTOR_TRACE_TAIL_BYTES` (16,000), go over all of them together. A blob that vanished is a note, not an error.
+  - **Code:** `doctor_code.package` reads the base package and keys it relative to `CODE_ROOT` with `domain.doctor.package_rel`, which tolerates a `device/` prefix or none and **drops `verify/`** (case-insensitive) along with absolute and `..` names. `domain.doctor.named_paths` picks the files that the log tail, trace tail, healer actions, reasoning or summary name, in order of first mention, at most 5. A token names a file if it is the path, ends in `/<path>` (`/work/x.py`, `device/x.py`, JSON-escaped or Windows separators included), or is a bare file name. `code_excerpts` takes each one's first `DOCTOR_EVIDENCE_FILE_BYTES` (4,000), `DOCTOR_EVIDENCE_CODE_BYTES` (16,000) in all, and skips binaries. `tree` lists the first 40 paths.
+  - **Fencing:** everything stays inside the untrusted block of `diagnose_prompt` and `draft_task`, notes included. `verify/` content and paths never appear, even when a log names them.
 
 ### 6.5 `services/proposals.py` (PR 2 stub, PR 4)
 
@@ -452,6 +496,11 @@ Each setting also goes in `.env.example` (`test_settings_defaults.py:108` checks
 | `doctor_proposal_ttl_s` | `3600` | |
 | `doctor_lookback_s` | `21600` | 6 h; consults never backfill older incidents |
 | `doctor_tick_s` / `doctor_max_open` / `doctor_job_workers` | `5` / `5` / `2` | |
+| `doctor_draft_estimate_usd` | `0.10` | PR 7. What one coder draft is assumed to cost: checked against the daily cap before each draft, and recorded when the coder reports no tokens. Estimate *(inferred)* |
+| `doctor_trace_tail_lines` / `doctor_trace_tail_bytes` | `40` / `16000` | PR 7. The agent-trace tail in the case file |
+| `doctor_evidence_file_bytes` / `doctor_evidence_code_bytes` | `4000` / `16000` | PR 7. Code excerpts per file and in total |
+
+PR 7 also reads `coder_provider` (and the `llm_*` endpoint), `coder_image`, `coder_test_cmd`, `coder_replay_timeout_s`, `coder_scratch_dir` and `coder_max_drafts_per_hour`, the same settings the batch and gate use.
 
 ## 8. Events (PR 2 adds `LABELS` and the APIs §5 row; the emitters add the rest)
 
@@ -504,6 +553,11 @@ Each setting also goes in `.env.example` (`test_settings_defaults.py:108` checks
   - `api/web.py` `_story_view` passes the ledger, and `web/templates/partials/story.html` shows a "Fleet Doctor" block only when it isn't empty, labelling `stub` (from `data.stub`) and `fake model` (a model starting with `fake`, e.g. `fake-templated`).
 - **Digest (PR 6, as built):** `domain/digest.py` adds `COUNTED_KINDS` entries `doctor_asks` (`doctor.asked`), `doctor_consults` (`doctor.consult_opened`), `doctor_proposals_offered`, `doctor_gave_up`, and a small `COUNTED_OUTCOMES` table for counts that need a `data` match: `doctor_consults_held` (`doctor.consult_closed`, outcome `held`) and `doctor_proposals_applied` (`doctor.proposal_result`, result `applied`; architecture §10 item 4 asks for "applied and held"). `Digest.doctor_by_kind` breaks those six down per `data.incident_kind` (`unknown` when missing), with the `doctor_` prefix dropped in each row. `Digest.doctor_spend_usd` sums `data.cost_usd` over `doctor.*` events by `doctor_spend`'s rules: only numbers count, a negative counts as 0, and a value too big for a float counts as infinity. Where `doctor_spend`'s infinite total makes `check_spend` fail closed, the digest reports a non-finite total as `null` ("spend unknown" in the text), so `GET /v1/digest` never fails on infinity. `render_text` adds one "Fleet Doctor:" line only when a `doctor.*` event is in the window. All of it is in `GET /v1/digest`. Doctor kinds are **not** in `ACTION_KINDS`, so they don't move the no-human share (a follow-up if wanted).
 - **Traces (PR 7):** each closed consult writes one `Recording(kind="doctor_consult", format="jsonl")` blob holding the case file, ledger, draft, checks and outcome. `services/datasets._traces_files` (`datasets.py:531`) includes `doctor_consult` next to `agent_trace`.
+  - **As built:** `services/doctor_trace.write`, called from `doctor._close` for **every** close (refusals at admit included).
+  - **Lines:** one JSON message per line, in the shape `domain.datasets.sharegpt` already reads: `{"role": "system", "name": "consult", ...}` (ids, attempt, origin, trigger, base, times, cost, `retry_of`), `user`/`case_file`, `assistant`/`ledger`, then `assistant`/`draft` and `tool`/`checks` when the consult got that far, and `system`/`outcome` (`outcome`, `why`, `proposal_id`).
+  - **No secrets:** the LLM and Naïve keys are scrubbed from the text before it is stored; the export's own redaction runs on top.
+  - **Storage:** the bytes go into the blob store under their sha256, with a `blobs` row (`media_type: application/jsonl`, insert-or-nothing), so snapshots include them. The `recordings` row has a fresh UUID, the consult's device and incident, `started_at` = opened, `ended_at` = `received_at` = closed, firmware and harness from `incident.running`, `schema_version: doctor_consult/1`, and `raw = {source: "fleet-doctor", consult, outcome}`. `doctor.consult_closed` names it (`refs.recording`, `data.trace_recording`) in the same transaction.
+  - **Export:** `datasets.TRACE_KINDS = ("agent_trace", "doctor_consult")`, and every `traces.jsonl` line now carries `kind`, an additive field.
 - **Skills:** nothing new. `batch._write_skills` already runs on every held overlay with an incident, Doctor overlays included.
 
 ## 10. Device side (reference code in `tools/fake_device`, PR 5)
@@ -616,3 +670,7 @@ There's no raw shell, ever (architecture §9). The catalog is a draft until Isha
 | `cloud/tests/unit/domain/test_digest_doctor.py` (+ `test_services_digest.py` case) | 6 | digest counts in total and per incident kind, spend ignoring bad values, unchanged text with no Doctor events |
 | `cloud/tests/flows/test_f2_timeline_page.py` (+case) | 6 | the incident page shows the "Fleet Doctor" block with stub and fake labels; the story JSON has `ledger` |
 | `cloud/tests/flows/test_f3_lock_in.py` (+case) | 9 | a held Doctor overlay becomes a candidate without a Coder call → `awaiting_canary` |
+| `cloud/tests/unit/domain/test_domain_doctor_real.py` | 7 | `split_patch` (sections, prefixes, renames, header look-alikes in hunks, no-newline markers), `find_repro_test`, `draft_task` (order, safety paths, fencing, bounds), `check_verdict` / `repro_failed`, `package_rel`, `named_paths`, `code_excerpts`, `tail_lines`, `coder_usage` |
+| `cloud/tests/unit/services/test_services_doctor_evidence.py` | 7 | case file with an in-memory blob store and a seeded code package: trace tail (this incident's stored traces only, newest last, byte caps, read from the end, no-seek store, vanished blob), code excerpts and caps, `verify/` never present, unregistered or missing rev, a package without `device/` |
+| `cloud/tests/unit/services/test_services_doctor_jobs.py` (reworked) | 7 | the adapter re-exports the shared types; `default_jobs` is the `"doctor"` pool, apart from the coder pools |
+| `cloud/tests/flows/test_f12c_doctor_real.py` | 7 | scripted coder + real `Sandbox` on `FakeDocker` (host pytest on the toy device): repro fails then passes → offered with the stub opt-in off; repro passes on the base / fix fails / no repro / empty / own tests failed / touches `verify/` → `failed_checks`; the shared coder budget makes the consult wait, then draft; a closed consult's `doctor_consult` recording is scrubbed and appears in `traces_jsonl` |
