@@ -45,7 +45,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 3:59 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 4:08 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
 
 **The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
 - **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
@@ -59,7 +59,7 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 - Main-track pitch: "PagerDuty with hands" *(inferred)*.
 
 **Design rules worth sharing:**
-- The RunPod/Hermes LLM never sits in the arm's control or safety loop. Fast deterministic reflexes run on the bench. The LLM only *proposes* typed, reversible actions (`rollback(model, rev)`, `set_mode(safe)`, `restart(proc)`), and a checker approves them *(inferred)*.
+- No LLM sits in the arm's real-time control loop. Fast deterministic reflexes run on the bench. **Updated:** under D5a the healer *may* patch the safety layer and the visor. Those candidates carry a `touches_safety` flag on the timeline, always go to a simulated canary first, and stay under the kill switch. The pitch no longer claims "the LLM never touches the safety layer" ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) K17). The LLM only *proposes* typed, reversible actions (`rollback(model, rev)`, `set_mode(safe)`, `restart(proc)`), and a checker approves them *(inferred)*.
 - Each type of action earns autonomy (suggest → approve → auto) and loses it after a bad fix. Showing that demotion live is what builds judges' trust *(inferred)*.
 - Get the company loop live tonight so it runs overnight unattended. A morning count of agent vs human actions answers "how much runs without you" *(inferred)*.
 
@@ -81,8 +81,8 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 - **Now:** planning is finished and Kent is starting to write the cloud-platform code. First is M0 (scaffold, contracts v0.1 for the device teammate, one real Naïve card, one real LLM call), due by 5:15 PM. The overnight run launches at 12:30 AM and the code freeze is Sun 10 AM ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §2).
 - **Decisions locked (D15–D22, all ✅):** v0 plan v2; Docker Compose with **Postgres 17**, FastAPI, Jinja + htmx; Naïve integration is outbound only, with caps checked in our code and over-cap orders blocked until a person resolves them (D19, D19b); telemetry formats (D20); a coding agent for code patches (D21), built as M8 and the first P1 item once its blockers clear (D21a) ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
 - **Just pushed — D22, the batch job's models:** one OpenAI-compatible client that talks to Naïve's model proxy by default or to James's RunPod vLLM, plus a swappable `Coder` that starts as a local open-source agent in a new `coder` sandbox container ([architecture](docs/cloud-platform-planning/cloud-platform-architecture.md)).
-- **Blocked on the device side and James:** the device code and tests need to be in `device/` (B1), the code-package and `code_patch` formats need agreement (B2, B3), and the STM32 toolchain has to go in the sandbox (B8). Either a Naïve key with `proxy:write` or James's RunPod endpoint is needed (B4) ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §3, M8).
-- **Note:** Ishaan changed D5a so the healer may patch the safety layer and the visor. That's at odds with the design rule above about keeping the model out of the safety loop *(inferred)*.
+- **Just reviewed:** Kent accepted Ishaan's D5a change and logged the risk as K17 ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md)). Ishaan has claimed the device side (D14) in `features.txt`.
+- **Blocked on Ishaan and James:** the device code and tests need to be in `device/` (B1), the code-package and `code_patch` formats need agreement (B2, B3), the STM32 toolchain has to go in the sandbox (B8), and Ishaan has to supply the list of safety and visor paths (K17). Either a Naïve key with `proxy:write` or James's RunPod endpoint is needed (B4) (build plan §3, M8). Ishaan's test bed lives in `edge/`, while the contracts expect `device/`, so the two need to agree on one folder *(inferred)*.
 <!-- romulus-sync:end -->
 
 ### Device-side healer (Ishaan)
