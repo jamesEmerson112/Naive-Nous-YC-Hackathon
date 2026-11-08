@@ -147,13 +147,15 @@ def admit(
     consult_cap: int,
     spend: Spend,
     mode: str,
+    estimate_usd: float = 0.0,
 ) -> Decision:
     """May a consult start work (the `admit` stage, interfaces.md §5.1)?
 
     `consults_for_incident` counts the incident's consults **before** this one (attempt - 1),
     so a count equal to `consult_cap` gives up. In order: off or frozen holds; no
     `running.code_rev` declines (a patch needs a base); out of consults gives up; then the
-    daily spend (`check_spend`). Bad counts fail closed as `blocked_over_cap`.
+    daily spend (`check_spend`) with `estimate_usd`, what the consult's next call may cost
+    (`diagnose_estimate_usd`). Bad counts fail closed as `blocked_over_cap`.
     """
     held = _held(mode, frozen)
     if held:
@@ -184,7 +186,7 @@ def admit(
             f"Gave up: the incident has had {consults_for_incident} of its {consult_cap} consults.",
             "consults",
         )
-    return check_spend(spend)
+    return check_spend(spend, estimate_usd=estimate_usd)
 
 
 def admit_ask(
@@ -536,3 +538,76 @@ def day_start(now: datetime, tz: str) -> datetime:
         now = now.replace(tzinfo=UTC)
     local = now.astimezone(ZoneInfo(tz))
     return local.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+# --- consults (PR 4: the L2 state machine in services/doctor.py) ------------------------
+
+# Outcomes a consult can close with (interfaces.md §5.2).
+ADVISED, DISCARDED, FAILED_CHECKS, HELD = "advised", "discarded", "failed_checks", "held"
+REVERTED, FAILED_VERIFY = "reverted", "failed_verify"
+STALE, REJECTED, EXPIRED = "stale", "rejected", "expired"
+# Closed with one of these, the incident gets another consult while the cap allows.
+RETRY_OUTCOMES = frozenset({FAILED_CHECKS, REVERTED, FAILED_VERIFY})
+# Proposal statuses that are a final answer in themselves.
+_FINAL_PROPOSAL = frozenset({HELD, REVERTED, FAILED_VERIFY, STALE, REJECTED, EXPIRED})
+# Overlay statuses that mean the device kept the overlay: `held`, or a status the cloud
+# only ever sets on a held overlay (lock-in and its results).
+HELD_OVERLAY = frozenset({"held", "locked_in", "dropped", "lockin_rolled_back", "lockin_error"})
+
+
+def applied_outcome(proposal_status: str, overlay_status: str | None) -> str | None:
+    """What a consult waiting on its proposal closes with, or None to keep waiting.
+
+    - `offered`: the device hasn't answered yet (expiry ends it).
+    - `applied`: decided by the overlay. Held (or locked in since) → `held`; `reverted` →
+      `reverted`; `superseded` (a new version replaced it before it held) → `stale`;
+      anything else (still `active`, or no row) → keep waiting.
+    - `held`, `reverted`, `failed_verify`, `stale`, `rejected`, `expired` → themselves.
+    - An unknown status keeps waiting: it never invents an outcome.
+    """
+    if proposal_status in _FINAL_PROPOSAL:
+        return proposal_status
+    if proposal_status != "applied":
+        return None
+    if overlay_status in HELD_OVERLAY:
+        return HELD
+    if overlay_status == "reverted":
+        return REVERTED
+    if overlay_status == "superseded":
+        return STALE
+    return None
+
+
+def estimate_tokens(chars: int) -> int:
+    """A token count from a text length: `len // 4`, never 0 (so a cost never reads $0)."""
+    return max(1, chars // 4)
+
+
+def diagnose_estimate_usd(max_completion_tokens: int, usd_per_1k_tokens: float) -> float:
+    """The most one diagnose call can cost: the largest prompt `diagnose_prompt` builds (the
+    system prompt, the evidence block at `MAX_EVIDENCE_CHARS`, wrapping) plus
+    `max_completion_tokens`. Raises ValueError on a bad price or count (`cost_usd`)."""
+    prompt_chars = len(DIAGNOSE_SYSTEM) + MAX_EVIDENCE_CHARS + 1000
+    return cost_usd(estimate_tokens(prompt_chars), max_completion_tokens, usd_per_1k_tokens)
+
+
+def failed_run_cost_usd(prompt_chars: int, usd_per_1k_tokens: float) -> tuple[int, float]:
+    """(estimated prompt tokens, cost) of a call that failed or was lost: its prompt was sent,
+    so it counts at `len // 4` tokens with no completion. Raises ValueError on a bad price."""
+    tokens = estimate_tokens(prompt_chars)
+    return tokens, cost_usd(tokens, 0, usd_per_1k_tokens)
+
+
+def after_close(outcome: str | None, consults_used: int, consult_cap: int) -> str | None:
+    """What follows a closed consult: `"retry"` (open attempt N+1), `"gave_up"`, or None
+    (the outcome isn't retried).
+
+    `consults_used` counts the incident's consults so far, this one included. A retryable
+    outcome retries while `consults_used < consult_cap`; otherwise the Doctor gives up.
+    Bad counts fail closed: they give up rather than open another consult.
+    """
+    if outcome not in RETRY_OUTCOMES:
+        return None
+    if not (_is_count(consults_used) and _is_count(consult_cap)):
+        return GAVE_UP
+    return "retry" if consults_used < consult_cap else GAVE_UP
