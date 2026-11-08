@@ -756,7 +756,7 @@ html[data-look="neon"] .xn.now .xi, html[data-look="neon"] .xn.think .xi { box-s
 .kempty { color: var(--faint); font-size: var(--t-meta); text-align: center; padding: 0.6rem 0.2rem; }
 
 /* ---------- feed ---------- */
-.feedlist { flex: 1; min-height: 0; overflow: hidden; padding: 0 0.9rem 0.6rem; display: flex; flex-direction: column; gap: 0.32rem; mask-image: linear-gradient(180deg, #000 78%, transparent); -webkit-mask-image: linear-gradient(180deg, #000 78%, transparent); }
+.feedlist { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; overscroll-behavior: contain; padding: 0 0.9rem 0.6rem; display: flex; flex-direction: column; gap: 0.32rem; mask-image: linear-gradient(180deg, #000 78%, transparent); -webkit-mask-image: linear-gradient(180deg, #000 78%, transparent); }
 .fi { display: grid; grid-template-columns: 1.9rem 4.9rem minmax(0, 1fr); align-items: center; gap: 0.6rem; padding: 0.42rem 0.6rem; border-radius: 10px; border: 1px solid transparent; flex: none; }
 .fi .ic { width: 1.75rem; height: 1.75rem; border-radius: 8px; display: grid; place-items: center; background: var(--fill-3); color: var(--text-2); }
 .fi .ic svg { width: 1.05rem; height: 1.05rem; }
@@ -772,6 +772,15 @@ html[data-look="neon"] .xn.now .xi, html[data-look="neon"] .xn.think .xi { box-s
 .fi.ok .ic { background: rgba(var(--ok-rgb), 0.2); color: var(--ok); }
 .fi.warn .ic { background: rgba(var(--warn-rgb), 0.18); color: var(--warn); }
 .fi.acc .ic { background: rgba(var(--accent-rgb), 0.16); color: var(--accent); }
+/* hover, keyboard focus or a click (sticky) opens a row in place: the whole line wrapped, plus the full time and
+   the source. The state is kept in JS by the row's key (renderFeed), so the 1 s re-render keeps it open. */
+.fi { cursor: pointer; }
+.fi:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fi .fmeta { display: none; }
+.feedlist.hasopen { mask-image: none; -webkit-mask-image: none; }
+.fi.open { align-items: start; background-color: var(--fill-2); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.45); }
+.fi.open .tx, .fi.bad.open .tx { white-space: normal; overflow: visible; text-overflow: clip; display: block; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
+.fi.open .fmeta { display: block; margin-top: 0.3rem; font-family: var(--mono); font-size: var(--t-meta); color: var(--muted); line-height: 1.35; }
 /* a new row slides in highlighted, never from transparent: the feed is never blank at the moment that matters.
    New rows are revealed one at a time, oldest first (renderFeed), so the feed tells the exchange in order */
 .fi.new { animation: slidein .6s cubic-bezier(.2,.8,.2,1); }
@@ -1029,6 +1038,8 @@ const F_CLOCK = dtf({ hour: "numeric", minute: "2-digit", second: "2-digit", tim
 const F_DATE = dtf({ weekday: "short", month: "short", day: "numeric" });
 const F_HMS = dtf({ hour: "numeric", minute: "2-digit", second: "2-digit" });
 const F_HM = dtf({ hour: "numeric", minute: "2-digit" });
+const F_FULL = dtf({ weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" });
+const fullTs = (ts) => (num(ts) ? F_FULL.format(new Date(ts * 1000)) : "");
 function parts(f, d) { const o = {}; for (const p of f.formatToParts(d)) o[p.type] = (o[p.type] || "") + p.value; return o; }
 function hms(ts) { if (!num(ts)) return ""; const p = parts(F_HMS, new Date(ts * 1000)); return `${p.hour}:${p.minute}:${p.second}`; }
 function hm(ts) { const p = parts(F_HM, new Date(ts * 1000)); return `${p.hour}:${p.minute}`; }
@@ -1942,15 +1953,17 @@ const feedShown = new Map();                       // key -> when it was reveale
 function renderFeed() {
   const items = feedItems(((S && S.derived && S.derived.feed) || []).slice(0, 40));
   if (!items.length) return setHTML($("feed"), `<div class="empty-state"><b>Quiet so far</b>Orders, skills, incidents and heals show up here as they happen.</div>`);
-  const keyOf = (it) => `${it.ts}|${it.kind}|${it.text}`;
+  const keyOf = feedKey;
   const keys = new Set(items.map(keyOf));
   const t = performance.now();
   if (!feedPrimed) { keys.forEach((k) => seenFeed.add(k)); feedPrimed = true; }
   feedQ = feedQ.filter((k) => keys.has(k));
   for (const it of items.slice().reverse()) { const k = keyOf(it); if (!seenFeed.has(k) && !feedQ.includes(k)) feedQ.push(k); }
   while (feedQ.length > 6) seenFeed.add(feedQ.shift());       // a burst (a reload, a soak): the old ones at once
-  if (feedQ.length && t - feedAt >= FEED_STEP_MS) { const k = feedQ.shift(); seenFeed.add(k); feedShown.set(k, t); feedAt = t; }
-  let html = "", n = 0;
+  if (feedQ.length && !feedHover && t - feedAt >= FEED_STEP_MS) {   // not while a row is hovered: the list must not move under the pointer
+    const k = feedQ.shift(); seenFeed.add(k); feedShown.set(k, t); feedAt = t;
+  }
+  let html = "", n = 0, anyOpen = false;
   for (const it of items) {
     const key = keyOf(it);
     if (!seenFeed.has(key)) continue;
@@ -1958,13 +1971,59 @@ function renderFeed() {
     let [icon, tone] = KIND[it.kind] || ["dot", "dim"];
     if (it.ok === false && tone !== "dim") { tone = "bad"; icon = "blocked"; }   // a failed heal or a blocked job is not green
     const fresh = t - (feedShown.get(key) || -1e9) < FEED_NEW_MS;
-    html += `<div class="fi ${tone}${fresh ? " new" : ""}"><span class="ic">${svg(icon)}</span><span class="tm">${esc(hms(it.ts))}</span><span class="tx"><span class="src">${esc(SRC[it.src] || it.src || "")}</span>${esc(it.words)}</span></div>`;
+    const src = SRC[it.src] || it.src || "", open = key === feedHover || key === feedSticky || key === feedFocus;
+    if (open) anyOpen = true;
+    // data-fk, not data-key: the 1-8 hotkeys look up [data-key]
+    html += `<div class="fi ${tone}${fresh ? " new" : ""}${open ? " open" : ""}" data-fk="${esc(key)}" tabindex="0" role="button" aria-expanded="${open}" aria-label="${esc(`${fullTs(it.ts)}, ${src}: ${it.words}`)}"><span class="ic">${svg(icon)}</span><span class="tm">${esc(hms(it.ts))}</span><span class="tx"><span class="src">${esc(src)}</span>${esc(it.words)}<span class="fmeta">${esc([fullTs(it.ts), src, it.kind].filter(Boolean).join(" · "))}</span></span></div>`;
   }
   seenFeed = new Set([...seenFeed].filter((k) => keys.has(k)));
   for (const k of feedShown.keys()) if (!keys.has(k)) feedShown.delete(k);
+  feedRestoring = true;                      // replacing the rows blurs the focused one: not a real blur
   setHTML($("feed"), html);
+  $("feed").classList.toggle("hasopen", anyOpen);
+  // a re-render replaces the rows: put keyboard focus back on the row that had it
+  const fe = $("feed");
+  if (feedActive && !fe.contains(document.activeElement)) {
+    const row = feedRow(feedActive);
+    if (row) row.focus({ preventScroll: true });
+  }
+  feedRestoring = false;
   $("feedSub").textContent = "newest first";
 }
+// Which feed row is open is kept here by the row's identity, not by the DOM, so the 1 s re-render (which
+// rebuilds the rows) never closes it: hover, keyboard focus, or a click (sticky; Escape clears all three).
+function feedKey(it) {
+  let h = 0; const t = String(it.text || "");
+  for (let i = 0; i < t.length; i++) h = (Math.imul(h, 31) + t.charCodeAt(i)) | 0;
+  return `${it.ts}|${it.src}|${it.kind}|${(h >>> 0).toString(36)}`;
+}
+let feedHover = null, feedSticky = null, feedFocus = null, feedActive = null, feedRestoring = false;
+const feedRow = (k) => [...$("feed").children].find((r) => r.dataset && r.dataset.fk === k) || null;
+const feedRowKey = (t) => { const r = t.closest && t.closest(".fi[data-fk]"); return r ? r.dataset.fk : null; };
+(() => {
+  const fe = $("feed");
+  const toggle = (k) => { feedSticky = feedSticky === k ? null : k; renderFeed(); const r = feedRow(k); if (r) r.scrollIntoView({ block: "nearest" }); };
+  fe.addEventListener("mouseover", (e) => { const k = feedRowKey(e.target); if (k !== feedHover) { feedHover = k; renderFeed(); } });
+  fe.addEventListener("mouseleave", () => { if (feedHover) { feedHover = null; renderFeed(); } });
+  fe.addEventListener("focusin", (e) => {
+    if (feedRestoring) return;
+    const k = feedRowKey(e.target); feedActive = k;
+    if (k && e.target.matches(":focus-visible")) { feedFocus = k; renderFeed(); }   // a mouse click focuses too: only the keyboard's focus opens
+  });
+  fe.addEventListener("focusout", (e) => {
+    if (feedRestoring) return;
+    feedActive = null;
+    // later, not now: the next row is receiving focus, and rebuilding the rows here would remove it
+    if (feedFocus) { feedFocus = null; setTimeout(renderFeed, 0); }
+  });
+  fe.addEventListener("click", (e) => { const k = feedRowKey(e.target); if (k) toggle(k); });
+  fe.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".fi")) { e.preventDefault(); e.stopPropagation(); toggle(feedRowKey(e.target)); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && (feedHover || feedSticky || feedFocus)) { feedHover = feedSticky = feedFocus = null; renderFeed(); }
+  });
+})();
 
 // ---------- render: pod ----------
 const IMAGES = { good: ["v1.1 · known good", "ok", "the image that ran clean"], "07": ["v1.7 · bad image 07", "bad", "distance math cut to 16 bits"], "02": ["v1.2 · bad image 02", "bad", "clock runs at half speed"] };
