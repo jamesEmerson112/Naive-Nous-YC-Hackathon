@@ -472,7 +472,7 @@ class MarkGoodTimer:       # health must hold N seconds or the overlay reverts (
 These typed models define the device tool service. There's no route, socket or lease.
 
 ```python
-class ToolSpec(CloudModel): name: str; tier: Literal["read", "act"]; params: dict  # JSON Schema
+class ToolSpec(CloudModel): name: str; tier: Literal["read", "act"]; grant: str | None  # "act:*" on act tools only; params: dict  # JSON Schema
                             returns: dict; summary: str
 class ToolCall(CloudModel): call_id: str; name: str; args: dict; lease_id: str | None = None
 class ToolResult(DeviceModel): call_id: str; ok: bool; result: Any = None; error: str = ""
