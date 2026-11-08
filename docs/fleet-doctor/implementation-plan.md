@@ -92,9 +92,19 @@ Wave 3  PR 7 evidence + real draft/check + traces (after M8b)      PR 9 lock-in 
 
 | PR | Status | GitHub | Notes |
 |---|---|---|---|
-| 0a | in progress | | |
-| 0b | in progress | | |
-| 1–9 | not started | | |
+| 0a | merged | #23 | D23–D28 logged; D28 = optional additions don't bump |
+| 0b | merged | #22 | this plan + `interfaces.md` |
+| 1 | merged | #26 | review fixes: lenient pointer, `budget_s` clamp, `ProposalPointer.sha256` |
+| 2 | merged | #27 | review fixes: spend sum fails closed, parser, usage estimate, boundary safety filter, `forget()` |
+| — | merged | #29 | `services/doctor_llm.build_doctor_llm` (shared by PR 3 and 4) |
+| 3 | merged | #34 | review fixes: `doctor.asked` before the call, failed calls cost money, device-day cap can't be dodged |
+| 4 | in review | #35 | open question: hide offered proposals when the Doctor is turned off |
+| 5 | review fixes | #32 | crash-safe mark-good, trigger order, retry on 409 |
+| 6 | merged | #33 | review fixes: gate status wins over a held close; Doctor never hides a needs-a-person status |
+| 7 | waiting | | starts after PR 4; M8b (#28) is merged |
+| 8 | merged | #30 | review fixes: fullmatch, path rules, id patterns, `grant` on act tools |
+| 9 | building | | fail-closed: skip the Coder only for a server-verified proposal (cloud lead's ask) |
+| F12 interop | waiting | | after PRs 3, 4, 5 |
 
 ## 8. Demo settings (fake mode, honest labels)
 
