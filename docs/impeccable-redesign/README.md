@@ -1,6 +1,6 @@
 # Romulus UI redesign: the Sunlit Workshop
 
-_Sun Nov 8, 9:10 AM. This is a plan; nothing is built yet. It covers the Romulus cloud pages in `cloud/src/romulus_cloud/web/`: Fleet, incident, agent run, Technician case and Data. The method is Impeccable v4.8.1 ([repo](https://github.com/pbakaus/impeccable/tree/skill-v4.8.1)): `critique` to score what's there, Operate mode for the direction, the craft floor for the rules._
+_Sun Nov 8, 9:10 AM. **Built 9:15–10:03** through PRs #80 (foundation), #83 (Technician), #84 (incident, run, Data), #85 (Fleet), #88 (polish), #90 (learning) and #91 (Technician empty state); the lanes are in [`BUILD.md`](BUILD.md). It covers the Romulus cloud pages in `cloud/src/romulus_cloud/web/`: Fleet, incident, agent run, Technician case and Data. The method is Impeccable v4.8.1 ([repo](https://github.com/pbakaus/impeccable/tree/skill-v4.8.1)): `critique` to score what's there, Operate mode for the direction, the craft floor for the rules._
 
 | File | What it is |
 |---|---|
