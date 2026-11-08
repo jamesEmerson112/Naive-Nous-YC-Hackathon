@@ -9,7 +9,9 @@ own command inside the real sandbox, and the next call carries their output back
 
 CODER_INTEGRATION_IMAGE picks the tag the coder image is built as (default romulus-coder:b5it).
 It also checks the lifecycle with real containers: a SIGTERM to a process mid-run leaves
-nothing, a SIGKILL leaves a run that the prune removes, and the proxy exits at its deadline.
+nothing, the startup prune spares a live owner's run and removes it once its owner is
+SIGKILLed, and the proxy exits at its deadline. Runs these tests open themselves are
+`kind=test` (a worker's prune never touches them) unless the test is about the prune.
 
 The optional real call (`test_one_tiny_real_call_through_the_proxy`) also needs
 CODER_REAL_LLM=1 and LLM_BASE_URL / LLM_MODEL / LLM_API_KEY in the environment (read at import,
@@ -30,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from romulus_cloud.adapters.coder import LocalAgent, Sandbox, subprocess_runner
-from romulus_cloud.adapters.coder_egress import LABEL, RUN_LABEL, Egress, prune
+from romulus_cloud.adapters.coder_egress import LABEL, RUN_LABEL, Egress, prune, remove_labelled
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import coder_fakes as fakes  # noqa: E402
@@ -209,7 +211,7 @@ def test_agent_reaches_only_the_llm_through_the_proxy(sandbox):
 @pytest.mark.skipif(not (REAL_LLM and LLM["LLM_BASE_URL"]), reason="CODER_REAL_LLM=1 + LLM_*")
 def test_one_tiny_real_call_through_the_proxy(sandbox):
     """End to end against the real endpoint (e.g. the Naïve proxy), max_tokens 10."""
-    egress = Egress(image=IMAGE, runner=subprocess_runner)
+    egress = Egress(image=IMAGE, runner=subprocess_runner, kind="test")
     script = (
         "import http.client, json, os\n"
         "c = http.client.HTTPConnection('llm-proxy', 8080, timeout=120)\n"
@@ -256,7 +258,7 @@ import os, sys, time
 from romulus_cloud.adapters.coder import subprocess_runner
 from romulus_cloud.adapters import coder_egress
 coder_egress.install_signal_teardown()
-egress = coder_egress.Egress(image=sys.argv[1], runner=subprocess_runner)
+egress = coder_egress.Egress(image=sys.argv[1], runner=subprocess_runner, kind=sys.argv[2])
 with egress.open("http://example.invalid/v1", "sk-held-REAL-KEY", model="m",
                  max_requests=1, ttl_s=120, base_env=os.environ) as net:
     print("RUN", net.agent_labels["romulus.coder.run"], net.proxy, flush=True)
@@ -264,10 +266,12 @@ with egress.open("http://example.invalid/v1", "sk-held-REAL-KEY", model="m",
 """
 
 
-def _hold_a_run() -> tuple[subprocess.Popen, str, str]:
+def _hold_a_run(kind: str = "test") -> tuple[subprocess.Popen, str, str]:
     """A separate process with one egress run open (the proxy holds a key), sleeping."""
     proc = subprocess.Popen(
-        [sys.executable, "-c", textwrap.dedent(HOLDER), IMAGE], stdout=subprocess.PIPE, text=True
+        [sys.executable, "-c", textwrap.dedent(HOLDER), IMAGE, kind],
+        stdout=subprocess.PIPE,
+        text=True,
     )
     line = proc.stdout.readline().split()
     assert line[:1] == ["RUN"], line
@@ -283,23 +287,30 @@ def test_sigterm_mid_run_leaves_nothing(sandbox):
         assert _labelled(f"{RUN_LABEL}={run}") == set()
     finally:
         proc.kill()
-        prune(subprocess_runner, label=f"{RUN_LABEL}={run}")
+        remove_labelled(subprocess_runner, label=f"{RUN_LABEL}={run}")
 
 
-def test_sigkill_mid_run_is_cleaned_by_the_startup_prune(sandbox):
-    """No handler runs on SIGKILL. The worker's startup prune (scoped to this run here, so a
-    parallel run elsewhere on this Docker is left alone) removes the live proxy and its net."""
-    proc, run, proxy = _hold_a_run()
-    proc.kill()
-    proc.wait(timeout=30)
-    left = _labelled(f"{RUN_LABEL}={run}")
-    assert len(left) == 2  # the orphan: a proxy still holding the key, and its network
-    assert prune(subprocess_runner, label=f"{RUN_LABEL}={run}") == 2
-    assert _labelled(f"{RUN_LABEL}={run}") == set()
+def test_the_startup_prune_spares_a_live_worker_and_cleans_up_after_a_sigkill(sandbox):
+    """The real `prune` (as at worker startup): a live worker's run stays; once that worker is
+    SIGKILLed (no handler, no `finally`), its proxy, still holding the key, and its network go.
+    It only ever removes `kind=worker` runs of dead owners on this host, or past deadline."""
+    proc, run, proxy = _hold_a_run(kind="worker")
+    try:
+        assert len(_labelled(f"{RUN_LABEL}={run}")) == 2
+        prune(subprocess_runner)
+        assert len(_labelled(f"{RUN_LABEL}={run}")) == 2  # its owner is alive: spared
+        proc.kill()
+        proc.wait(timeout=30)
+        assert len(_labelled(f"{RUN_LABEL}={run}")) == 2  # the orphan
+        assert prune(subprocess_runner) >= 2
+        assert _labelled(f"{RUN_LABEL}={run}") == set()
+    finally:
+        proc.kill()
+        remove_labelled(subprocess_runner, label=f"{RUN_LABEL}={run}")
 
 
 def test_the_proxy_exits_at_its_deadline(sandbox):
-    egress = Egress(image=IMAGE, runner=subprocess_runner)
+    egress = Egress(image=IMAGE, runner=subprocess_runner, kind="test")
     with egress.open(
         "http://example.invalid/v1",
         "sk-ttl",

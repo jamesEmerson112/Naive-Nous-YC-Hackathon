@@ -13,11 +13,15 @@ For each agent run the worker:
 4. removes every container of the run (agent and proxy) and then the network afterwards,
    whatever happened.
 
-Everything is labelled `romulus.coder=egress`, `romulus.coder.run=<id>` and
-`romulus.coder.role=net|proxy|agent`. A killed worker can still leave a run behind, so:
-`install_signal_teardown` (SIGTERM/SIGINT tear down this process's active runs first) and
-`prune` (removes every labelled container and network) run at worker startup and in
-`make worker-host` (`python -m romulus_cloud.adapters.coder_egress --prune`).
+Everything is labelled `romulus.coder=egress`, `romulus.coder.run=<id>`,
+`romulus.coder.role=net|proxy|agent`, `romulus.coder.kind=worker|test`,
+`romulus.coder.owner=<host>:<pid>:<process start>` and `romulus.coder.expires=<unix time of
+the proxy's deadline>`. A killed worker can still leave a run behind, so
+`install_signal_teardown` (SIGTERM/SIGINT tear down this process's open runs first) and
+`prune` run at worker startup (after the host worker's pid-file lock). `prune` removes only
+`kind=worker` runs that are past their deadline, or whose owner is on this host and no longer
+alive: never a live worker's run, and never a test run (`kind=test`).
+`python -m romulus_cloud.adapters.coder_egress --prune` does the same by hand.
 
 The proxy forwards only `POST /v1/chat/completions` to the configured LLM endpoint, rebuilds
 the body from an allowlist with the model forced, caps body size, tokens, requests and
@@ -26,12 +30,16 @@ connections, and logs one line per request; `summary` counts those lines.
 
 from __future__ import annotations
 
+import os
 import secrets
 import signal
+import socket
+import subprocess
 import sys
 import threading
+import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -46,6 +54,9 @@ PROXY_PYTHON = "/usr/local/bin/python"
 LABEL = "romulus.coder=egress"
 RUN_LABEL = "romulus.coder.run"
 ROLE_LABEL = "romulus.coder.role"
+KIND_LABEL = "romulus.coder.kind"  # worker (pruned when orphaned) or test (never pruned)
+OWNER_LABEL = "romulus.coder.owner"  # <host>:<pid>:<process start>
+EXPIRES_LABEL = "romulus.coder.expires"  # unix time the proxy exits on its own
 # Without it the bridge still holds the network's gateway IP, so the agent could reach
 # services listening on the Docker host (on Docker Desktop: its Linux VM) at x.y.0.1.
 NO_GATEWAY = "com.docker.network.bridge.inhibit_ipv4=true"
@@ -93,8 +104,57 @@ def summarize(logs: str) -> EgressSummary:
     )
 
 
-def _labels(run: str, role: str) -> list[str]:
-    return ["--label", LABEL, "--label", f"{RUN_LABEL}={run}", "--label", f"{ROLE_LABEL}={role}"]
+def _process_start(pid: int) -> str | None:
+    """The process's start time as `ps` prints it (Linux and macOS), letters and digits only;
+    None if there is no such process. With the pid it tells a live owner from a reused pid."""
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    start = "".join(ch for ch in out.stdout if ch.isalnum())
+    return start if out.returncode == 0 and start else None
+
+
+_OWNER: str | None = None
+
+
+def process_owner() -> str:
+    """This process's owner label, `<host>:<pid>:<process start>` (computed once per pid)."""
+    global _OWNER
+    pid = os.getpid()
+    if _OWNER is None or _OWNER.split(":")[1] != str(pid):
+        _OWNER = f"{socket.gethostname()}:{pid}:{_process_start(pid) or 'unknown'}"
+    return _OWNER
+
+
+def owner_alive(owner: str, host: str | None = None) -> bool | None:
+    """True if `owner`'s process still runs (same pid and start time), False if it is gone,
+    None if that can't be told from here (another host, or an unreadable label)."""
+    parts = owner.split(":", 2)
+    if len(parts) != 3 or not parts[1].isdigit():
+        return None
+    if parts[0] != (host or socket.gethostname()):
+        return None
+    start = _process_start(int(parts[1]))
+    return start is not None and parts[2] in ("unknown", start)
+
+
+def _labels(run: str, role: str, kind: str, owner: str, expires: int) -> dict[str, str]:
+    key, value = LABEL.split("=", 1)
+    return {
+        key: value,
+        RUN_LABEL: run,
+        ROLE_LABEL: role,
+        KIND_LABEL: kind,
+        OWNER_LABEL: owner,
+        EXPIRES_LABEL: str(expires),
+    }
+
+
+def _label_args(labels: Mapping[str, str]) -> list[str]:
+    return [arg for k, v in labels.items() for arg in ("--label", f"{k}={v}")]
 
 
 def remove_labelled(runner: Runner, docker: str = "docker", label: str = LABEL) -> int:
@@ -137,16 +197,56 @@ def install_signal_teardown() -> None:
     signal.signal(signal.SIGINT, handler)
 
 
-def prune(runner: Runner | None = None, docker: str = "docker", label: str = LABEL) -> int:
-    """Remove every labelled egress container and network (worker startup); 0 without Docker."""
+def orphaned(labels: Mapping[str, str], now: float, alive: Callable[[str], bool | None]) -> bool:
+    """A worker run nobody will tear down: past its proxy deadline, or its owner on this host
+    is gone. Test runs, and live (or unknowable) owners' runs before the deadline, are spared."""
+    if labels.get(KIND_LABEL) != "worker":
+        return False
+    try:
+        if float(labels.get(EXPIRES_LABEL, "")) < now:
+            return True
+    except ValueError:
+        pass  # no readable deadline: the owner alone decides
+    return alive(labels.get(OWNER_LABEL, "")) is False
+
+
+def _listed(runner: Runner, argv: list[str]) -> list[tuple[str, dict[str, str]]]:
+    """(id, labels) per line of `docker ps -a` / `docker network ls` with `{{.ID}} {{.Labels}}`."""
+    proc = runner(argv, timeout=60)
+    found = []
+    for line in proc.stdout.splitlines() if proc.returncode == 0 else []:
+        ident, _, raw = line.strip().partition(" ")
+        if ident:
+            found.append((ident, dict(p.split("=", 1) for p in raw.split(",") if "=" in p)))
+    return found
+
+
+def prune(
+    runner: Runner | None = None,
+    docker: str = "docker",
+    *,
+    now: float | None = None,
+    alive: Callable[[str], bool | None] = owner_alive,
+) -> int:
+    """Remove orphaned worker runs (`orphaned`), containers before networks. Returns how
+    many things it removed; 0 without Docker."""
     if runner is None:
         from romulus_cloud.adapters.coder import subprocess_runner
 
         runner = subprocess_runner
+    now = time.time() if now is None else now
+    fmt = ["--filter", f"label={LABEL}", "--format", "{{.ID}} {{.Labels}}"]
+    removed = 0
     try:
-        return remove_labelled(runner, docker, label)
+        for kind in ("ps", "network"):
+            listing = [docker, "ps", "-a"] if kind == "ps" else [docker, "network", "ls"]
+            remove = [docker, "rm", "-f"] if kind == "ps" else [docker, "network", "rm"]
+            for ident, labels in _listed(runner, [*listing, *fmt]):
+                if orphaned(labels, now, alive):
+                    removed += runner([*remove, ident], timeout=60).returncode == 0
     except OSError:  # no docker CLI: nothing of ours can be running either
         return 0
+    return removed
 
 
 @dataclass
@@ -157,6 +257,7 @@ class Egress:
     runner: Runner
     docker: str = "docker"
     outside: str = "bridge"  # the proxy's way out; the agent never joins it
+    kind: str = "worker"  # "test": a startup prune never touches the run
 
     def _docker(self, *args: str, env: Mapping[str, str] | None = None, check: bool = True):
         proc = self.runner([self.docker, *args], env=env, timeout=60)
@@ -196,14 +297,17 @@ class Egress:
             "LLM_PROXY_TTL_S": str(ttl_s),
             "LLM_PROXY_PORT": str(PROXY_PORT),
         }
+        owner, expires = process_owner(), int(time.time()) + ttl_s
+        labels = {r: _labels(run, r, self.kind, owner, expires) for r in ("net", "proxy", "agent")}
         with _ACTIVE_LOCK:
             _ACTIVE[run] = self
         try:
             self._docker(
-                "network", "create", "--internal", "-o", NO_GATEWAY, *_labels(run, "net"), network
-            )
+                "network", "create", "--internal", "-o", NO_GATEWAY,
+                *_label_args(labels["net"]), network,
+            )  # fmt: skip
             argv = [
-                "create", "--rm", "--name", proxy, *_labels(run, "proxy"),
+                "create", "--rm", "--name", proxy, *_label_args(labels["proxy"]),
                 "--network", network, "--network-alias", PROXY_ALIAS,
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only",
                 "--user", "65534:65534", "--memory", "256m", "--pids-limit", "64",
@@ -220,7 +324,7 @@ class Egress:
                     "LLM_BASE_URL": f"http://{PROXY_ALIAS}:{PROXY_PORT}/v1",
                     "LLM_API_KEY": token,
                 },
-                agent_labels=dict([LABEL.split("=", 1), (RUN_LABEL, run), (ROLE_LABEL, "agent")]),
+                agent_labels=labels["agent"],
                 proxy=proxy,
             )
         finally:

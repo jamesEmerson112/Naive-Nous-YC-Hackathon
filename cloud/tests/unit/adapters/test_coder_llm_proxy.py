@@ -391,3 +391,20 @@ def test_config_from_env_reads_the_new_caps():
         }
     )
     assert (cfg.model, cfg.max_tokens, cfg.max_conns, cfg.read_timeout_s) == (MODEL, 321, 3, 4.0)
+
+
+def test_deeply_nested_json_is_a_counted_400_not_a_dropped_connection(make_proxy, capsys):
+    up = Upstream()
+    port = make_proxy(up)
+    raw = b"[" * 100_000
+    reply = _raw(
+        port,
+        b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+        + f"Authorization: Bearer {TOKEN}\r\nContent-Length: {len(raw)}\r\n\r\n".encode()
+        + raw,
+    )
+    assert reply.startswith(b"HTTP/1.1 400")
+    assert up.seen == []
+    log = capsys.readouterr().err
+    assert "nested too deeply" in log and "Traceback" not in log
+    assert coder_egress.summarize(log).refused == 1

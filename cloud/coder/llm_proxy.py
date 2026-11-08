@@ -129,6 +129,8 @@ def upstream_body(raw: bytes, cfg: Config) -> bytes:
         body = json.loads(raw)
     except (ValueError, UnicodeDecodeError) as exc:
         raise BadBody("body is not JSON") from exc
+    except RecursionError as exc:  # e.g. 100,000 nested `[`
+        raise BadBody("body is nested too deeply") from exc
     if not isinstance(body, dict):
         raise BadBody("body is not a JSON object")
     messages = body.get("messages")

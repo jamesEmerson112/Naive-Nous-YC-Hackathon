@@ -144,6 +144,9 @@ class FakeDocker:
             label = args[args.index("--filter") + 1].removeprefix("label=")
             pool = self.containers if args[0] == "ps" else self.networks
             hits = [name for name, labels in pool.items() if _matches(labels, label)]
+            if "--format" in args:  # `{{.ID}} {{.Labels}}`, as the egress prune asks for
+                rows = (f"{h} {','.join(f'{k}={v}' for k, v in pool[h].items())}" for h in hits)
+                return ProcResult(0, "".join(f"{row}\n" for row in rows), "")
             return ProcResult(0, "".join(f"{h}\n" for h in hits), "")
         return ProcResult(0, "", "")
 
