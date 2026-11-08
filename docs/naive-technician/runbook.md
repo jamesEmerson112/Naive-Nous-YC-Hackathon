@@ -29,7 +29,7 @@ _Sun Nov 8. Needs the PR #68 backend (`tech/backend`). Shot list and stage plan:
 
 ## If things break
 - **The script's own errors:** stack not up; a 409 with the server's reason (mode off, `live needs NAIVE_API_KEY` or `NAIVE_TECHNICIAN_AGENT`, order not `needs_human`); no work order within 15 s (check `docker compose -p tech logs worker`).
-- **Shop 429:** on `tech/backend` `0834d8f`, a 429 gets one more read through urllib. If the store still fails, the gate re-checks on the next sync ticks (every 3 s), 3 tries in all (`SHOP_TRIES`), and then shows "not staged".
+- **Shop 429:** WowRobo rate-limits `/products/<handle>.js` from inside Docker. `shop.product` then falls back to `/products.json?limit=250` and caches a good read for 10 min. If the store still fails, the gate re-checks every ~20 s for up to 10 min before it shows "not staged", and the email carries a Romulus note saying the part isn't staged yet (#68).
 - **Naïve "at capacity":**
   - This morning, sonnet sessions started in about 2 s while opus queued indefinitely, so keep the `technician` agent on sonnet.
   - A case that hangs in diagnosing: `curl -XPOST localhost:8000/v1/technician/cases/<id>/stop`, then switch to the replay tab.
