@@ -83,7 +83,7 @@ def _fleet(session, fleet_id: str) -> dict[str, Any]:
 
 def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
     rows = []
-    for incident in incidents.list_incidents(session, fleet_id=fleet_id)[:TIMELINE_LIMIT]:
+    for incident in incidents.list_incidents(session, limit=TIMELINE_LIMIT, fleet_id=fleet_id):
         _, story = incidents.story(session, incident.id)
         status, tone = story.status
         rows.append(

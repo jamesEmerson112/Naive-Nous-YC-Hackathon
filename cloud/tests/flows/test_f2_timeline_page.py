@@ -189,3 +189,13 @@ def test_fleet_strip_and_switch_read_only_this_fleet(client, arm, db_session):
     for url in ("/", "/partials/killswitch", "/partials/fleet"):
         page = _text(client.get(url))
         assert "FLEET FROZEN" not in page and "Another fleet was frozen." not in page
+
+
+def test_timeline_shows_at_most_the_limit(client, arm, example, monkeypatch):
+    from romulus_cloud.api import web
+
+    monkeypatch.setattr(web, "TIMELINE_LIMIT", 1)
+    client.post("/v1/devices/arm-1/incidents", json=example("incident_rules_patch"))
+    client.post("/v1/devices/arm-1/incidents", json=example("incident_d1_code_patch"))
+    page = _text(client.get("/partials/incidents"))
+    assert f"/incidents/{D1}" in page and f"/incidents/{RULES}" not in page
