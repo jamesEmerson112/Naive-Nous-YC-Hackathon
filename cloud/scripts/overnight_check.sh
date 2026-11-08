@@ -72,6 +72,14 @@ case "$fd_args" in
   *) warn "fake-devices args are '$fd_args' (want --chaos=overnight --speed=1)" ;;
 esac
 
+# --- Env files: .env (real keys, never edited) with .env.overnight layered on top ------------
+for f in .env .env.overnight; do
+  if [ -f "$f" ]; then pass "env file $f is present and loaded"; else warn "env file $f is absent"; fi
+done
+if [ ! -f .env.overnight ]; then
+  fail ".env.overnight is missing: cp .env.overnight.example .env.overnight; make sim"
+fi
+
 # --- What the app itself resolves (not printenv: env names match case-insensitively) -----------
 setting() {  # <service> <name>: the value the app's own Settings resolve, or empty
   $COMPOSE exec -T "$1" python -m romulus_cloud.cli setting "$2" 2>/dev/null | tr -d '\r'

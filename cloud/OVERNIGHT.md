@@ -23,21 +23,19 @@ make up && FORCE=1 make reset        # WIPES the database and blobs: a fresh sch
                                      # OVERNIGHT_STARTED; never run this after launch)
 rm -rf data/fake_device              # old outboxes and chaos.json: otherwise the chaos would
                                      # "resume" an earlier run's clock and skip hours
-cp .env .env.before-overnight        # keep your keys
-cp .env.overnight.example .env       # overnight values: NAIVE_MODE=fake, 1200 / 3600, ...
-rm -f .env.overnight                 # no stale override file (the reset above ran before
-                                     # any overnight env, so it needed no override either;
-                                     # cp .env.overnight.example .env.overnight here instead of
-                                     # the two cp lines works too: Compose loads it after .env)
-#   now copy your secrets (NAIVE_API_KEY, LLM_API_KEY, ...) from .env.before-overnight into
-#   .env, but keep every *_MODE / *_PROVIDER line from the example: all fake (K13)
+cp .env.overnight.example .env.overnight   # overnight values on top of .env:
+                                     # NAIVE_MODE=fake, 1200 / 3600, ... NEVER edit or
+                                     # overwrite .env: it holds the real keys
 make sim                             # db, api, worker + fake-devices, --chaos=overnight
+                                     # (recreates api/worker with .env.overnight layered)
 make seed
 make overnight-start BY=kent         # DB flag: reset refuses; the digest counts from here
 make overnight-check                 # every line PASS (a WARN is a judgment call; FAIL is not)
 ```
 
-`NAIVE_MODE` must be **fake** all night: the chaos plants hardware faults, and a live work
+Compose loads `.env` and then `.env.overnight` (git-ignored) into api, worker and
+fake-devices, so the overnight file wins wherever both set a value; `.env` is never
+touched. `NAIVE_MODE` must be **fake** all night: the chaos plants hardware faults, and a live work
 order could phone a real supplier at 3 AM (build plan K13). `make overnight-check` asks the
 running api and worker for the mode they actually resolved. Even in live mode, an order for
 a device whose kind isn't exactly `real` is never posted (it waits for a person).
@@ -79,10 +77,10 @@ timeline page at `http://localhost:8000/`, and `docker compose ps` (everything u
 ```bash
 docker compose --profile sim stop fake-devices   # FIRST: no more chaos faults
 make overnight-stop BY=kent                      # clears the DB flag
-cp .env.before-overnight .env && make up         # back to your own settings
+rm .env.overnight && make up                     # back to your own .env settings
 ```
 
-Stop the fake fleet before changing `.env`: with chaos still running, a park after the
-switch would create a work order under your normal (possibly live) settings.
+Stop the fake fleet before deleting `.env.overnight`: with chaos still running, a park
+after the switch would create a work order under your normal (possibly live) settings.
 Keep the data: datasets (M6) are built from it on Sunday morning. `make reset` refuses
 while `OVERNIGHT_STARTED=true` or the DB flag is set; `FORCE=1` overrides, and wipes the night.

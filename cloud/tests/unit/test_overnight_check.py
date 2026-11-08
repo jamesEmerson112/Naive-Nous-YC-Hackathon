@@ -118,3 +118,14 @@ def test_check_fails_when_the_schema_is_behind(tmp_path):
     lacks = "schema: the database lacks fleet_state.overnight_started_at"
     out = run_check(tmp_path, "fake", "fake", STUB_SCHEMA=lacks)
     assert f"FAIL  {lacks}" in out
+
+
+def test_check_reports_the_active_env_files(tmp_path):
+    out = run_check(tmp_path, "fake", "fake")
+    assert "FAIL  .env.overnight is missing" in out and "WARN  env file .env is absent" in out
+    (tmp_path / ".env").write_text("NAIVE_API_KEY=k\n")
+    (tmp_path / ".env.overnight").write_text("NAIVE_MODE=fake\n")
+    out = run_check(tmp_path, "fake", "fake")
+    assert "PASS  env file .env is present and loaded" in out
+    assert "PASS  env file .env.overnight is present and loaded" in out
+    assert ".env.overnight is missing" not in out

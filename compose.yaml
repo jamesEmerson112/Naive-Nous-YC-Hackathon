@@ -72,6 +72,11 @@ services:
       - "--chaos=${CHAOS:-overnight}"
       - "--speed=${CHAOS_SPEED:-1}"
       - "--seed=${CHAOS_SEED:-0}"
+    env_file:  # same layering as api and worker (the fake device reads none of it today)
+      - path: .env
+        required: false
+      - path: .env.overnight
+        required: false
     environment:
       CLOUD_URL: http://api:8000
     volumes:
