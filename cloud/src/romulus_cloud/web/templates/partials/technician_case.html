@@ -6,12 +6,14 @@
 {% set working = v.status in ('open', 'diagnosing') %}
 {% set ended_bad = v.status in ('failed', 'stopped') %}
 {% set recorded = v.mode != 'live' %}
-{% set last_stage = v.stages[-1] if v.stages else none %}
+{% set stages = v.stages or [] %}
+{% set feed = v.feed or [] %}
+{% set last_stage = stages[-1] if stages else none %}
 {% set last_label = (last_stage.label if last_stage else '') or '' %}
 {% set approved_by = v.approved_by or (last_label[12:] if last_label.startswith('approved by ') else none) %}
 {% set denied = v.work_order_status == 'denied' or (last_stage and last_stage.state == 'denied') %}
 {% set denied_by = v.denied_by or (last_label[10:] if last_label.startswith('denied by ') else none) %}
-{% set feed_tail = v.feed[-7:] if v.feed else [] %}
+{% set feed_tail = feed[-7:] %}
 {% set p = v.part %}
 {% set e = v.email %}
 
@@ -50,7 +52,7 @@
     {% if p.total_usd %}<p class="tc-price">${{ p.total_usd }}{% if p.qty and p.qty > 1 and p.unit_usd %}<small>${{ p.unit_usd }} × {{ p.qty }}</small>{% endif %}</p>{% endif %}
   </div>
   <ul class="tc-checks" aria-label="Gate checks">
-    {% for c in p.checks %}
+    {% for c in (p.checks or []) %}
     <li class="{{ 'ok' if c.ok else 'no' }}" {% if c.detail %}title="{{ c.detail }}"{% endif %}><span class="tc-tick" aria-hidden="true">{{ '✓' if c.ok else '✕' }}</span>{{ c.label }}<span class="sr-only">: {{ 'passed' if c.ok else 'failed' }}{% if c.detail %}, {{ c.detail }}{% endif %}</span></li>
     {% endfor %}
   </ul>
@@ -118,14 +120,14 @@
 {% macro feed_block() %}
 <section class="tc-card tc-feed{% if working %} is-live{% endif %}">
   <p class="tc-kicker">{% if working %}<span class="pulse" aria-hidden="true"></span>Agent at work{% else %}Agent's work{% endif %}{{ recorded_tag() }}
-    <span class="tc-kicker-note">{{ v.feed | length }} step{{ '' if v.feed | length == 1 else 's' }}{% if v.naive_session_id %} · Naïve session <span class="mono">{{ v.naive_session_id }}</span>{% endif %}</span></p>
+    <span class="tc-kicker-note">{{ feed | length }} step{{ '' if feed | length == 1 else 's' }}{% if v.naive_session_id %} · Naïve session <span class="mono">{{ v.naive_session_id }}</span>{% endif %}</span></p>
   {% if feed_tail %}
   <ol class="tc-feed-list">
     {% for f in feed_tail %}
     <li{% if loop.last %} class="is-last"{% endif %}><time>{{ f.t }}</time><span>{{ f.text }}</span></li>
     {% endfor %}
   </ol>
-  {% if v.feed | length > feed_tail | length %}<p class="tc-fine">{{ v.feed | length - feed_tail | length }} earlier step{{ '' if v.feed | length - feed_tail | length == 1 else 's' }} in the full log below.</p>{% endif %}
+  {% if feed | length > feed_tail | length %}<p class="tc-fine">{{ feed | length - feed_tail | length }} earlier step{{ '' if feed | length - feed_tail | length == 1 else 's' }} in the full log below.</p>{% endif %}
   {% else %}
   <p class="tc-fine">{{ 'Waiting for the first tool call…' if working else 'No agent steps recorded.' }}</p>
   {% endif %}
@@ -148,7 +150,7 @@
   </section>
 
   <ol class="tc-stages" aria-label="Story">
-    {% for s in v.stages %}
+    {% for s in stages %}
     <li class="st-{{ s.state }}"><span class="tc-st-mark" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state == 'denied' %}✕{% endif %}</span><span class="tc-st-label">{{ s.label }}</span>{% if s.state == 'active' %}<span class="tc-st-now">now</span>{% endif %}<span class="sr-only"> ({{ s.state }})</span></li>
     {% endfor %}
   </ol>
@@ -191,7 +193,7 @@
           <div><dt>Vendor</dt><dd>{{ p.vendor_label }} · <span class="mono">{{ p.origin_host }}</span></dd></div>
           <div><dt>Variant</dt><dd class="mono">{{ p.variant_id }}</dd></div>
           <div><dt>Price</dt><dd>{% if p.unit_usd %}${{ p.unit_usd }} × {{ p.qty }} = {% endif %}${{ p.total_usd }}</dd></div>
-          {% for c in p.checks %}<div><dt>{{ c.label }}</dt><dd class="check {{ 'ok' if c.ok else 'no' }}">{{ '✓ passed' if c.ok else '✕ failed' }}{% if c.detail %} · {{ c.detail }}{% endif %}</dd></div>{% endfor %}
+          {% for c in (p.checks or []) %}<div><dt>{{ c.label }}</dt><dd class="check {{ 'ok' if c.ok else 'no' }}">{{ '✓ passed' if c.ok else '✕ failed' }}{% if c.detail %} · {{ c.detail }}{% endif %}</dd></div>{% endfor %}
           {% if p.cart_url %}<div><dt>Cart</dt><dd><a class="mono tc-wrap" href="{{ p.cart_url }}" target="_blank" rel="noopener noreferrer">{{ p.cart_url }}</a></dd></div>{% endif %}
           {% if p.why %}<div><dt>Why</dt><dd>{{ p.why }}</dd></div>{% endif %}
           {% if p.blocked_reason %}<div><dt>Blocked</dt><dd class="check no">{{ p.blocked_reason }}</dd></div>{% endif %}
@@ -203,7 +205,8 @@
         <h3 class="tc-h3">Sources the agent read</h3>
         <ul class="tc-sources">
           {% for s in v.sources %}
-          <li><a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.title or s.url }}</a> <span class="muted mono">{{ s.url.split('/')[2] if '://' in s.url else s.url }}</span></li>
+          {% set url = s.url or '' %}
+          <li>{% if url.startswith('https://') %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ s.title or url }}</a> <span class="muted mono">{{ url.split('/')[2] }}</span>{% else %}{{ s.title or url }}{% if url and s.title %} <span class="muted mono">{{ url }}</span>{% endif %}{% endif %}</li>
           {% endfor %}
         </ul>
       </div>
@@ -212,10 +215,10 @@
     {% else %}
     <p class="muted">These fill in when the agent's report arrives.</p>
     {% endif %}
-    {% if v.feed and v.feed | length > feed_tail | length %}
+    {% if feed and feed | length > feed_tail | length %}
     <details class="tc-card tc-log" id="tc-full-log">
-      <summary class="block-h">Full agent log <span class="muted">{{ v.feed | length }} steps, oldest first</span></summary>
-      <ol class="tc-feed-list">{% for f in v.feed %}<li><time>{{ f.t }}</time><span>{{ f.text }}</span></li>{% endfor %}</ol>
+      <summary class="block-h">Full agent log <span class="muted">{{ feed | length }} steps, oldest first</span></summary>
+      <ol class="tc-feed-list">{% for f in feed %}<li><time>{{ f.t }}</time><span>{{ f.text }}</span></li>{% endfor %}</ol>
     </details>
     {% endif %}
     <p class="tc-ids">
