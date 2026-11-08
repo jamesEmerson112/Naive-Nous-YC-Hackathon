@@ -44,10 +44,13 @@ orders created / posted; kill switch `fleet.frozen`.
 applied (`doctor.proposal_result` with `result` `applied`), held (`doctor.consult_closed`
 with `outcome` `held`) and give-ups (`doctor.gave_up`), in total and per fault family
 (`doctor_by_kind`, keyed on `data.incident_kind`, `unknown` when missing), plus the spend:
-the sum of `data.cost_usd` over `doctor.*` events, where only non-negative finite numbers
-count (as in `services/doctor_spend`). None of these are actions yet, so they don't move
-the no-human share. The digest text gains its Fleet Doctor line only when a `doctor.*`
-event is in the window, so a night without the Doctor reads as it did before.
+the sum of `data.cost_usd` over `doctor.*` events by `services/doctor_spend`'s rules (only
+numbers count, a negative counts as 0, a value too big for a float counts as infinity).
+A total that isn't finite is reported as None (unknown), where `doctor_spend`'s infinity
+makes `check_spend` fail closed; the digest never reports infinity. None of these are
+actions yet, so they don't move the no-human share. The digest text gains its Fleet
+Doctor line only when a `doctor.*` event is in the window, so a night without the Doctor
+reads as it did before.
 """
 
 import math
@@ -178,7 +181,7 @@ class Digest:
     doctor_consults_held: int = 0
     doctor_gave_up: int = 0
     doctor_by_kind: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
-    doctor_spend_usd: float = 0.0
+    doctor_spend_usd: float | None = 0.0  # None when the total is not finite
 
     @property
     def doctor_active(self) -> bool:
@@ -243,14 +246,16 @@ def _outcomes(event: Any) -> list[str]:
 
 
 def _cost(value: Any) -> float:
-    """A `data.cost_usd` as dollars: only finite, non-negative JSON numbers count."""
+    """A `data.cost_usd` as dollars, by `services/doctor_spend`'s rules: only numbers count
+    (not strings or bools), a negative or NaN counts as 0, and a value too big for a float
+    counts as infinity, so the total fails closed instead of quietly dropping it."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return 0.0
     try:
         usd = float(value)
     except OverflowError:
-        return 0.0
-    return usd if math.isfinite(usd) and usd > 0 else 0.0
+        return math.inf
+    return usd if usd > 0 else 0.0  # NaN > 0 is False
 
 
 def _family(event: Any) -> str:
@@ -258,8 +263,10 @@ def _family(event: Any) -> str:
     return kind.strip() if isinstance(kind, str) and kind.strip() else "unknown"
 
 
-def _doctor(chosen: list[Any]) -> tuple[dict[str, dict[str, int]], float]:
-    """(the Fleet Doctor metrics per fault family, the Doctor's spend) over the window."""
+def _doctor(chosen: list[Any]) -> tuple[dict[str, dict[str, int]], float | None]:
+    """(the Fleet Doctor metrics per fault family, the Doctor's spend) over the window. The
+    spend is None when the total isn't finite: unknown, never infinity (JSON can't carry it,
+    and `GET /v1/digest` must not fail on it)."""
     by_kind: dict[str, dict[str, int]] = {}
     spend = 0.0
     for e in chosen:
@@ -272,7 +279,7 @@ def _doctor(chosen: list[Any]) -> tuple[dict[str, dict[str, int]], float]:
         row = by_kind.setdefault(_family(e), {n.removeprefix("doctor_"): 0 for n in DOCTOR_METRICS})
         for n in names:
             row[n.removeprefix("doctor_")] += 1
-    return dict(sorted(by_kind.items())), round(spend, 6)
+    return dict(sorted(by_kind.items())), round(spend, 6) if math.isfinite(spend) else None
 
 
 def summarize(events: Iterable[Any], since: datetime, until: datetime | None = None) -> Digest:
@@ -371,7 +378,11 @@ def render_text(
             f"Fleet Doctor: {d.doctor_asks} asks · {d.doctor_consults} consults · "
             f"fixes {d.doctor_proposals_offered} offered, {d.doctor_proposals_applied} applied, "
             f"{d.doctor_consults_held} held · {d.doctor_gave_up} gave up · "
-            f"spend ${d.doctor_spend_usd:.4f}"
+            + (
+                "spend unknown (a cost too large to add up; the spend cap refuses it too)"
+                if d.doctor_spend_usd is None
+                else f"spend ${d.doctor_spend_usd:.4f}"
+            )
         )
     if d.human_actions:
         lines.append("Human actions:")

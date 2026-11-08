@@ -3,6 +3,8 @@ give-ups, per fault family, and the Doctor's spend. Events in interfaces.md §8 
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from romulus_cloud.domain.digest import EventView, render_text, summarize
 
 T0 = datetime(2026, 11, 8, 0, 30, tzinfo=UTC)
@@ -88,7 +90,7 @@ def test_family_falls_back_to_unknown_and_uncounted_kinds_add_no_family():
     assert list(d.doctor_by_kind) == ["unknown"] and d.doctor_by_kind["unknown"]["asks"] == 3
 
 
-def test_spend_sums_only_non_negative_finite_numbers():
+def test_spend_sums_only_non_negative_numbers():
     evs = [
         doc("doctor.advised", cost_usd=0.1),
         doc("doctor.diagnosed", cost_usd=0.2),
@@ -98,13 +100,27 @@ def test_spend_sums_only_non_negative_finite_numbers():
         doc("doctor.advised", cost_usd=True),
         doc("doctor.advised", cost_usd=None),
         doc("doctor.advised", cost_usd=float("nan")),
-        doc("doctor.advised", cost_usd=float("inf")),
-        doc("doctor.advised", cost_usd=10**400),
         doc("doctor.advised", cost_usd={"usd": 1}),
         doc("doctor.advised"),
         EventView("worker", "automation", "coder.drafted", T0, "why", {}, {"cost_usd": 9}),
     ]
     assert summarize(evs, T0, T1).doctor_spend_usd == 3.3
+
+
+@pytest.mark.parametrize(
+    "costs",
+    [
+        [1e308, 1e308],  # each finite, the total overflows
+        [10**400],  # too big for a float: counts as infinity, as in doctor_spend
+        [float("inf"), 0.5],
+    ],
+)
+def test_a_total_that_is_not_finite_is_unknown_never_infinity(costs):
+    evs = [doc("doctor.diagnosed", cost_usd=c) for c in costs] + [doc("doctor.asked")]
+    d = summarize(evs, T0, T1)
+    assert d.doctor_spend_usd is None and d.doctor_asks == 1
+    line = next(x for x in render_text(d).splitlines() if x.startswith("Fleet Doctor:"))
+    assert line.endswith("spend unknown (a cost too large to add up; the spend cap refuses it too)")
 
 
 def test_window_bounds_apply_to_doctor_counts():

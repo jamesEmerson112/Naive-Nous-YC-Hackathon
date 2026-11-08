@@ -15,7 +15,8 @@ size, download link, whether the bytes are stored). Their steps carry it too, an
 Fleet Doctor (PR 6): `doctor.*` steps carry their event's data as `doctor`, and
 `Story.ledger` lists the hypotheses from `doctor.advised` (an L1 ask) and
 `doctor.diagnosed` (an L2 consult), newest first. A closed consult picks its badge from
-`data.outcome` (`CONSULT_OUTCOME_STATUS`). All doctor kinds share one `STAGE`, so on a
+`data.outcome` (`CONSULT_OUTCOME_STATUS`; `held` sets none), and no Doctor status covers
+one that needs a person (`NEEDS_PERSON`). All doctor kinds share one `STAGE`, so on a
 tied `ts` they keep the order they were written in.
 
 Order is by when things happened (`ts`, the device's `occurred_at` for device events),
@@ -119,12 +120,21 @@ class Story:
     def status(self) -> tuple[str, str]:
         """Where the incident stands, from the latest step whose kind is in `STATUS`:
         (words, tone), e.g. ("overlay held", "good"). Steps that don't move it (evidence,
-        notes) are skipped."""
-        for s in reversed(self.steps):
+        notes) are skipped.
+
+        A Fleet Doctor status never covers one that needs a person (`NEEDS_PERSON`), and a
+        consult that closed `held` doesn't move it (`overlay.held` already did, and lock-in
+        may have moved on since)."""
+        for i in range(len(self.steps) - 1, -1, -1):
+            s = self.steps[i]
+            if s.kind.startswith("doctor."):
+                found = _doctor_status(s)
+                if found is None:
+                    continue
+                before = _settled(self.steps[:i])
+                return before if before in NEEDS_PERSON else found
             if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
                 return WORK_ORDER_STATUS[s.refs["status"]]
-            if s.kind == "doctor.consult_closed":
-                return _consult_status(s.doctor or {})
             if s.kind in STATUS and s.label:
                 return STATUS[s.kind]
         return ("no events", "info") if not self.steps else ("open", "bad")
@@ -480,9 +490,18 @@ def _doctor(e: EventLike) -> dict[str, Any] | None:
     return dict(e.data) if isinstance(e.data, Mapping) else {}
 
 
+# The longest claim or how_to_check the ledger shows; the event keeps the full text.
+LEDGER_TEXT_MAX = 500
+
+
+def _clip(s: str, limit: int = LEDGER_TEXT_MAX) -> str:
+    return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
+
+
 def _hypotheses(d: Mapping[str, Any]) -> list[tuple[str, str]]:
-    """(claim, how_to_check) pairs from `data.hypotheses`. A string item is a bare claim;
-    an item without a non-blank string claim is skipped; anything but a list gives []."""
+    """(claim, how_to_check) pairs from `data.hypotheses`, each cut to `LEDGER_TEXT_MAX`.
+    A string item is a bare claim; an item without a non-blank string claim is skipped;
+    anything but a list gives []."""
     raw = d.get("hypotheses")
     if not isinstance(raw, list | tuple):
         return []
@@ -492,7 +511,8 @@ def _hypotheses(d: Mapping[str, Any]) -> list[tuple[str, str]]:
         if isinstance(h, Mapping):
             claim, how = h.get("claim"), h.get("how_to_check")
         if isinstance(claim, str) and claim.strip():
-            out.append((claim.strip(), how.strip() if isinstance(how, str) else ""))
+            how = how.strip() if isinstance(how, str) else ""
+            out.append((_clip(claim.strip()), _clip(how)))
     return out
 
 
@@ -790,27 +810,60 @@ STATUS.update(
         "doctor.gave_up": ("Fleet Doctor gave up", "bad"),
     }
 )
-CONSULT_OUTCOME_STATUS: dict[str, tuple[str, str]] = {
-    "held": ("Fleet Doctor fix held", "good"),
-    "advised": ("Fleet Doctor advised", "info"),
-    "declined": ("Fleet Doctor declined", "info"),
+# Every outcome but `held` means nothing of the Doctor's was applied and kept, so the
+# incident isn't fixed: bad. `held` sets no status (`overlay.held` already says so, and a
+# close that lands after lock-in must not pull the badge back from the gate).
+CONSULT_OUTCOME_STATUS: dict[str, tuple[str, str] | None] = {
+    "held": None,
+    "advised": ("Fleet Doctor advised only", "bad"),
+    "declined": ("Fleet Doctor declined", "bad"),
     "blocked_over_cap": ("Fleet Doctor: over cap", "bad"),
     "discarded": ("Fleet Doctor fix discarded", "bad"),
     "failed_checks": ("Fleet Doctor fix failed checks", "bad"),
     "reverted": ("Fleet Doctor fix reverted", "bad"),
     "failed_verify": ("Fleet Doctor fix failed verify", "bad"),
-    "stale": ("Fleet Doctor fix stale", "info"),
-    "rejected": ("Fleet Doctor fix rejected", "info"),
-    "expired": ("Fleet Doctor fix expired", "info"),
+    "stale": ("Fleet Doctor fix stale", "bad"),
+    "rejected": ("Fleet Doctor fix rejected", "bad"),
+    "expired": ("Fleet Doctor fix expired", "bad"),
     "gave_up": ("Fleet Doctor gave up", "bad"),
 }
 
+# Statuses a person has to act on. Nothing the Fleet Doctor does covers them up; a later
+# non-Doctor step (the work order moving on, an unfreeze) still can.
+NEEDS_PERSON: frozenset[tuple[str, str]] = frozenset(
+    {
+        WORK_ORDER_STATUS["blocked_over_cap"],
+        WORK_ORDER_STATUS["needs_human"],
+        WORK_ORDER_STATUS["stopped"],
+        STATUS["candidate.frozen"],
+    }
+)
 
-def _consult_status(d: Mapping[str, Any]) -> tuple[str, str]:
+
+def _consult_status(d: Mapping[str, Any]) -> tuple[str, str] | None:
     outcome = _text(d, "outcome")
     if not outcome:
         return STATUS["doctor.consult_closed"]
     return CONSULT_OUTCOME_STATUS.get(outcome, (f"consult closed: {_words(outcome)}", "info"))
+
+
+def _doctor_status(s: Step) -> tuple[str, str] | None:
+    """The status a doctor step sets, or None if it doesn't move it."""
+    if s.kind == "doctor.consult_closed":
+        return _consult_status(s.doctor or {})
+    return STATUS.get(s.kind) if s.label else None
+
+
+def _settled(steps: Iterable[Step]) -> tuple[str, str] | None:
+    """The status from the latest non-Doctor step that sets one, or None."""
+    for s in reversed(list(steps)):
+        if s.kind.startswith("doctor."):
+            continue
+        if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
+            return WORK_ORDER_STATUS[s.refs["status"]]
+        if s.kind in STATUS and s.label:
+            return STATUS[s.kind]
+    return None
 
 
 # One stage for every doctor kind: after the device's own heal and its evidence, before

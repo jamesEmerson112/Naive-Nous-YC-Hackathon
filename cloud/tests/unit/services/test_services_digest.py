@@ -6,6 +6,7 @@ import pytest
 
 from romulus_cloud import events
 from romulus_cloud.errors import ApiError
+from romulus_cloud.ids import utcnow
 from romulus_cloud.models import Blob, Device, FleetState
 from romulus_cloud.services import digest, overnight
 
@@ -57,6 +58,27 @@ def test_report_carries_the_fleet_doctor_metrics(db_session, now):
     assert d["doctor_spend_usd"] == 0.004
     assert d["doctor_by_kind"] == {"unknown": {**dict.fromkeys(_METRICS, 0), "asks": 1}}
     assert "Fleet Doctor: 1 asks" in digest.report(db_session, now).text()
+
+
+def test_digest_route_reports_an_overflowing_spend_as_null(client, db_session):
+    """Each cost is a finite JSON number, but their sum overflows a float: the route still
+    answers 200, with the spend unknown (null), never infinity."""
+    for _ in range(2):
+        events.record(
+            db_session,
+            "fleet-doctor",
+            "agent",
+            "doctor.diagnosed",
+            {},
+            "diagnosed",
+            data={"cost_usd": 1e308},
+            ts=utcnow(),
+        )
+    db_session.flush()
+    resp = client.get("/v1/digest", params={"since": "1h"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["doctor_spend_usd"] is None and "spend unknown" in body["text"]
 
 
 _METRICS = (

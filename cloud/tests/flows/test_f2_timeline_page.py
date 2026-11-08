@@ -179,7 +179,7 @@ def test_story_shows_the_fleet_doctor_ledger(client, arm, example, db_session):
     # The steps read too, and the closed consult sets the badge.
     assert "The Fleet Doctor sent 1 hypothesis to arm-1 (model fake-templated)." in page
     assert "The Fleet Doctor diagnosed the incident: 1 hypothesis (stub)." in page
-    assert "Fleet Doctor advised" in page
+    assert 'class="status tone-bad">Fleet Doctor advised only<' in page
     # The ledger is in the story JSON too, and device-ish text stays escaped in the HTML.
     story = client.get(f"/v1/incidents/{RULES}/story").json()
     assert [h["source"] for h in story["ledger"]] == ["consult", "ask"]

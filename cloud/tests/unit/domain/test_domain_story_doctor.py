@@ -213,29 +213,101 @@ def test_lines_say_what_the_doctor_did_and_announce_stubs():
     )
 
 
+def _closed(minutes, outcome):
+    return Ev(
+        "doctor.consult_closed",
+        ts=T0 + timedelta(minutes=minutes),
+        refs=_refs(consult="c"),
+        data={"outcome": outcome},
+    )
+
+
+def _opened(minutes):
+    return Ev("doctor.consult_opened", ts=T0 + timedelta(minutes=minutes), refs=_refs(consult="c"))
+
+
+REPORTED = Ev("incident.reported", data={"kind": "camera_occluded"})
+
+
 @pytest.mark.parametrize(
     "outcome,expected",
     [
-        ("held", ("Fleet Doctor fix held", "good")),
         ("gave_up", ("Fleet Doctor gave up", "bad")),
         ("discarded", ("Fleet Doctor fix discarded", "bad")),
-        ("advised", ("Fleet Doctor advised", "info")),
+        # Nothing was applied and kept, so the incident isn't fixed: never info.
+        ("advised", ("Fleet Doctor advised only", "bad")),
+        ("declined", ("Fleet Doctor declined", "bad")),
+        ("stale", ("Fleet Doctor fix stale", "bad")),
+        ("rejected", ("Fleet Doctor fix rejected", "bad")),
+        ("expired", ("Fleet Doctor fix expired", "bad")),
         ("something_new", ("consult closed: something new", "info")),
         (None, ("Fleet Doctor consult closed", "info")),
     ],
 )
 def test_a_closed_consult_picks_its_status_from_the_outcome(outcome, expected):
+    assert build_story([REPORTED, _opened(1), _closed(2, outcome)], INC).status == expected
+
+
+def test_a_held_close_sets_no_status():
+    held = Ev("overlay.held", ts=T0 + timedelta(minutes=2), refs=_refs(overlay="ov-9"))
+    s = build_story([REPORTED, _opened(1), held, _closed(3, "held")], INC)
+    assert s.status == ("overlay held", "good")
+
+
+def test_a_held_close_after_lock_in_keeps_the_gate_status():
     evs = [
-        Ev("incident.reported", data={"kind": "camera_occluded"}),
-        Ev("doctor.consult_opened", ts=T0 + timedelta(minutes=1), refs=_refs(consult="c")),
-        Ev(
-            "doctor.consult_closed",
-            ts=T0 + timedelta(minutes=2),
-            refs=_refs(consult="c"),
-            data={"outcome": outcome},
-        ),
+        REPORTED,
+        _opened(1),
+        Ev("overlay.held", ts=T0 + timedelta(minutes=2), refs=_refs(overlay="ov-9")),
+        Ev("overlay.locked_in", ts=T0 + timedelta(minutes=3), refs=_refs(overlay="ov-9")),
+        Ev("candidate.created", ts=T0 + timedelta(minutes=3), refs=_refs(candidate="cand_1")),
+        Ev("candidate.promoted", ts=T0 + timedelta(minutes=4), refs=_refs(candidate="cand_1")),
+        _closed(5, "held"),  # the tick saw the held overlay after the gate moved on
     ]
-    assert build_story(evs, INC).status == expected
+    assert build_story(evs, INC).status == ("in the fleet", "good")
+
+
+def test_doctor_statuses_never_cover_a_work_order_that_needs_a_person():
+    wo = Ev(
+        "workorder.created",
+        ts=T0 + timedelta(minutes=1),
+        refs=_refs(work_order="wo_1", status="needs_human"),
+        data={"part_name": "gripper servo", "quantity": 1},
+    )
+    needs_person = ("work order needs a person", "bad")
+    assert build_story([REPORTED, wo, _opened(2)], INC).status == needs_person
+    offered = Ev("doctor.proposal_offered", ts=T0 + timedelta(minutes=3), refs=_refs(consult="c"))
+    assert build_story([REPORTED, wo, _opened(2), offered], INC).status == needs_person
+    assert build_story([REPORTED, wo, _opened(2), _closed(3, "gave_up")], INC).status == (
+        needs_person
+    )
+    # Once the order moves on (not a Doctor step), the Doctor's status shows again.
+    posted = Ev(
+        "workorder.card_posted",
+        ts=T0 + timedelta(minutes=4),
+        refs=_refs(work_order="wo_1", status="posted"),
+    )
+    assert build_story([REPORTED, wo, posted, _opened(5)], INC).status == (
+        "Fleet Doctor consulting",
+        "wait",
+    )
+
+
+def test_doctor_statuses_never_cover_a_frozen_candidate():
+    frozen = Ev("candidate.frozen", ts=T0 + timedelta(minutes=1), refs=_refs(candidate="c1"))
+    assert build_story([REPORTED, frozen, _opened(2)], INC).status == ("frozen", "bad")
+
+
+def test_ledger_text_is_capped_for_display():
+    long_claim, long_how = "c" * 2000, "h" * 600
+    ev = diagnosed(0, _hyp(long_claim, long_how), _hyp("short", "fine"))
+    first, second = build_story([ev], INC).ledger
+    cap = story.LEDGER_TEXT_MAX
+    assert len(first["claim"]) == cap and first["claim"].endswith("…")
+    assert len(first["how_to_check"]) == cap and first["how_to_check"].endswith("…")
+    assert (second["claim"], second["how_to_check"]) == ("short", "fine")
+    exact = diagnosed(0, _hyp("x" * cap))
+    assert build_story([exact], INC).ledger[0]["claim"] == "x" * cap
 
 
 def test_status_while_a_consult_is_open_and_after_an_ask():
