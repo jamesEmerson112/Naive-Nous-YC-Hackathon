@@ -89,8 +89,8 @@ Daily digest and budgets
 AgentMail incident email
 
 BOARD
-Arm job card format
-Planner creates arm job cards
+Arm job card format (armsim/orders.py)    <--- James
+Planner creates arm job cards (orders -> ARM JOB cards) <--- James
 Bench board token (scoped MCP session)
 
 MODELS
@@ -109,7 +109,7 @@ Hermes install on the bench             <--- James
 Hermes arm plugin tools                 <--- James
 pre_tool_call safety guard              <--- James
 Board link via Hermes MCP client
-Cron pulls next board card
+Cron pulls next board card (armsim/dispatch.py) <--- James
 Gateway phone alerts
 Hermes plugin catalog submission
 pi vs Hermes comparison (Naive console)  <--- James
