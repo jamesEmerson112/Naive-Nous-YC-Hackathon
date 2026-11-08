@@ -207,12 +207,51 @@ def test_mnemonic_prefixes_are_unprefixed():
     assert touches_safety(patch, [])
 
 
-def test_device_prefixed_paths_are_listed_and_reported():
+RELATIVE_D1 = (
+    "diff --git a/robot/control.py b/robot/control.py\n"
+    "--- a/robot/control.py\n+++ b/robot/control.py\n@@ -1 +1 @@\n-a\n+b\n"
+)
+PREFIXED_D1 = RELATIVE_D1.replace("a/robot/", "a/device/robot/").replace(
+    "b/robot/", "b/device/robot/"
+)
+
+
+@pytest.mark.parametrize("patch", [RELATIVE_D1, PREFIXED_D1], ids=["relative", "prefixed"])
+def test_both_path_forms_read_the_same_relative_to_device(patch):
+    s = summary(patch)
+    assert s.ok, s.problems
+    assert s.paths == ("robot/control.py",)
+    assert s.root_prefixed == (patch is PREFIXED_D1)
+    assert s.strip == (2 if patch is PREFIXED_D1 else 1)
+    assert touches_safety(patch, ["robot/control.py"])
+    assert not touches_safety(patch, ["safety"])
+
+
+def test_device_prefixed_safety_and_verify_paths_are_seen_without_the_prefix():
     patch = "--- a/device/safety/visor.py\n+++ b/device/safety/visor.py\n@@ -1 +1 @@\n-a\n+b\n"
     s = summary(patch)
-    assert s.paths == ("device/safety/visor.py",)
-    assert len(s.problems) == 2 and "relative to device/ itself" in s.problems[0]
+    assert s.ok and s.paths == ("safety/visor.py",) and s.root_prefixed
     assert touches_safety(patch, ["safety/"])
+    verify = "--- /dev/null\n+++ b/device/Verify/test_x.py\n@@ -0,0 +1 @@\n+x\n"
+    assert summary(verify).paths == ("Verify/test_x.py",)  # is_under(.., "verify") matches
+
+
+def test_a_patch_mixing_both_forms_is_a_problem_and_touches_safety():
+    patch = PREFIXED_D1 + "--- a/robot/app.py\n+++ b/robot/app.py\n@@ -1 +1 @@\n-a\n+b\n"
+    s = summary(patch)
+    assert any("mix the two forms" in p for p in s.problems)
+    assert not s.root_prefixed
+    assert touches_safety(patch, [])
+
+
+@pytest.mark.parametrize(
+    "path", ["device", "device/../robot/x.py", "device/../../etc/passwd", "../device/x.py"]
+)
+def test_the_device_prefix_never_escapes_or_names_the_root(path):
+    patch = f"--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-a\n+b\n"
+    s = summary(patch)
+    assert not s.ok and s.rejected_paths
+    assert touches_safety(patch, [])
 
 
 def test_dot_and_double_slash_are_normalized():

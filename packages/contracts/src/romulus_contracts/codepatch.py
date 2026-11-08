@@ -10,6 +10,13 @@
   prefixes: `--- a/control/gripper.py` / `+++ b/control/gripper.py`. New and deleted
   files use `/dev/null` on one side. `git diff` output (run inside `device/`) fits,
   including its `diff --git`, rename, copy and mode lines.
+- **Also accepted (B3):** the same paths with a leading `device/` (`--- a/device/control/
+  gripper.py`), which is what `git diff` run from the repo root gives. A leading `device/`
+  always means the package root. `summarize_code_patch` reads it in one place
+  (`_Collector.path`): `paths` come back relative to `device/` either way, so
+  `touches_safety` and the `verify/` holdout see the same names, and `PatchSummary.strip`
+  tells `git apply` how many components to drop. A patch that mixes the two forms is a
+  problem (fail closed).
 - The base `code_rev` is the code the device ran when it made the patch. Send it as
   `running.code_rev` in the incident (proposed; see README).
 
@@ -72,16 +79,24 @@ class PatchSummary:
     - `problems`: every format problem. Non-empty means fail closed (`touches_safety`).
     - `rejected_paths`: raw paths that cannot be placed inside `device/` (absolute, `..`).
     - `notes`: things worth surfacing that are not format problems (e.g. STM32 paths).
+    - `root_prefixed`: the patch names files as `device/...` (`--- a/device/robot/x.py`, what
+      `git diff` run from the repo root gives); `paths` already have that prefix removed.
     """
 
     paths: tuple[str, ...] = ()
     problems: tuple[str, ...] = ()
     rejected_paths: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    root_prefixed: bool = False
 
     @property
     def ok(self) -> bool:
         return not self.problems
+
+    @property
+    def strip(self) -> int:
+        """`git apply -p<strip>` from inside `device/`: 2 drops `a/device/`, 1 drops `a/`."""
+        return 2 if self.root_prefixed else 1
 
 
 @dataclass
@@ -90,6 +105,7 @@ class _Collector:
     problems: list[str] = field(default_factory=list)
     rejected: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    forms: dict[str, str] = field(default_factory=dict)  # "prefixed"/"relative" -> first raw
 
     def path(self, line_no: int, raw: str | None, prefix: str | None) -> None:
         """Record one path as it appeared on line `line_no`; `prefix` is "a/", "b/" or None."""
@@ -117,12 +133,17 @@ class _Collector:
             self.problems.append(f"line {line_no}: path {raw!r} names no file")
             self.rejected.append(raw)
             return
+        # The one place a leading `device/` is read (B3): it names the package root, so
+        # `device/robot/x.py` is `robot/x.py`. Checked after `..` above, so it never escapes.
+        form = "relative"
+        if PurePosixPath(norm).parts[0] == CODE_ROOT:
+            form, norm = "prefixed", str(PurePosixPath(*PurePosixPath(norm).parts[1:]))
+            if norm == ".":
+                self.problems.append(f"line {line_no}: path {raw!r} names no file")
+                self.rejected.append(raw)
+                return
+        self.forms.setdefault(form, raw)
         top = PurePosixPath(norm).parts[0]
-        if top == CODE_ROOT:
-            self.problems.append(
-                f"line {line_no}: path {raw!r} starts with {CODE_ROOT}/; "
-                f"paths are relative to {CODE_ROOT}/ itself"
-            )
         if top == MCU_ROOT and norm not in self.paths:
             self.notes.append(f"{norm}: STM32 code; needs a rebuild and reflash")
         self.paths.add(norm)
@@ -276,11 +297,17 @@ def summarize_code_patch(code_patch: str | None) -> PatchSummary:
         i += 1
     if not saw_file:
         c.problems.insert(0, "no file headers found ('diff --git' or '--- a/<path>' / '+++ b/')")
+    if len(c.forms) > 1:
+        c.problems.append(
+            f"paths mix the two forms ({c.forms['prefixed']!r} has the {CODE_ROOT}/ prefix, "
+            f"{c.forms['relative']!r} doesn't); use one, so the patch applies one way"
+        )
     return PatchSummary(
         paths=tuple(sorted(c.paths)),
         problems=tuple(c.problems),
         rejected_paths=tuple(c.rejected),
         notes=tuple(c.notes),
+        root_prefixed=set(c.forms) == {"prefixed"},
     )
 
 

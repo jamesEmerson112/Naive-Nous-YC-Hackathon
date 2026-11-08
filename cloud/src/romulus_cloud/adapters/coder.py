@@ -296,9 +296,17 @@ class ScratchRepo:
         return [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
 
     def apply(self, patch: str) -> str | None:
-        """Apply a unified diff to the work tree. Returns None, or why it doesn't apply."""
+        """Apply a code_patch to the work tree. Returns None, or why it doesn't apply.
+
+        Paths may be relative to `device/` or carry a `device/` prefix (APIs §2.10, B3). The
+        contract's parser decides which and `git apply -p` follows it, so what is applied is
+        what was checked; a patch it finds any problem in (mixed forms, escapes, links) is
+        refused (fail closed)."""
+        summary = summarize_code_patch(patch)
+        if summary.problems:
+            return "; ".join(summary.problems)
         try:
-            self.git("apply", "--whitespace=nowarn", "-", stdin=patch)
+            self.git("apply", f"-p{summary.strip}", "--whitespace=nowarn", "-", stdin=patch)
         except CoderError as exc:
             return str(exc)
         return None
