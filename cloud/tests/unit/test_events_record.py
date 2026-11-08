@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.dialects import postgresql
 
 from romulus_cloud import events
 from romulus_cloud.models import Device, Event
@@ -60,7 +63,56 @@ def test_committed_event_survives_with_its_change(db_session, now):
     )
     db_session.commit()
     assert db_session.get(Device, "sim-1") is not None
-    assert db_session.scalars(select(Event).where(Event.refs["device"].astext == "sim-1")).one()
+    assert [e.kind for e in events.find(db_session, {"device": "sim-1"})] == ["device.first_seen"]
+
+
+def test_find_matches_refs_containment_in_time_order(db_session, now):
+    later = now + timedelta(seconds=5)
+    events.record(
+        db_session,
+        "gate",
+        "automation",
+        "candidate.created",
+        {"incident": "i-1", "candidate": "cand_1"},
+        "Candidate made.",
+        ts=later,
+    )
+    events.record(
+        db_session,
+        "device:arm-1",
+        "agent",
+        "incident.reported",
+        {"incident": "i-1", "device": "arm-1"},
+        "arm-1 reported it.",
+        ts=now,
+    )
+    events.record(
+        db_session,
+        "device:arm-2",
+        "agent",
+        "incident.reported",
+        {"incident": "i-2", "device": "arm-2"},
+        "arm-2 reported it.",
+        ts=now,
+    )
+    story = events.find(db_session, {"incident": "i-1"})
+    assert [e.kind for e in story] == ["incident.reported", "candidate.created"]
+    assert [e.kind for e in events.find(db_session, {"incident": "i-1", "device": "arm-1"})] == [
+        "incident.reported"
+    ]
+    assert events.find(db_session, {"incident": "i-1"}, kinds=["candidate.created"])[0].ts == later
+    assert events.find(db_session, {"incident": "nope"}) == []
+
+
+def test_find_uses_jsonb_containment_and_the_gin_index(db_session):
+    sql = str(events.find_query({"incident": "i-1"}).compile(dialect=postgresql.dialect()))
+    assert "events.refs @> " in sql
+    db_session.execute(text("SET LOCAL enable_seqscan = off"))
+    plan = db_session.execute(
+        text("EXPLAIN SELECT id FROM events WHERE refs @> CAST(:r AS jsonb)"),
+        {"r": '{"incident": "i-1"}'},
+    ).scalars()
+    assert "ix_events_refs" in "\n".join(plan)
 
 
 def test_ts_defaults_to_now_and_is_aware(db_session):
