@@ -1,0 +1,6 @@
+# SO-101 arm host: LeRobot 0.7.0 (released 2026-11-05) pinned, per docs/so101-research.md.
+#   feetech  -> STS3215 servo bus (rustypot backend)
+#   hardware -> pynput for the arrow-key recording controls
+#   viz      -> rerun viewer for --display_data
+#   dataset, core-scripts -> lerobot-record / lerobot-replay datasets
+lerobot[feetech,hardware,viz,dataset,core-scripts]==0.7.0
