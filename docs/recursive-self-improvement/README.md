@@ -1,76 +1,98 @@
 # Fleet learning: every fault happens once
 
-_Kent's request, planned by a Claude session with sub-agents, Sun Nov 8, ~8:45 AM PST. Status: **draft v1, before review**; nothing built. The folder is called `recursive-self-improvement`; on stage it's "Every fault happens once" and the page is "Fleet learning" ([`demo.md`](demo.md) §1 says why)._
+_Kent's request, planned by a Claude session with sub-agents (four investigations, two designs, three reviews), Sun Nov 8, 8:20–8:55 AM PST. Status: **v2, after review** ([`review.md`](review.md)); nothing built. The folder name is Kent's. The feature is "Fleet learning", and "Every fault happens once" is only the stage tagline._
 
-## The idea
-Romulus runs one heal loop at three scales: the arm heals itself, the fleet gets fixes that hold, and the company (Naïve) takes the faults that need hands. **Fleet learning adds the fourth dimension, time: every turn of the loop leaves the next one smarter.**
+## In one sentence
+**Every heal is labelled by whatever checked it, the labelled runs become the fleet's training set on their own, and when a failure has no working fix in the fleet, a Naïve agent session proposes a rule or a skill that ships only through the same gate as every other change.**
 
-1. **Every heal is an episode, and a verifier's verdict is its reward.** An episode is one heal attempt: what the healer saw, thought and did (`agent_runs`, APIs §3.11). Its label comes only from something that checked: the gate promoted or rolled back, the overlay held on the device, or a bench check passed. A device saying "fixed" with nothing behind it stays `unverified`, and never becomes a label *(the RLVR framing, [`research.md`](research.md) §4)*.
-2. **The fleet keeps its own dataset.** Plain code keeps one standing dataset, `fleet-episodes`, snapshots it as verified episodes arrive, and exports it as training rows: Hermes trajectories with `completed` set to the verdict, plus SFT and KTO files and a dataset card. No person and no model is involved.
-3. **A Naïve curator generalizes failures; the batch already generalizes fixes.** Romulus's batch job already turns every *held* fix into a fleet version (`cloud/src/romulus_cloud/services/batch.py:1-37`). Nothing handles the failures nobody fixed: a healer gave up, or a detector missed. When those cluster, a **Naïve agent session** reads the episodes and returns one typed **lesson**. Plain code checks it, and the existing gate (replay → simulated canary → promote or roll back) ships it to every arm as a healer skill.
-4. **Weights are the same story, later.** The model is one more artifact through the same gate. Not built today; shown greyed out.
+## Words used here
+| Word | Meaning |
+|---|---|
+| **Labelled run** | One heal attempt (an agent run, APIs §3.11) plus a **verdict** that only a verifier gives: `pass`, `fail`, `unverified` or `excluded` |
+| **Verifier** | Something that checked, never a model's opinion: the gate promoted or rolled back, the fix held on the device, or a bench check passed |
+| **Fleet dataset** | One standing dataset that plain code snapshots and exports as labelled runs (Hermes trajectories, `completed` = verdict) |
+| **Failure cluster** | Failed or unverified runs of one fault kind that **no held fix** covers |
+| **Cluster review** | A Fleet Doctor mode that runs as a Naïve agent session. It reads a failure cluster and returns one typed **proposal**: a rule for a missed detection, or a skill for a failed heal |
+
+The rest is the existing vocabulary: candidate, gate, canary, version (`docs/cloud-platform-planning/`).
 
 ## The loop
 ```
- one device                     Romulus (plain code)                                   Naïve
- ──────────                     ────────────────────                                   ─────
- heal attempt ─► agent run ─►  EPISODE  verdict from a verifier only
-                               (pass · fail · unverified · excluded)
-                                  │
-              ┌───────────────────┼─────────────────────────────┐
-              ▼                   ▼                             ▼
-     regression case        fleet-episodes dataset      failure cluster (same kind, ≥2 devices,
-     (exists: guards        snapshot → export:          ≥1 fail/unverified, no fix behind it)
-      every release)        trajectories · sft · kto ·        │ case file
-                            card (no human)                   ▼
-                                                        curator session (pi, typed) ──────►  agent "curator"
-                                                              │ FleetLesson               ◄──  returns one lesson
-                                                        CHECKS in code: evidence exists,
-                                                        classes, prose-only skill, probe ↑
-                                                              │ accept
-                                                        harness candidate (+ skill) ─► GATE: replay (stub, says so)
-                                                                                         → canary sim-2 (real)
-                                                                                         → promote to every arm
-                                                              │ promoted
-                                                        publish skill v(n+1) ─────────────►  Naïve Skills page
+ heal attempt on one device
+        │
+        ▼
+ LABELLED RUN ── verdict from a verifier only
+        │
+        ├──► regression case        (exists: every fixed incident guards every release)
+        ├──► fleet dataset          (new, plain code, 0 clicks: snapshot → trajectories export)
+        └──► failure cluster? ──► cluster review (Naïve session) ──► proposal, checked in code
+                                         ├─ missed detection → proposed RULE  → gate: real replay → canary → every device
+                                         ├─ failed heal      → proposed SKILL → gate: canary → every device
+                                         └─ touches safety   → staged for its owner (D25): never ships on its own
 ```
 
+## Who decides what (the company's autonomy policy, made visible)
+| Change | Decided by | Human clicks |
+|---|---|---|
+| Dataset snapshots and training exports | plain code | 0 |
+| A proposed rule or skill that doesn't touch safety | the gate (replay, simulated canary, promote or roll back; D6) | 0 |
+| Anything that touches safety | its owner, with the measured evidence attached (D25) | 1 review |
+| Spending money | a person (the Technician's D30) | 1 click |
+
+**After a bad change:** a rolled-back proposal pauses cluster review for that fault kind until a person clears it. That's the pitch's "each action type earns autonomy and loses it after a bad fix" (CLAUDE.md).
+
 ## The hero story: a frozen sensor that says "clear"
-- **The fault:** the pod's ultrasonic freezes, so the distance stops changing. It still reports `st=ok`.
-- **Why it matters:** the arm's safety gate trusts any `ok` reading at or above `min_mm` as "clear" (`arm/safe_replay.py:66-75`), and nothing checks for a flat echo. So a frozen reading lets the arm move into whatever is there *(inferred from that code)*.
-- **Who already knows:** the arm-sim watchdog has a frozen check (`prototypes/arm-sim/armsim/level1.py:30-44`, "the rule Olir's `check_ultrasonic` is missing"). The pod's `detect.py` doesn't (`firmware/healer/healer/detect.py:217-276`), and that's an open gap in the team status.
-- **What the curator does:** it notices one healer knows what the others don't, and writes the lesson. The lesson ships as a skill to every arm's healer. Because it changes the safety behaviour, it's flagged `touches_safety` and goes to the simulated canary first (K17). The rule port for `detect.py` and `safe_replay.py` is staged for its owner (Olir), measured but not auto-merged.
-- **Measured** (architect fork, 8:45 AM, standard library, 0.74 s; re-run by the probe script before anything is shown):
-  - freezes of 4 s or more: **0 of 120** caught today → **120 of 120** with the port;
-  - **0 new false alarms** on the committed 600-item `gen_pod` set, which includes five hard-negative families;
-  - **limits:** a 3.5 s freeze is caught 4 of 30 times, and a freeze on out-of-range rows 0 of 30.
+- **The fault:** the pod's ultrasonic freezes. The distance stops changing, but each reading still says `st=ok`.
+- **Why it matters:** the arm's start gate counts any `ok` reading at or above `min_mm` as "clear" (`arm/safe_replay.py:66-75`), and nothing checks for a flat echo. So a frozen sensor would let the arm move into whatever is there *(inferred from that code)*.
+- **Who already knows:**
+  - The arm-sim watchdog has a frozen check (`prototypes/arm-sim/armsim/level1.py:30-44`, "the rule Olir's `check_ultrasonic` is missing").
+  - The pod's `detect.py` doesn't (`firmware/healer/healer/detect.py:217-276`). The team status lists this as an open gap.
+  - So **one failure on one device** is enough: another part of the fleet already handles it.
+- **What fleet learning does:**
+  1. Cluster review names a missed detection and proposes porting the watchdog's check.
+  2. A probe measures the port offline.
+  3. Because the port touches the arm's start gate, it's **staged for its owner (Olir) with the numbers attached**, not shipped (D25).
+  4. In the stage line, the agent knows where its autonomy stops.
+- **Measured** (8:45 AM, standard library, 0.74 s; the probe script must reproduce these before anything is shown):
+  - freezes of 4 s or more: **0 of 120** caught today, **120 of 120** with the port;
+  - **no new false alarms** on the 600-item `gen_pod` set, which includes five hard-negative families;
+  - **still missed:** a 3.5 s freeze is caught only 4 of 30 times, and a freeze on out-of-range rows 0 of 30.
 
 ## What's core, and what isn't
-| Built (tiers in [`build-plan.md`](build-plan.md)) | Not built, on purpose |
+| Core | Not built, on purpose |
 |---|---|
-| **Episodes:** a pure view with the verdict table | Training weights (a LoRA on a seeded sim fleet would be theatre) |
-| **Fleet dataset:** standing, auto-snapshotted, `trajectories` export | A `lessons` table (events are the spine) |
-| **Curator:** a Naïve session, plain-code checks, a harness candidate | ML clustering (grouping by `kind` is enough at four devices) |
-| **Probe:** an offline scorecard for a lesson's claim | Naïve Outcomes as the reward (the grader never sees the trace) |
-| **`/learning` page** | Auto-merging rule code; the LeRobot export (cut at K1); webhooks; Apps |
+| **Labelled runs:** a pure view with the verdict table, the one spine the digest, the Doctor and James's Level 3 can all read | Training weights (a LoRA on a seeded sim fleet would be theatre) |
+| **Fleet dataset:** standing, snapshotted on its own, `trajectories` export | New tables (events are the spine) |
+| **Cluster review:** a Naïve session, plain-code checks, routing by gap type | A new agent beside the Doctor; ML clustering; Naïve Outcomes as the reward |
+| **Probe:** an offline scorecard for a proposed rule | Auto-merging rule code; the LeRobot export (cut at K1) |
+| **`/learning` page** | Webhooks, Apps, cron (Naïve can't reach the laptop cloud) |
 
-## Why this is a Naïve beat
-- The judges score "how much of the company runs without you" (`docs/hackathons.md:12`).
-- The Technician beat ends on **1 human click**, because spending money needs a person (D30). Fleet learning ends on **0 human clicks**, because a verified software lesson doesn't (D6). Put side by side, the two show the company's autonomy policy without anyone saying it.
-- The team already wrote this agent's job down: the CEO board's open **INSIGHTS** card, "Batches robot and embedded-agent traces, clusters failures… ranks them by fleet impact… proposing firmware/harness changes" (read-only MCP check, 8:25 AM).
+## Why it's a Naïve beat
+- The judges score "how much of the company runs without you" (`docs/hackathons.md:12`). The table above *is* that answer, with the one place a person steps in for each kind of change.
+- The team already wrote this agent's job down: the CEO board's open **INSIGHTS** card, "Batches robot and embedded-agent traces, clusters failures… ranks them by fleet impact… proposing firmware/harness changes" (read-only Naïve MCP check, 8:25 AM).
+
+## What lands today (details in [`build-plan.md`](build-plan.md))
+**Before the 10:00 freeze, three lanes run in parallel, none of them needing the gate,** because the hero is staged:
+- **A · evidence:** the probe's real numbers, plus one live cluster-review session in the Naïve Studio, saved as a fixture.
+- **B · data:** labelled runs, the standing dataset and the `trajectories` export, on the `learn` stack.
+- **C · page:** `/learning` with the staged hero and the data strip.
+
+**On stage:** a sentence in beat 5. **At the 11:00 table:** the walk-through.
+
+**After 1 PM:** the skill lane through the gate, live mode, and the rule lane. The full T0 is 70–90 minutes, too long to build before the freeze.
 
 ## Documents
 | Doc | What it holds |
 |---|---|
-| [`design.md`](design.md) | The spec: components, the Episode and its verdict table, the curator contract and checks, the training export, the rollout lane, the probe, settings, events, tests |
-| [`demo.md`](demo.md) | Where the beat sits in the 1 PM run of show, the scripts, the page wireframe, the shot list, demo data, honesty rules, fallbacks |
-| [`build-plan.md`](build-plan.md) | Tiers against the 10:00 freeze, the guaranteed minimum beat, the file list, coordination, cut order |
-| [`review.md`](review.md) | The three reviews (execution risk, demo, coherence) and what changed |
+| [`design.md`](design.md) | The spec: labelled runs and the verdict table, the fleet dataset and export, cluster review (trigger, case file, proposal schema, checks, routing), rollout lanes, the probe, draft D31, settings, events, tests |
+| [`demo.md`](demo.md) | Where it sits in the 1 PM run of show, the scripts, the page wireframe, the table walk-through, honesty rules, fallbacks |
+| [`build-plan.md`](build-plan.md) | Three lanes before the freeze (evidence, data, page), then T0 → T2 after 1 PM, gotchas for the build sessions |
+| [`review.md`](review.md) | The three reviews (execution risk, judges' seat, coherence) and what changed |
 | [`research.md`](research.md) | Every outside fact, with links |
 
 ## Decisions for Kent
-1. **Go or no-go before 10:00**, and at which tier ([`build-plan.md`](build-plan.md)). The default is the guaranteed minimum beat now, and T0 only if a free Claude session starts by 9:10.
-2. **The hero lesson and Olir's P0 rule.** The default is the frozen sensor. Ask Olir to hold his hand-written rule until after 1 PM, or land it as the curator's staged patch.
-3. **Live Naïve writes:** the agent `curator` and the skill `romulus-healer-playbook`, at most $0.50 a session. The default is yes, after the Technician's G1.
-4. **Verdict strictness.** The default is strict: only held, promoted or bench-checked counts as a pass.
-5. **Where it runs:** its own stack (`COMPOSE_PROJECT_NAME=learn`, `API_PORT=8001`), never `tech` on :8000 or Olir's laptop.
+1. **Today's scope:** lanes A, B and C before the freeze (default), or A alone if you'd rather keep the morning for rehearsal ([`build-plan.md`](build-plan.md) §2).
+2. **D31, drafted in [`design.md`](design.md) §8:** cluster review is a Fleet Doctor mode with the same limits (D25). A prose skill that names no safety path isn't held by the K17 block; anything touching safety is staged for its owner. Default: accept.
+3. **The Naïve agent `fleet-doctor`** (`pi`, no tools, $0.50 a task), created through the Naïve MCP with your OK. Default: yes, at 9:00, so lane A can start.
+4. **Olir's P0 frozen-ultrasonic rule:** ask him to hold it until after 1 PM, or land it as the staged proposal with the probe's numbers. Default: the latter, if he's free.
+5. **Where it runs:** its own stack (`COMPOSE_PROJECT_NAME=learn`, `API_PORT=8001`), and **no merge into main before 1 PM**, because Kent's `tech` API hot-reloads from the main checkout.

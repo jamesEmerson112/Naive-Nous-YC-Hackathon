@@ -1,144 +1,142 @@
-# Fleet learning: the demo beat and the page
+# Fleet learning: the demo and the page
 
-_Draft v1, Sun Nov 8, ~8:45 AM PST. Every number marked **(placeholder)** must be replaced by the value the probe or the gate actually prints. The rules follow `docs/naive-technician/demo-clip.md`: numbers on screen are measured, never typed in._
+_v2, Sun Nov 8, ~8:55 AM PST, after the judges'-seat review ([`review.md`](review.md)). The rules follow `docs/naive-technician/demo-clip.md`: numbers on screen are measured, never typed in, and every number here marked **(placeholder)** must come from the probe or the gate._
 
-_What the beat has to land, in order:_
-1. _One device's failure became a lesson for every device._
-2. _A **Naïve** agent wrote the lesson; plain code and the gate checked it._
-3. _Nobody clicked._
-4. _Every run left labelled training data behind._
+## 1. What it has to land
+1. One device's failure became something the whole fleet gains: a checked change, or a measured fix handed to the right person.
+2. A **Naïve** agent did the thinking; plain code and the gate did the checking.
+3. Each kind of change has a known place where a person steps in, and for data and non-safety changes that place is nowhere.
+4. Every run leaves labelled training data behind.
 
-## 1. Name, and where it sits
-**Stage name: "Every fault happens once." Page title: "Fleet learning."**
-- "Recursive self-improvement" hurts with these judges. It reads as AI-takeoff hype, and it overclaims, since no weights are trained today. The judges score "what its agents actually delivered" (`docs/hackathons.md`).
-- Keep the term for the folder and for Q&A: "it's a self-improving loop with a verifier in it."
+**The name:** on stage it's "Every fault happens once"; the page is "Fleet learning". "Recursive self-improvement" reads as AI-takeoff hype and overclaims, since no weights are trained. Keep it for Q&A: "it's a self-improving loop with a verifier in it."
 
-**The run of show** (the plan calls for "five demo beats, the digest numbers, the levels 2–3 pitch slide", `features.txt:67`). There's one scale per beat, and each beat answers "what's left that the one before couldn't do?" *(inferred)*.
+## 2. Today (1 PM): no new stage beat
+The judges'-seat review was clear. Without a change the gate actually promoted, a separate beat would only say "an agent wrote a suggestion", in a demo scored on what agents *delivered*. So on stage it gets **one sentence inside beat 5** (the numbers), and the full walk-through happens at the 11:00 table.
 
-| # | Beat | Scale | Stage s |
-|---|---|---|---|
-| 1 | The company takes a job: Naïve card → Hermes → the arm moves | company | 10 |
-| 2 | Break → heal → resume: bad image 07, the pod healer's `fw_rollback`, the job resumes; ends on the Romulus timeline | arm | 30 |
-| 3 | Some faults need hands: the Naïve Technician, `… · 1 human click` | company | 15 |
-| 4 | **Every fault happens once: fleet learning** | fleet × time | **18** |
-| 5 | The numbers: the digest (agent vs human actions), the scale line, the levels 2–3 slide | — | 20 |
+**The run of show** (the plan's "five demo beats, the digest numbers, the levels 2–3 pitch slide", `features.txt:67`):
 
-- **Fold any separate "fleet lock-in" beat into beat 4.** Otherwise two beats both say "the fleet gets the fix".
-- **Bridge in**, at the end of beat 3: "Some faults need hands. Most should only ever happen once."
-- **Bridge out**, into beat 5: "And every one of those runs is now gate-labelled training data. Next, the healer's own model learns from it, through the same gate."
-- **The contrast:** beat 3 ends on **1 human click** (spending money needs a person, D30); beat 4 ends on **0** (a verified software lesson doesn't, D6).
-
-## 2. Scripts
-**Stage, 18 s (45 words, "Naïve" at word 9):**
-> Most faults should happen only once. A sim pod's distance sensor froze, still reading "clear", and our arm's safety gate believed it. A Naïve agent turned that into a lesson; our gate canaried it, and every arm's healer has it now. Nobody clicked.
-
-**Table, 30 s, walking the page:**
-1. Read the lesson (the verdict line).
-2. Point at the evidence card: "Today our pods catch 0 of 120 freezes; with the lesson's check, 120 of 120, with no new false alarms (placeholders). It also shows where it still misses."
-3. Switch to the **Naïve Studio** tab: the curator's session, then the Skills page at v2.
-4. Open the data strip: "Every run, labelled pass or fail by the gate, exports as Hermes trajectories. Here's the file."
-5. "Where did we step in? Nowhere. Software lessons ship on the gate; only spending money needs a person."
-
-## 3. The page: `/learning` in Romulus
-**Why Romulus, not Mission Control:**
-- Romulus owns the registry, the gate, datasets and exports.
-- The Technician page's visual language (`.tc-head`, `.tc-stages`, `.tc-verdict` ≥ 36 px, `cloud/src/romulus_cloud/web/templates/technician.html`) makes beats 3 and 4 look like one product.
-- Mission Control can't run on this laptop (`armsim/__init__.py` imports MuJoCo), and it's James's lane.
-
-**What it shows:** the newest lesson, polled with htmx like the timeline (`timeline.html:4`).
-
-```
-┌ Romulus   Timeline · Data · Learning                                     kill switch ┐
-│┌────────────────────────────────────────────────────────────────────────────────────┐│
-││ NAÏVE AGENT · curator · live session               31 s · $0.07 · 0 human clicks   ││  .tc-head; or the yellow
-││ lesson L-1 · evidence: sim-pod-2, sim-pod-3, arm-1's watchdog · 08:52             ││  "Recorded Naïve session"
-│└────────────────────────────────────────────────────────────────────────────────────┘│
-│  ✓ A SENSOR FROZE   ✓ AGENT WROTE A LESSON   ✓ GATE: CANARY HELD   ● EVERY ARM HAS IT │  .tc-stages, 4 columns
-│┌ LESSON ─────────────────────────────────────────────────────────────────────────────┐│
-││  A distance that never changes is a frozen sensor, not a clear path.              ││  .tc-verdict: the
-││  Every arm now parks on it.                                                       ││  LARGEST text, ≤140 chars
-││  known by: arm-sim watchdog (level1.py) · missed by: pod detect.py, safe_replay.py  ││
-│└─────────────────────────────────────────────────────────────────────────────────────┘│
-│┌ EVIDENCE · probe, recorded 08:41 ──────────┐ ┌ GATE · harness v2 ───────────────────┐│
-││ freezes ≥4 s caught   0/120  →  120/120     │ │ replay   stub (prose skill)          ││
-││ new false alarms      0 of 600 windows      │ │ canary   sim-2 healthy 120 s  ✓      ││
-││ still missed: 3.5 s freeze 26/30,           │ │ PROMOTED · automatic (D6) · safety ⚑ ││
-││   out-of-range freeze 30/30                 │ ├ ROLLOUT ─────────────────────────────┤│
-││ $ uv run python cloud/scripts/lesson_probe… │ │ sim-1  v1 → v2  ✓ installed      SIM ││
-│└─────────────────────────────────────────────┘ │ sim-2  v1 → v2  ✓ installed  SIM·can ││
-│                                                │ sim-3  v1 → v2  ✓ installed      SIM ││
-│                                                │ arm-1  v1 → v2  assigned        REAL ││
-│                                                │ Naïve Skill playbook v1 → v2  ↗      ││
-│                                                └──────────────────────────────────────┘│
-│┌ THE DATA THIS LEFT BEHIND ───────────────────────────────────────────────────────────┐│
-││  37 episodes → 21 verified → 21 regression tests → 21 training rows   (placeholders)  ││  KPI strip
-││  [↓ trajectories.jsonl]  completed = gate verdict · redacted · sha256 ab12…           ││  (partials/overview.html)
-││  NEXT · not built: the healer's own model learns from these rows, through this gate  ││  greyed 4th lane
-│└──────────────────────────────────────────────────────────────────────────────────────┘│
-│ below the fold: evidence episodes (links to incident and agent-run pages) · curator   │
-│ feed · the typed lesson (collapsed) · staged rule patch for Olir · dataset card       │
-```
-
-**The overlay: `duration · cost · 0 human clicks`.** It rhymes with the Technician's `duration · cost · 1 human click`, and comes from events:
-- **duration:** `lesson.session_opened` → `candidate.promoted`;
-- **cost:** the curator session's `consumed_micro_usd`;
-- **human clicks:** the human-actor events in the lesson's chain.
-
-**Two rules for the cards:**
-- **Evidence and gate are separate cards.** The probe is the evidence; the gate's replay is a stub and says so. Nothing labelled "verified" sits on a stub.
-- **The data strip shows counts and a real file, never "trained".** The weights lane is greyed out and says "not built".
-
-**Reuse:** `.tc-head`, `.tc-stages`, `.tc-verdict` and the record badge from `technician.html`; the KPI strip from `partials/overview.html`; feed lines from the Technician case partial. Every status has a word or a mark, never colour alone.
-
-## 4. Shot list (18 s)
-| t (s) | Shot | Caption (≤ 5 words) | Must be true when filmed |
-|---|---|---|---|
-| 0–3 | `/learning`: head band and stages, the first two ticked | Every fault happens once | the lesson came from a curator session on these episodes |
-| 3–6 | **Naïve Studio:** the curator session, case file → `submit_output` | Naïve agent writes lesson | the same session id as the page header |
-| 6–10 | Page, zoomed: the evidence card `0/120 → 120/120`, then the gate card, canary ✓ | Checked before shipping | the probe ran on the stated rev; the canary really held |
-| 10–13 | Rollout chips at v2 (SIM badges visible), then a 1.5 s cut to **Studio Skills: playbook v1 → v2** | Every arm has it | the skill version was published by Romulus after promotion; every ✓ chip really pulled v2 |
-| 13–18 | Data strip + overlay `31 s · $0.07 · 0 human clicks` (placeholders) | Nobody clicked | the counts come from the export file; the overlay comes from events |
-
-Before filming: browser zoom 125–150%, notifications off, both Studio tabs pre-opened.
-
-## 5. Demo data
-- **Where:** its own stack, `COMPOSE_PROJECT_NAME=learn API_PORT=8001`. Never Kent's `tech` stack on :8000 (the Technician demo), and never Olir's laptop cloud, which holds real runs (`cloud/CLAUDE.md`).
-- **The fleet:**
-  - `make seed`: `arm-1` (real, registered) and `sim-1..3` (`sim-2` is the canary).
-  - Plus `sim-pod-2` and `sim-pod-3` as `sensor_pod`, kind `sim`, for the evidence episodes.
-  - Every sim device is badged SIM.
-- **Episodes,** from one seeded script posting through the real device API:
-  1. fake-arm scenarios `--scenario all`, which give incidents, overlays, gate verdicts and recordings;
-  2. `edge_bridge.fake_healer` runs (`agent_run_01` shape), the real-shape agent runs `cloud/CLAUDE.md` requires;
-  3. **the hero cluster:** two sim-pod `us_frozen` incidents whose distance windows are `gen_pod` frozen windows (fixed seed), each with a pod agent run that ends `broken` or unverified, plus the arm watchdog's finding as cross-device evidence.
-- **Live vs recorded:**
-
-| Piece | On stage | Note |
+| # | Beat | Scale |
 |---|---|---|
-| Probe numbers | recorded, with the command and rev on the card | reproducible in about 1 s |
-| Gate: canary + promote | **live** in rehearsal; on stage the finished page | the canary takes 120 s |
-| Export file and counts | **live** | the worker builds every 5 s (`worker.py:73-76`) |
-| Curator session | **recorded** fixture by default, from a live rehearsal | live only if rehearsal shows ≤ 60 s and no 429s (the Technician's live runs took 29.6 s and 32.8 s, about $0.07) |
-| Naïve Skill v1 → v2 | published at rehearsal; the Studio tab stays open | |
+| 1 | The company takes a job: Naïve card → Hermes → the arm moves | company |
+| 2 | Break → heal → resume: bad image 07 rolled back, the job resumes | arm |
+| 3 | Some faults need hands: the Naïve Technician, `… · 1 human click` | company |
+| 4 | (the existing fleet lock-in, if it's in the run of show) | fleet |
+| 5 | **The numbers**: the digest, *the fleet-learning sentence*, the scale line, the levels 2–3 slide | — |
 
-## 6. Honesty rules for this beat
-1. **No fleet claim beyond the registry.** Say "every arm in our registry: one real, three simulated", never "our fleet". SIM badges stay in every frame.
-2. **Assigned isn't running.** `arm-1` reads "assigned" unless the Pi really pulled v2. Only chips that installed show ✓.
-3. **The frozen fault came from sim pods.** Never imply the real pod froze, and never cut real-arm footage into this beat.
-4. **Every number comes from the probe or the gate run on the page.** This doc's numbers are placeholders.
-5. **Say where the check came from:** "the arm-sim watchdog already had it; the agent made it every arm's lesson", not "invented".
-6. **The rule port is staged, not shipped.** What ships is a skill for the healer. The `detect.py` and `safe_replay.py` port waits for its owner, and the page says so below the fold.
-7. **"Training data", never "trained."** If James's L3a numbers appear on the levels 2–3 slide, label them "classifier · sim data only".
-8. **No stub dressed as a verdict.** The gate card says "replay: stub".
+**Bridge out of beat 3** (it makes the Technician's one click look deliberate): "Spending money needs a person. A checked change doesn't."
+
+**The fleet-learning sentence in beat 5** (44 words, about 16 s, "Naïve" at word 16):
+> Every run our robots make is labelled by whatever checked it, so the fleet builds its own training set. This morning a Naïve agent found a sensor fault our pods miss, measured the fix, and handed it to its engineer: safety code waits for a person.
+
+**The scale line** (49 words, about 18 s):
+> Every arm we sell makes the others better at fixing themselves: a fault is solved once, checked by our gate, shipped to all, and kept as labelled training data for the next model. The bigger the fleet, the fewer new faults each arm sees.
+
+- "Fewer new faults per arm" is the thesis, not a measurement, so it isn't given as a number.
+- The repeat rate (`design.md` §7) is what would measure it.
+
+## 3. The 11:00 table walk-through (about 40 s)
+1. **The problem, in one breath:** "A frozen distance sensor keeps saying 'all clear'. Our arm's start gate believes any 'ok' reading (`arm/safe_replay.py:66-75`). Our arm simulator's watchdog catches it; our pods don't."
+2. **Naïve Studio, the `fleet-doctor` session:** the case file goes in, and the typed proposal comes out: *missed detection; port the watchdog's check.* "It's one Naïve agent session: about 30 seconds and a few cents (placeholder; measured in the spike)."
+3. **The probe:** "We measured the agent's proposal: today our pods catch 0 of 120 freezes; with the port, 120 of 120, with no new false alarms (placeholders). It still misses a 3.5-second freeze, and it says so."
+4. **The routing:** "It touches the arm's start gate, so it doesn't ship itself. It's staged for Olir, our firmware engineer, with these numbers. That's the policy: data and non-safety changes ship on the gate, safety code waits for its engineer, money waits for a person."
+5. **If lanes B and C landed** (`build-plan.md` §2): open `/learning` on the `learn` stack. "Every run, labelled pass or fail by what checked it, exports as Hermes trajectories. Here's the file."
+
+**Where a judge will poke:**
+
+| Question | Answer |
+|---|---|
+| "So nothing was trained?" | "Right. Every run is now labelled data; the model is the next thing through the same gate." |
+| "It's all sim?" | "The frozen sensor is planted in sim, like a fire drill. The real arm's start-gate code is real." |
+| "Who wrote the check?" | "James, for the sim watchdog. The agent noticed the pods lacked it; our probe measured it; we wrote the probe, and the agent chose to cite it." |
+| "Did the agent get 120 of 120?" | "No, the ported check did. The agent proposed it, and code verified the claim." |
+| "A skill is just markdown?" | "Yes: a playbook the healer reads. That's why the gate's replay says 'stub' for skills, and rules get a real replay." |
+
+## 4. The page: `/learning` in Romulus (for the table, and for when T0 is built)
+**Why Romulus, not Mission Control:**
+- Romulus owns the registry, the gate and the datasets.
+- The Technician page's look (`.tc-head`, `.tc-stages`, `.tc-verdict` ≥ 36 px in `technician.html`) makes the two features read as one product.
+- Mission Control can't run on this laptop (MuJoCo import), and it's James's lane.
+
+**Above the fold**, readable from 5 m:
+```
+┌ Romulus   Timeline · Data · Learning                                      kill switch ┐
+│┌─────────────────────────────────────────────────────────────────────────────────────┐│
+││ NAÏVE AGENT · fleet-doctor · cluster review       31 s · 7¢ · staged for Olir       ││  .tc-head; yellow badge
+│└─────────────────────────────────────────────────────────────────────────────────────┘│  if recorded
+│  ✓ ONE ROBOT KNEW   ✓ NAÏVE AGENT FOUND THE GAP   ✓ FIX MEASURED   ● WAITING ON ITS ENGINEER │  .tc-stages
+│                                                                                         │
+│   A distance that never changes is a frozen sensor, not a clear path.                  │  .tc-verdict, largest
+│                                                                                         │
+│   0 → 120 of 120 freezes caught · no new false alarms          (placeholders)          │  second largest
+│   safety code → staged for Olir (D25) · still misses a 3.5 s freeze                    │  12–14 px
+│┌ THE FLEET'S OWN DATA ──────────────────────────────────────────────────────────────────┐│
+││  37 runs → 21 labelled by a verifier → 21 regression tests → 21 training rows (placeh.) ││  KPI strip
+││  [↓ trajectories.jsonl]  completed = verdict · redacted · sha256 ab12…                  ││
+││  repeat rate after a change: —  ·  NEXT, not built: the healer's model trains on this   ││  greyed lane
+│└─────────────────────────────────────────────────────────────────────────────────────────┘│
+│ below the fold: the evidence runs (links to agent-run pages) · the typed proposal ·      │
+│ the probe's command and rev · the staged patch · the dataset card · gate details         │
+```
+
+**Rules for the page:**
+- **The overlay names the real end state:**
+  - for a staged proposal: `duration · cost · staged for <owner>`;
+  - for a skill the gate promoted: `lesson → every arm · <duration including the canary> · <cost> · 0 clicks`.
+- **Duration is measured from events:** `review.session_opened` to `review.staged` or `candidate.promoted`. A promoted change's figure includes the canary (120 s by default), so it's minutes, not seconds.
+- **The evidence (does the change help?) and the canary (does it do no harm?) are never merged into one claim.**
+- **Gate details go below the fold, small,** including "replay: stub" for skills.
+- **The rollout shows as one row of chips:** `[sim-1 ✓ SIM] [sim-2 ✓ SIM·test] [sim-3 ✓ SIM] [arm-1 queued REAL]`. Only installed chips get ✓.
+- **Every status has a word or a mark, never colour alone.**
+
+**Reuse:**
+- `.tc-head`, `.tc-stages`, `.tc-verdict` and the record badge from `technician.html`;
+- the KPI strip from `partials/overview.html`;
+- htmx polling as in `timeline.html:4`.
+
+## 5. The full beat, once a gate-promoted skill exists (after 1 PM)
+Use it for the Hermes video or a later demo. It needs a **non-safety failed heal** as its hero, so that 0 clicks is true. The frozen sensor can't be that hero, because it touches safety.
+
+**Script** (about 17 s):
+> Our Naïve agent makes sure a fault only happens once. In sim, one robot's healer couldn't fix [fault]; another could. The agent wrote the lesson down, a sim arm tried it first, and now it's shipping to every arm. Nobody clicked.
+
+**Shot list** (15 s):
+
+| t (s) | Shot | Caption |
+|---|---|---|
+| 0–3 | `/learning`, head and stages | Every fault happens once |
+| 3–5 | **Naïve Studio Skills:** `romulus-healer-playbook` v1 → v2 with the new paragraph highlighted ("mirrored after gate promotion"). The session itself for 1 s at most: with no tools it's JSON in, JSON out | Naïve agent wrote it |
+| 5–10 | The canary chip, then the rollout chips | Tried on a sim arm first |
+| 10–15 | The overlay `lesson → every arm · 2m40s · 7¢ · 0 clicks` (placeholders) | Nobody clicked |
+
+**Better than any transcript, if it's built (T2):** on promotion, a comment on the CEO board's INSIGHTS card ("done by agent `fleet-doctor`"). It shows a company run by agents in under 2 s.
+
+## 6. Demo data (for the table page and the full beat)
+- **Where:** its own stack, `COMPOSE_PROJECT_NAME=learn API_PORT=8001`. Never `tech` on :8000, never Olir's laptop cloud.
+- **The fleet:**
+  - `make seed` gives `arm-1` (real, registered) and `sim-1..3` (`sim-2` is the canary).
+  - Sim pods are registered first with `POST /v1/devices` as `device_class: "sensor_pod"`. Otherwise they auto-register as `so101` (`services/devices.py:213`) and get harnesses.
+- **Runs:**
+  - `edge_bridge.agent_runs.build()` runs, the real shape;
+  - the hero's frozen windows from `gen_pod` (fixed seed).
+  - No `--scenario all`: its batch candidates would collide with a review candidate on `sim-2`.
+- **The canary,** for rehearsal:
+  - `CANARY_WINDOW_S=30` on `learn` only, shown on the page;
+  - fake arms run with chaos off: `CHAOS=off docker compose -f compose.yaml -f compose.dev.yaml --profile sim up -d`.
+
+## 7. Honesty rules
+1. **No fleet claim beyond the registry:** "one real arm, three simulated". SIM badges in every frame.
+2. **Queued isn't running.** `arm-1` shows "queued" unless the Pi pulled the version.
+3. **The frozen fault came from sim.** Never imply the real pod froze; never cut real-arm footage into this.
+4. **Every number comes from the probe or the gate run shown.**
+5. **Say who wrote what:** "the watchdog had it; the agent noticed the gap; we wrote the probe."
+6. **Staged isn't shipped.** The safety port waits for its owner, and the page says so above the fold.
+7. **"Training data", never "trained".** James's L3a numbers, if shown, are labelled "classifier · sim data only".
+8. **No stub dressed as a verdict**, and no evidence presented as the canary's result.
 9. **Recorded or sped-up material is labelled.**
 
-## 7. Fallbacks
+## 8. Fallbacks
 | If… | Then… |
 |---|---|
-| Naïve returns 429 or "at capacity" | Play the recorded fixture with its badge. The Studio tab still shows the rehearsal session |
-| The build isn't done at 10:00 | The **minimum beat** (`build-plan.md` §2): the probe's real numbers, the curator spike's session in Studio, the Skills page at v2, and one slide. **Never a mock page with typed numbers** |
-| Olir lands the frozen rule by hand first | **Retro-validation:** "Our engineer wrote this check at X AM; given only the runs, the Naïve agent proposed the same lesson." Or move to the next real gap, the out-of-range freeze (0 of 30, placeholder) |
-| The live lesson fails the checks or the canary | It's honest and the page says "held" or "rolled back", but the stage uses the recorded run |
-
-## 8. The scale line (beat 5)
-> Every arm we sell makes every other arm safer: each fault is fixed once, checked by the gate, shipped to the whole fleet, and kept as labelled training data. Today that took one Naïve agent **31 seconds, 7 cents and no people** (placeholders).
+| The spike fails or Naïve returns 429 | At the table: the probe numbers plus the design's loop diagram. On stage: the beat-5 sentence without "this morning a Naïve agent…": "When a sensor fault like a frozen echo slips past our pods, the fleet's agents measure the fix and hand it to its engineer." |
+| Olir lands the frozen rule by hand first | **Retro-validation:** "Our engineer wrote this check at X; given only the runs, the Naïve agent proposed the same port." Or move to the next real gap, the out-of-range freeze (0 of 30, placeholder) |
+| A judge asks to see it ship | "Data and non-safety changes ship on the gate today (here's the gate on a skill from the batch); this one is safety code, so it waits." |
