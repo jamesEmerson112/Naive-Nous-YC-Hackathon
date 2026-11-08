@@ -353,6 +353,25 @@ def test_same_ts_doctor_events_keep_their_write_order_after_the_heal():
     ]
 
 
+def test_a_doctor_fix_overlay_reads_after_its_result_but_the_heal_overlay_stays_first():
+    """`record_result` writes `doctor.proposal_result`, then `overlay.applied`, with one `ts`
+    (the device's `occurred_at`). The Doctor's overlay keeps that order; the device's own
+    heal overlay (no `proposal` ref) still sorts with the heal, before doctor kinds."""
+    evs = [
+        Ev("doctor.proposal_result", refs=_refs(proposal="p", overlay="ov-doc")),
+        Ev("overlay.applied", refs=_refs(proposal="p", overlay="ov-doc"), actor="device:arm-1"),
+        Ev("doctor.consult_opened", refs=_refs(consult="c1")),
+        Ev("overlay.applied", refs=_refs(overlay="ov-heal"), actor="device:arm-1"),
+    ]
+    steps = build_story(evs, INC).steps
+    assert [(s.kind, s.refs.get("overlay")) for s in steps] == [
+        ("overlay.applied", "ov-heal"),
+        ("doctor.proposal_result", "ov-doc"),
+        ("overlay.applied", "ov-doc"),
+        ("doctor.consult_opened", None),
+    ]
+
+
 def test_doctor_refs_appear_in_steps_and_the_chain():
     evs = [
         Ev("incident.reported", data={"kind": "camera_occluded"}),

@@ -274,11 +274,11 @@ def test_a_consult_offers_a_fix_the_device_pulls_applies_and_holds(
         "doctor.checked",
         "doctor.proposal_offered",
         "doctor.proposal_result",
+        "overlay.applied",  # same `ts` as the result, written after it (`story.stage`)
         "overlay.held",
         "doctor.consult_closed",
     ]
     assert [k for k in kinds if k in want] == want
-    # Same `ts` as the result; which reads first is `story.STAGE`'s call (PR 6).
     assert kinds.count("overlay.applied") == 1
     steps = {s["kind"]: s for s in story["steps"]}
     assert steps["doctor.checked"]["why"].startswith("check: stub, passed by default")

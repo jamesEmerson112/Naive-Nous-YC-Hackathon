@@ -611,7 +611,7 @@ There's no raw shell, ever (architecture §9). The catalog is a draft until Isha
 | `cloud/tests/flows/test_f12_doctor_consult.py` | 4 | L2 cloud side: consult.wanted → admit … offer → pointer on check-in → GET with sha → result `applied` → overlay row → held → `consult_closed: held`; stale, discard, gave_up, cap, frozen. Also: held-before-applied placeholder, expiry and a late result, no `code_rev`, lookback, auto-consult, defaults, pending/lost/failed jobs, route errors |
 | `cloud/tests/unit/domain/test_domain_doctor_consult.py` | 4 | `applied_outcome` and `after_close` (retry, give up, bad counts fail closed) |
 | `tools/fake_device/tests/test_doctor.py` | 5 | breaker, triggers, applier base/expiry/parked checks, mark-good revert |
-| `cloud/tests/flows/test_interop_fake_device.py` (+case) | 5 | the fake device runs F12 end to end through `device_http` |
+| `cloud/tests/flows/test_f12d_interop_fake_device.py` | 5 | the unmodified fake device runs F12 end to end through `device_http` against the real cloud: L1 ask → consult → offer → pull with sha → apply → mark-good → `held` → `consult_closed: held`, the story in order; frozen hides the pointer until unfrozen |
 | `cloud/tests/unit/domain/test_domain_story_doctor.py` | 6 | ledger order, sources and robustness; lines, labels, status by outcome, tie order |
 | `cloud/tests/unit/domain/test_digest_doctor.py` (+ `test_services_digest.py` case) | 6 | digest counts in total and per incident kind, spend ignoring bad values, unchanged text with no Doctor events |
 | `cloud/tests/flows/test_f2_timeline_page.py` (+case) | 6 | the incident page shows the "Fleet Doctor" block with stub and fake labels; the story JSON has `ledger` |

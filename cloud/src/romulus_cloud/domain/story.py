@@ -17,7 +17,8 @@ Fleet Doctor (PR 6): `doctor.*` steps carry their event's data as `doctor`, and
 `doctor.diagnosed` (an L2 consult), newest first. A closed consult picks its badge from
 `data.outcome` (`CONSULT_OUTCOME_STATUS`; `held` sets none), and no Doctor status covers
 one that needs a person (`NEEDS_PERSON`). All doctor kinds share one `STAGE`, so on a
-tied `ts` they keep the order they were written in.
+tied `ts` they keep the order they were written in; so does a Doctor fix's `overlay.applied`
+(`stage`), which therefore reads after its `doctor.proposal_result`.
 
 Order is by when things happened (`ts`, the device's `occurred_at` for device events),
 never by when the server received them (K9). Events with the same `ts` are ordered by
@@ -873,6 +874,16 @@ DOCTOR_STAGE = 30
 STAGE.update({kind: DOCTOR_STAGE for kind in LABELS if kind.startswith("doctor.")})
 
 
+def stage(e: EventLike) -> int:
+    """`STAGE` for this event. A Doctor fix's `overlay.applied` (refs `proposal`) is written
+    just after its `doctor.proposal_result`, with the same `ts`; it takes the doctor stage so
+    the story reads result → overlay (`services/proposals._apply_overlay`), not the stage of
+    the device's own heal, which would put it first."""
+    if e.kind == "overlay.applied" and "proposal" in (e.refs or {}):
+        return DOCTOR_STAGE
+    return STAGE.get(e.kind, _DEFAULT_STAGE)
+
+
 def _default_label(e: EventLike) -> str:
     return e.kind.replace(".", " ").replace("_", " ")
 
@@ -884,7 +895,7 @@ def _default_line(e: EventLike) -> str:
 def build_story(events: Iterable[EventLike], incident_id: str) -> Story:
     """The incident's events as ordered, readable steps. Pass every event that refs it."""
     indexed = list(enumerate(events))
-    indexed.sort(key=lambda p: (p[1].ts, STAGE.get(p[1].kind, _DEFAULT_STAGE), p[0]))
+    indexed.sort(key=lambda p: (p[1].ts, stage(p[1]), p[0]))
     steps = tuple(
         Step(
             at=e.ts,
