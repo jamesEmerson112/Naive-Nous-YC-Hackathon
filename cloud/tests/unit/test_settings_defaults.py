@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from romulus_cloud.settings import Settings
@@ -28,13 +29,10 @@ ARCH_ENV_VARS = [
 ]
 
 
-def _clean_env(monkeypatch):
-    for name in [*ARCH_ENV_VARS, "ALLOW_PASSTHROUGH_CODE_PROMOTION", "OVERNIGHT_STARTED"]:
-        monkeypatch.delenv(name, raising=False)
+# conftest's autouse fixture unsets every settings variable before each test.
 
 
-def test_defaults_are_fake_and_offline(monkeypatch):
-    _clean_env(monkeypatch)
+def test_defaults_are_fake_and_offline():
     s = Settings(_env_file=None)
     assert s.naive_mode == "fake"
     assert s.llm_mode == "fake" and s.llm_provider == "fake"
@@ -56,7 +54,6 @@ def test_every_architecture_variable_is_a_setting():
 
 
 def test_secrets_never_show_in_repr(monkeypatch):
-    _clean_env(monkeypatch)
     monkeypatch.setenv("NAIVE_API_KEY", "sk_live_supersecret")
     monkeypatch.setenv("LLM_API_KEY", "llm-supersecret")
     s = Settings(_env_file=None)
@@ -66,7 +63,6 @@ def test_secrets_never_show_in_repr(monkeypatch):
 
 
 def test_env_overrides_one_variable_per_adapter(monkeypatch):
-    _clean_env(monkeypatch)
     monkeypatch.setenv("NAIVE_MODE", "live")
     monkeypatch.setenv("CANARY_WINDOW_S", "1200")
     s = Settings(_env_file=None)
@@ -75,7 +71,6 @@ def test_env_overrides_one_variable_per_adapter(monkeypatch):
 
 def test_test_settings_ignore_dotenv_and_stay_fake(make_settings, tmp_path, monkeypatch):
     """A real `.env` with live modes must not leak into tests."""
-    _clean_env(monkeypatch)
     (tmp_path / ".env").write_text(
         "NAIVE_MODE=live\nLLM_MODE=live\nLLM_PROVIDER=naive_proxy\n"
         "CODER_PROVIDER=local_agent\nNAIVE_API_KEY=sk_live_from_dotenv\n"
@@ -88,11 +83,26 @@ def test_test_settings_ignore_dotenv_and_stay_fake(make_settings, tmp_path, monk
     assert s.naive_api_key.get_secret_value() == ""
 
 
-def test_test_settings_stay_fake_even_with_live_env(make_settings, monkeypatch):
+def test_test_settings_ignore_exported_shell_variables(make_settings, tmp_path, monkeypatch):
+    """`set -a; . .env` or direnv exports the real key: test settings still ignore it."""
+    monkeypatch.setenv("NAIVE_API_KEY", "sk_live_REAL")
     monkeypatch.setenv("NAIVE_MODE", "live")
     monkeypatch.setenv("LLM_MODE", "live")
+    monkeypatch.setenv("CANARY_WINDOW_S", "9999")
+    monkeypatch.setenv("OVERNIGHT_STARTED", "true")
+    (tmp_path / ".env").write_text("NAIVE_MODE=live\nNAIVE_API_KEY=sk_live_from_dotenv\n")
+    monkeypatch.chdir(tmp_path)
+    assert Settings().naive_api_key.get_secret_value() == "sk_live_REAL"  # plain loader reads it
     s = make_settings(naive_mode="live")
     assert s.naive_mode == "fake" and s.llm_mode == "fake"
+    assert s.naive_api_key.get_secret_value() == ""
+    assert s.canary_window_s == 120 and s.overnight_started is False
+
+
+def test_autouse_fixture_unset_every_settings_variable():
+    """No settings variable from the developer's shell survives into a test."""
+    leaked = [n.upper() for n in Settings.model_fields if n.upper() in os.environ]
+    assert leaked == [] and "FORCE" not in os.environ
 
 
 def test_env_example_lists_every_setting():

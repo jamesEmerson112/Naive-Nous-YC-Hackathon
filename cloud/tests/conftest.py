@@ -3,11 +3,13 @@
 - One throwaway database per pytest session, on the shared `romulus-testdb` container
   (`TEST_DATABASE_URL` is the admin URL). Created lazily, only if a test needs the DB,
   and dropped at the end, so parallel sessions never collide.
-- Each test runs inside an outer transaction that is rolled back afterwards. Code under
-  test may call `session.commit()`; with `join_transaction_mode="create_savepoint"` that
-  only releases a savepoint, so nothing leaks between tests.
-- Settings never read `.env` and every adapter is forced to fake mode, so a real key in
-  `.env` or the shell can't make a test call out.
+- Each test gets one connection with an outer transaction that is rolled back afterwards.
+  Every session in the test (`db_session`, each request's session, worker steps run via
+  `sessions`) joins it with `join_transaction_mode="create_savepoint"`, so `commit()` only
+  releases a savepoint: they all see each other's writes and nothing leaks between tests.
+- Test settings read neither `.env` nor the process environment, every adapter is forced
+  to fake, and an autouse fixture unsets every settings variable for the test, so a real
+  key in `.env` or the shell can't make a test call out.
 """
 
 import os
@@ -18,12 +20,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, make_url, text
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+from sqlalchemy import Connection, Engine, create_engine, make_url, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from romulus_cloud import db
-from romulus_cloud.api.deps import get_session
 from romulus_cloud.main import create_app
 from romulus_cloud.settings import Settings
 
@@ -40,9 +42,33 @@ FAKE_MODES = {
 }
 
 
+class _TestSettings(Settings):
+    """Settings built from constructor arguments only: no env vars, no `.env`."""
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
+
+
+@pytest.fixture(autouse=True)
+def _no_settings_env(monkeypatch):
+    """Unset every settings variable (and FORCE), so code that calls `Settings()` directly
+    can't pick up an exported shell variable either."""
+    for name in [*Settings.model_fields, "force"]:
+        monkeypatch.delenv(name.upper(), raising=False)
+
+
 @pytest.fixture
 def make_settings(tmp_path) -> Callable[..., Settings]:
-    """Build test settings: no `.env`, fake adapters, tmp data dirs. Overrides win."""
+    """Build test settings: no env, no `.env`, fake adapters, tmp data dirs. Overrides win,
+    except that adapter modes are always fake."""
 
     def make(**overrides) -> Settings:
         values = {
@@ -52,7 +78,7 @@ def make_settings(tmp_path) -> Callable[..., Settings]:
             **overrides,
             **FAKE_MODES,
         }
-        return Settings(_env_file=None, **values)
+        return _TestSettings(**values)
 
     return make
 
@@ -98,29 +124,46 @@ def engine(test_database_url) -> Iterator[Engine]:
 
 
 @pytest.fixture
-def db_session(engine) -> Iterator[Session]:
+def db_connection(engine) -> Iterator[Connection]:
+    """The test's one connection, inside an outer transaction rolled back at the end."""
     conn = engine.connect()
     outer = conn.begin()
-    session = Session(bind=conn, join_transaction_mode="create_savepoint", expire_on_commit=False)
     try:
-        yield session
+        yield conn
     finally:
-        session.close()
         outer.rollback()
         conn.close()
 
 
 @pytest.fixture
-def app(settings, engine, db_session, test_database_url) -> FastAPI:
-    """The real app on the test DB; every request shares the test's `db_session`."""
+def sessions(db_connection) -> Callable[[], Session]:
+    """A sessionmaker stand-in bound to the test's transaction. Pass it to
+    `worker.run_tick`; the `app` fixture also uses it for every request."""
+
+    def make() -> Session:
+        return Session(
+            bind=db_connection, join_transaction_mode="create_savepoint", expire_on_commit=False
+        )
+
+    return make
+
+
+@pytest.fixture
+def db_session(sessions) -> Iterator[Session]:
+    session = sessions()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@pytest.fixture
+def app(settings, engine, sessions, test_database_url) -> FastAPI:
+    """The real app on the test DB; each request's session joins the test's transaction."""
     application = create_app(
         settings.model_copy(update={"database_url": test_database_url}), engine
     )
-
-    def _session() -> Iterator[Session]:
-        yield db_session
-
-    application.dependency_overrides[get_session] = _session
+    application.state.sessionmaker = sessions
     return application
 
 
