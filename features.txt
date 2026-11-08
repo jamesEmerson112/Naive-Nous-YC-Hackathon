@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sat Nov 7, 10:58 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 11:58 PM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -156,6 +156,7 @@ Backup demo video
 HUB AND DOCS
 Stack hub: put it all together          <--- James
 Hermes harness gap notes                <--- James
+Firmware API and data doc (docs/firmware-apis.md)
 
 SPONSORS AND CREDITS
 Credits each hacker gets (docs/hackathons.md). Add "<--- Name" once redeemed.
