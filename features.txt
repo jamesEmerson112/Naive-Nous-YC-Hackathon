@@ -89,14 +89,11 @@ Daily digest and budgets
 AgentMail incident email
 
 BOARD
-Arm job card format (armsim/orders.py)    <--- James
-Planner creates arm job cards (orders -> ARM JOB cards) <--- James
 Bench board token (scoped MCP session)
 
 MODELS
 OpenAI key for bench Hermes             <--- James
 RunPod LLM endpoint (D22, optional)
-Worker model benchmark (workerbench)    <--- James
 
 NVIDIA SIM
 NVIDIA sim on RunPod
@@ -110,12 +107,10 @@ Hermes install on the bench             <--- James
 Hermes arm plugin tools                 <--- James
 pre_tool_call safety guard              <--- James
 Board link via Hermes MCP client
-Cron pulls next board card (armsim/dispatch.py) <--- James
 Gateway phone alerts
 Hermes plugin catalog submission
 pi vs Hermes comparison (Naive console)  <--- James
 Hermes compaction fix (summarizer login)
-Worker/manager healer loop (armsim/worker.py) <--- James
 
 ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
@@ -153,14 +148,11 @@ STM32 C bug demo (6 bad pod images ready, firmware/demo, 69fc292) <--- Olir
 Camera-cover hero demo
 Demo script and rehearsal
 Backup demo video
-Overnight sim soak runner (prototypes/arm-sim/SOAK.md) <--- James
-Mission Control page (prototypes/arm-sim) <--- James
 
 HUB AND DOCS
 Stack hub: put it all together          <--- James
 Hermes harness gap notes                <--- James
 Firmware API and data doc (docs/firmware-apis.md)
-Worker/manager healer design (docs/worker-manager-healer.md) <--- James
 
 SPONSORS AND CREDITS
 Credits each hacker gets (docs/hackathons.md). Add "<--- Name" once redeemed.
@@ -180,6 +172,14 @@ Hermes plugin: $20K cash, $10K first
 Other sponsors: HubSpot, Vercel, OpenRouter, Luxor, Neon
 
 FINISHED
+Board: Arm job card format (armsim/orders.py) <--- James
+Board: Planner creates arm job cards (orders -> ARM JOB cards) <--- James
+Models: Worker model benchmark (workerbench/RESULTS.md, Runpod L40S) <--- James
+Hermes: Dispatcher pulls the next board card (armsim/dispatch.py) <--- James
+Hermes: Worker/manager healer loop, in sim (armsim/worker.py) <--- James
+Demo: Overnight sim soak runner (prototypes/arm-sim/SOAK.md) <--- James
+Demo: Mission Control page, three looks (prototypes/arm-sim) <--- James
+Hub: Worker/manager healer design (docs/worker-manager-healer.md) <--- James
 Hub: team status sync in CLAUDE.md      <--- James
 Hub: SO-101 research notes              <--- James
 Hub: stack hub artifact v1              <--- James

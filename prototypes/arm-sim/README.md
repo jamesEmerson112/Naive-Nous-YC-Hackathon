@@ -29,6 +29,21 @@ uv pip install --python .venv/bin/python -e ../../packages/contracts -e ../../to
 | `b` | A stuck sensor mid-job: "Distance stuck at 130 mm while the arm moved 29 mm". The arm parks, the sensor restarts through podd, the job retries. |
 | `b --hermes` | The same, but the job is a new Naïve board card and Hermes does it, ending with `RESULT:` on the card. |
 | `stall` | A dead elbow servo: a checked retry fails, the incident is handed to a person (`hardware`), and Romulus opens a work order. |
+| `redo` (`--manager fake`) | A wrong action (sim only): the block is bumped and the grasp misses. The arm reverses, the manager corrects the approach (±40 mm, never joint angles), and the arm redoes it; after two misses it goes to a person. |
+
+
+**The autonomous loop, Mission Control and the healer's manager** (all `PYTHONPATH=. .venv/bin/python -m …`, with the arm host up):
+
+| Command | What it does |
+|---|---|
+| `armsim.orders add pick\|wave --board naive` | Places an order: an `ARM JOB ord-…` card on the Arm jobs board (`--board file` uses `runs/board.json`) |
+| `armsim.dispatch --board naive --exec hermes` | Claims each order card, has Hermes do it, and closes or blocks the card. One dispatcher per arm (lock next to the arm host's socket) |
+| `armsim.dispatch --board file --exec scripted --manager fake\|hermes [--wrong-action redo]` | The scripted commander, healing through the worker → manager loop (`armsim/worker.py`, `manager.py`, `escalation.py`): plain code checks the manager's one-action plan against an allowlist before the worker runs it. `--worker-lm ollama --worker-model lfm3:1.7b` adds the small model (`workerbench/RESULTS.md`) |
+| `armsim.soak run --board naive --with-dispatcher hermes --every 600 --hours 4` | The soak: an order every 10 min, half with a planted fault, and a report (`SOAK.md`) |
+| `armsim.mission --board naive` | Mission Control on `http://localhost:8765/?look=mission\|neon\|light`: the 3D twin, the story banner, jobs, the commander feed, the heal timeline, the pod and the fleet, plus presenter buttons (hotkeys 1–8) |
+| `armsim.level3 train` / `audit runs/<run>.jsonl` | Healer level 3: the run-audit classifier (`docs/healer-data-levels.md`) |
+
+The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The design is `docs/worker-manager-healer.md`.
 
 **What each piece does:**
 - **The watchdog** (`host.py`) speaks one sentence, parks the arm, and closes an incident only after `verify()`: home, fresh readings, and podd agreeing. Pod incidents park the arm too.

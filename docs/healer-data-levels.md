@@ -9,7 +9,7 @@ The healer reads the same data at three levels. Each level only takes over what 
 |---|---|---|---|
 | 1 | Plain-code rules: `prototypes/arm-sim/armsim/level1.py` (arm), Olir's `firmware/healer/detect.py` (pod) | The arm host, every tick | Done |
 | 2 | A time-series model (ChatTS-14B) asked whether a trace looks wrong | One Runpod GPU, on demand | Ran Sun 3 AM: catches dropouts and spikes; misses a frozen trace alone, catches it next to a healthy one |
-| 3 | A model trained on labeled traces from the fault factory plus bench recordings | CPU for a small classifier; Runpod only for a fine-tune | Data generator done; no model yet |
+| 3 | A model trained on labeled traces from the fault factory plus bench recordings | CPU for a small classifier; Runpod only for a fine-tune | L3a classifier done (sim only, below); L3b, in the loop, not started |
 
 ## James's decisions (Sun ~3 AM)
 - **Worker and manager:**
@@ -33,7 +33,7 @@ The healer reads the same data at three levels. Each level only takes over what 
 - **The gap:** subtle faults (an offset, a scale error, a reversed joint) look healthy to fixed thresholds. That gap is what levels 2 and 3 are for.
 - **Known hole on the pod:** `detect.py` has no frozen-ultrasonic rule, so a stuck distance fires nothing (team status in CLAUDE.md).
 
-## Level 2: a time-series model (next)
+## Level 2: a time-series model (ran Sun 3 AM)
 - **The test:** `prototypes/arm-sim/level2/chatts_test.py`. Olir's real 300-reading ultrasonic sample, plus planted copies: frozen, dropouts, spikes. Only the 1 µs jitter separates the frozen copy from the healthy one, and Olir's rules miss it.
 - **Run:** `level2/runpod_l2.py launch | status | fetch | terminate` on one Runpod GPU, through the REST API. The job has a 2-hour `timeout`.
 - **Result** (Sun Nov 8, ~3 AM PST; `prototypes/arm-sim/level2/results/`):
@@ -59,7 +59,7 @@ The healer reads the same data at three levels. Each level only takes over what 
   - **Fix:** install `torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0` from the cu124 index first.
   - **Python's user agent:** Runpod's Cloudflare blocks the default one with error 1010, so send a plain client name.
 
-## Level 3: learned from data (next)
+## Level 3: learned from data (L3a done, L3b next)
 - **L3a, a small classifier on CPU** *(inferred design)*:
   1. Regenerate the fault factory (`python -m armsim.factory --n 2000 --workers 8`, about 0.1 s a run).
   2. Cut each run into fixed windows of the distance trace and the joint errors.

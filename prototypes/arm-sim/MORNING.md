@@ -1,8 +1,47 @@
 # Morning brief (James): the prototype, everything together
 
-_Final version, Sun Nov 8, about 1:55 AM PST._
-- **Branch** `james/arm-sim`, pushed. **Draft PR [#55](https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon/pull/55)**: it's the demo branch, and Kent's Romulus work merges into it this morning.
-- **Stack Map:** https://claude.ai/artifact/7TriXR2KDUm9GxLg3o3aZ2
+_Updated Sun Nov 8, about 7:40 AM PST. The 1:55 AM brief is kept below, from "What works"._
+- **Branch** `james/arm-sim-ydcsss`, merged into `main` this morning. Pull `main` (or `git fetch && git checkout james/arm-sim-ydcsss`).
+- **Stack Map:** https://claude.ai/artifact/7TriXR2KDUm9GxLg3o3aZ2. Its plan checklist (`hub/src/content/proposal.ts`) now marks items 8, Soak, 9, UI, WM, C2 and WB done; rebuild with `npm run build` in `hub/` to republish it.
+- **Tests:** 112 pass across the 8 files in `tests/` (each runs as `PYTHONPATH=. .venv/bin/python tests/test_<name>.py`).
+
+## Built overnight (2–7:30 AM), all in sim
+| What | Run it (from `prototypes/arm-sim`, with `PYTHONPATH=. .venv/bin/python -m`) | Status |
+|---|---|---|
+| **Autonomous loop (item 8):** an order becomes an `ARM JOB` card, the dispatcher claims it, Hermes (or the scripted commander) does it, a fault heals, the card closes | `armsim.orders add pick --board naive`, then `armsim.dispatch --board naive --exec hermes` | Sim soak: 6 of 6 done, no double claims. Review fixes in: SIGINT to Hermes first, only cards with an order id, one dispatcher per arm (lock next to the socket, claim token), unknown status never treated as "not done" |
+| **Soak (every 10 min, half with a planted fault)** | `armsim.soak run --board naive --with-dispatcher hermes --every 600 --hours 4` (see `SOAK.md`) | Ready; not started on your Mac |
+| **Mission Control (item 9)** | `armsim.mission --board naive`, then open `http://localhost:8765/?look=mission` | Done; 8 presenter buttons (hotkeys 1–8) |
+| **Worker → manager healer** | `armsim.dispatch --board naive --exec scripted --manager hermes --manager-url http://127.0.0.1:8642/p/manager` (or `--manager fake` without Hermes). `--manager` works with the scripted commander only; with `--exec hermes`, Hermes heals by its own rules. `hermes-manager/README.md` sets up the manager profile | Built and tested with a fake manager; **not run against a real Hermes yet** |
+| **Category 2, a wrong action** | `armsim.stories redo --manager fake` (sim only) | Missed grasp → reverse → the manager corrects the approach (±40 mm) → redone, or a person after two misses |
+| **Worker-model benchmark** | `workerbench/RESULTS.md` | Ran on a Runpod L40S, about $2.13. Pick: `lfm3:1.7b` as the laptop worker, `qwen3.5:4b` as the fallback. No model may open incidents alone |
+| **Healer level 2 and 3** | `docs/healer-data-levels.md`, `armsim.level3 train` | L2 ChatTS ran (~$0.11); L3a classifier: 0 of 74 healthy flagged on a fresh batch |
+
+**Runpod:** about $2.24 spent in total tonight (L2 $0.11, the benchmark $2.13), out of your $10. Every pod is terminated (`GET /v1/pods` returned `[]` at 7:29 AM).
+
+## Pick a look for Mission Control
+Three looks, same screen. Switch with `?look=mission|neon|light`, the dots next to the title, or the L key; the choice is remembered in the browser. Screenshots (healing, then a wrong move being corrected):
+
+| mission (dark) | neon | light |
+|---|---|---|
+| ![](docs/looks/mission-healing.jpg) | ![](docs/looks/neon-healing.jpg) | ![](docs/looks/light-healing.jpg) |
+| ![](docs/looks/mission-wrong.jpg) | ![](docs/looks/neon-wrong.jpg) | ![](docs/looks/light-wrong.jpg) |
+
+All 88 shots (every state, at 1920 and 1280) are in `runs/media/r2-<look>-<state>.png` in the cloud session only; `runs/` is gitignored. *(inferred: on a projector, `light` reads best in a bright room and `mission` in a dark one; nobody has checked colours on a projector yet.)*
+
+**Presenter keys:** 1 order pick · 2 order wave · 3 stuck sensor · 4 bad pod image 07 · 5 dead elbow · 6 bump the block (wrong move) · 7 a person fixed it · 8 freeze fleet. Also C (clear), F (freeze), L (look), W (wrong move). When Mission Control listens beyond localhost (`--host 0.0.0.0`), the buttons need `--token` and the page opened with `?token=`.
+
+## Your steps this morning (on the Mac)
+1. **Pull:** `git pull origin main`.
+2. **Revert Hermes's compaction test setting:** `hermes config set compression.threshold_tokens null`.
+3. **Manager profile (about 20 min):** follow `hermes-manager/README.md` (`./setup.sh a 127.0.0.1`, merge `config.manager.yaml`, `./check.sh`, then one `./ask.sh samples/esc-us_frozen.json`). The model is ChatGPT 6 sol at default reasoning, through your ChatGPT login.
+4. **The loop with the real manager:** `armsim.dispatch --board naive --exec scripted --manager hermes --manager-url http://127.0.0.1:8642/p/manager --wrong-action redo` (drop `/p/manager` if you took setup branch b), and Mission Control beside it. For the Hermes-commander demo instead, run `--exec hermes` without `--manager`.
+5. **Optional worker model:** `ollama pull lfm3:1.7b`, then add `--worker-lm ollama --worker-model lfm3:1.7b` to the dispatcher.
+
+## Known gaps
+- Wrong moves are not host incidents, so they don't show on the heal timeline or in "Faults healed".
+- The manager's "Unreachable" wording on Mission Control has never been on screen; it was only matched from the dispatcher's error text.
+- The worker model is off by default: plain code builds the escalation packet, and with `--worker-lm ollama` the model adds its own answer (kind, evidence, message) to it. Plain code still checks the manager's plan.
+- Level 3 is not in the loop yet (L3b).
 
 ## What works (simulation, on your Mac)
 **One command per story**, after `prototypes/arm-sim/demo/up.sh`. Run them with `PYTHONPATH=. .venv/bin/python -m armsim.stories …` from `prototypes/arm-sim`:
