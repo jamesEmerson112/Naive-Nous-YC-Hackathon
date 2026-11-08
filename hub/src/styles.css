@@ -762,3 +762,9 @@ svg.mini { display: block; width: 100%; height: auto; }
 .fcell.s-gap, .fcell.s-hold { background: var(--void); border: 1px dashed var(--void-line); color: #aab2bc; }
 .fcell.s-hold { opacity: 0.7; }
 .view-toggle { justify-self: start; }
+
+/* Our build plan as a checklist (no clock) */
+.plan-list li.plan-done { opacity: 0.55; }
+.plan-list li.plan-now { color: var(--ink); font-weight: 600; }
+.plan-list li.plan-later { opacity: 0.7; }
+.plan-list .plan-mark { display: inline-block; width: 1.1em; font-family: var(--font-mono); }

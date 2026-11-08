@@ -1,7 +1,7 @@
 import { BY_PERSON, FEATURES, type BoxId, type PhaseLine } from "../content/features";
-import { BENCHMARK, EDGE, ISAAC, LEROBOT, LLM_CHOICE, OUR_SCHEDULE, OUR_WINDOW, PODS, PROPOSAL_SRC, RESET } from "../content/proposal";
+import { BENCHMARK, EDGE, ISAAC, LEROBOT, LLM_CHOICE, OUR_PLAN, PODS, PROPOSAL_SRC, RESET } from "../content/proposal";
 import { More, Section, Sources, Table, Txt } from "../ui";
-import { BudgetBar, CanaryFlow, Icon, ResetLoop, Schedule, type IconName } from "../viz";
+import { BudgetBar, CanaryFlow, Icon, ResetLoop, type IconName } from "../viz";
 import { BOXES, MARK, SAY } from "./FeatureMap";
 
 function KV({ rows }: { rows: { k: string; v: string }[] }) {
@@ -120,7 +120,17 @@ export function OurLane() {
       }
     >
       <h3>Our build plan</h3>
-      <Schedule blocks={OUR_SCHEDULE} from={OUR_WINDOW.from} to={OUR_WINDOW.to} scale={OUR_WINDOW.scale} />
+      <ol className="sched-list plan-list" aria-label="Our build plan, as a checklist">
+        {OUR_PLAN.map((p) => (
+          <li key={p.id} className={`plan-${p.state}`}>
+            <span className="plan-mark" aria-hidden="true">
+              {p.state === "done" ? "✓" : p.state === "now" ? "▶" : p.state === "next" ? "○" : "·"}
+            </span>{" "}
+            <b>{p.id}</b> {p.what}
+            <span className="sr-only"> ({p.state})</span>
+          </li>
+        ))}
+      </ol>
       <JamesLines />
 
       <div className="jobs">

@@ -1,31 +1,28 @@
 import { ext, repo, type Src } from "./meta";
-import type { SchedBlock } from "../viz";
 
 const LR = "https://huggingface.co/docs/lerobot";
 
 /** James's build plan (the phases in features.txt), on a PST clock. UTC = PST + 8 h. */
-export const OUR_WINDOW: { from: string; to: string; scale: [string, string, string] } = {
-  from: "2026-11-08T05:00:00Z",
-  to: "2026-11-08T21:00:00Z",
-  scale: ["Sat 9:00 PM", "overnight: the prototype in sim", "Sun 1:00 PM · present"],
-};
+/** Our build plan as a checklist, no clock (James, Sun ~2 AM: "ignore the timeline").
+ *  state: done · now (being built) · next · later. */
+export type PlanItem = { id: string; what: string; state: "done" | "now" | "next" | "later" };
 
-/** "Slap everything together" (re-planned Sun 12:15 AM): the whole loop in sim overnight, the same code on the Pi from 7 AM. */
-export const OUR_SCHEDULE: SchedBlock[] = [
-  { id: "P1", what: "Sim prototypes: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory (1,000 runs), ChatTS level-2 test · c42339f…a5ecc11", from: "2026-11-08T05:15:00Z", to: "2026-11-08T07:30:00Z", done: true },
-  { id: "P2", what: "Firmware API and data doc (docs/firmware-apis.md) · 235e30d; Olir asked to keep his podd logs overnight", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:15:00Z", done: true },
-  { id: "S0", what: "Unblock: main and Andre's arm/prims merged into james/arm-sim (901aa7d); the restricted bench MCP session needs an org owner or admin (James's key was refused), but James's own key reads the board, so Hermes gets a board-only tool filter instead", from: "2026-11-08T08:15:00Z", to: "2026-11-08T08:45:00Z", done: true },
-  { id: "S1", what: "Virtual pod: the sim's rangefinder written as real pod lines on a pty, read by Olir's real podd · 5313a44. Clean link at 9.8 Hz D / 48.6 Hz A; bad image 02 opens podd's own clock_skew (0.50x) in 9 s; podd cmd and Olir's heal pod_cmd work against it", from: "2026-11-08T08:45:00Z", to: "2026-11-08T09:45:00Z", done: true },
-  { id: "S2", what: "Arm host reads distance and incidents through podd; restarts the sensor through podd's cmd op; story A's heal stand-in for a firmware rollback · fb01bc9. Story A heals in 17–29 s (podd clock_skew → stand-in rollback → check at home → retry grips); story B 3 of 3 (\"Distance stuck at 110 mm while the arm moved 10 mm\" → restart through podd → retry); 0 false alarms in 62 healthy factory runs", from: "2026-11-08T09:45:00Z", to: "2026-11-08T11:00:00Z", done: true },
-  { id: "S3", what: "Romulus on James's Mac: pod-1 through the edge bridge, arm-1 check-ins and incidents from the arm host; hardware fault → work order (fake tonight) · Romulus on the Mac got arm-twin-1's 3 incidents and pod-1's clock_skew (from the edge bridge) with the right outcomes, 5 recordings, and a needs_human work order for the stuck joint", from: "2026-11-08T11:00:00Z", to: "2026-11-08T12:15:00Z", done: true },
-  { id: "S4", what: "Naïve card → Hermes: the bench MCP session in Hermes; take the arm job, run the skills, comment RESULT, move the card · Hermes did the test card end to end: the planted stuck sensor surfaced on the reach, it restarted the sensor, retried, picked and lifted the block, commented RESULT and moved the card to done (board-only tool filter on James's key)", from: "2026-11-08T12:15:00Z", to: "2026-11-08T13:00:00Z", done: true },
-  { id: "R1", what: "Real-arm adapter on Andre's prims.Arm (arrival, load, Status), tested with a mock · 5 of 5 mock tests; until the joint offsets are measured on the bench it moves between taught poses in joint space and runs only the checks that need no prediction", from: "2026-11-08T13:00:00Z", to: "2026-11-08T13:45:00Z", done: true },
-  { id: "S5", what: "Both stories end to end in sim from one script each; GIFs for the backup video; MORNING.md · demo/up.sh + armsim.stories a|b|stall; story A now uses bad image 07, the fault Olir's #54 passed on the real bench; main merged in; draft PR #55 (the demo branch: Romulus merges into it in the morning)", from: "2026-11-08T13:45:00Z", to: "2026-11-08T14:45:00Z", done: true },
-  { id: "R0", what: "Pi check: SSH, Python 3.12 + LeRobot 0.7, calibration, both ports pinned by /dev/serial/by-id, podd on the real pod", from: "2026-11-08T15:00:00Z", to: "2026-11-08T15:30:00Z" },
-  { id: "R2", what: "Both stories on the real arm and pod, with Andre; story A's rollback by Olir's real pod healer", from: "2026-11-08T15:30:00Z", to: "2026-11-08T17:00:00Z" },
-  { id: "R3", what: "First real runs and the overnight podd slice into samples/; push and PR (with approval); Kent's real-arm slot 9–10", from: "2026-11-08T17:00:00Z", to: "2026-11-08T18:00:00Z" },
-  { id: "FZ", what: "10 AM code freeze, rehearse both stories ×3, backup video (the sim recording), present at 1 PM", from: "2026-11-08T18:00:00Z", to: "2026-11-08T21:00:00Z" },
-  { id: "P5", what: "Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video · due Wed Nov 11, 2 PM PST", from: "2026-11-08T21:00:00Z", to: "2026-11-11T22:00:00Z" },
+export const OUR_PLAN: PlanItem[] = [
+  { id: "P1", what: "Sim prototypes: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory, ChatTS level-2 test", state: "done" },
+  { id: "P2", what: "Firmware API and data doc (docs/firmware-apis.md)", state: "done" },
+  { id: "1", what: "Virtual sensor pod, read by Olir's real podd", state: "done" },
+  { id: "2", what: "Arm host reads and heals through podd: one-sentence watchdog, park, check, resume", state: "done" },
+  { id: "3", what: "One command per story (A: bad pod image 07, B: stuck sensor, stall: hardware hand-off), backup-video clips", state: "done" },
+  { id: "4", what: "Romulus on James's Mac gets the arm's and the pod's incidents; a dead joint becomes a work order", state: "done" },
+  { id: "5", what: "A Naïve card drives Hermes: it does the job, heals the fault, closes the card", state: "done" },
+  { id: "6", what: "Everyone's work merged into our branch (main, Andre's arm/prims, Olir's full-test-2 with bad image 08); main has it all (#55)", state: "done" },
+  { id: "7", what: "Small items: Hermes's compaction test setting reverted; this checklist replaces the timed bar", state: "now" },
+  { id: "8", what: "Autonomous loop: an order becomes an ARM JOB card on the Arm jobs board, Hermes picks it up on its own, the arm works, a fault heals, the card closes; nobody types", state: "next" },
+  { id: "9", what: "Romulus Mission Control: one screen (3D twin, jobs, commander feed, pod health, heal timeline, fleet + Freeze, work orders) with presenter buttons", state: "next" },
+  { id: "Soak", what: "Overnight soak: an order every 60 min, half with a planted fault; an hourly check-in fixes breaks and logs them in MORNING.md", state: "next" },
+  { id: "10", what: "The real arm and pod replace the sim (Pi check, poses, both stories with --real)", state: "later" },
+  { id: "Demo", what: "Rehearse, record the backup video, present", state: "later" },
+  { id: "P5", what: "Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video", state: "later" },
 ];
 
 export const SIM_JOBS: { name: string; what: string; how: string }[] = [
