@@ -90,7 +90,7 @@ Status: **v0** = in the hackathon build · **later** = after the hackathon · **
 - Version signing.
 - Generic fleet-management features (asset inventory, user management, generic log search).
 - Live video streaming or teleop.
-- Anything in the safety layer (D13, `~/git2/docs/VISION.md`).
+- The cloud writing safety-layer changes on its own initiative. Device patches to the safety layer or visor are allowed (D5a, confirmed by Kent); they go through the same gate as any patch and are flagged `touches_safety` on the timeline.
 
 ## 7. Success criteria for the hackathon
 

@@ -175,9 +175,8 @@ The full design is in [telemetry](cloud-platform-telemetry.md).
 **For Kent:**
 - ~~Q1, code patches in overlays~~: decided as D21 (a coding agent drafts them) and D21a (P1, as soon as nothing blocks it).
 - ~~Q2, the batch job's LLM~~: decided as D22 (Naïve proxy and RunPod first, behind swappable adapters).
-- **D18:** approve the architecture proposals.
-- **D19:** approve the Naïve design, and D19b: what happens over the spend cap.
-- **D20:** approve the telemetry formats and capture policy.
+- ~~D18, D19, D19b, D20~~: all decided in the round-2 lock-down (decision log).
+- **Safety and visor patches** (D5a, confirmed): carried through the same gate, flagged `touches_safety` on the timeline (build plan K17).
 
 **For the device teammate:** the frozen dataset schema; rollout-driven or scripted; Hermes or not; health-check definition; what counts as "held"; how a fault gets judged to be hardware. See telemetry §11 and APIs §2.
 

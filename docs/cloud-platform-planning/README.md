@@ -25,12 +25,8 @@ Planning docs for the Romulus cloud platform: the cloud half of the arm company'
 
 ## Where things stand
 
-- **Decided:** D0–D17. The heal loop, the overlay model, automatic gate with the kill switch as the only human control, Naïve for agents, telemetry as an asset, local Docker with Python and FastAPI.
-- **Waiting on Kent:**
-  - D18: architecture details.
-  - D19: Naïve design.
-  - D19b: what happens over the spend cap.
-  - D20: telemetry formats.
+- **Decided: D0–D22, everything.** That covers the heal loop and overlays, the healer patching anything including safety (D5a), the automatic gate with the kill switch as the only human control, Naïve for agents with caps in our code, telemetry as an asset, the coding agent for code patches (P1, tracked blockers), Naïve and RunPod for models, the architecture, and local Docker with Python and FastAPI.
+- **Waiting on Kent:** nothing blocks the code. Open items belong to the device teammate (build plan §7) and Naïve staff (Naïve integration §7).
 - **Next step:** build plan **M0**, which covers the scaffold, contracts v0.1 for the device teammate, and the Naïve and LLM spikes.
 
 ## For a coding session

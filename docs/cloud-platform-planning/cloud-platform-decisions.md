@@ -153,7 +153,11 @@ Example shape (field names not final):
 - The overlay is the unit the batch job learns from: overlays that held up become candidates for new firmware (D0).
 - This brings back most of the safety lost in D5. A bad patch can only last until its next health check.
 
-**History:** decided Sat Nov 7 (Kent). Changed Sat Nov 7 (Ishaan, device side): the healer may patch everything, including the safety layer and the visor, which were previously off limits.
+**History:**
+- Decided Sat Nov 7 (Kent).
+- Changed Sat Nov 7 (Ishaan, device side): the healer may patch everything, including the safety layer and the visor, which were previously off limits.
+- **Confirmed Sat Nov 7 (Kent, round-2 lock-down):** the change stands. Kent turned down the alternatives: device-only (the cloud never promotes safety or visor patches), and reverting to the original. The cloud treats safety-layer and visor patches like any other: replay, canary, promote. The Romulus pitch line "the LLM never touches the safety layer" is dropped.
+- **What this means for the build** *(inferred)*: since these patches go fleet-wide like any other, they have to be easy to see (D9). An overlay or candidate whose diff touches the safety layer or the visor carries a `touches_safety` flag that is shown prominently on the timeline. It's for visibility only, not an approval step (D11 holds). The device teammate supplies the list of safety and visor paths and parameter names (build plan K17).
 
 ### D6. What checks a batch-built version ✅
 **Question:** What has to pass before a firmware or harness version built by the batch job reaches a device?

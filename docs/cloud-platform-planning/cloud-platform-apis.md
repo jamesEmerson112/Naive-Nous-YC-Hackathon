@@ -240,7 +240,7 @@ Every event has `actor`, `kind`, `refs` and `why` (v0 plan §4).
 |---|---|
 | Devices | `device.first_seen`, `device.health_changed`, `install.reported` |
 | Incidents | `incident.reported`, `overlay.held`, `overlay.reverted`, `overlay.locked_in`, `overlay.dropped` |
-| Batch and gate | `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.awaiting_canary` |
+| Batch and gate (events for overlays and candidates whose diff touches safety-layer or visor paths carry `touches_safety: true` in `refs`; D5a, K17) | `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.awaiting_canary` |
 | Coding agent (D21) | `coder.started`, `coder.drafted`, `coder.tests_passed`, `coder.tests_failed`, `code.version_created` |
 | Fleet | `fleet.frozen`, `fleet.unfrozen` |
 | Work orders | `workorder.created`, `workorder.card_posted`, `workorder.status_changed` |

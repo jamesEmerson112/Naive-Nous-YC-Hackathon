@@ -54,7 +54,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 - [ ] Contracts v0.1: the Pydantic models from APIs §2, including the code-package and `code_patch` contract (§2.10, D21), plus `rules.evaluate()` with unit tests
 - [ ] `cloud/CLAUDE.md` (architecture §9)
 - [ ] **Naïve spike (15 min):** with a real API key, create and read one card on the company board ([Naïve integration](cloud-platform-naive-integration.md) §5). Write down the board ID and the ops agent's name
-- [ ] **LLM spike (10 min):** one live call from the `llm` adapter
+- [ ] **LLM spike (10 min):** one live call through the Naïve model proxy (`naive proxy message`, then the `llm` adapter with `LLM_PROVIDER=naive_proxy`); pick a model id from `GET /v1/models`. Ask James for the RunPod endpoint and test it too if it's up (D22)
 - [ ] **Hand-off:** send the contracts to the device teammate (APIs doc §2–3 plus the package path), and agree on a time for the first real check-in
 
 ### M1 · Walking skeleton
@@ -162,7 +162,8 @@ Fixed checkpoints: **5:15 PM** (M0), **7:30 PM**, **9:30 PM**, **11:30 PM**, **1
 | K13 | **Overnight chaos phones a real supplier at 3 AM** | Medium | High | Overnight `NAIVE_MODE=fake`, or point `parts.yaml` at a teammate's phone; cap orders per day ([Naïve integration](cloud-platform-naive-integration.md) §6) | Before the M7 launch |
 | K14 | **The dataset feature schema drifts**, so LeRobot `merge` fails | Medium | Medium | Freeze schema v0.1 tonight with the teammate ([telemetry](cloud-platform-telemetry.md) §8) | Teammate changes a feature |
 | K15 | **Camera frames include judges and other people** | High | Medium | Low-res, no audio, local only, no public push, `--redact` traces ([telemetry](cloud-platform-telemetry.md) §10) | — |
-| K16 | **Naïve spend caps can't live in Naïve policy** (the earlier assumption was wrong) | Certain | Medium | Caps in our code; over-cap behaviour is D19b ([Naïve integration](cloud-platform-naive-integration.md) §3.4) | — |
+| K16 | **Naïve spend caps can't live in Naïve policy** (the earlier assumption was wrong) | Certain | Medium | Caps in our code; over-cap orders are blocked and wait for a person (D19b) | — |
+| K17 | **A patch to the safety layer or visor is promoted fleet-wide** (allowed by D5a). A bad visor patch could also break overlay self-revert | Medium | High | Canary first, always simulated; the kill switch; a `touches_safety` flag shown prominently on the timeline; the device teammate supplies the safety and visor path list. The pitch no longer claims "the LLM never touches the safety layer" | A `touches_safety` candidate appears |
 
 ## 6. Cut lines
 
