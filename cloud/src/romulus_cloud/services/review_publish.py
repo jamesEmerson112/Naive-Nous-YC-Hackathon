@@ -194,7 +194,7 @@ def render_playbook(lessons: list[Lesson], slug: str) -> str:
 def comment_text(lesson: Lesson, clicks: int, slug: str, version: Any) -> str:
     who = f"{clicks} human click" + ("" if clicks == 1 else "s")
     return (
-        f"Fleet learning: {lesson.title} shipped to every {lesson.device_class} arm after the "
+        f"Fleet learning: “{lesson.title}” shipped to every {lesson.device_class} arm after the "
         f"canary held · proposed by Naïve agent {AGENT} · {who} · Naïve skill {slug} v{version}"
     )
 
