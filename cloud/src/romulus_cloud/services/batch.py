@@ -53,6 +53,7 @@ from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import BlobStore, build_blobstore
 from romulus_cloud.adapters.coder import CodeDraft, Coder, CoderError, build_coder, redact
 from romulus_cloud.adapters.llm import FakeLlm, Llm, LlmError, build_llm
+from romulus_cloud.domain import coder_retry
 from romulus_cloud.domain.merge import (
     MergeError,
     apply_overlay,
@@ -84,6 +85,7 @@ ACTOR = "agent:batch"
 CONFIG_KINDS = frozenset({"rules", "params"})
 PASSTHROUGH_NOTE = "pass-through: coding agent not wired"
 LOCKIN_ERROR = "lockin_error"
+CODER_UNAVAILABLE = "coder_unavailable"  # overlay.deferred reason: a provider blip, retried
 Key = tuple[str, str]  # (device_id, overlay_id)
 
 
@@ -360,7 +362,12 @@ def _overlay_refs(ov: Overlay, candidate: Candidate | None = None) -> dict[str, 
 
 
 def _mark_error(
-    session: Session, overlays: list[Overlay], why: str, now: datetime, result: RunResult
+    session: Session,
+    overlays: list[Overlay],
+    why: str,
+    now: datetime,
+    result: RunResult,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     """Mark overlays `lockin_error` with the reason, so the batch doesn't retry them (and
     call the LLM again) every tick. The device keeps its local fix."""
@@ -378,7 +385,7 @@ def _mark_error(
             _overlay_refs(ov),
             f"Overlay {ov.id} from {ov.device_id} could not be locked in: {why}. It is not "
             "retried; the device keeps its local fix.",
-            data={"error": why},
+            data={"error": why, **(extra or {})},
             ts=now,
             fleet_id=ov.fleet_id,
         )
@@ -867,12 +874,83 @@ def _coder_incident(session: Session, ov: Overlay) -> dict[str, Any]:
 def _drafts_this_hour(session: Session, fleet_id: str, now: datetime) -> int:
     """Coder drafts started in the last hour (from `coder.started` events, so a restart
     doesn't reset the budget)."""
-    stmt = select(func.count(Event.id)).where(
-        Event.fleet_id == fleet_id,
-        Event.kind == "coder.started",
-        Event.ts > now - timedelta(hours=1),
+
+    def count(*where) -> int:
+        stmt = select(func.count(Event.id)).where(
+            Event.fleet_id == fleet_id, Event.ts > now - timedelta(hours=1), *where
+        )
+        return session.scalar(stmt) or 0
+
+    # A draft the provider turned away before any token was spent doesn't use the budget.
+    free = Event.data.contains({"reason": CODER_UNAVAILABLE, "no_tokens": True})
+    started = count(Event.kind == "coder.started")
+    return max(started - count(Event.kind.in_(["overlay.deferred", "batch.error"]), free), 0)
+
+
+def _coder_attempts(session: Session, ov: Overlay) -> list[Event]:
+    """The overlay's transient coder failures so far, oldest first (from events, so the
+    backoff survives a worker restart)."""
+    refs = {"device": ov.device_id, "overlay": ov.id}
+    found = events.find(session, refs, kinds=["overlay.deferred"])
+    return [e for e in found if (e.data or {}).get("reason") == CODER_UNAVAILABLE]
+
+
+def _coder_failed(
+    session: Session,
+    ov: Overlay,
+    outcome: coder_retry.CoderOutcome,
+    why: str,
+    now: datetime,
+    result: RunResult,
+) -> None:
+    """A failed draft: a provider blip defers the overlay with a backoff (bounded); a bad
+    draft, or the 5th blip in a row, makes it sticky `lockin_error` (BUILD §8)."""
+    verdict = coder_retry.classify(outcome)
+    if not verdict.transient:
+        _mark_error(session, [ov], why, now, result)
+        return
+    past = _coder_attempts(session, ov)
+    attempt = len(past) + 1
+    at = coder_retry.retry_at(attempt, now)
+    if at is None:
+        reasons = [(e.data or {}).get("detail", "") for e in past] + [why]
+        listed = "; ".join(f"attempt {i}: {r}" for i, r in enumerate(reasons, 1))
+        why = f"the coding agent was unavailable {attempt} times in a row ({listed})"
+        free = {"reason": CODER_UNAVAILABLE, "no_tokens": outcome.tokens in (0, None)}
+        _mark_error(session, [ov], why, now, result, extra=free)
+        return
+    result.deferred.append((ov.device_id, ov.id))
+    events.record(
+        session,
+        ACTOR,
+        "agent",
+        "overlay.deferred",
+        _overlay_refs(ov),
+        f"Overlay {ov.id} from {ov.device_id} stays held: coder unavailable ({verdict.label}), "
+        f"retry after {at:%H:%M} UTC (attempt {attempt} of {coder_retry.MAX_TRANSIENT}). "
+        f"{why}.",
+        data={
+            "reason": CODER_UNAVAILABLE,
+            "attempt": attempt,
+            "retry_at": at.isoformat(),
+            "label": verdict.label,
+            "detail": why,
+            "no_tokens": outcome.tokens in (0, None),
+        },
+        ts=now,
+        fleet_id=ov.fleet_id,
     )
-    return session.scalar(stmt) or 0
+
+
+def _outcome(draft: CodeDraft) -> coder_retry.CoderOutcome:
+    return coder_retry.CoderOutcome(
+        passed=draft.passed,
+        exit_status=draft.exit_status,
+        error=draft.error,
+        steps=draft.steps,
+        tokens=draft.tokens,
+        no_result=draft.no_result,
+    )
 
 
 def _say_once(session: Session, ov: Overlay, reason: str, why: str, now: datetime) -> None:
@@ -932,7 +1010,11 @@ def _await_drafts(
     - At most CODER_MAX_DRAFTS_PER_HOUR drafts start per hour; over it, the overlay waits
       `held` ("coder budget"), not sticky.
     - A failing draft, a coder error or a diff touching `verify/` marks the overlay
-      `lockin_error` (sticky: never re-drafted, so the agent isn't called again every run).
+      `lockin_error` (sticky: never re-drafted, so the agent isn't called again every run),
+      unless the failure is transient (`domain.coder_retry`: a rate limit, 5xx, timeout, or an
+      agent that spent no tokens): then it stays held and is retried after a backoff of 2 min
+      doubling to 30 min, and only the 5th transient failure in a row is sticky, listing every
+      attempt's reason. A zero-token retry doesn't use the hourly budget.
     - With no way to run the coder here (`coder_blocker`), code overlays just stay held: the
       worker logged why once at startup.
     """
@@ -956,6 +1038,10 @@ def _await_drafts(
             key = doctor.key if doctor else code_lockin.draft_key(ov, cv.rev)
             status = Done(doctor) if doctor else tools.jobs.poll(key)
             if isinstance(status, Missing):  # new, or the worker restarted: (re)submit
+                attempts = _coder_attempts(session, ov)
+                if attempts and now < datetime.fromisoformat(attempts[-1].data["retry_at"]):
+                    result.deferred.append((ov.device_id, ov.id))  # its event said when
+                    continue
                 if started >= budget:
                     result.deferred.append((ov.device_id, ov.id))
                     _say_once(
@@ -996,7 +1082,8 @@ def _await_drafts(
             consumed.add(key)
         if isinstance(status, Failed):
             why = redact(f"the coding agent could not run ({status.error})", tools.secrets)
-            _mark_error(session, [ov], why, now, result)
+            failed = coder_retry.CoderOutcome(False, error=redact(status.error, tools.secrets))
+            _coder_failed(session, ov, failed, why, now, result)
         elif isinstance(status, Done):
             draft = status.result
             refused = patch_refusal(draft.diff) if draft.passed else None
@@ -1009,7 +1096,7 @@ def _await_drafts(
             else:
                 summary = code_lockin.draft_summary(draft)
                 why = redact(f"the coding agent's draft did not pass: {summary}", tools.secrets)
-                _mark_error(session, [ov], why, now, result)
+                _coder_failed(session, ov, _outcome(draft), why, now, result)
         else:  # still running: stays held, nothing written
             result.deferred.append((ov.device_id, ov.id))
     for key in consumed:  # applied below (or marked); identical patches shared it this run

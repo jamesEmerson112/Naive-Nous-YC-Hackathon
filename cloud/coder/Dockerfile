@@ -44,7 +44,10 @@ ENV UV_PYTHON_DOWNLOADS=never \
     PYTHONUNBUFFERED=1 \
     # The agent can write to $HOME=/tmp; a usercustomize.py or .pth there must not load.
     PYTHONNOUSERSITE=1 \
-    MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT=2 \
+    # A rate limit or 5xx is retried in the container 3 times (tenacity's wait_exponential,
+    # min 4 s, max 60 s: about 4, 8 and 16 s). Longer outages are the batch's job: it defers
+    # the overlay and retries with a 2-30 min backoff (domain/coder_retry.py, PR #38).
+    MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT=4 \
     # Runs as the host user (docker run --user), who has no home in the image.
     HOME=/tmp \
     MSWEA_SILENT_STARTUP=1 \

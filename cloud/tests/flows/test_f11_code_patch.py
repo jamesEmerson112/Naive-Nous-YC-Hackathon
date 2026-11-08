@@ -523,3 +523,102 @@ def test_f11_with_no_test_command_the_verify_scripts_still_replay(
     assert "verify 2/2 passed" in detail["replay"]["why"]
     replay_modes = [c["argv"][-1] for c in rig.docker.calls if c["argv"][1] == "run"][1:]
     assert replay_modes == ["verify", "verify"]
+
+
+# --- a provider blip is retried, bounded (domain/coder_retry, PR #38) ----------------------
+
+AT_CAPACITY = {
+    "agent": "mini-swe-agent",
+    "version": "2.4.6",
+    "model": "test-model",
+    "exit_status": "RateLimitError",
+    "error": "litellm.RateLimitError: OpenAIException - the service is at capacity",
+    "steps": 1,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "seconds": 3.0,
+}
+
+
+class Flaky:
+    """The agent: the provider answers 429 (0 tokens) `blips` times, then the agent fixes it.
+    FakeDocker reads `agent_result` after calling the agent, so each call sets it."""
+
+    def __init__(self, docker: fakes.FakeDocker, blips: int) -> None:
+        self.docker, self.blips, self.ok = docker, blips, dict(docker.agent_result)
+
+    def __call__(self, work: Path) -> None:
+        if self.blips > 0:
+            self.blips -= 1
+            self.docker.agent_result = AT_CAPACITY
+            return
+        self.docker.agent_result = self.ok
+        fakes.fix_like_a_careful_engineer(work)
+
+
+def _flaky_rig(sessions, settings, clock, blips):
+    docker = fakes.FakeDocker()
+    docker.agent = Flaky(docker, blips)
+    return Rig(sessions, settings, clock, runner=docker)
+
+
+def _deferrals(db_session, ov):
+    found = events.find(db_session, {"overlay": ov.id}, kinds=["overlay.deferred"])
+    return [e for e in found if e.data.get("reason") == batch.CODER_UNAVAILABLE]
+
+
+def test_f11_a_429_defers_then_the_retry_after_backoff_succeeds(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session, count_events
+):
+    rig = _flaky_rig(sessions, settings, clock, blips=1)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+
+    rig.work(now + 40 * S)  # attempt 1: the proxy is at capacity
+    ov = _overlay(db_session, arms)
+    assert ov.status == "held" and "code" not in _cands(client)
+    (deferred,) = _deferrals(db_session, ov)
+    assert "coder unavailable (rate limited), retry after 22:02 UTC (attempt 1 of 5)" in (
+        deferred.why
+    )
+    assert deferred.data["no_tokens"] is True
+    assert batch._drafts_this_hour(db_session, "default", now + 41 * S) == 0  # cost nothing
+
+    client.post("/v1/batch/run", json={"by": "kent"})
+    rig.work(now + 100 * S)  # before retry_at: no new draft
+    assert count_events("coder.started") == 1 and len(_deferrals(db_session, ov)) == 1
+
+    client.post("/v1/batch/run", json={"by": "kent"})
+    rig.work(now + 170 * S)  # after the 2 min backoff: redrafted, and this time it works
+    code = _cands(client)["code"]
+    assert count_events("coder.started") == 2
+    rig.work(now + 171 * S)
+    assert client.get(f"/v1/candidates/{code['id']}").json()["status"] == "awaiting_canary"
+    db_session.expire_all()
+    assert _overlay(db_session, arms).status == "locked_in"
+
+
+def test_f11_five_429s_in_a_row_become_sticky_with_every_reason(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session, count_events
+):
+    rig = _flaky_rig(sessions, settings, clock, blips=99)
+    _start(tick_arms, now)
+    _held(arms, "code", "sim-3", now + 20 * S)
+    # Backoff 2, 4, 8, 16 min: each run lands just after the previous retry_at.
+    for t in (40, 170, 420, 910, 1880):
+        client.post("/v1/batch/run", json={"by": "kent"})
+        rig.work(now + t * S)
+
+    ov = _overlay(db_session, arms)
+    assert ov.status == "lockin_error"
+    assert "unavailable 5 times in a row" in ov.status_reason
+    for i in range(1, 6):
+        assert f"attempt {i}: the coding agent's draft did not pass" in ov.status_reason
+    assert ov.status_reason.count("exit RateLimitError") == 5
+    assert [e.data["attempt"] for e in _deferrals(db_session, ov)] == [1, 2, 3, 4]
+    assert count_events("coder.started") == 5
+    # Zero-token retries never used the hourly budget.
+    assert batch._drafts_this_hour(db_session, "default", now + 1881 * S) == 0
+    client.post("/v1/batch/run", json={"by": "kent"})
+    rig.work(now + 4000 * S)  # sticky: never drafted again
+    assert count_events("coder.started") == 5

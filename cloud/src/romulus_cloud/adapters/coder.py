@@ -67,6 +67,14 @@ class CodeDraft:
     passed: bool  # advisory only: the gate trusts the replay, never this (see module doc)
     notes: str
     flags: tuple[str, ...] = ()  # e.g. "test_harness: conftest.py (added)", for the gate
+    # How the agent ended, so the batch can tell a provider blip from a bad draft
+    # (`domain.coder_retry`): its exit status and error, steps, tokens (prompt + completion;
+    # None when unknown) and whether the sandbox returned no result at all.
+    exit_status: str = ""
+    error: str = ""
+    steps: int | None = None
+    tokens: int | None = None
+    no_result: bool = False
 
 
 class Coder(Protocol):
@@ -537,7 +545,24 @@ class LocalAgent:
             passed=passed,
             notes=redact("; ".join(notes) + ".", secrets),
             flags=tuple(redact(f, secrets) for f in flags),
+            exit_status=str(agent.get("exit_status") or ""),
+            error=redact(str(agent.get("error") or ""), secrets),
+            steps=_int(agent.get("steps")),
+            tokens=_tokens(agent),
+            no_result=run.result is None,
         )
+
+
+def _int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _tokens(agent: Mapping[str, Any]) -> int | None:
+    prompt, completion = _int(agent.get("prompt_tokens")), _int(agent.get("completion_tokens"))
+    return None if prompt is None or completion is None else prompt + completion
 
 
 def build_coder(
