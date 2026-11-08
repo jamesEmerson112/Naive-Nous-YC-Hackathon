@@ -23,16 +23,33 @@ Where the data comes from. Each source fails on its own and reads {error: "..."}
 
 What the presenter bar does (POST, answered 202 at once; worker threads run them in order, so a
 skill holding the arm's socket never stalls the page). Each POST writes a `presenter` event:
-  /api/order {job}            orders.place(board, job, source="mission"): a new ARM JOB card
+  /api/order {job}            orders.place(board, job, source="mission"): a new ARM JOB card (job required)
   /api/fault {fault}          the host's inject (joint_stuck: the elbow, params {joint: 2})
   /api/clear                  "a person fixed it": the host's clear, then repair verify
   /api/freeze, /api/unfreeze  Romulus's kill switch, as {"by": "mission-control", "why": "presenter"}
+The same POST again while the first is still queued or running is dropped: the reply (200) carries
+the first ticket with "duplicate": true, so a double click places one order, not two.
+
+Who may POST (these move the arm and freeze the fleet):
+  - Content-Type must be application/json (415 otherwise): a cross-site page can only send that
+    after a CORS preflight, and this server never answers one.
+  - Host, and Origin when sent, must name this server: localhost, 127.0.0.1 or the bound address,
+    on the bound port (403 otherwise; GETs are checked too). That stops DNS rebinding.
+  - With a token (--token or $ARMSIM_MISSION_TOKEN; made up and printed when --host isn't
+    loopback), a POST needs the header X-Mission-Token. The page gets the token in a
+    <meta name="mission-token"> only when the browser runs on this machine; from another machine,
+    open the page as http://<ip>:<port>/?token=<token>.
 """
 import argparse
+import hmac
+import html
+import ipaddress
 import json
 import os
 import queue
 import re
+import secrets
+import socket
 import statistics
 import threading
 import time
@@ -41,6 +58,7 @@ import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import events, orders
 from .board import open_board
@@ -51,6 +69,8 @@ EVENTS_TAIL = 200
 NAIVE_TTL_S = 3.0
 ROMULUS_EVERY_S = 2.0
 STALE_S = 5.0
+MAX_BODY = 65536                                       # bytes a POST body may declare
+LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
 FAULTS = {   # what the presenter can plant, and how the screen names it
     "us_frozen": "a stuck distance sensor",
     "us_no_echo": "a sensor with no echo",
@@ -84,7 +104,12 @@ def read_arm(path=None):
         return {"error": f"no arm snapshot yet at {p}: is the arm host running?"}
     except (OSError, json.JSONDecodeError) as exc:
         return {"error": f"can't read the arm snapshot {p}: {exc}"}
-    snap["age_s"] = round(time.time() - float(snap.get("ts") or 0), 2)
+    if not isinstance(snap, dict):
+        return {"error": f"the arm snapshot {p} isn't a JSON object"}
+    try:
+        snap["age_s"] = round(time.time() - float(snap.get("ts") or 0), 2)
+    except (TypeError, ValueError):
+        return {"error": f"the arm snapshot {p} has no usable ts"}
     snap["stale"] = snap["age_s"] > STALE_S
     return snap
 
@@ -266,22 +291,32 @@ class Presenter:
     def __init__(self):
         self.queues = {"host": queue.Queue(), "net": queue.Queue()}
         self.pending, self.last, self.n = 0, None, 0
+        self.inflight = {}                            # (action, fields) -> its ticket, while queued or running
         self.lock = threading.Lock()
         for name, q in self.queues.items():
             threading.Thread(target=self._work, args=(q,), name=f"presenter-{name}", daemon=True).start()
 
     def submit(self, lane, action, label, fn, **fields):
+        """A new ticket; or, while the same action is still queued or running, that ticket marked
+        duplicate and nothing queued (a double click, or a burst of clicks, does it once)."""
+        key = (action, tuple(sorted(fields.items())))
         with self.lock:
+            if key in self.inflight:
+                return {**self.inflight[key], "duplicate": True}
             self.n += 1
             self.pending += 1
             ticket = {"id": self.n, "action": action, "label": label, "at": time.time(), "state": "queued"}
-        events.emit("mission", "presenter", f"Presenter: {label}", action=action, echo=False, **fields)
-        self.queues[lane].put((ticket, fn))
-        return ticket
+            self.inflight[key] = ticket
+        try:
+            events.emit("mission", "presenter", f"Presenter: {label}", action=action, echo=False, **fields)
+        except OSError as exc:                        # the event log is a record: the button still works
+            print(f"event log: {exc}", flush=True)
+        self.queues[lane].put((ticket, fn, key))
+        return dict(ticket)                           # a copy: the worker updates the ticket as it runs
 
     def _work(self, q):
         while True:
-            ticket, fn = q.get()
+            ticket, fn, key = q.get()
             try:
                 ticket.update(result=fn(), ok=True, state="done")
             except Exception as exc:
@@ -292,6 +327,7 @@ class Presenter:
             with self.lock:
                 self.pending -= 1
                 self.last = ticket
+                self.inflight.pop(key, None)
 
     def get(self):
         with self.lock:
@@ -339,12 +375,22 @@ class Derived:
 
     def __init__(self):
         self.seen = {}
+        self.pid, self.ts, self.live = None, 0.0, set()   # the latest snapshot: its host pid, ts, open ids
+        self.last_ts = {}                             # host pid -> the last snapshot ts seen from it
         self.lock = threading.Lock()                  # /api/arm and /api/state run on different threads
 
     def note(self, arm):
         if arm.get("error"):
             return
         with self.lock:
+            pid, ts = arm.get("pid"), float(arm.get("ts") or 0)
+            self.last_ts[pid] = max(ts, self.last_ts.get(pid, 0.0))
+            if ts >= self.ts:                         # two threads can read snapshots out of order
+                # Open now: the open list, plus history rows still open. The host builds the open
+                # list from a cache while the watchdog's lock is busy, so it can lag history.
+                self.pid, self.ts = pid, ts
+                self.live = ({i.get("id") for i in arm.get("incidents") or []}
+                             | {i.get("id") for i in arm.get("history") or [] if i.get("state") == "open"})
             for inc in arm.get("history") or []:
                 if inc.get("opened_at") is None:
                     continue
@@ -354,13 +400,22 @@ class Derived:
                     del self.seen[k]
 
     def incidents(self, now):
+        """outcome: healed, person, open (still open in the latest snapshot, from the same host) or
+        lost (never closed, and its host is gone or no longer lists it: shown up to its host's last
+        snapshot, not counted as open)."""
         out = []
         with self.lock:
-            seen = list(self.seen.items())
+            seen, pid_now, live, last_ts = list(self.seen.items()), self.pid, set(self.live), dict(self.last_ts)
         for (pid, _), inc in seen:
             end = inc.get("resolved_at") or inc.get("handed_off")
-            outcome = ("person" if inc.get("handed_off") else "healed" if inc.get("state") == "resolved"
-                       else "open")
+            if inc.get("handed_off"):
+                outcome = "person"
+            elif inc.get("state") == "resolved":
+                outcome = "healed"
+            elif pid == pid_now and inc.get("id") in live:
+                outcome = "open"
+            else:
+                outcome, end = "lost", last_ts.get(pid)
             out.append({"key": f"{pid}/{inc['id']}", "id": inc["id"], "kind": inc.get("kind"),
                         "short": short_kind(inc.get("kind")), "summary": inc.get("summary"),
                         "opened": inc["opened_at"], "closed": end, "outcome": outcome, "fix": inc.get("fix"),
@@ -464,8 +519,10 @@ class Mission:
 
     # ---- POST actions ----
     def order(self, body):
-        job = body.get("job") or "pick"
-        if job not in orders.JOBS:
+        job = body.get("job")                         # no default: an empty POST places nothing
+        if job is None:
+            raise ValueError(f'say which job: {{"job": ...}}, one of {sorted(orders.JOBS)}')
+        if not isinstance(job, str) or job not in orders.JOBS:
             raise ValueError(f"unknown job {job!r}; jobs: {sorted(orders.JOBS)}")
 
         def run():
@@ -475,7 +532,7 @@ class Mission:
 
     def fault(self, body):
         fault = body.get("fault")
-        if fault not in FAULTS:
+        if not isinstance(fault, str) or fault not in FAULTS:
             raise ValueError(f"unknown fault {fault!r}; faults: {sorted(FAULTS)}")
         params = {"joint": 2} if fault == "joint_stuck" else {}
         return self.presenter.submit("host", "fault", f"plant {FAULTS[fault]} ({fault})",
@@ -494,12 +551,34 @@ class Mission:
                                      "freeze the fleet" if on else "unfreeze the fleet", lambda: self.romulus.switch(on))
 
 
-def make_handler(mission):
+def is_loopback(host):
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def lan_ip():
+    """This machine's address on its default route (no packet is sent), for the printed URL."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "<this machine's IP>"
+
+
+def make_handler(mission, token=None):
     posts = {"/api/order": mission.order, "/api/fault": mission.fault, "/api/clear": mission.clear,
              "/api/freeze": lambda body: mission.freeze(True), "/api/unfreeze": lambda body: mission.freeze(False)}
+    me = socket.gethostname().lower()
+    my_names = {me, me + ".local"}                    # http://raspberrypi.local:8765 on a 0.0.0.0 bind
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "MissionControl/1"
+        timeout = 10                                  # a client that stops sending lets go of its thread
 
         def log_message(self, fmt, *args):            # the page polls 10 times a second: stay quiet
             pass
@@ -513,11 +592,53 @@ def make_handler(mission):
             self.end_headers()
             self.wfile.write(data)
 
+        def _ours(self, url):
+            """Does this http URL name this server? A DNS-rebinding page sends its own name
+            (evil.example) as Host, so only our names pass, and only on our port."""
+            bound, port = self.server.server_address[:2]
+            try:
+                u = urlsplit(url)
+                if u.scheme != "http" or (u.port or 80) != port or not u.hostname:
+                    return False
+            except ValueError:                        # a port that isn't a number
+                return False
+            name = u.hostname.lower()
+            if name in LOOPBACK_NAMES or name == bound:
+                return True
+            if bound in ("0.0.0.0", ""):              # every interface: any IP literal, or this machine's name
+                try:
+                    ipaddress.ip_address(name)        # a browser sends an IP as Host only when it dialled that IP
+                    return True
+                except ValueError:
+                    return name in my_names
+            return False
+
+        def _refused(self):
+            """Why this request is refused (Host or Origin isn't this server), else None."""
+            host = self.headers.get("Host")
+            if not host or not self._ours("http://" + host):
+                return (f"Host {host!r} isn't this server: open http://localhost:{self.server.server_address[1]} "
+                        "or this machine's IP")
+            origin = self.headers.get("Origin")
+            if origin is not None and not self._ours(origin):
+                return f"a request from another site ({origin}) is refused"
+            return None
+
+        def _page(self):
+            page = PAGE.read_bytes()
+            if token and is_loopback(self.client_address[0]):   # never to another machine: it uses ?token=
+                meta = f'<meta name="mission-token" content="{html.escape(token)}">'.encode()
+                page = re.sub(rb"<head(\s[^>]*)?>", lambda m: m.group(0) + meta, page, count=1)
+            return page
+
         def do_GET(self):
             path = self.path.split("?", 1)[0]
+            why = self._refused()
+            if why:
+                return self._send(403, {"error": why})
             try:
                 if path in ("/", "/index.html"):
-                    return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
+                    return self._send(200, self._page(), "text/html; charset=utf-8")
                 if path == "/api/arm":
                     return self._send(200, mission.arm())
                 if path == "/api/state":
@@ -528,13 +649,26 @@ def make_handler(mission):
 
         def do_POST(self):
             path = self.path.split("?", 1)[0]
+            why = self._refused()
+            if why:
+                return self._send(403, {"ok": False, "error": why})
             fn = posts.get(path)
             if not fn:
-                return self._send(404, {"error": f"no such action {path}"})
+                return self._send(404, {"ok": False, "error": f"no such action {path}"})
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                return self._send(415, {"ok": False, "error": "send the body as Content-Type: application/json"})
+            sent = self.headers.get("X-Mission-Token") or ""
+            if token and not hmac.compare_digest(sent.encode(), token.encode()):
+                return self._send(403, {"ok": False, "error": "missing or wrong X-Mission-Token: open the page "
+                                        "with ?token=<the token Mission Control printed>"})
             try:
                 n = int(self.headers.get("Content-Length") or 0)
-                body = json.loads(self.rfile.read(n) or b"{}") if n else {}
-                return self._send(202, {"ok": True, "ticket": fn(body if isinstance(body, dict) else {})})
+                if n < 0 or n > MAX_BODY:
+                    raise ValueError(f"Content-Length {n} is outside 0..{MAX_BODY}")
+                body = json.loads(self.rfile.read(n)) if n else {}
+                ticket = fn(body if isinstance(body, dict) else {})
+                return self._send(200 if ticket.get("duplicate") else 202, {"ok": True, "ticket": ticket})
             except ValueError as exc:
                 return self._send(400, {"ok": False, "error": str(exc)})
             except Exception as exc:
@@ -543,19 +677,37 @@ def make_handler(mission):
     return Handler
 
 
+def make_server(mission, host="127.0.0.1", port=8765, token=None):
+    """(server, token). Bound to anything but loopback, POSTs always need a token: the one given,
+    else a new one (printed at start)."""
+    if not token and not is_loopback(host):
+        token = secrets.token_urlsafe(12)
+    srv = ThreadingHTTPServer((host, port), make_handler(mission, token=token))
+    srv.daemon_threads = True
+    return srv, token
+
+
 def main():
     ap = argparse.ArgumentParser(description="Romulus Mission Control: the demo screen.")
     ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to open it from another machine")
+    ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to open it from another machine (POSTs then need a token)")
     ap.add_argument("--board", choices=["file", "naive"], default=os.environ.get("ARMSIM_BOARD_KIND", "file"))
     ap.add_argument("--board-id", default=None)
     ap.add_argument("--romulus", default=os.environ.get("ARMSIM_ROMULUS", "http://localhost:8000"))
+    ap.add_argument("--token", default=os.environ.get("ARMSIM_MISSION_TOKEN"),
+                    help="the X-Mission-Token every POST must carry ($ARMSIM_MISSION_TOKEN); made up for you "
+                         "when --host isn't loopback")
     a = ap.parse_args()
     mission = Mission(board_kind=a.board, board_id=a.board_id, romulus=a.romulus)
-    srv = ThreadingHTTPServer((a.host, a.port), make_handler(mission))
-    srv.daemon_threads = True
+    srv, token = make_server(mission, a.host, a.port, a.token)
     print(f"Mission Control on http://{'localhost' if a.host in ('127.0.0.1', '0.0.0.0') else a.host}:{a.port} "
           f"(arm snapshot {state_path()}, board {a.board}, events {events.PATH}, Romulus {a.romulus})", flush=True)
+    if token and not is_loopback(a.host):
+        ip = lan_ip() if a.host in ("0.0.0.0", "") else a.host
+        print(f"From another machine, open http://{ip}:{a.port}/?token={token} "
+              "(the buttons send it as X-Mission-Token)", flush=True)
+    elif token:
+        print("POSTs need X-Mission-Token (the page served here carries it).", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

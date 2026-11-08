@@ -7,6 +7,7 @@ thread against the same fake host. Run from prototypes/arm-sim:
 import functools
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -16,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from armsim import dispatch, events, soak                      # noqa: E402
+from armsim import dispatch, events, orders, soak              # noqa: E402
 from armsim.board import FileBoard, comment_text               # noqa: E402
 
 TMP = Path(tempfile.mkdtemp(prefix="armsim-soak-test-"))
@@ -188,7 +189,8 @@ def test_the_plan_is_deterministic_and_spreads_the_faults_evenly():
         assert sorted(planted[k:k + 3]) == sorted(faults), planted[k:k + 3]
     waves = sum(p["job"] == "wave" for p in a)
     assert 120 < waves < 280, waves                   # mostly picks, sometimes a wave
-    assert all(1.0 <= p["delay_s"] <= 4.0 for p in a if p["fault"])
+    assert all(p["delay_s"] == 0.0 for p in a if (p["fault"] or "").startswith("pod_"))   # pod faults: at the claim
+    assert all(0.2 <= p["delay_s"] <= 2.5 for p in a if p["fault"] == "us_frozen")
     assert all(p["delay_s"] is None for p in a if not p["fault"])
     four = [soak.plan(i, seed=1, rate=0.5, faults=("us_frozen", "pod_image07"))["fault"] for i in range(4)]
     assert sorted(f for f in four if f) == ["pod_image07", "us_frozen"], four   # the real run below: one of each
@@ -230,6 +232,10 @@ def test_a_frozen_sensor_is_planted_after_the_claim_healed_and_never_written_on_
     kinds = [e["kind"] for e in events.read(b.log)]
     assert kinds.index("card_claimed") < kinds.index("fault_planted") < kinds.index("card_done"), kinds
     assert ("clear", "us_frozen") in b.host.calls                           # never outlives its order
+    planted = next(e for e in events.read(b.log) if e["kind"] == "fault_planted")   # the measured time, not the plan
+    assert planted["after_claim_s"] == rec["planted_after_claim_s"] and rec["planted_ts"], (planted, rec)
+    said = f"landed {rec['planted_after_claim_s']:.1f} s after the soak saw the claim (planned: {rec['delay_s']:g} s"
+    assert said in planted["text"], planted["text"]
 
 
 def test_a_bad_pod_image_waits_for_the_pod_healer_and_counts_podd_s_kind():
@@ -238,7 +244,7 @@ def test_a_bad_pod_image_waits_for_the_pod_healer_and_counts_podd_s_kind():
         rec = b.soak(faults=["pod_image07"], rate=1.0).tick(plan_with("pod_image07", faults=("pod_image07",)))
     finally:
         b.close()
-    assert rec["outcome"] == "done" and rec["healed"], rec
+    assert rec["outcome"] == "done" and rec["healed"] and rec["delay_s"] == 0.0, rec      # planted at the claim
     assert "pod_us_mismatch" in rec["incidents"] and "podd:us_mismatch" in rec["incidents"], rec
     assert rec["heals"] and rec["heals"][0]["action"].startswith("wait_for_pod"), rec["heals"]
     assert b.host.image == "good" and not rec["residue"], rec
@@ -294,7 +300,8 @@ def test_an_unnoticed_fault_is_still_cleared_and_a_bad_image_left_over_is_residu
         rec = b.soak(faults=["pod_image02"], rate=1.0).tick(plan_with("pod_image02", faults=("pod_image02",)))
     finally:
         b.close()
-    assert rec["outcome"] == "done" and rec["healed"] and not rec["noticed"], rec     # done, but nothing tripped
+    assert rec["outcome"] == "done" and not rec["healed"] and not rec["noticed"], rec  # done, but nothing tripped
+    assert rec["plant_note"] == "planted, not noticed during the job", rec
     assert rec["residue"] and rec["residue_cleared"], rec
     assert rec["residue_detail"] == ["the pod runs bad image 02"], rec["residue_detail"]
     assert b.host.image == "good"
@@ -386,6 +393,166 @@ def test_a_stop_ends_the_soak_and_records_the_order_in_flight():
     assert b.lines()[0]["outcome"] == "stopped"
 
 
+# ---- what counts as healed, and the races around a plant ------------------------------------------------
+class LateInjectHost(FakeHost):
+    """The inject reaches the host only after the dispatcher logged card_done: the fault lands on an idle arm."""
+
+    def __call__(self, op, **f):
+        if op == "inject":                                # outside the lock: the dispatcher thread keeps going
+            t = time.time()
+            while not any(e["kind"] == "card_done" for e in events.read(self.log)) and time.time() - t < 10:
+                time.sleep(0.01)
+            time.sleep(0.01)
+        return super().__call__(op, **f)
+
+
+def test_a_fault_that_lands_after_the_card_is_done_is_not_healed():
+    host = LateInjectHost()
+    b = Bench("late-plant", host)
+    host.log = b.log
+    try:
+        rec = b.soak(faults=["us_frozen"], rate=1.0).tick(plan_with("us_frozen", "pick", faults=("us_frozen",)))
+    finally:
+        b.close()
+    assert rec["outcome"] == "done" and rec["planted_at"] and rec["planted_after_job"], rec
+    assert not rec["healed"] and not rec["noticed"] and "after the card was done" in rec["plant_note"], rec
+    assert ("clear", "us_frozen") in host.calls, host.calls
+    md = soak.report([rec])
+    assert "| `us_frozen` | 0 | 0 | – | – | 1 landed after the job ended |" in md, md
+
+
+def test_a_fault_due_on_a_card_that_is_no_longer_in_doing_is_not_planted():
+    b = Bench("recheck", dispatcher=False)
+    _, card = orders.place(b.board, "wave", source="test")
+    b.board.done(card["id"], note="waved")                 # the job finished during the delay
+    s = b.soak()
+    rec = {"n": 1, "order": "ord-x", "card": card["id"], "fault": "us_frozen", "delay_s": 1.5, "planted_ts": None}
+    s._plant(rec, time.time(), time.time())
+    s._clear_fault(rec)
+    assert not [c for c in b.host.calls if c[0] in ("inject", "clear")], b.host.calls
+    assert rec["plant_note"] == "not planted: the card was done by the time the fault was due", rec
+
+
+class LostReplyHost(FakeHost):
+    """The host plants the fault, but the reply never reaches the soak (the client's 60 s timeout)."""
+
+    def __call__(self, op, **f):
+        out = super().__call__(op, **f)
+        if op == "inject":
+            raise TimeoutError("timed out")
+        return out
+
+
+def test_an_inject_whose_reply_was_lost_is_still_cleared():
+    host = LostReplyHost(notice=False)
+    b = Bench("lost-reply", host)
+    try:
+        rec = b.soak(faults=["us_frozen"], rate=1.0).tick(plan_with("us_frozen", "pick", faults=("us_frozen",)))
+    finally:
+        b.close()
+    assert rec["outcome"] == "done" and rec["planted_at"] is None and "inject failed" in rec["plant_note"], rec
+    assert ("clear", "us_frozen") in host.calls and "us_frozen" not in host.faults, host.calls   # not carried over
+
+
+class LateClaimBoard(FileBoard):
+    """A dispatcher's claim (no compare-and-set, as on the Naïve board) lands right after the soak blocked the
+    unclaimed card; the job then finishes a moment later."""
+
+    claimed = False
+
+    def move(self, card_id, **kw):
+        out = super().move(card_id, **kw)
+        if kw.get("status") == "blocked" and not self.claimed:
+            self.claimed = True
+            super().move(card_id, status="doing")
+            self.comment(card_id, "CLAIMED: a late dispatcher")
+
+            def finish():
+                self.comment(card_id, "RESULT: waved, no faults")
+                self.done(card_id, note="Done: wave hello, no faults.")
+            threading.Timer(0.3, finish).start()
+        return out
+
+
+def test_a_claim_that_lands_as_the_soak_gives_up_is_waited_for():
+    b = Bench("late-claim", dispatcher=False)
+    b.board = LateClaimBoard(b.dir / "board.json", board_id="brd_test")
+    rec = b.soak(claim_timeout=0.2, rate=0.0).tick(0)
+    assert rec["outcome"] == "done" and rec["late_claim"] and rec["final_status"] == "done", rec
+    assert rec["comment"] == "RESULT: waved, no faults", rec
+    assert not any(e["kind"] == "error" and "not claimed" in e["text"] for e in events.read(b.log)), "warned anyway"
+    # Claimed between the soak's last look and its block: the compare-and-set refuses, and no BLOCKED is posted.
+    b2 = Bench("claim-race", dispatcher=False)
+    _, card = orders.place(b2.board, "pick", source="test")
+    b2.board.move(card["id"], status="doing")
+    s = b2.soak()
+    r = {"n": 1, "order": "ord-x", "outcome": None, "comment": None}
+    assert s._not_claimed(r, card["id"]) == "doing" and r["late_claim"] and r["outcome"] is None, r
+    assert b2.board.card(card["id"])["status"] == "doing" and not b2.board.comments(card["id"])
+
+
+def test_another_order_on_the_board_skips_the_slot_as_busy():
+    b = Bench("busy", dispatcher=False)
+    b.host._open("us_frozen", "Distance frozen at 130 mm")             # left over, but not the soak's to touch now
+    _, theirs = orders.place(b.board, "wave", source="mission")
+    s = b.soak(rate=0.0)
+    first = s.tick(0)
+    b.board.move(theirs["id"], status="doing")
+    second = s.tick(1)
+    assert [r["outcome"] for r in (first, second)] == ["busy", "busy"], (first, second)
+    assert first["busy_cards"] == [theirs["id"]] and first["card"] is None and "in todo" in first["reason"], first
+    assert "in doing" in second["reason"] and len(b.board.show()) == 1, second             # nothing placed
+    assert not [c for c in b.host.calls if c[0] == "repair"], b.host.calls                  # no cleanup mid-job
+    b.board.add("ARM JOB: pick up the block", body="a story's card, no order id")           # not a dispatcher's
+    b.board.done(theirs["id"], note="waved")
+    assert s._busy() == [], s._busy()
+    md = soak.report([first, second])
+    assert "2 busy" in md and f"**Busy:** 2 slots skipped" in md and f"`{theirs['id']}`" in md, md
+    assert "**Failures:** none" in md and not soak.is_failure(first), md
+
+
+class PresenterHost(FakeHost):
+    """Mission Control's presenter plants a stuck sensor during the job (a presenter event, then the fault)."""
+
+    def __call__(self, op, **f):
+        if op == "skill" and not getattr(self, "pressed", False):
+            self.pressed = True
+            events.emit("mission", "presenter", "Presenter: plant a stuck distance sensor (us_frozen)", path=self.log,
+                        echo=False, action="fault", fault="us_frozen")
+            with self.lock:
+                self.faults.add("us_frozen")
+        return super().__call__(op, **f)
+
+
+def test_a_presenter_fault_during_a_clean_order_is_outside_not_a_false_alarm():
+    host = PresenterHost()
+    b = Bench("presenter", host)
+    host.log = b.log
+    try:
+        rec = b.soak(rate=0.0).tick(0)
+    finally:
+        b.close()
+    assert rec["outcome"] == "done" and not rec["fault"] and "us_frozen" in rec["incidents"], rec
+    assert [f["fault"] for f in rec["outside_faults"]] == ["us_frozen"], rec["outside_faults"]
+    md = soak.report([rec])
+    assert "1 had a fault planted from Mission Control during it (not a false alarm)" in md, md
+    assert "tripped an incident anyway" not in md, md
+
+
+def test_the_report_keeps_unnoticed_late_and_outside_faults_apart():
+    recs = [rec(1, "done", fault="pod_image02", after=20, noticed=False, healed=False,
+                plant_note="planted, not noticed during the job"),
+            rec(2, "done", fault="pod_image02", after=30, incidents=["pod_clock_skew"]),
+            rec(3, "done", fault="pod_image02", after=15, healed=False, noticed=False, planted_after_job=True),
+            rec(4, "done", after=25, incidents=["us_stuck"], outside_faults=[{"fault": "us_frozen", "after_s": 9}]),
+            rec(5, "done", after=25, incidents=["us_noisy"])]
+    md = soak.report(recs)
+    assert ("| `pod_image02` | 2 | 1 | 50% | 30 s | 1 planted, not noticed during the job, "
+            "1 landed after the job ended |") in md, md
+    assert ("- **No fault planted:** 2 orders, 2 done; 1 had a fault planted from Mission Control during it "
+            "(not a false alarm); **1 tripped an incident anyway**") in md, md
+
+
 # ---- the child dispatcher ----------------------------------------------------------------------------
 def test_the_child_dispatcher_starts_holds_the_board_and_stops_on_one_sigterm():
     d, board, log, _ = fresh("child")
@@ -413,7 +580,8 @@ def test_the_child_dispatcher_starts_holds_the_board_and_stops_on_one_sigterm():
 def test_the_cli_refuses_hermes_on_the_file_board_and_unknown_faults():
     for argv, said in ((["run", "--with-dispatcher", "hermes", "--board", "file"], "needs --board naive"),
                        (["run", "--faults", "us_frozen,gremlins"], "unknown fault"),
-                       (["run", "--fault-rate", "2"], "from 0 to 1")):
+                       (["run", "--fault-rate", "2"], "from 0 to 1"),
+                       (["run", "--every", "0"], "more than 0")):
         try:
             soak.main(argv)
             raise AssertionError(f"{argv} was accepted")

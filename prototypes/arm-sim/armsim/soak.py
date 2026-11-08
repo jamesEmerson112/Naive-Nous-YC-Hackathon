@@ -16,17 +16,25 @@ runs/logs/soak-dispatch.log; without it a dispatcher must already be running on 
 It needs a running arm host with a virtual pod (demo/up.sh, or `python -m armsim.host --pod sim`).
 
 Each order, one at a time (there is one arm):
-1. The arm host must answer, with no incident open and a good pod image; anything left over is cleaned up
-   first (as in 6).
+1. The arm host must answer. Another order's ARM JOB card already in todo or doing (Mission Control, a
+   teammate) means the slot is skipped as busy: no cleanup, no order on top of that job. Anything left over
+   on the arm (an incident, a bad pod image) is cleaned up first (as in 6).
 2. orders.place(): an ARM JOB card, mostly "pick", sometimes "wave". The fault is never written on the card.
 3. plan(): --seed and the order's index alone decide the job, whether to plant a fault, which one and when.
    Faulted orders are spread evenly (any run of orders is within one of --fault-rate), and the faults take
    turns in an order reshuffled every round, so 48 orders at 0.5 plant each of 3 faults 8 times.
-4. Wait for a dispatcher to claim the card (it moves to doing; up to 120 s). Nobody does: not_claimed, a loud
-   warning, and the card moves to blocked, so a dispatcher can't run it late, on top of a later order.
-5. A planted fault goes in 1-4 s after the claim through the host's `inject`, with a fault_planted event.
-   The host does one thing at a time, so it lands at the next skill boundary (after go_home or reach). joint_stuck can't heal by itself: once the card is blocked, the soak plays the
-   person (clear the fault, `repair verify`) and the order counts as needs_human.
+4. Wait for a dispatcher to claim the card (it moves to doing; up to 120 s). Nobody does: the card moves to
+   blocked (only if it is still in todo), so a dispatcher can't run it late, on top of a later order. A
+   claim can land at that same moment (the Naïve board has no conditional update), so the soak reads the
+   card again 5 s later: in doing, the claim won and the soak waits for the job (late_claim); otherwise
+   not_claimed, with a loud warning.
+5. A planted fault goes in through the host's `inject`, with a fault_planted event that says when it
+   actually landed. A pod_* fault goes in at the claim (podd needs about 10 s to flag a bad image); the
+   others 0.2-2.5 s after it, once the soak has checked the card is still in doing. The host does one thing
+   at a time, so a fault lands at the next skill boundary (after go_home, say). An inject whose reply is lost
+   may still have landed, so any inject the soak tried is cleared after the order. joint_stuck can't heal
+   by itself: once the card is blocked, the soak plays the person (clear the fault, `repair verify`) and the
+   order counts as needs_human.
 6. Wait for done or blocked (--job-timeout). Then the planted fault is cleared, and an incident or a bad pod
    image left over is cleaned up (the pod's own healer gets 90 s, then `repair verify`), so nothing piles up
    for the next order: the line says residue: true and what was left. A pick that didn't finish may have
@@ -40,14 +48,21 @@ stops cleanly: the order in flight is recorded as stopped and its fault cleared,
 one SIGTERM (it finishes its step and blocks its card), and the arm is cleaned up. A second one quits now.
 
 The outcome line, one JSON object per order:
-  n, slot, at (ISO, when the order was placed), ts, order, card, job, fault, delay_s, planted_at,
-  claimed_after_s and finished_after_s (both counted from placing the order; from the dispatcher's events
-  when they're in the same event log), final_status (the card's column at the end), outcome (done, blocked,
-  needs_human, not_claimed, timeout, stopped, host_down, arm_not_ready, error), healed (a fault was planted
-  and the card is done), noticed (an incident was seen), incidents (kinds seen: the arm's, "podd:<kind>" for
-  podd's own, the commander's),
-  heals (the commander's heal events), comment (the RESULT: or BLOCKED: line, 200 chars), residue,
-  residue_detail, person_fix, and the run's settings (every, rate, faults, seed).
+  n, slot, at (ISO, when the order was placed), ts, order, card, job, fault, delay_s (planned), planted_at,
+  planted_ts, planted_after_s (from placing the order) and planted_after_claim_s (from the soak seeing the
+  claim), planted_after_job, plant_note, claimed_after_s and finished_after_s (both counted from placing the
+  order; from the dispatcher's events when they're in the same event log), late_claim, final_status (the
+  card's column at the end), outcome (done, blocked, needs_human, not_claimed, timeout, stopped, busy,
+  host_down, arm_not_ready, error),
+  healed: the fault landed before the card was done, the job noticed it (below), and the card is done. A
+       fault that lands on a done card, or that nothing noticed, is not healed: plant_note says which;
+  noticed: during this card's job, after the plant, the commander logged an incident or heal for the card,
+       the soak saw an incident in the host's status, or the host opened one (its opened_at, when that is
+       wall-clock time: a host with a pod);
+  incidents (kinds seen in the order's whole window: the arm's, "podd:<kind>" for podd's own, the
+  commander's), heals (the commander's heal events), outside_faults (faults Mission Control's presenter
+  planted during the order: not the soak's, and no false alarm), comment (the RESULT: or BLOCKED: line,
+  200 chars), residue, residue_detail, person_fix, and the run's settings (every, rate, faults, seed).
 """
 import argparse
 import fcntl
@@ -82,13 +97,16 @@ DEFAULT_FAULTS = ("us_frozen", "pod_image07", "pod_image02")
 NEEDS_PERSON = ("joint_stuck",)                  # planted faults no healer can fix: the soak plays the person
 NEEDS_VPOD = ("us_no_echo", "pod_image07", "pod_image02")
 WAVE_SHARE = 0.2                                 # the rest are picks
-DELAY_S = (1.0, 4.0)                             # from the claim to the fault
+DELAY_S = (0.2, 2.5)                             # from the claim to a sensor or arm fault (a pod_* fault: 0)
 CLAIM_TIMEOUT_S = 120.0
 CLAIM_POLL_S = 1.0
+LATE_CLAIM_S = 5.0                               # after blocking an unclaimed card, read it again this much later
 POD_HEAL_S = 90.0                                # the pod's own healer's time to roll a bad image back
 LATE_GRACE_S = 5.0                               # a slot missed by less than this is still used
-OUTCOMES = ("done", "blocked", "needs_human", "not_claimed", "timeout", "stopped", "host_down", "arm_not_ready",
-            "error")
+WALL_CLOCK = 1e9                                 # an incident's opened_at above this is a unix time (a host with
+                                                 # a pod); below it, seconds of sim time
+OUTCOMES = ("done", "blocked", "needs_human", "not_claimed", "timeout", "stopped", "busy", "host_down",
+            "arm_not_ready", "error")
 
 
 def iso(ts):
@@ -116,7 +134,9 @@ def plan(index, *, seed=1, rate=0.5, faults=DEFAULT_FAULTS):
     seed and index always give the same plan (string seeds are hashed the same way in every process).
 
     A fault goes on order i when floor((i + 1) * rate + u) passes an integer, u being a phase taken from the
-    seed: faulted orders are spread evenly. They take the faults in turns, reshuffled every round."""
+    seed: faulted orders are spread evenly. They take the faults in turns, reshuffled every round.
+    A pod_* fault goes in at the claim (delay 0): podd takes about 10 s to flag a bad image, and a pick is over
+    in 20 s."""
     rng = random.Random(f"soak:{seed}:{index}")
     job = "wave" if rng.random() < WAVE_SHARE else "pick"
     delay = round(rng.uniform(*DELAY_S), 1)
@@ -128,7 +148,11 @@ def plan(index, *, seed=1, rate=0.5, faults=DEFAULT_FAULTS):
         turn = list(faults)
         random.Random(f"soak:{seed}:round:{rnd}").shuffle(turn)
         fault = turn[k]
-    return {"index": index, "job": job, "fault": fault, "delay_s": delay if fault else None}
+    if fault is None:
+        delay = None
+    elif fault.startswith("pod_"):
+        delay = 0.0
+    return {"index": index, "job": job, "fault": fault, "delay_s": delay}
 
 
 def leftovers(st):
@@ -158,13 +182,14 @@ class Soak:
     def __init__(self, board, *, call=None, emit=None, out=None, every=600.0, rate=0.5, faults=DEFAULT_FAULTS,
                  seed=1, max_orders=None, hours=None, job_timeout=900.0, claim_timeout=CLAIM_TIMEOUT_S,
                  claim_poll_s=CLAIM_POLL_S, poll_s=None, pod_heal_s=POD_HEAL_S, stop=None, wait=None, child=None,
-                 events_path=None, late_grace_s=LATE_GRACE_S):
+                 events_path=None, late_grace_s=LATE_GRACE_S, late_claim_s=LATE_CLAIM_S):
         self.board, self.host = board, dispatch.Host(call)
         self.emit = emit or events.emit
         self.out = Path(out or SOAK_FILE)
         self.every, self.rate, self.faults, self.seed = float(every), float(rate), list(faults), seed
         self.max_orders, self.hours = max_orders, hours
         self.job_timeout, self.claim_timeout, self.claim_poll_s = job_timeout, claim_timeout, claim_poll_s
+        self.late_claim_s = late_claim_s
         self.poll_s = poll_s or (1.0 if getattr(board, "kind", "") == "file" else 3.0)
         self.pod_heal_s, self.late_grace_s = pod_heal_s, late_grace_s
         self.stop = stop or threading.Event()
@@ -210,7 +235,8 @@ class Soak:
                 self.tick(n, slot, due, skipped)
                 n += 1
                 nxt, now = slot + 1, time.time()
-                while t0 + nxt * self.every < now - self.late_grace_s:   # the job ran past these slots: skip them
+                # The job ran past these slots: skip them (--every 0, in tests: back to back).
+                while self.every > 0 and t0 + nxt * self.every < now - self.late_grace_s:
                     nxt += 1
                 skipped, slot = nxt - slot - 1, nxt
         finally:
@@ -226,9 +252,11 @@ class Soak:
         now = time.time()
         rec = {"v": 1, "run": self.run_id, "n": n + 1, "slot": slot, "skipped_slots": skipped, "at": iso(now),
                "ts": round(now, 3), "late_s": None, "order": None, "card": None, "job": p["job"], "fault": p["fault"],
-               "delay_s": p["delay_s"], "planted_at": None, "claimed_after_s": None, "finished_after_s": None,
-               "final_status": None, "outcome": None, "healed": False, "noticed": False, "incidents": [], "heals": [], "comment": None,
-               "residue": False, "residue_detail": [], "person_fix": None, **self.settings}
+               "delay_s": p["delay_s"], "planted_at": None, "planted_ts": None, "planted_after_job": False,
+               "plant_note": None, "claimed_after_s": None, "finished_after_s": None, "late_claim": False,
+               "final_status": None, "outcome": None, "healed": False, "noticed": False, "incidents": [], "heals": [],
+               "outside_faults": [], "comment": None, "residue": False, "residue_detail": [], "person_fix": None,
+               **self.settings}
         try:
             self._order(rec, due if due is not None else now)
         except Exception as exc:  # one bad order must not end the night
@@ -250,6 +278,13 @@ class Soak:
             rec.update(outcome="host_down", reason=st.get("error"))
             self.warn(f"order {rec['n']} not placed: {st.get('error')}")
             return
+        busy = self._busy()
+        if busy:                                    # someone else's job: don't clean up or queue behind it
+            rec.update(outcome="busy", busy_cards=[cid for cid, _ in busy],
+                       reason="another order's card is already on the arm's queue: "
+                              + "; ".join(f"{cid} in {status}" for cid, status in busy))
+            self._ev("soak_tick", f"order {rec['n']} skipped: {rec['reason']}", cards=rec["busy_cards"])
+            return
         if leftovers(st):
             if not self._cleanup(rec, st, what="before"):
                 rec.update(outcome="arm_not_ready", reason="left from before and not cleared: "
@@ -266,22 +301,23 @@ class Soak:
                  order=order["id"], card=cid, job=rec["job"], n=rec["n"])
 
         status = self._wait_claim(cid)
+        if status is None and not self.stop.is_set():
+            status = self._not_claimed(rec, cid)      # "doing" when a dispatcher claimed it at the last moment
         if status is None:
-            if self.stop.is_set():
-                rec["outcome"] = "stopped"
-            else:
-                self._not_claimed(rec, cid)
+            rec["outcome"] = rec["outcome"] or "stopped"
             self._finish(rec, t0, before, seen)
             return
-        rec["claimed_after_s"] = round(time.time() - t0, 1)
+        claimed_at = time.time()
+        rec["claimed_after_s"] = round(claimed_at - t0, 1)
         if rec["fault"]:
             if status == "doing":
-                self._plant(rec, t0)
+                self._plant(rec, t0, claimed_at)
             else:
                 rec["plant_note"] = f"not planted: the card was already {status} when the soak saw it claimed"
-        claimed_at = t0 + rec["claimed_after_s"]
-        final = self._wait_final(cid, claimed_at, seen)
-        rec["finished_after_s"] = round(time.time() - t0, 1) if final in ("done", "blocked") else None
+        during = set()                                # incident kinds the soak saw in the job, after the plant
+        final = self._wait_final(cid, claimed_at, seen, rec, during)
+        seen_end = time.time()
+        rec["finished_after_s"] = round(seen_end - t0, 1) if final in ("done", "blocked") else None
         if final in ("stopped", "timeout"):
             rec["outcome"] = final
             if final == "timeout":
@@ -293,7 +329,7 @@ class Soak:
                 rec.update(residue=True, residue_detail=left, residue_cleared=None)
             elif left:                               # a stop by hand: final_cleanup() runs after the dispatcher stops
                 rec["left_at_stop"] = left
-            self._finish(rec, t0, before, seen)
+            self._finish(rec, t0, before, seen, during)
             return
         if final == "blocked" and rec["fault"] in NEEDS_PERSON and rec["planted_at"]:
             self._play_the_person(rec)
@@ -301,7 +337,7 @@ class Soak:
         self._cleanup(rec)
         if final != "done" and rec["job"] == "pick":
             self._reset_scene(rec)
-        self._finish(rec, t0, before, seen)
+        self._finish(rec, t0, before, seen, during, seen_end)
 
     def _card(self, cid):
         try:
@@ -324,18 +360,41 @@ class Soak:
             self.wait(self.claim_poll_s)
         return None
 
+    def _busy(self):
+        """Other orders' ARM JOB cards in todo or doing: the arm has a job queued or running already (Mission
+        Control's presenter, a teammate). Only cards orders.place() made (they carry an order id) count, the
+        ones a dispatcher works; a story's hand-made "ARM JOB:" card left open doesn't keep the soak waiting.
+        [(card id, column)]. A board that can't be read says nothing here (placing the order will say it)."""
+        try:
+            return [(c.get("id"), status) for status in ("todo", "doing") for c in self.board.show(status)
+                    if orders.is_arm_job(c) and orders.parse_card(c)["order"]]
+        except BoardError:
+            return []
+
     def _not_claimed(self, rec, cid):
-        rec["outcome"] = "not_claimed"
+        """Nobody claimed the card in time: move it to blocked, only if it is still in todo, so a dispatcher
+        can't run it late on top of a later order. A claim can land at that same moment (the Naïve board has
+        no conditional update), so read the card again late_claim_s later: in doing (or done), the claim won.
+        Returns that status, so the soak waits for the job; None when it really wasn't claimed."""
         why = (f"BLOCKED: soak: no dispatcher claimed this card within {self.claim_timeout:.0f} s, so the soak "
                "moved it out of todo (a late run would land on top of a later order). Is a dispatcher running "
                "on this board?")
-        card = self._card(cid)
-        if dispatch.card_status(card) in (None, "todo"):
-            try:
-                self.board.comment(cid, why)
-                self.board.move(cid, status="blocked")
-            except BoardError as exc:
+        conflict = False                          # the card had left todo: someone else moved it
+        try:
+            self.board.move(cid, status="blocked", expect="todo")   # moved first: no BLOCKED on a claimed card
+            self.board.comment(cid, why)
+        except BoardError as exc:
+            conflict = exc.code == "conflict"
+            if not conflict:
                 why += f" (couldn't block the card: {exc})"
+        self.wait(self.late_claim_s)
+        status = self._card_status(cid)
+        if status in ("doing", "done") or (status == "blocked" and conflict):
+            rec["late_claim"] = True
+            self._ev("soak_tick", f"order {rec['n']}: card {cid} was claimed just as the soak gave up on it "
+                                  f"({status} now); waiting for the job", order=rec["order"], card=cid)
+            return status
+        rec["outcome"] = "not_claimed"
         rec["comment"] = why[:200]
         alive = ("the soak's dispatcher is running" if self.child and self.child.alive()
                  else "the soak's dispatcher is NOT running" if self.child
@@ -344,13 +403,25 @@ class Soak:
         self.warn(f"order {rec['n']} ({rec['order']}, card {cid}) was not claimed within "
                   f"{self.claim_timeout:g} s ({alive}; see runs/logs/ and the event log)",
                   order=rec["order"], card=cid)
+        return None
 
-    def _plant(self, rec, t0):
+    def _plant(self, rec, t0, claimed_at):
+        """Plant the fault once the planned delay is up and the card is still in doing (a fault on a card
+        that is already done tests nothing). planted_ts is when the host's reply came back: the host takes
+        one request at a time, so that is after the skill in progress."""
         fault = rec["fault"]
         params, what = FAULTS[fault]
-        self.wait(rec["delay_s"])
+        if rec["delay_s"]:                        # with no delay, _wait_claim's read just now was the check
+            self.wait(rec["delay_s"])
+            if self.stop.is_set():
+                return
+            status = self._card_status(rec["card"])
+            if status != "doing":
+                rec["plant_note"] = f"not planted: the card was {status} by the time the fault was due"
+                return
         if self.stop.is_set():
             return
+        rec["plant_tried"] = True                 # an inject whose reply is lost may still land: clear it after
         r = self.host("inject", fault=fault, **({"params": params} if params else {}))
         if not r.get("ok"):
             rec["plant_note"] = f"inject failed: {r.get('error')}"
@@ -358,13 +429,18 @@ class Soak:
                       card=rec["card"])
             return
         now = time.time()
-        rec["planted_at"], rec["planted_after_s"] = iso(now), round(now - t0, 1)
-        self._ev("fault_planted", f"planted {fault} on order {rec['order']}: {what}, {rec['delay_s']:g} s after the "
-                                  f"claim (the card says nothing about it)", order=rec["order"], card=rec["card"],
-                 fault=fault, where=r.get("where"), delay_s=rec["delay_s"])
+        rec.update(planted_at=iso(now), planted_ts=round(now, 3), planted_after_s=round(now - t0, 1),
+                   planted_after_claim_s=round(now - claimed_at, 1))
+        self._ev("fault_planted", f"planted {fault} on order {rec['order']}: {what}. It landed "
+                                  f"{rec['planted_after_claim_s']:.1f} s after the soak saw the claim (planned: "
+                                  f"{rec['delay_s']:g} s; the host takes it after the skill in progress). The card "
+                                  "says nothing about it", order=rec["order"], card=rec["card"], fault=fault,
+                 where=r.get("where"), delay_s=rec["delay_s"], after_claim_s=rec["planted_after_claim_s"])
 
-    def _wait_final(self, cid, claimed_at, seen):
-        """done or blocked; timeout (--job-timeout from the claim) or stopped. Notes incident kinds meanwhile."""
+    def _wait_final(self, cid, claimed_at, seen, rec, during):
+        """done or blocked; timeout (--job-timeout from the claim) or stopped. Notes incident kinds meanwhile,
+        and in `during` the kinds open in the host's status after the plant (or the claim, with no fault)."""
+        watch = bool(rec["planted_ts"]) or not rec["fault"]    # the plant (if any) is in: every look counts
         last_look = 0.0
         while True:
             st = self._card_status(cid)
@@ -375,7 +451,12 @@ class Soak:
             if time.time() - claimed_at > self.job_timeout:
                 return "timeout"
             if time.time() - last_look >= 2.0:
-                self._look(seen)
+                now_open = {}
+                self._look(now_open)
+                for k in now_open:
+                    seen.setdefault(k, True)
+                if watch:
+                    during.update(now_open)
                 last_look = time.time()
             self.wait(self.poll_s)
 
@@ -403,8 +484,9 @@ class Soak:
 
     def _clear_fault(self, rec):
         """A planted fault never outlives its order, healed or not (an unnoticed frozen sensor would break the
-        next one). `clear` doesn't flash the pod back: a bad image is the pod healer's (see _cleanup)."""
-        if not rec.get("planted_at") or rec.get("cleared"):
+        next one). Any inject the soak tried counts: one whose reply was lost (a timeout) may still have landed.
+        `clear` doesn't flash the pod back: a bad image is the pod healer's (see _cleanup)."""
+        if not rec.get("plant_tried") or rec.get("cleared"):
             return
         r = self.host("clear", fault=rec["fault"])
         rec["cleared"] = bool(r.get("ok"))
@@ -447,26 +529,41 @@ class Soak:
                       order=rec.get("order"), card=rec.get("card"))
         return clean
 
-    def _finish(self, rec, t0, before, seen):
-        """Timings from the dispatcher's events, incident kinds from every source, the card's last word."""
+    def _finish(self, rec, t0, before, seen, during=(), seen_end=None):
+        """Timings from the dispatcher's events, incident kinds from every source, the card's last word, and
+        whether the planted fault was healed: it landed before the card was done, this card's job noticed it
+        (an incident or heal after the plant: the commander's events for this card, `during` from the soak's
+        own looks, or the host's history when its opened_at is wall-clock time), and the card is done."""
         cid = rec["card"]
-        evs = [e for e in events.read(self.events_path, since=t0 - 1) if e.get("card") == cid]
+        window = events.read(self.events_path, since=t0 - 1)
+        evs = [e for e in window if e.get("card") == cid]
         claimed = next((e["ts"] for e in evs if e.get("kind") == "card_claimed"), None)
         ended = next((e["ts"] for e in reversed(evs) if e.get("kind") in ("card_done", "card_blocked")), None)
         if claimed:
             rec["claimed_after_s"] = round(claimed - t0, 1)
         if ended and rec["finished_after_s"] is not None:
             rec["finished_after_s"] = round(ended - t0, 1)
+        start = rec["planted_ts"] or t0               # with a fault, only what came after the plant counts
+        end = ended or seen_end or time.time()        # the dispatcher's card_done, else when the soak saw it
+        in_job = set(during)
         for e in evs:
             if e.get("kind") in ("incident", "heal") and isinstance(e.get("incident"), dict):
                 seen.setdefault(e["incident"].get("kind"), True)
+                if e["ts"] >= start:
+                    in_job.add(e["incident"].get("kind"))
         rec["heals"] = [{"kind": (e.get("incident") or {}).get("kind"), "action": e.get("action"), "ok": e.get("ok"),
                          "seconds": e.get("seconds"), "step": e.get("step")} for e in evs if e.get("kind") == "heal"]
         for i in self.host("incidents").get("incidents") or []:
             if i.get("id") not in before:
                 seen.setdefault(i.get("kind"), True)
+                opened = i.get("opened_at")
+                if isinstance(opened, (int, float)) and opened > WALL_CLOCK and start - 0.1 <= opened <= end:
+                    in_job.add(i.get("kind"))
         rec["incidents"] = [k for k in seen if k]
-        rec["noticed"] = bool(rec["incidents"])
+        rec["noticed"] = bool(in_job - {None})
+        rec["outside_faults"] = [{"fault": e.get("fault"), "after_s": round(e["ts"] - t0, 1)} for e in window
+                                 if e.get("src") == "mission" and e.get("kind") == "presenter"
+                                 and e.get("action") == "fault"]
         card = self._card(cid)
         rec["final_status"] = dispatch.card_status(card)
         try:
@@ -482,7 +579,14 @@ class Soak:
                 rec["outcome"] = "needs_human"
             else:
                 rec["outcome"] = "blocked"
-        rec["healed"] = bool(rec["planted_at"]) and rec["outcome"] == "done"
+        planted = rec["planted_ts"]
+        if planted and planted >= end:
+            rec["planted_after_job"] = True
+            rec["plant_note"] = (f"landed {planted - end:.1f} s after the card was {rec['final_status'] or 'closed'}, "
+                                 "so it tested nothing")
+        rec["healed"] = bool(planted) and not rec["planted_after_job"] and rec["noticed"] and rec["outcome"] == "done"
+        if planted and not rec["planted_after_job"] and not rec["noticed"] and rec["outcome"] == "done":
+            rec["plant_note"] = "planted, not noticed during the job"
 
     def _record(self, rec):
         self.out.parent.mkdir(parents=True, exist_ok=True)
@@ -496,7 +600,12 @@ class Soak:
                       f"between orders (demo/down.sh && demo/up.sh). Last: {rec.get('comment') or rec['outcome']}",
                       order=rec.get("order"), card=rec.get("card"))
         what = rec["fault"] if rec.get("planted_at") else "no fault"
-        tail = {"done": f"done in {secs(rec['finished_after_s'])}" + (f", healed {rec['fault']}" if rec["healed"] else ""),
+        note = (f", healed {rec['fault']}" if rec["healed"] else
+                f"; {rec['fault']}: {rec['plant_note']}" if rec["fault"] and rec.get("plant_note") else "")
+        if rec.get("outside_faults"):
+            theirs = ", ".join(f["fault"] or "?" for f in rec["outside_faults"])
+            note += f"; Mission Control planted {theirs} meanwhile"
+        tail = {"done": f"done in {secs(rec['finished_after_s'])}{note}",
                 "needs_human": "handed to a person, as a dead elbow should be"
                                + ("; fixed by hand" if (rec.get("person_fix") or {}).get("verified") else
                                   "; the check after the fix by hand FAILED"),
@@ -642,8 +751,9 @@ def load(path=None, since=None):
 
 
 def is_failure(rec):
-    """Anything but done, except a dead elbow handed to a person and fixed by hand, and a stop by hand."""
-    if rec.get("outcome") in ("done", "stopped"):
+    """Anything but done, except a dead elbow handed to a person and fixed by hand, a stop by hand, and a
+    slot skipped because another order's job was on the arm (busy)."""
+    if rec.get("outcome") in ("done", "stopped", "busy"):
         return False
     if rec.get("outcome") == "needs_human":
         return not (rec.get("person_fix") or {}).get("verified")
@@ -676,13 +786,21 @@ def report(recs):
         lines.append(f"- **Time to done** (order placed to card done): median "
                      f"{secs(statistics.median(r['finished_after_s'] for r in done))}, worst "
                      f"{secs(worst['finished_after_s'])} (order `{worst['order']}`, card `{worst['card']}`).")
-    clean = [r for r in recs if not r.get("fault")]
+    clean = [r for r in recs if not r.get("fault") and r.get("card")]
     if clean:
-        tripped = sum(1 for r in clean if r.get("incidents"))
+        outside = sum(1 for r in clean if r.get("outside_faults"))
+        tripped = sum(1 for r in clean if r.get("incidents") and not r.get("outside_faults"))
         lines.append(f"- **No fault planted:** {len(clean)} order{'' if len(clean) == 1 else 's'}, "
                      f"{sum(r.get('outcome') == 'done' for r in clean)} done"
+                     + (f"; {outside} had a fault planted from Mission Control during it (not a false alarm)"
+                        if outside else "")
                      + (f"; **{tripped} tripped an incident anyway** (a false alarm, or the sim drifting)" if tripped
                         else "") + ".")
+    busy = [r for r in recs if r.get("outcome") == "busy"]
+    if busy:
+        cards = sorted({c for r in busy for c in r.get("busy_cards") or []})
+        lines.append(f"- **Busy:** {len(busy)} slot{'' if len(busy) == 1 else 's'} skipped: another order's card was "
+                     f"already in todo or doing ({', '.join(f'`{c}`' for c in cards) or '?'}).")
     residue = [r for r in recs if r.get("residue")]
     if residue:
         stuck = [r for r in residue if r.get("residue_cleared") is not True]
@@ -700,22 +818,28 @@ def report(recs):
                   "|---|---|---|---|---|---|"]
         for name in names:
             rs = [r for r in faulted if r["fault"] == name]
-            planted = [r for r in rs if r.get("planted_at")]
+            landed = [r for r in rs if r.get("planted_at")]
+            planted = [r for r in landed if not r.get("planted_after_job")]     # a fault on a done card tested nothing
             healed = [r for r in planted if r.get("healed")]
             pct = f"{len(healed) / len(planted):.0%}" if planted else "–"
             if name in NEEDS_PERSON:
                 pct = "– (needs a person)"
             to_done = [r["finished_after_s"] for r in healed if r.get("finished_after_s") is not None]
-            other = Counter(r.get("outcome") for r in planted if not r.get("healed"))
+            unnoticed = sum(1 for r in planted if r.get("outcome") == "done" and not r.get("healed"))
+            other = Counter(r.get("outcome") for r in planted if not r.get("healed") and r.get("outcome") != "done")
             notes = [f"{v} {k.replace('_', ' ')}" for k, v in other.items()]
+            if unnoticed:
+                notes.append(f"{unnoticed} planted, not noticed during the job")
+            if len(landed) > len(planted):
+                notes.append(f"{len(landed) - len(planted)} landed after the job ended")
+            outside = sum(1 for r in planted if r.get("outside_faults"))
+            if outside:
+                notes.append(f"{outside} with a Mission Control fault too")
             fixed = sum(1 for r in planted if (r.get("person_fix") or {}).get("verified"))
-            quiet = sum(1 for r in healed if not r.get("noticed"))
-            if quiet:
-                notes.append(f"{quiet} of the healed tripped no incident")
             if name in NEEDS_PERSON and planted:
                 notes.append(f"{fixed} fixed by hand")
-            if len(rs) > len(planted):
-                notes.append(f"{len(rs) - len(planted)} planned but not planted")
+            if len(rs) > len(landed):
+                notes.append(f"{len(rs) - len(landed)} planned but not planted")
             lines.append(f"| `{name}` | {len(planted)} | {len(healed)} | {pct} | "
                          f"{secs(statistics.median(to_done)) if to_done else '–'} | {', '.join(notes) or '–'} |")
         lines.append("")
@@ -741,6 +865,8 @@ def cmd_run(a):
         raise SystemExit(f"unknown fault(s) {unknown}; the soak can plant {sorted(FAULTS)}")
     if not 0.0 <= a.fault_rate <= 1.0:
         raise SystemExit("--fault-rate is a share of orders, from 0 to 1")
+    if a.every <= 0:
+        raise SystemExit("--every is the seconds between orders: more than 0 (600 overnight)")
     kind = a.board or os.environ.get("ARMSIM_BOARD_KIND", "file")
     if a.with_dispatcher == "hermes" and kind == "file":
         raise SystemExit("--with-dispatcher hermes needs --board naive: Hermes reads and closes cards only through "
