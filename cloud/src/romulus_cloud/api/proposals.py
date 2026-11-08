@@ -5,7 +5,8 @@ The device treats any non-200 as "no answer".
 
 - `GET  /v1/devices/{device_id}/proposals/{proposal_id}` → the `Proposal` body bytes, with
   `X-Sha256` over exactly those bytes. `404 unknown_proposal` (also another device's),
-  `409 fleet_frozen`, `410 proposal_gone` (no longer offered, or expired).
+  `409 fleet_frozen`, `410 proposal_gone` (no longer offered, expired, or held back by the
+  serve-time safety gate, `proposals.serve_refusal`).
 - `POST /v1/devices/{device_id}/proposals/{proposal_id}/result` → `204`, or `200` for a
   resend of the recorded result. `404 unknown_proposal`, `409 proposal_result_conflict`,
   `422` when `applied` has no `overlay_id`.
@@ -29,9 +30,14 @@ router = APIRouter(prefix="/v1", tags=["doctor"])
 
 
 @router.get("/devices/{device_id}/proposals/{proposal_id}")
-def get_proposal(device_id: str, proposal_id: str, session: SessionDep) -> Response:
-    """The body bytes as dumped once by `proposal_body_and_sha256`, never re-encoded."""
-    body, sha256 = proposals.get_for_device(session, device_id, proposal_id, utcnow())
+def get_proposal(
+    device_id: str, proposal_id: str, session: SessionDep, settings: SettingsDep
+) -> Response:
+    """The body bytes as dumped once by `proposal_body_and_sha256`, never re-encoded. Served
+    only while `proposals.serve_refusal` passes under this request's settings."""
+    body, sha256 = proposals.get_for_device(
+        session, device_id, proposal_id, utcnow(), settings=settings
+    )
     return Response(body, media_type="application/json", headers={SHA256_HEADER: sha256})
 
 

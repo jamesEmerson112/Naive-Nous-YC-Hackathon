@@ -26,6 +26,7 @@ from romulus_cloud.models import (
     Overlay,
 )
 from romulus_cloud.services import proposals, registry
+from romulus_cloud.settings import Settings
 from romulus_contracts import Assigned, CheckIn, CheckInResponse, InstallResult
 
 # `unknown`: auto-registered from a check-in that didn't say what it is. It counts as real
@@ -190,9 +191,18 @@ def _fill_assignment(session: Session, device: Device, now: datetime, *, quiet: 
 
 
 def check_in(
-    session: Session, device_id: str, body: CheckIn, raw: dict[str, Any], now: datetime
+    session: Session,
+    device_id: str,
+    body: CheckIn,
+    raw: dict[str, Any],
+    now: datetime,
+    *,
+    settings: Settings | None = None,
 ) -> CheckInResponse:
-    """Record what the device runs and answer with what it should run (APIs §2.3)."""
+    """Record what the device runs and answer with what it should run (APIs §2.3).
+
+    `settings` gate the Fleet Doctor pointer (`proposals.serve_refusal`); without them the
+    pointer is always null (fails closed)."""
     actor = f"device:{device_id}"
     device = session.get(Device, device_id)
     registered_now = False
@@ -325,9 +335,9 @@ def check_in(
         assigned=Assigned(firmware=device.assigned_firmware, harness=device.assigned_harness),
         drop_overlay=_drop_overlay(session, device),
         frozen=_fleet_frozen(session, device.fleet_id),
-        # A checked Fleet Doctor fix waiting for this device (None while frozen). Reads
-        # only: a routine check-in still writes no event.
-        proposal=proposals.pointer_for(session, device, now),
+        # A checked Fleet Doctor fix waiting for this device (None while frozen, or while
+        # the serve-time gate refuses it). Reads only: a routine check-in writes no event.
+        proposal=proposals.pointer_for(session, device, now, settings=settings),
     )
 
 

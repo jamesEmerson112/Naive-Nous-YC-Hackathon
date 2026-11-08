@@ -1,16 +1,73 @@
-"""domain/doctor.py, consult rules (PR 4): how a waiting consult ends, and what follows."""
+"""domain/doctor.py, consult rules (PR 4): how a waiting consult ends, what follows, and
+what a diagnose call may cost."""
 
 import math
 
 import pytest
 
 from romulus_cloud.domain.doctor import (
+    BLOCKED_OVER_CAP,
+    DIAGNOSE_SYSTEM,
     GAVE_UP,
     HELD_OVERLAY,
+    MAX_EVIDENCE_CHARS,
     RETRY_OUTCOMES,
+    Spend,
+    admit,
     after_close,
     applied_outcome,
+    cost_usd,
+    diagnose_estimate_usd,
+    estimate_tokens,
+    failed_run_cost_usd,
 )
+
+
+def test_estimate_tokens_is_len_over_4_and_never_zero():
+    assert estimate_tokens(400) == 100
+    assert estimate_tokens(0) == 1 and estimate_tokens(3) == 1
+
+
+def test_the_diagnose_estimate_covers_the_largest_prompt_and_the_completion_budget():
+    est = diagnose_estimate_usd(4000, 0.001)
+    biggest_prompt = estimate_tokens(len(DIAGNOSE_SYSTEM) + MAX_EVIDENCE_CHARS)
+    assert est > cost_usd(biggest_prompt, 4000, 0.001)
+    assert diagnose_estimate_usd(0, 0.001) > 0  # the prompt alone costs something
+    assert diagnose_estimate_usd(4000, 0.0) == 0.0
+
+
+@pytest.mark.parametrize("price", [-0.001, math.nan, math.inf])
+def test_a_bad_price_never_estimates_as_free(price):
+    with pytest.raises(ValueError):
+        diagnose_estimate_usd(4000, price)
+    with pytest.raises(ValueError):
+        failed_run_cost_usd(1000, price)
+
+
+def test_a_failed_run_costs_its_prompt():
+    tokens, cost = failed_run_cost_usd(4000, 0.001)
+    assert tokens == 1000 and cost == pytest.approx(0.001)
+    assert failed_run_cost_usd(0, 0.001)[0] == 1
+
+
+def _admit(spent: float, cap: float, estimate: float):
+    return admit(
+        frozen=False,
+        code_rev="c0de001",
+        consults_for_incident=0,
+        consult_cap=2,
+        spend=Spend(spent, cap),
+        mode="fake",
+        estimate_usd=estimate,
+    )
+
+
+def test_admit_counts_the_estimate_against_the_cap():
+    assert _admit(0.0, 1.0, 1.0).ok
+    blocked = _admit(0.0, 1.0, 1.01)
+    assert not blocked.ok and blocked.outcome == BLOCKED_OVER_CAP and blocked.which == "spend"
+    assert not _admit(0.5, 1.0, 0.6).ok
+    assert not _admit(0.0, 1.0, math.nan).ok  # fails closed
 
 
 @pytest.mark.parametrize(

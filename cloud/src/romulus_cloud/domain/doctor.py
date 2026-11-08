@@ -147,13 +147,15 @@ def admit(
     consult_cap: int,
     spend: Spend,
     mode: str,
+    estimate_usd: float = 0.0,
 ) -> Decision:
     """May a consult start work (the `admit` stage, interfaces.md §5.1)?
 
     `consults_for_incident` counts the incident's consults **before** this one (attempt - 1),
     so a count equal to `consult_cap` gives up. In order: off or frozen holds; no
     `running.code_rev` declines (a patch needs a base); out of consults gives up; then the
-    daily spend (`check_spend`). Bad counts fail closed as `blocked_over_cap`.
+    daily spend (`check_spend`) with `estimate_usd`, what the consult's next call may cost
+    (`diagnose_estimate_usd`). Bad counts fail closed as `blocked_over_cap`.
     """
     held = _held(mode, frozen)
     if held:
@@ -184,7 +186,7 @@ def admit(
             f"Gave up: the incident has had {consults_for_incident} of its {consult_cap} consults.",
             "consults",
         )
-    return check_spend(spend)
+    return check_spend(spend, estimate_usd=estimate_usd)
 
 
 def admit_ask(
@@ -574,6 +576,26 @@ def applied_outcome(proposal_status: str, overlay_status: str | None) -> str | N
     if overlay_status == "superseded":
         return STALE
     return None
+
+
+def estimate_tokens(chars: int) -> int:
+    """A token count from a text length: `len // 4`, never 0 (so a cost never reads $0)."""
+    return max(1, chars // 4)
+
+
+def diagnose_estimate_usd(max_completion_tokens: int, usd_per_1k_tokens: float) -> float:
+    """The most one diagnose call can cost: the largest prompt `diagnose_prompt` builds (the
+    system prompt, the evidence block at `MAX_EVIDENCE_CHARS`, wrapping) plus
+    `max_completion_tokens`. Raises ValueError on a bad price or count (`cost_usd`)."""
+    prompt_chars = len(DIAGNOSE_SYSTEM) + MAX_EVIDENCE_CHARS + 1000
+    return cost_usd(estimate_tokens(prompt_chars), max_completion_tokens, usd_per_1k_tokens)
+
+
+def failed_run_cost_usd(prompt_chars: int, usd_per_1k_tokens: float) -> tuple[int, float]:
+    """(estimated prompt tokens, cost) of a call that failed or was lost: its prompt was sent,
+    so it counts at `len // 4` tokens with no completion. Raises ValueError on a bad price."""
+    tokens = estimate_tokens(prompt_chars)
+    return tokens, cost_usd(tokens, 0, usd_per_1k_tokens)
 
 
 def after_close(outcome: str | None, consults_used: int, consult_cap: int) -> str | None:

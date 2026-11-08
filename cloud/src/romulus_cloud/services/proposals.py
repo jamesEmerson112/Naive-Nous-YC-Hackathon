@@ -5,9 +5,14 @@
   `doctor.proposal_offered`. It refuses (raises) a patch that touches a safety path, or any
   patch while `SAFETY_PATHS_CONFIRMED` is false: the consult discards those before it gets
   here, so this is the last line, not the rule (D25).
-- **`pointer_for`** answers `CheckInResponse.proposal`: the device's newest offered,
-  unexpired proposal, or None. Always None while the fleet is frozen (D11).
-- **`get_for_device`** serves the body the device pulls.
+- **`pointer_for`** answers `CheckInResponse.proposal`: the device's newest servable
+  proposal, or None. Always None while the fleet is frozen (D11).
+- **`get_for_device`** serves the body the device pulls (409 while frozen).
+- **Serve-time gate (`serve_refusal`).** Both re-check, on every request and against that
+  request's settings: offered and unexpired, the Doctor not off, safety paths confirmed,
+  `touches_safety` recomputed against today's `SAFETY_PATHS`, and no stub check unless
+  `DOCTOR_OFFER_STUB_CHECKED` is on and the draft was a stub too. Turning any of these off
+  hides an already-offered fix at once (null pointer, 410), without waiting for expiry.
 - **Hashes are computed per request, never stored for serving.** `pointer_for` and
   `get_for_device` each call `proposal_body_and_sha256` on the same stored row, and the dump
   is canonical, so the pointer's `sha256`, the body bytes and `X-Sha256` always agree. The
@@ -84,30 +89,54 @@ def body_and_sha256(p: DoctorProposal) -> tuple[bytes, str]:
     return proposal_body_and_sha256(proposal_model(p))
 
 
-def _servable(p: DoctorProposal, now: datetime) -> bool:
-    return p.status == OFFERED and not p.touches_safety and p.expires_at > now
+def serve_refusal(p: DoctorProposal, now: datetime, settings: Settings | None) -> str | None:
+    """Why this proposal may not be served right now, or None. Checked on **every** pointer
+    and pull, against the settings of this request (not those it was offered under):
+
+    - it is `offered` and not past `expires_at`;
+    - the Doctor isn't off (no settings counts as off: fail closed);
+    - `SAFETY_PATHS_CONFIRMED` is true;
+    - its patch doesn't touch `SAFETY_PATHS`, recomputed now (the stored flag counts too);
+    - its check isn't a stub, unless `DOCTOR_OFFER_STUB_CHECKED` is on and its draft was a
+      stub as well (so a real patch with only a stub check is never served).
+    """
+    if p.status != OFFERED:
+        return p.status or "unknown"
+    if p.expires_at <= now:
+        return "expired"
+    if settings is None or settings.doctor_mode == "off":
+        return "held back: the Fleet Doctor is off"
+    if not settings.safety_paths_confirmed:
+        return "held back: the safety paths are unconfirmed (D25)"
+    if p.touches_safety or touches_safety(p.code_patch, settings.safety_paths):
+        return "held back: its patch touches the safety layer or visor (D25)"
+    stub_ok = settings.doctor_offer_stub_checked and bool((p.raw or {}).get("draft_stub"))
+    if (p.checks or {}).get("stub") and not stub_ok:
+        return "held back: its check is a stub"
+    return None
 
 
 # --- the check-in pointer and the pull ---------------------------------------------------
 
 
-def pointer_for(session: Session, device: Device, now: datetime) -> ProposalPointer | None:
-    """The device's newest offered, unexpired proposal for `CheckInResponse.proposal`; None
-    if the fleet is frozen or there is none. Reads only, so a routine check-in still writes
-    no event."""
+def pointer_for(
+    session: Session, device: Device, now: datetime, *, settings: Settings | None
+) -> ProposalPointer | None:
+    """The device's newest servable proposal (`serve_refusal`) for
+    `CheckInResponse.proposal`; None if the fleet is frozen or there is none. Reads only, so
+    a routine check-in still writes no event."""
     if _frozen(session, device.fleet_id):
         return None
-    p = session.scalars(
+    offered = session.scalars(
         select(DoctorProposal)
         .where(
             DoctorProposal.device_id == device.id,
             DoctorProposal.status == OFFERED,
-            DoctorProposal.touches_safety.is_(False),
             DoctorProposal.expires_at > now,
         )
         .order_by(DoctorProposal.created_at.desc(), DoctorProposal.id.desc())
-        .limit(1)
-    ).first()
+    )
+    p = next((p for p in offered if serve_refusal(p, now, settings) is None), None)
     if p is None:
         return None
     _, sha256 = body_and_sha256(p)
@@ -123,12 +152,17 @@ def _unknown(device_id: str, proposal_id: str) -> ApiError:
 
 
 def get_for_device(
-    session: Session, device_id: str, proposal_id: str, now: datetime
+    session: Session,
+    device_id: str,
+    proposal_id: str,
+    now: datetime,
+    *,
+    settings: Settings | None,
 ) -> tuple[bytes, str]:
     """(body, sha256) of the proposal the device pulls.
 
     404 `unknown_proposal` (also when it belongs to another device), 409 `fleet_frozen`,
-    410 `proposal_gone` (no longer offered, or expired).
+    410 `proposal_gone` (no longer offered, expired, or held back by `serve_refusal`).
     """
     p = session.get(DoctorProposal, proposal_id)
     if p is None or p.device_id != device_id:
@@ -140,10 +174,10 @@ def get_for_device(
             "The fleet is frozen (kill switch), so no Fleet Doctor fix is served; "
             "stay on the assigned version.",
         )
-    if not _servable(p, now):
-        state = "expired" if p.status == OFFERED and p.expires_at <= now else p.status or "unknown"
+    refusal = serve_refusal(p, now, settings)
+    if refusal is not None:
         raise ApiError(
-            410, "proposal_gone", f"Proposal {proposal_id} is {state}; it is no longer offered."
+            410, "proposal_gone", f"Proposal {proposal_id} is {refusal}; it is not offered now."
         )
     return body_and_sha256(p)
 
@@ -168,10 +202,17 @@ def offer(
     patch = draft.get("code_patch")
     if not isinstance(patch, str) or not patch.strip():
         raise ValueError(f"consult {consult.id}: the draft has no code_patch to offer")
-    if touches_safety(patch, settings.safety_paths) or not settings.safety_paths_confirmed:
+    safety = touches_safety(patch, settings.safety_paths)
+    if safety or not settings.safety_paths_confirmed:
         raise ValueError(
             f"consult {consult.id}: refusing to offer a patch while it touches a safety path "
             "or SAFETY_PATHS_CONFIRMED is false (D25)"
+        )
+    draft_stub = bool(draft.get("stub"))
+    if checks.get("stub") and not (settings.doctor_offer_stub_checked and draft_stub):
+        raise ValueError(
+            f"consult {consult.id}: refusing to offer a stub-checked patch unless "
+            "DOCTOR_OFFER_STUB_CHECKED is on and the draft is a stub too"
         )
     incident = session.get(Incident, consult.incident_id)
     device = session.get(Device, consult.device_id)
@@ -195,12 +236,12 @@ def offer(
         repro_test=draft.get("repro_test"),
         why=draft.get("why") or "",
         checks=dict(checks),
-        touches_safety=False,
+        touches_safety=safety,
         status=OFFERED,
         expires_at=now + timedelta(seconds=settings.doctor_proposal_ttl_s),
         created_at=now,
         updated_at=now,
-        raw={},
+        raw={"draft_stub": draft_stub},  # `serve_refusal` reads it on every serve
     )
     _, p.sha256 = body_and_sha256(p)  # informational; served hashes are recomputed
     session.add(p)
@@ -263,8 +304,13 @@ def record_result(
       a no-op; a different one is `409 proposal_result_conflict`.
     - A result on an `expired` proposal with none recorded is still stored: the device
       pulled it before it expired and only the report is late (the outbox). Refusing it
-      would lose a running overlay's row. The why says it arrived late.
+      would lose a running overlay's row. `late` (and the why) say so, also for a result
+      that beat the tick's expiry (`expires_at <= now`).
     - `applied` creates the overlay row (`_apply_overlay`) and records `overlay.applied`.
+      An `overlay_id` whose row already belongs to an incident and doesn't carry this
+      proposal's id is `409 proposal_result_conflict`, before anything is written: the
+      cloud never takes over another incident's overlay.
+    - Not gated by the serve-time rules: a device can always report what it did.
     - Every new result records `doctor.proposal_result` (actor `device:<id>`).
     """
     p = session.get(DoctorProposal, proposal_id, with_for_update=True)
@@ -281,7 +327,24 @@ def record_result(
             f"{device_id} already reported {said} for proposal {proposal_id}; "
             f"this result says {body.result}.",
         )
-    late = p.status == EXPIRED
+    row: Overlay | None = None
+    if body.result == "applied":
+        assert body.overlay_id is not None  # the contract's one strict rule
+        row = session.get(Overlay, (device_id, body.overlay_id), with_for_update=True)
+        if (
+            row is not None
+            and row.incident_id is not None
+            and (row.raw or {}).get("proposal_id") != p.id
+        ):
+            # Never take over another incident's overlay (a reused or wrong id).
+            raise ApiError(
+                409,
+                "proposal_result_conflict",
+                f"Overlay {body.overlay_id} on {device_id} already belongs to incident "
+                f"{row.incident_id}, not to proposal {proposal_id}; report the overlay id "
+                "the fix was applied as.",
+            )
+    late = p.status == EXPIRED or p.expires_at <= now
     at = body.occurred_at or now
     p.status = body.result
     p.overlay_id = body.overlay_id if body.result == "applied" else None
@@ -300,18 +363,8 @@ def record_result(
         "consult": p.consult_id,
         "proposal": p.id,
     }
-    row: Overlay | None = None
-    note = ""
-    if body.result == "applied":
-        assert p.overlay_id is not None  # the contract's one strict rule
+    if p.overlay_id:
         refs["overlay"] = p.overlay_id
-        row = session.get(Overlay, (p.device_id, p.overlay_id), with_for_update=True)
-        if row is not None and row.incident_id is not None:
-            # The device reused an overlay id another incident owns; the first owner keeps it.
-            note = (
-                f" Overlay {p.overlay_id} already belongs to incident {row.incident_id}, so "
-                "the cloud left that row alone."
-            )
     reason = body.reason or "no reason given"
     words = {
         "applied": f"applied the Fleet Doctor's fix {p.id} as overlay {p.overlay_id}",
@@ -328,7 +381,7 @@ def record_result(
         "agent",
         "doctor.proposal_result",
         refs,
-        why + note,
+        why,
         data={
             "result": body.result,
             "reason": body.reason,
@@ -339,7 +392,7 @@ def record_result(
         ts=at,
         fleet_id=p.fleet_id,
     )
-    if body.result == "applied" and not note:
+    if body.result == "applied":
         _apply_overlay(session, p, row, kind, at, now, safety_paths)
     return True
 

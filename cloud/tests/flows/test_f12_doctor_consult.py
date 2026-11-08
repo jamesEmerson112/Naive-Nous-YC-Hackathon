@@ -99,6 +99,19 @@ class Doctor:
 
 
 @pytest.fixture
+def settings(make_settings):
+    """The API's settings (the `app` fixture's): the Doctor on, like the worker's. The
+    check-in pointer and the pull re-check them on every request (`serve_refusal`)."""
+    return make_settings(**ON)
+
+
+def _estimate(settings) -> float:
+    return rules.diagnose_estimate_usd(
+        settings.doctor_diagnose_max_tokens, settings.doctor_usd_per_1k_tokens
+    )
+
+
+@pytest.fixture
 def make_doctor(sessions, clock, make_settings, seeded) -> Callable[..., Doctor]:
     def make(*, jobs=None, llm=None, **overrides) -> Doctor:
         return Doctor(sessions, clock, make_settings(**(ON | overrides)), jobs=jobs, llm=llm)
@@ -382,12 +395,131 @@ def test_a_draft_touching_safety_is_discarded(
     assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"doctor_mode": "off"},
+        {"safety_paths_confirmed": False},
+        {"safety_paths": ["safety", "visor", "doctor"]},  # now covers doctor/FAKE_FIX.md
+        {"doctor_offer_stub_checked": False},
+    ],
+    ids=["mode-off", "safety-unconfirmed", "safety-paths-cover-patch", "stub-not-offered"],
+)
+def test_the_serve_time_gate_hides_an_offered_fix(
+    change, app, client, example, make_doctor, db_session, clock
+):
+    """Settings the API holds now, not those the fix was offered under, decide whether it is
+    served: the pointer goes null and the pull answers 410, at once, with no state change.
+    A device can still report what it did."""
+    doc = make_doctor()
+    _, pid, t = _offered(doc, client, example, clock, db_session)
+    assert _checkin(client, example)["proposal"]["proposal_id"] == pid
+    on = app.state.settings
+    app.state.settings = on.model_copy(update=change)
+    assert _checkin(client, example)["proposal"] is None
+    resp = client.get(f"/v1/devices/arm-1/proposals/{pid}")
+    assert resp.status_code == 410 and resp.json()["error"] == "proposal_gone"
+    assert _proposal(db_session, pid).status == "offered"
+
+    app.state.settings = on  # a gate, not a state change: back on, served again
+    assert _checkin(client, example)["proposal"]["proposal_id"] == pid
+    app.state.settings = on.model_copy(update=change)
+    assert _result(client, pid, "applied", overlay_id="ov-doc-1", at=t).status_code == 204
+    assert _overlay(db_session, "ov-doc-1").raw["proposal_id"] == pid
+
+
+def test_a_stored_proposal_is_rechecked_on_every_serve(
+    client, example, make_doctor, db_session, clock
+):
+    """The stored row is never trusted alone: a stub check without a stub draft, or a stored
+    `touches_safety`, is held back even under permissive settings."""
+    doc = make_doctor()
+    _, pid, _ = _offered(doc, client, example, clock, db_session)
+    p = _proposal(db_session, pid)
+    assert p.touches_safety is False and p.raw["draft_stub"] is True
+    for forged in ({"raw": {}}, {"touches_safety": True}):
+        for name, value in forged.items():
+            setattr(p, name, value)
+        db_session.commit()
+        assert _checkin(client, example)["proposal"] is None
+        assert client.get(f"/v1/devices/arm-1/proposals/{pid}").status_code == 410
+        p.raw, p.touches_safety = {"draft_stub": True}, False
+        db_session.commit()
+        assert _checkin(client, example)["proposal"]["proposal_id"] == pid
+
+
+REAL_PATCH = "\n".join(
+    [
+        "diff --git a/doctor/REAL_FIX.md b/doctor/REAL_FIX.md",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/doctor/REAL_FIX.md",
+        "@@ -0,0 +1,1 @@",
+        "+a real change, not a stub",
+        "",
+    ]
+)
+
+
+def test_a_real_patch_is_never_offered_on_a_stub_check(
+    monkeypatch, client, example, make_doctor, db_session, clock
+):
+    """`DOCTOR_OFFER_STUB_CHECKED` lets a stub draft through a stub check, never a real one
+    (what a coder draft would be): the consult ends `advised`."""
+    monkeypatch.setattr(
+        rules, "fake_draft", lambda case: {"code_patch": REAL_PATCH, "repro_test": None, "why": "x"}
+    )
+    doc = make_doctor()
+    clock.at(T0)
+    incident_id = _report(client, example)
+    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER + 2)
+    (consult,) = _consults(db_session, incident_id)
+    assert consult.outcome == "advised"
+    (closed,) = [e for e in _doctor_events(db_session, incident_id) if e.kind.endswith("closed")]
+    assert "patch is real" in closed.data["why"]
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
+
+
+def test_a_result_never_takes_over_another_incidents_overlay(
+    client, example, make_doctor, db_session, clock, count_events
+):
+    doc = make_doctor()
+    incident_id, pid, t = _offered(doc, client, example, clock, db_session)
+    # The healer's own overlay from an earlier incident on the same arm.
+    healer_incident = _report(client, example, name="incident_d1_code_patch")
+    healer = _overlay(db_session, "ov-d1-0001")
+    before = (healer.incident_id, healer.code_patch, dict(healer.raw), healer.status)
+    assert before[0] == healer_incident
+
+    resp = _result(client, pid, "applied", overlay_id="ov-d1-0001", at=t)
+    assert resp.status_code == 409 and resp.json()["error"] == "proposal_result_conflict"
+    healer = _overlay(db_session, "ov-d1-0001")
+    assert (healer.incident_id, healer.code_patch, dict(healer.raw), healer.status) == before
+    assert _proposal(db_session, pid).status == "offered"  # nothing recorded
+    assert count_events("doctor.proposal_result", {"proposal": pid}) == 0
+
+    # The real overlay id still works afterwards.
+    assert _result(client, pid, "applied", overlay_id="ov-doc-1", at=t).status_code == 204
+    # The consult reads only its own overlay: a row that doesn't carry this proposal's id
+    # (forged here) says nothing about the fix, even when it is held.
+    ov = _overlay(db_session, "ov-doc-1")
+    ov.raw, ov.status = {**ov.raw, "proposal_id": "prop_someone_else"}, "held"
+    db_session.commit()
+    doc.tick(t + timedelta(seconds=5))
+    assert _consults(db_session, incident_id)[0].status == "waiting"
+
+
 # --- caps, freeze, expiry -------------------------------------------------------------------
 
 
-def test_the_daily_spend_cap_blocks_at_admit(client, example, make_doctor, db_session, clock):
-    # A $0 cap: blocked before any money is spent.
-    doc = make_doctor(doctor_daily_usd_cap=0.0)
+@pytest.mark.parametrize("fraction", [0.0, 0.99], ids=["zero-cap", "cap-below-estimate"])
+def test_the_daily_spend_cap_blocks_at_admit(
+    fraction, client, example, make_doctor, make_settings, db_session, clock
+):
+    """Blocked before any money is spent: at $0, and with nothing spent yet but a cap below
+    what one diagnose call may cost (admit passes that estimate to `check_spend`)."""
+    cap = fraction * _estimate(make_settings(**ON))
+    doc = make_doctor(doctor_daily_usd_cap=cap)
     clock.at(T0)
     incident_id = _report(client, example)
     doc.tick(T0 + timedelta(seconds=2))
@@ -396,17 +528,20 @@ def test_the_daily_spend_cap_blocks_at_admit(client, example, make_doctor, db_se
     (blocked,) = [
         e for e in _doctor_events(db_session, incident_id) if e.kind == "doctor.blocked_over_cap"
     ]
-    assert blocked.data["which"] == "spend" and blocked.data["cap_usd"] == 0.0
+    assert blocked.data["which"] == "spend" and blocked.data["cap_usd"] == cap
+    assert blocked.data["estimate_usd"] == _estimate(doc.settings)
+    assert blocked.data["stage"] == "admit"
 
 
 def test_spend_adds_up_and_a_tiny_cap_blocks_the_next_consult(
-    client, example, make_doctor, db_session, clock
+    client, example, make_doctor, make_settings, db_session, clock
 ):
-    doc = make_doctor(doctor_daily_usd_cap=1e-6)
+    estimate = _estimate(make_settings(**ON))
+    doc = make_doctor(doctor_daily_usd_cap=estimate * 1.01)  # room for one call, barely
     clock.at(T0)
     first = _report(client, example)
     t = doc.run(T0 + timedelta(seconds=2), 3)  # admitted at $0, then diagnosed: spends
-    assert _consults(db_session, first)[0].cost_usd > 1e-6
+    assert _consults(db_session, first)[0].cost_usd > estimate * 0.01
     clock.at(t)
     second = _report(client, example)
     doc.tick(t)
@@ -466,6 +601,20 @@ def test_an_unpulled_fix_expires_and_a_late_result_is_still_recorded(
     assert result.data["late"] is True
     doc.run(late + timedelta(seconds=10), 2)
     assert len(_consults(db_session, incident_id)) == 1  # expired isn't retried
+
+
+def test_a_result_after_expires_at_is_late_even_before_the_tick_expires_it(
+    client, example, make_doctor, db_session, clock
+):
+    doc = make_doctor(doctor_proposal_ttl_s=60)
+    incident_id, pid, t = _offered(doc, client, example, clock, db_session)
+    clock.at(t + timedelta(seconds=120))  # past expires_at; no tick has run since
+    assert _proposal(db_session, pid).status == "offered"
+    assert _result(client, pid, "stale", at=t).status_code == 204
+    (result,) = [
+        e for e in _doctor_events(db_session, incident_id) if e.kind == "doctor.proposal_result"
+    ]
+    assert result.data["late"] is True and "after the proposal expired" in result.why
 
 
 # --- what never gets a consult --------------------------------------------------------------
@@ -529,11 +678,13 @@ def test_consult_true_is_shorthand_for_wanted(client, example, make_doctor, db_s
 
 
 def test_with_default_settings_the_doctor_does_nothing(
-    client, example, db_session, clock, settings, seeded
+    client, example, db_session, clock, make_settings, seeded
 ):
     clock.at(T0)
     incident_id = _report(client, example)
-    assert doctor.tick(db_session, T0, settings=settings, jobs=InlineJobs(), llm=FakeLlm()) == {}
+    defaults = make_settings()
+    assert defaults.doctor_mode == "off"
+    assert doctor.tick(db_session, T0, settings=defaults, jobs=InlineJobs(), llm=FakeLlm()) == {}
     assert _consults(db_session, incident_id) == []
     assert _doctor_events(db_session, incident_id) == []
 
@@ -609,6 +760,35 @@ def test_a_job_that_fails_three_times_gives_up(client, example, make_doctor, db_
     assert doc.jobs.calls == [f"diagnose:{consult.id}"] * 3
     (gave_up,) = [e for e in _doctor_events(db_session, incident_id) if e.kind == "doctor.gave_up"]
     assert gave_up.data["reason"].startswith("job failed") and "provider down" in gave_up.why
+    # Each failed run sent its prompt, so each counts toward today's spend (an estimate).
+    failed = [e for e in _doctor_events(db_session, incident_id) if e.kind == "doctor.declined"]
+    assert [e.data["run"] for e in failed] == [1, 2, 3]
+    for e in failed:
+        assert e.data["stage"] == "diagnose" and e.data["reason"] == "job failed: LlmError"
+        assert e.data["cost_usd"] > 0 and e.data["usage_estimated"] is True
+        assert e.data["completion_tokens"] == 0
+    assert consult.cost_usd == pytest.approx(sum(e.data["cost_usd"] for e in failed))
+
+
+def test_spend_is_checked_again_before_a_retry(
+    client, example, make_doctor, make_settings, db_session, clock
+):
+    """Admit and the first run fit the cap; the failed run's estimated cost doesn't leave
+    room for a second, so the retry is blocked instead of submitted."""
+    estimate = _estimate(make_settings(**ON))
+    doc = make_doctor(llm=BrokenLlm(), doctor_daily_usd_cap=estimate * 1.0001)
+    clock.at(T0)
+    incident_id = _report(client, example)
+    doc.run(T0 + timedelta(seconds=2), 5)
+    (consult,) = _consults(db_session, incident_id)
+    assert consult.outcome == "blocked_over_cap"
+    assert doc.jobs.calls == [f"diagnose:{consult.id}"]
+    kinds = [e.kind for e in _doctor_events(db_session, incident_id)]
+    assert kinds[-3:] == ["doctor.declined", "doctor.blocked_over_cap", "doctor.consult_closed"]
+    (blocked,) = [
+        e for e in _doctor_events(db_session, incident_id) if e.kind == "doctor.blocked_over_cap"
+    ]
+    assert blocked.data["stage"] == "diagnose" and blocked.data["spent_today_usd"] > 0
 
 
 # --- route errors ---------------------------------------------------------------------------

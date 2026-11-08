@@ -226,16 +226,25 @@ def _give_up(t: _Tick, consult: DoctorConsult, reason: str) -> None:
     _close(t, consult, rules.GAVE_UP, f"Gave up: {reason}.")
 
 
-def _refuse(t: _Tick, consult: DoctorConsult, d: rules.Decision, spend: rules.Spend) -> None:
-    """Admit said no for good: its event (`doctor.declined` / `blocked_over_cap` /
-    `gave_up`), then the close."""
+def _refuse(
+    t: _Tick,
+    consult: DoctorConsult,
+    d: rules.Decision,
+    spend: rules.Spend,
+    estimate_usd: float | None,
+    stage: str = "admit",
+) -> None:
+    """A spend or admit check said no for good: its event (`doctor.declined` /
+    `blocked_over_cap` / `gave_up`), then the close."""
     assert d.outcome is not None
     data: dict[str, Any] = {
-        rules.DECLINED: {"reason": d.why, "stage": "admit", "which": d.which},
+        rules.DECLINED: {"reason": d.why, "stage": stage, "which": d.which},
         rules.BLOCKED_OVER_CAP: {
             "spent_today_usd": spend.spent_today_usd,
             "cap_usd": spend.cap_usd,
+            "estimate_usd": estimate_usd,
             "which": d.which,
+            "stage": stage,
         },
         rules.GAVE_UP: {
             "reason": d.why,
@@ -417,9 +426,29 @@ def _advance(t: _Tick, consult: DoctorConsult) -> None:
         stage(t, consult, incident)
 
 
+def _spend(t: _Tick) -> rules.Spend:
+    s = t.settings
+    return rules.Spend(spent_today(t.session, t.now, settings=s), s.doctor_daily_usd_cap)
+
+
+def _diagnose_estimate(s: Settings) -> float | rules.Decision:
+    """The most a diagnose call may cost, or a refusal when the price or token budget is bad
+    (a bad price must never count as free: fails closed)."""
+    try:
+        return rules.diagnose_estimate_usd(s.doctor_diagnose_max_tokens, s.doctor_usd_per_1k_tokens)
+    except ValueError as exc:
+        return rules.Decision(
+            False,
+            rules.BLOCKED_OVER_CAP,
+            f"Blocked, can't price the Fleet Doctor's calls: {exc}.",
+            "spend",
+        )
+
+
 def _admit(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
     s = t.settings
-    spend = rules.Spend(spent_today(t.session, t.now, settings=s), s.doctor_daily_usd_cap)
+    spend = _spend(t)
+    estimate = _diagnose_estimate(s)
     decision = rules.admit(
         frozen=False,  # the tick returned already if the fleet is frozen
         code_rev=(incident.running or {}).get("code_rev"),
@@ -427,21 +456,14 @@ def _admit(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
         consult_cap=s.doctor_consults_per_incident,
         spend=spend,
         mode=s.doctor_mode,
+        estimate_usd=estimate if isinstance(estimate, float) else 0.0,
     )
-    if decision.ok:
-        try:  # a bad price must never count as free (fails closed)
-            rules.cost_usd(0, 0, s.doctor_usd_per_1k_tokens)
-        except ValueError as exc:
-            decision = rules.Decision(
-                False,
-                rules.BLOCKED_OVER_CAP,
-                f"Blocked, can't price the Fleet Doctor's calls: {exc}.",
-                "spend",
-            )
+    if decision.ok and isinstance(estimate, rules.Decision):
+        decision = estimate
     if decision.ok:
         _move(t, consult, "gather")
     elif decision.outcome is not None:  # None: held for now (off, frozen); never here
-        _refuse(t, consult, decision, spend)
+        _refuse(t, consult, decision, spend, estimate if isinstance(estimate, float) else None)
 
 
 def _gather(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
@@ -459,11 +481,55 @@ def _forget_after_commit(t: _Tick, key: str) -> None:
     event.listen(t.session, "after_commit", lambda _session: jobs.forget(key), once=True)
 
 
+def _record_failed_run(
+    t: _Tick, consult: DoctorConsult, stage: str, run: int, error: str, prompt_chars: int
+) -> None:
+    """A run that failed or was lost still sent its prompt: count it toward today's spend at
+    an estimate (`len // 4` prompt tokens, no completion), as `doctor.declined` with
+    `stage` and `cost_usd`, so the cap can't be dodged by calls that error out."""
+    exc_type = error.split(":", 1)[0].strip() or "Error"
+    tokens, cost = rules.failed_run_cost_usd(prompt_chars, t.settings.doctor_usd_per_1k_tokens)
+    consult.cost_usd = (consult.cost_usd or 0.0) + cost
+    _record(
+        t.session,
+        t.settings,
+        consult,
+        "doctor.declined",
+        f"The {stage} run {run} failed ({_clip(error, 200)}); its prompt counts toward today's "
+        f"spend at an estimated ${cost:.4f}.",
+        {
+            "reason": f"job failed: {exc_type}",
+            "stage": stage,
+            "which": "job",
+            "error": _clip(error, 500),
+            "run": run,
+            "prompt_tokens": tokens,
+            "completion_tokens": 0,
+            "cost_usd": cost,
+            "usage_estimated": True,
+        },
+        now=t.now,
+    )
+
+
 def _run_job(
-    t: _Tick, consult: DoctorConsult, key: str, make: Callable[[], Callable[[], Any]]
+    t: _Tick,
+    consult: DoctorConsult,
+    key: str,
+    make: Callable[[], Callable[[], Any]],
+    *,
+    stage: str,
+    prompt_chars: int,
+    estimate_usd: float,
 ) -> Done | None:
     """Poll `key`; submit it when it was never run, was lost (Missing) or failed. → `Done`,
-    or None while pending (or after giving up: 3 tries, then `gave_up`, "job failed")."""
+    or None while pending, or once the consult closed.
+
+    - A failed or lost run is counted toward spend (`_record_failed_run`), then after
+      `MAX_JOB_TRIES` runs the consult gives up ("job failed").
+    - Spend is checked (`estimate_usd`) before **every** submit, the first included, so a
+      day's cap reached between runs blocks the retry (`blocked_over_cap`).
+    """
     state = t.jobs.poll(key)
     if isinstance(state, Done):
         return state
@@ -473,10 +539,18 @@ def _run_job(
     raw = dict(consult.raw or {})
     tries = dict(raw.get("job_tries") or {})
     used = int(tries.get(key, 0))
-    if used >= MAX_JOB_TRIES:
-        error = state.error if isinstance(state, Failed) else "its result was lost"
+    if used:
+        error = state.error if isinstance(state, Failed) else "LostJob: the worker lost it"
+        _record_failed_run(t, consult, stage, used, error, prompt_chars)
+        if used >= MAX_JOB_TRIES:
+            _forget_after_commit(t, key)
+            _give_up(t, consult, f"job failed: {key} ran {used} times ({error})")
+            return None
+    spend = _spend(t)
+    decision = rules.check_spend(spend, estimate_usd=estimate_usd)
+    if not decision.ok:
         _forget_after_commit(t, key)
-        _give_up(t, consult, f"job failed: {key} ran {used} times ({error})")
+        _refuse(t, consult, decision, spend, estimate_usd, stage=stage)
         return None
     tries[key] = used + 1
     raw["job_tries"] = tries
@@ -517,7 +591,7 @@ def _tokens(result: dict[str, Any], prompt_chars: int) -> tuple[int, int, bool]:
         value = result.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             text_len = chars if chars is not None else len(str(result.get("text") or ""))
-            value, estimated = max(1, text_len // 4), True
+            value, estimated = rules.estimate_tokens(text_len), True
         counts.append(value)
     return counts[0], counts[1], estimated
 
@@ -536,8 +610,20 @@ def _diagnose(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
             s.doctor_diagnose_timeout_s,
         )
 
+    estimate = _diagnose_estimate(s)
+    if isinstance(estimate, rules.Decision):
+        _refuse(t, consult, estimate, _spend(t), None, stage="diagnose")
+        return
     try:
-        done = _run_job(t, consult, key, make)
+        done = _run_job(
+            t,
+            consult,
+            key,
+            make,
+            stage="diagnose",
+            prompt_chars=len(system) + len(user),
+            estimate_usd=estimate,
+        )
     except LlmConfigError as exc:
         _give_up(t, consult, f"the Doctor has no LLM: {exc}")
         return
@@ -697,17 +783,22 @@ def _check(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
 
 
 def _offer(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
-    checks = consult.checks or {}
-    if checks.get("stub") and not t.settings.doctor_offer_stub_checked:
+    checks, draft = consult.checks or {}, consult.draft or {}
+    # A stub check may only carry a stub draft: a real patch is never offered unchecked.
+    if checks.get("stub") and not (t.settings.doctor_offer_stub_checked and draft.get("stub")):
+        why = (
+            "The fix's check is a stub and DOCTOR_OFFER_STUB_CHECKED is off"
+            if not t.settings.doctor_offer_stub_checked
+            else "The fix's check is a stub but its patch is real, and a real patch is never "
+            "offered on a stub check"
+        )
         _close(
             t,
             consult,
             rules.ADVISED,
-            "The fix's check is a stub and DOCTOR_OFFER_STUB_CHECKED is off, so nothing is "
-            "offered; the hypotheses stand as advice.",
+            f"{why}, so nothing is offered; the hypotheses stand as advice.",
         )
         return
-    draft = consult.draft or {}
     refusal = _safety_refusal(draft.get("code_patch"), t.settings)  # again, as it's offered
     if refusal:
         _discard(t, consult, refusal)
@@ -752,6 +843,8 @@ def _sync_applied(t: _Tick, consult: DoctorConsult) -> None:
         _give_up(t, consult, "its proposal is missing")
         return
     overlay = t.session.get(Overlay, (p.device_id, p.overlay_id)) if p.overlay_id else None
+    if overlay is not None and (overlay.raw or {}).get("proposal_id") != p.id:
+        overlay = None  # not this proposal's overlay: its status says nothing about the fix
     outcome = rules.applied_outcome(p.status, overlay.status if overlay else None)
     if outcome is None:
         return

@@ -252,11 +252,17 @@ These refine §5.1–§5.2 and §8; where they differ, this section wins.
 
 - **`doctor_max_open` bounds working consults** (stages `admit`…`offer`). Consults in `applied` only wait on the device, so every tick syncs all of them (cheap reads, `SKIP LOCKED`) outside that limit. Otherwise five silent devices would starve every new consult.
 - **No event for `admit → gather` or `gather → diagnose`.** §8 has no kind for them, and adding one would need a `story.LABELS` entry. `doctor.consult_opened` comes before them and `doctor.diagnosed` after. Every other transition writes its event in the same transaction.
-- **Admit also checks the price.** A bad `DOCTOR_USD_PER_1K_TOKENS` closes the consult `blocked_over_cap` (`which: spend`) before anything is spent, so `cost_usd` can't raise later.
+- **Admit counts what the call may cost.** It passes `estimate_usd = domain.doctor.diagnose_estimate_usd(DOCTOR_DIAGNOSE_MAX_TOKENS, price)` to `check_spend`. That is the largest prompt `diagnose_prompt` builds plus the full completion budget. A bad `DOCTOR_USD_PER_1K_TOKENS` closes the consult `blocked_over_cap` (`which: spend`) before anything is spent. `doctor.blocked_over_cap` adds `estimate_usd` and `stage`.
+- **Spend is checked again before every job submit,** the first included. A cap reached between runs closes the consult `blocked_over_cap` with `stage: diagnose` instead of submitting the job.
+- **Failed and lost runs cost money too.** Each one records `doctor.declined` with `stage: diagnose`, `reason: "job failed: <ExcType>"`, `run`, and `cost_usd` at `len // 4` prompt tokens with no completion (`usage_estimated: true`). It also adds that cost to `consult.cost_usd`. `doctor.declined` moves no badge in the story.
 - **Job tries count submissions.** A `Missing` or `Failed` job is resubmitted until it has run 3 times; the next `Missing` or `Failed` closes the consult `gave_up` (reason `job failed: …`). The tries live in `doctor_consults.raw["job_tries"]`. The key is forgotten in an `after_commit` hook on the step's session, so a rolled-back tick re-applies the result without paying again.
-- **`applied` sync** (`domain.doctor.applied_outcome`): the proposal's final statuses map to themselves. An `applied` proposal is decided by its overlay: `held`, or any cloud status that only follows held (`locked_in`, `dropped`, `lockin_*`), gives `held`; `reverted` gives `reverted`; `superseded` (a version replaced it before it held) gives `stale`. The tick moves the proposal to `held` or `reverted` in the same transaction as `doctor.consult_closed`.
+- **A stub check carries only a stub draft.** `offer` needs `checks.stub` → `DOCTOR_OFFER_STUB_CHECKED` **and** `draft.stub`. A real patch (a future coder draft) with only a stub check closes `advised` and is never offered. `proposals.offer` raises on it as well.
+- **`applied` sync** (`domain.doctor.applied_outcome`): the overlay counts only if its `raw.proposal_id` is this proposal's id; any other row (a reused or wrong id) is ignored. The proposal's final statuses map to themselves. An `applied` proposal is decided by its overlay: `held`, or any cloud status that only follows held (`locked_in`, `dropped`, `lockin_*`), gives `held`; `reverted` gives `reverted`; `superseded` (a version replaced it before it held) gives `stale`. The tick moves the proposal to `held` or `reverted` in the same transaction as `doctor.consult_closed`.
 - **Retry or give up** (`domain.doctor.after_close`): after a close with `failed_checks`, `reverted` or `failed_verify`, the incident gets attempt N+1 while its consult count is under the cap. Otherwise `doctor.gave_up` is recorded on that last consult, which keeps its own outcome. `raw["next"]` (`retry` or `gave_up`) makes this happen once. Only a job failure closes a consult with the outcome `gave_up`.
-- **Defense in depth on safety:** `check` discards, `offer` re-runs the same check before calling `proposals.offer`, `proposals.offer` raises on a safety-touching patch or unconfirmed paths, and `pointer_for` and the GET never serve a row with `touches_safety`.
+- **Defense in depth on safety:**
+  - `check` discards, and `offer` re-runs the same check before calling `proposals.offer`.
+  - `proposals.offer` raises on a safety-touching patch, on unconfirmed paths, or on a real patch with a stub check. It stores the computed `touches_safety` and `raw.draft_stub`.
+  - The serve-time gate (§6.5) re-checks everything on each pointer and pull.
 - **`consult` shorthand:** `open_new` reads `incidents.raw.consult` with the contract's own leniency (`IncidentReport`), so `"consult": true` counts as wanted, not only `{"wanted": true}`.
 - **Extra event data:** `doctor.consult_opened` adds `retry_of` on retries; `doctor.consult_closed` adds `attempt`; `doctor.declined` adds `which`; `doctor.diagnosed` adds `removed_for_safety`, `usage_estimated` and `latency_ms`; `doctor.proposal_discarded` adds `paths`; `doctor.proposal_result` adds `overlay_id` and `late`. `overlay.applied` and `doctor.proposal_result` both carry refs `consult` and `proposal`.
 - **`doctor_consults.raw` keys:** `proposal_id`, `job_tries`, `job_error`, `retry_of`, `next`.
@@ -300,6 +306,10 @@ def day_start(now: datetime, tz: str) -> datetime                           # sa
 # PR 4:
 def applied_outcome(proposal_status: str, overlay_status: str | None) -> str | None   # how a waiting consult ends (§5.3)
 def after_close(outcome: str | None, consults_used: int, consult_cap: int) -> str | None  # "retry" | "gave_up" | None
+def estimate_tokens(chars: int) -> int                                      # len // 4, never 0
+def diagnose_estimate_usd(max_completion_tokens: int, usd_per_1k_tokens: float) -> float  # largest prompt + budget
+def failed_run_cost_usd(prompt_chars: int, usd_per_1k_tokens: float) -> tuple[int, float]  # a failed run's prompt
+# admit(..., estimate_usd: float = 0.0) passes the estimate to check_spend
 ```
 
 **Prompt rule:** device text (logs, traces, files, the question) goes inside a fenced `<evidence untrusted="true">` block. The system prompt says to treat it as data and answer only in the JSON shape (§6 item 6 of the architecture doc).
@@ -362,9 +372,10 @@ def case_file(session, store, consult, incident, *, settings) -> dict
 ### 6.5 `services/proposals.py` (PR 2 stub, PR 4)
 
 ```python
-def pointer_for(session, device, now) -> ProposalPointer | None        # called at devices.py:324; None if frozen
+def pointer_for(session, device, now, *, settings) -> ProposalPointer | None   # check_in; None if frozen or gated
 def offer(session, consult, draft: dict, checks: dict, now, *, settings) -> DoctorProposal
-def get_for_device(session, device_id, proposal_id, now) -> tuple[bytes, str]   # (body, sha256)
+def get_for_device(session, device_id, proposal_id, now, *, settings) -> tuple[bytes, str]   # (body, sha256)
+def serve_refusal(p, now, settings) -> str | None   # PR 4: the serve-time gate (below)
 def record_result(session, device_id, proposal_id, body: ProposalResult, raw: dict, now, *, safety_paths) -> bool  # True if new
 def expire_due(session, now) -> int
 ```
@@ -381,10 +392,18 @@ def expire_due(session, now) -> int
 If an `OverlayStatus` arrived first, `incidents.set_overlay_status` will have made a placeholder with `incident_id=None`. Fill that placeholder in and keep its status, the way `_apply_overlay` does (`incidents.py:191-199`). Record `overlay.applied` (actor `device:<id>`, class `agent`) and `doctor.proposal_result`.
 
 **As built (PR 4):**
+- **Serve-time safety gate (`serve_refusal`).** The check-in route and the GET route take `SettingsDep`, and `devices.check_in(..., *, settings=None)` passes it on. On **every** request a proposal is served only if all of these hold under that request's settings:
+  - it is `offered` and not past `expires_at`;
+  - `doctor_mode != "off"` (no settings counts as off);
+  - `safety_paths_confirmed` is true;
+  - `touches_safety(code_patch, safety_paths)` is false, recomputed now (OR'ed with the stored flag);
+  - the check isn't a stub, unless `doctor_offer_stub_checked` is on and the draft was a stub (`raw.draft_stub`).
+
+  Otherwise the pointer is null and the GET answers `410 proposal_gone`. Nothing is written, so turning a setting back on serves the proposal again. `record_result` is **not** gated: a device can always report what it did.
 - **The result is recorded once,** in `doctor_proposals.raw["result"]` (`result`, `overlay_id`, the verbatim body). A resend is the same `result` and, for `applied`, the same `overlay_id`; reason text and `occurred_at` may differ between outbox attempts. It answers 200 and writes nothing. Any other result answers `409 proposal_result_conflict`.
-- **A late result on an `expired` proposal is stored,** if none was recorded. The device can only apply a proposal it pulled before expiry, so only the report was late (the outbox). Refusing it would lose the row of an overlay the device runs. The event's why says it was late (`data.late`). The consult stays closed `expired`.
+- **A late result on an `expired` proposal is stored,** if none was recorded. The device can only apply a proposal it pulled before expiry, so only the report was late (the outbox). Refusing it would lose the row of an overlay the device runs. The event's why says it was late (`data.late`). The consult stays closed `expired`. `late` is `status == expired or expires_at <= now`, so a report that arrives before the tick expires the proposal counts as late too.
 - **`doctor.proposal_result` is recorded before `overlay.applied`;** both carry the device's `occurred_at`.
-- If the overlay id already belongs to another incident's row, that row is left alone (the first owner keeps it, as in `_apply_overlay`), and the result's why says so.
+- **A reused overlay id is refused.** On `applied`, the overlay id may already exist for this device with an `incident_id` and a `raw.proposal_id` that is different or missing. That is `409 proposal_result_conflict`, returned before anything is written: the cloud never takes over another incident's overlay. A placeholder (`incident_id` null) is filled as usual.
 - `touches_safety` on the overlay is the proposal's flag OR'ed with `touches_safety(code_patch, SAFETY_PATHS)` at result time. `diff` is `{}`.
 - `incidents.py` is unchanged. The placeholder fill is a few lines duplicated in `proposals._apply_overlay`.
 
