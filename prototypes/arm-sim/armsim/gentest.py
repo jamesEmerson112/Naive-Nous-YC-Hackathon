@@ -275,7 +275,7 @@ def ssh(cmd, timeout=180):
     return r.returncode, r.stdout, r.stderr
 
 
-HOST_UP = (f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. setsid nohup .venv/bin/python -u -m armsim.host "
+HOST_UP = (f"cd {PI_REPO}/prototypes/arm-sim || exit 1; PYTHONPATH=. setsid nohup .venv/bin/python -u -m armsim.host "
            f"--arm real --pod real --var {PI_REPO}/firmware/healer/var --romulus http://192.168.50.1:8000 "
            "> runs/logs/host.log 2>&1 < /dev/null & disown; echo $! > runs/logs/host.pid; sleep 6; "
            "PYTHONPATH=. .venv/bin/python -c \"from armsim.client import call; s=call('status'); "
