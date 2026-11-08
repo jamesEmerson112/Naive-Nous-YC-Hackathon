@@ -242,3 +242,9 @@ def test_superseded_is_terminal(fleet, now):
     assert fleet.get(Overlay, ("arm-1", "ov-1")).status == "superseded"
     kinds = [e.kind for e in events.find(fleet, {"device": "arm-1", "overlay": "ov-1"})]
     assert kinds.count("overlay.superseded") == 1 and "overlay.reverted" not in kinds
+
+
+def test_detected_why_falls_back_to_the_healer(fleet, now):
+    incidents.report(fleet, "arm-1", *_incident(overlay=None), now, safety_paths=[])
+    (ev,) = events.find(fleet, {"device": "arm-1"}, kinds=["incident.reported"])
+    assert ev.why == "Reported by the device's healer."

@@ -53,6 +53,7 @@ def test_f2_rules_patch_story(client, arm, example, count_events, db_session):
     assert broke["line"] == (
         "arm-1 reported camera_occluded: Camera brightness fell below threshold during pick"
     )
+    assert broke["why"] == "Detected by signals brightness; healer outcome fix-config."
     assert agent["why"].startswith("Frames dark for 3 s; occlusion, not hardware.")
     assert "safe_pose" in agent["line"] and "resolved it" in agent["line"]
     assert agent["actor_class"] == "agent"
@@ -88,6 +89,10 @@ def test_f2_d1_code_patch_held_then_reverted(client, arm, example, count_events,
     assert client.post(url, json=example("overlay_status_held")).status_code == 204
     story = _story(client, D1)
     assert story["chain"] == "unexpected_release → agent acted → overlay ov-d1-0001 → held"
+    assert story["steps"][0]["why"] == (
+        "Detected by tier 3 health check; log: S HOLDING->RELEASE reason=dist_lt_threshold "
+        "dist_mm=31; signals dist_mm, gripper_closed; healer outcome fix-code."
+    )
     applied = story["steps"][2]
     assert "code control/hold.py, tests/test_hold_proximity.py" in applied["line"]
     assert "SPEC.md says never open the gripper" in story["steps"][1]["why"]
@@ -131,6 +136,8 @@ def test_f2_late_report_is_placed_by_occurred_at(client, arm, example):
     client.post("/v1/devices/arm-1/incidents", json=rules)
     listed = [i["incident_id"] for i in client.get("/v1/incidents").json()]
     assert listed == [D1, RULES]  # newest first by occurred_at, not by arrival
+    assert [i["incident_id"] for i in client.get("/v1/incidents?limit=1").json()] == [D1]
+    assert client.get("/v1/incidents?limit=0").status_code == 422
     assert [i["incident_id"] for i in client.get("/v1/incidents?kind=camera_occluded").json()] == [
         RULES
     ]

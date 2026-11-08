@@ -7,7 +7,7 @@ actor is then `human:<by>`.
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -200,8 +200,9 @@ def list_incidents(
     device: str | None = None,
     kind: str | None = None,
     since: datetime | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict]:
-    rows = incidents.list_incidents(session, device=device, kind=kind, since=since)
+    rows = incidents.list_incidents(session, device=device, kind=kind, since=since, limit=limit)
     return [incidents.view(i) for i in rows]
 
 

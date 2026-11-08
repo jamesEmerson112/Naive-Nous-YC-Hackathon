@@ -6,6 +6,7 @@ An incident report writes up to three events, all at the incident's `occurred_at
 `overlay.reverted`. Retries are no-ops. Nothing here commits.
 """
 
+import json
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
@@ -48,9 +49,11 @@ def list_incidents(
     device: str | None = None,
     kind: str | None = None,
     since: datetime | None = None,
+    limit: int | None = None,
     fleet_id: str = "default",
 ) -> list[Incident]:
-    """Newest first by when they happened (`occurred_at`), so a late report lands in place."""
+    """Newest first by when they happened (`occurred_at`), so a late report lands in place.
+    `limit` caps how many rows (and raw payloads) are loaded."""
     stmt = select(Incident).where(Incident.fleet_id == fleet_id)
     if device:
         stmt = stmt.where(Incident.device_id == device)
@@ -58,7 +61,28 @@ def list_incidents(
         stmt = stmt.where(Incident.kind == kind)
     if since:
         stmt = stmt.where(Incident.occurred_at >= since)
-    return list(session.scalars(stmt.order_by(Incident.occurred_at.desc(), Incident.id)))
+    stmt = stmt.order_by(Incident.occurred_at.desc(), Incident.id)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return list(session.scalars(stmt))
+
+
+def _detected_why(body: IncidentReport) -> str:
+    """What caught the fault: health tier, the last log line, the signals, the healer's outcome.
+
+    The story's line already says what broke, so this says how it was noticed.
+    """
+    parts = []
+    if body.tier is not None:
+        parts.append(f"tier {body.tier} health check")
+    if body.log_tail:
+        last = body.log_tail[-1]
+        parts.append(f"log: {last if isinstance(last, str) else json.dumps(last)}")
+    if body.signals:
+        parts.append("signals " + ", ".join(sorted(body.signals)))
+    if body.outcome and body.outcome.category:
+        parts.append(f"healer outcome {body.outcome.category}")
+    return f"Detected by {'; '.join(parts)}." if parts else "Reported by the device's healer."
 
 
 def report(
@@ -123,7 +147,7 @@ def report(
         "automation",
         "incident.reported",
         refs,
-        f"{device_id} detected {body.kind}: {body.summary or 'no summary given'}.",
+        _detected_why(body),
         data={"kind": body.kind, "summary": body.summary, "tier": body.tier},
         ts=ts,
         fleet_id=fleet,
