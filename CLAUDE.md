@@ -75,33 +75,33 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 10:00 PM PST_
+_Last updated: Sat Nov 7, 10:09 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged Fleet Doctor device reference code (#32); two Kent PRs stay open: #38 (real `device/` code in the coder path, B1) and #39 (lock-in, D24). Ishaan's pod healer loop (`ishaan/pod-agent-loop`) and Andre's `arm/teleop-recording` still have no PR.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Ishaan's pod healer loop merged (#41) and is handed to Olir's session for bench runs (`firmware/harness/HANDOFF.md`). Kent's #38 (real `device/` code in the coder path, B1) is the only open PR; Fleet Doctor has 8 of 9 PRs merged, all off by default. Andre's `arm/teleop-recording` still has no PR.
 
 **Recently done:**
-- Kent merged #32 (`67d9c3a`, 9:49 PM): Fleet Doctor PR 5, device reference code in `tools/fake_device` (new `doctor.py` with the trigger hook, proposal applier and mark-good, plus `test_doctor.py`; `interfaces.md` updated). Off by default, not on the demo path
-- Kent merged #35 (`f07e811`, 9:43 PM): Fleet Doctor L2, the consult state machine, proposals and their routes (`services/doctor.py`, `services/proposals.py`, `services/doctor_evidence.py`, flow test `test_f12_doctor_consult.py`). Off by default
-- Kent merged #40 (`f0ea311`, 9:42 PM): ruff now lints only our Python packages through an include-list in `pyproject.toml`
-- Olir merged #36 (`d43683e`, 9:26 PM): `arm/safe_replay.py` starts a recorded SO-101 motion only if the pod's HC-SR04 sees nothing within 200 mm, plus Andre's recorded motions. It also committed `arm/__pycache__/*.pyc`
+- Ishaan merged #41 (`4ee3517`, 10:04 PM): pod healer agent loop and blind eval in `firmware/harness/` (`agent.py` with Claude and Ollama drivers and a risk gate, `evaluate.py`, 13 offline tests, README, HANDOFF.md). Not yet run on the bench
+- Ishaan pointed Olir's session to the handoff in CLAUDE.md (`8d9a30b`, 10:04 PM): bench up → model reachable → smoke run → scenario 05 → baseline on 05, 01, 02, 03, 06 → report
+- Kent merged #39 (`945b1a0`, 10:01 PM): Fleet Doctor PR 9, a held Doctor overlay locks in without a second Coder pass (D24) (`services/doctor_lockin.py`, flow test `test_f12b_doctor_lock_in.py`). PR 7 (real evidence, draft and check) has not started
+- Kent merged #32 (`67d9c3a`, 9:49 PM): Fleet Doctor PR 5, device reference code in `tools/fake_device` (trigger hook, proposal applier, mark-good). Off by default
 
 **Open questions:**
-- Kent's only blocker is still the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor, D25), plus his own go-ahead for the live Naïve card. Ishaan's block (9:12 PM) still owes Kent K17 and the contracts review (B2, B3); his pod-loop bench runs need SSH to the pod, Olir's OK and an API key, and the Jetson link is paused (no USB data or LAN path)
-- #31 flagged two clashes: the arm's servo bus and `podd` both default to `/dev/ttyACM0`, and `robot/` reads the ultrasonic in cm from Pi GPIO while Olir's pod reports mm. Olir's `arm/safe_replay.py` already finds the pod by `/dev/serial/by-id/` and reads mm through `podd`; should `robot/` follow it? *(inferred)*
-- Arm prototypes for tomorrow (control program with `move_to()`/`grasp()` and a servo-error watchdog, ultrasonic approach-then-grasp, predicted-vs-measured check, frozen-ultrasonic rule, labelled run logger) have no owner in a box section; they need to be ready before Kent's 9–10 AM "real arm + polish" slot. `arm/safe_replay.py` covers part of the ultrasonic gate *(inferred)*
-- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email). The overnight launch is due by 12:30 AM (Kent's plan). Should pi drive the arm at all?
+- Pod healer bench runs: where should Ollama run, on the Pi (3.3 GB pull, speed unknown) or on a laptop over the LAN (HANDOFF.md)? Nothing has been checked on the bench yet: podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API
+- Kent is still blocked only on the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor), plus his own go-ahead for the live Naïve card. Ishaan also still owes the contracts review (B2, B3)
+- #31 flagged two clashes: the arm's servo bus and `podd` both default to `/dev/ttyACM0`, and `robot/` reads the ultrasonic in cm from Pi GPIO while Olir's pod reports mm. Should `robot/` follow `arm/safe_replay.py` (`/dev/serial/by-id/`, mm through `podd`)? *(inferred)*
+- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and the arm prototypes before Kent's 9–10 AM "real arm + polish" slot. The overnight launch is due by 12:30 AM (Kent's plan)
 
 **Recent commits (all authors):**
+- `24d965b` Sat 22:08 · Kent Gang · Update Kent status in CLAUDE.md
+- `be5cd12` Sat 22:08 · Kent Gang · Update Kent status in CLAUDE.md
+- `8d9a30b` Sat 22:04 · Ishaan Ranjan · Point Olir's session to the pod healer handoff in CLAUDE.md
+- `4ee3517` Sun 01:04 · Ishaan Ranjan · Pod healer agent loop and blind eval in firmware/harness (#41)
+- `945b1a0` Sat 22:01 · kgang · Fleet Doctor PR 9: held Doctor overlay locks in without a second Coder pass (D24) (#39)
+- `5e22672` Sat 21:59 · jamesEmerson112 · Update team status and features.txt
 - `c1aec2c` Sat 21:58 · Kent Gang · Update Kent status in CLAUDE.md
 - `67d9c3a` Sat 21:49 · kgang · Fleet Doctor PR 5: device reference code in fake_device (trigger hook, proposal applier, mark-good) (#32)
 - `eb839ac` Sat 21:49 · jamesEmerson112 · Update team status and features.txt
 - `6d3bd65` Sat 21:48 · Kent Gang · Update Kent status in CLAUDE.md
-- `f07e811` Sat 21:43 · kgang · Fleet Doctor L2: consult state machine, proposals and their routes (PR 4) (#35)
-- `f0ea311` Sat 21:42 · kgang · Lint only our Python packages via a ruff include-list (#40)
-- `adccfc5` Sat 21:39 · jamesEmerson112 · Update team status and features.txt
-- `24e5605` Sat 21:38 · Kent Gang · Update Kent status in CLAUDE.md
-- `d23711e` Sat 21:30 · kgang · Fleet Doctor: tracker update (7 PRs merged) and ToolSpec.grant in interfaces (#37)
-- `d43683e` Sat 21:26 · Oliravan Eswaramoorthy · Merge pull request #36 from jamesEmerson112/demo
 
-**Branches on GitHub:** `main`; open PR branches `cloud/b1-device-code` (#38) and `doctor/lock-in` (#39) (both Kent); `ishaan/pod-agent-loop` (Ishaan, no PR); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `ishaan/device-healer` (merged as #31); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `doctor/device-ref` was deleted after #32 merged
+**Branches on GitHub:** `main`; open PR branch `cloud/b1-device-code` (#38, Kent); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `ishaan/pod-agent-loop` (#41), `doctor/lock-in` (#39), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
