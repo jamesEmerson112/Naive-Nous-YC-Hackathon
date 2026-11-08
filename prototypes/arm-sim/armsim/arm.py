@@ -309,21 +309,21 @@ class SimArm:
         return d.site_xpos[self._tip].copy(), d.site_xmat[self._tip].reshape(3, 3)[:, 0].copy()
 
     def predicted_mm(self, table_z=0.0, *, objects=()):
-        """Distance the sensor *should* read: along the approach axis to the table, or to an
-        object top if one is in the way. `objects` are (x, y, top_z, half_size) boxes."""
+        """Distance the sensor *should* read, from what the encoders believe: the same ray the
+        rangefinder casts, against the whole model posed at the believed angles. That includes the
+        arm's own links and the moving jaw (closed, it sits in the beam at about 7 mm), the block
+        and the table. None when nothing is in range. (`table_z` and `objects` are kept for older
+        callers; the model already holds the table and the block.)"""
         sid = self.m.site("ultrasonic").id
-        d = self._belief_data()          # predict from what the encoders believe
-        p = d.site_xpos[sid]
-        a = d.site_xmat[sid].reshape(3, 3)[:, 2]
-        if a[2] > -1e-6:
+        d = self._belief_data()
+        p = d.site_xpos[sid].copy()
+        a = d.site_xmat[sid].reshape(3, 3)[:, 2].copy()
+        geomid = np.zeros(1, dtype=np.int32)
+        dist = mujoco.mj_ray(self.m, d, p, a, None, 1, int(self.m.site_bodyid[sid]), geomid)
+        cutoff = float(self.m.sensor_cutoff[self.m.sensor("ultrasonic").id])
+        if dist < 0 or dist >= cutoff - 1e-6:
             return None
-        best = (table_z - p[2]) / a[2]
-        for (x, y, top, half) in objects:
-            s = (top - p[2]) / a[2]
-            hit = p + s * a
-            if 0 < s < best and abs(hit[0] - x) <= half and abs(hit[1] - y) <= half:
-                best = s
-        return best * 1000.0
+        return float(dist) * 1000.0
 
     def solve(self, xyz, *, seed=None, iters=200):
         """Joint pose (LeRobot units) that puts the fingertips at `xyz` pointing straight down."""

@@ -86,8 +86,12 @@ def check_distance_residual(s, *, seconds=2.0, min_rows=12, moved_mm=10.0):
                        ["move to two more heights: a constant gap means offset, a constant ratio means scale",
                         "chip_clock", "fw_rollback"])]
         return []
-    # Fit measured = a * predicted + b, but only when the reading actually follows the pose
-    # (correlation >= 0.95); a flat or erratic reading is not a calibration or scale error.
+    # Fit measured = a * predicted + b, but only over enough travel to tell a scale from an offset
+    # (over ~15 mm a slope of 0.92 with an 8 mm intercept fits the same points as slope 1 and no
+    # gap), and only when the reading actually follows the pose (correlation >= 0.95): a flat or
+    # erratic reading is not a calibration or scale error.
+    if moved < 2 * moved_mm:
+        return []
     mp, mm_ = statistics.fmean(pred), statistics.fmean(meas)
     sp, sm = _std(pred), _std(meas)
     if sm < 1.0 or sp == 0:
@@ -96,14 +100,14 @@ def check_distance_residual(s, *, seconds=2.0, min_rows=12, moved_mm=10.0):
     if r < 0.95:
         return []
     a = r * sm / sp
-    b = mm_ - a * mp
-    ev = {"n": len(rows), "slope": round(a, 3), "offset_mm": round(b, 1), "r": round(r, 3), "arm_moved_mm": round(moved)}
+    gap = statistics.median(m - p for m, p in zip(meas, pred))     # the offset, measured directly
+    ev = {"n": len(rows), "slope": round(a, 3), "gap_mm": round(gap, 1), "r": round(r, 3), "arm_moved_mm": round(moved)}
     if abs(a - 1) > 0.2:
         return [_f("us_scale", "critical", "Reads %.2fx the kinematics distance" % a, ev,
                    ["a clock or units bug in the pod firmware (for example a half-speed clock halves distances)"],
                    ["chip_clock", "fw_rollback", "src_diff"])]
-    if abs(b) > 8 and abs(a - 1) <= 0.1:
-        return [_f("us_offset", "warn", "Reads %d mm %s at every height" % (abs(round(b)), "long" if b > 0 else "short"), ev,
+    if abs(gap) > 8 and abs(a - 1) <= 0.1:
+        return [_f("us_offset", "warn", "Reads %d mm %s at every height" % (abs(round(gap)), "long" if gap > 0 else "short"), ev,
                    ["the distance calibration offset is wrong", "the sensor mount moved"],
                    ["correct the offset, then re-sweep 5 heights"])]
     return []
@@ -117,7 +121,11 @@ def check_ultrasonic_noise(s, *, seconds=2.0, min_rows=12, max_std_us=4.0):
     rows = [d for d in _window(s["D"], s["now"], seconds) if d.get("st") == "ok" and d.get("pred_mm") is not None]
     if len(rows) < min_rows or max(d["pred_mm"] for d in rows) - min(d["pred_mm"] for d in rows) > 2.0:
         return []
-    sd = _std([d["us"] for d in rows])
+    # Robust spread (1.4826 x the median absolute deviation, which equals the std for Gaussian
+    # jitter): one reading taken as the beam crosses an edge must not count as jitter.
+    us = [d["us"] for d in rows]
+    med = statistics.median(us)
+    sd = 1.4826 * statistics.median(abs(u - med) for u in us)
     if sd <= max_std_us:
         return []
     return [_f("us_noisy", "warn", "Distance jitters +-%.1f mm at rest (a healthy sensor jitters under 0.2 mm)" % (sd * 343 / 2000),
@@ -160,6 +168,27 @@ def check_arrival(result, *, load_nm=None):
                ["the servo is stuck, unpowered or overloaded", "something blocks the arm", "the joint's calibration is off"],
                ["read the servo Status register (overload, voltage, overheat bits)",
                 "compare calibration with the last good file", "park and call a person if it persists"])]
+
+
+def residual_finding(mm, pred_mm):
+    """One reading far from what the pose predicts, seen while stepping down on the target
+    (the approach checks this every step). Story A: bad image 02 halves every distance."""
+    ratio = mm / pred_mm if pred_mm else 0.0
+    return _f("us_residual", "critical",
+              "Distance reads %d mm where the arm's pose says %d mm (%.2fx)" % (mm, round(pred_mm), ratio),
+              {"mm": mm, "pred_mm": round(pred_mm, 1), "ratio": round(ratio, 3)},
+              ["the pod's firmware or clock changed (a bad image halves time and distance)",
+               "something sits in the beam", "the arm's calibration is off"],
+              ["read the pod's own incidents (podd)", "restart the sensor", "re-check at home"])
+
+
+def pod_finding(inc):
+    """A podd incident (docs/firmware-apis.md §6) as an arm-side finding: the arm parks too."""
+    return _f("pod_" + inc["kind"], inc.get("severity", "critical"),
+              "Sensor pod: " + inc.get("summary", inc["kind"]),
+              {"podd_incident": inc.get("id"), "first_evidence": inc.get("first_evidence")},
+              ["the pod's firmware or its link is faulty; its own healer owns the fix"],
+              ["wait for the pod healer", "then re-check at home"])
 
 
 def run(s):

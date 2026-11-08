@@ -19,6 +19,7 @@ import os
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -119,7 +120,7 @@ def approach(arm, poses, *, step_m=0.005, max_steps=20):
             pred = rows[-1].get("pred_mm")
             if pred is not None and pred - d > 20:
                 return {"arrived": False, "aborted": f"reading {d} mm is far below the expected {pred:.0f} mm",
-                        "readings": readings}
+                        "readings": readings, "finding": level1.residual_finding(d, pred)}
             if d <= SWITCH_MM:
                 r = arm.goto(poses["pick"], duration=0.8)          # the fixed final move
                 return {**r, "steps": step, "readings": readings, "switched_at_mm": d}
@@ -158,28 +159,46 @@ def speak(text, *, out=None):
     return "live"
 
 
-class Watchdog:
-    """Plain code, no LLM: level-1 findings over the recent rows open incidents."""
+SENSOR_KINDS = ("us_frozen", "us_stuck", "us_scale", "us_offset", "us_noisy", "us_missing_echo", "us_residual")
 
-    def __init__(self, arm, rec):
+
+class Watchdog:
+    """Plain code, no LLM: level-1 findings over the recent rows open incidents.
+
+    In pod mode the rows come from podd (armsim.podsource), `clock` is wall-clock time, and the pod's
+    own critical incidents park the arm too. A fix is only trusted after `verify()`: a move home,
+    fresh readings that pass the checks, and (pod mode) no critical incident left in podd."""
+
+    REPAIRS = ("restart_sensor", "verify")
+
+    def __init__(self, arm, rec, *, clock=None, pod=None):
         self.arm, self.rec, self.incidents = arm, rec, []
+        self.clock = clock or (lambda: arm.t)
+        self.pod = pod                        # PodSource, or None in plain sim
+        self.lock = threading.RLock()
+        self.on_open, self.on_resolve = [], []    # callbacks(incident): the Romulus reporter
+        self.verify_pending = None            # set from the pod thread, run on the main thread
+        self.home = None                      # the pose verify() checks from (set by serve)
         arm.watchers.append(self)
 
     def open(self):
-        return [i for i in self.incidents if i["state"] == "open"]
+        with self.lock:
+            return [i for i in self.incidents if i["state"] == "open"]
 
     def __call__(self, arm):
         if self.open():
             return
-        snap = {"now": arm.t, "D": list(arm.d_rows), "holding": arm.grasp_check()["holding"]}
+        snap = {"now": self.clock(), "D": list(arm.d_rows), "holding": arm.grasp_check()["holding"]}
         found = [f for f in level1.run(snap) if f["severity"] in ("critical", "warn")]
         if found:
             self._open(found[0])
 
     def arrival(self, result):
-        """After a skill: a move that didn't arrive opens a joint_stall incident."""
+        """After a skill: a finding it returned, or a move that didn't arrive (joint_stall)."""
         if self.open():
             return None
+        if result.get("finding"):
+            return self._open(result["finding"])
         load = None
         if result.get("worst_joint"):
             from .arm import JOINTS
@@ -188,42 +207,146 @@ class Watchdog:
         found = level1.check_arrival(result, load_nm=load)
         return self._open(found[0]) if found else None
 
+    def on_pod_incidents(self, open_list):
+        """podd's open incidents, every second (pod thread). A critical one parks the arm; once
+        every pod incident tied to our incidents has resolved, a verify is queued."""
+        crit = [i for i in open_list if i.get("severity") == "critical"]
+        with self.lock:
+            mine = self.open()
+            for inc in crit:
+                if any(inc["id"] in m.get("pod_incidents", []) for m in self.incidents):
+                    continue
+                if mine:                                  # explain the open incident, don't re-speak
+                    mine[0].setdefault("pod_incidents", []).append(inc["id"])
+                    mine[0].setdefault("pod_summaries", []).append(inc.get("summary"))
+                else:
+                    new = self._open(level1.pod_finding(inc))
+                    new["pod_incidents"] = [inc["id"]]
+                    mine = [new]
+            open_ids = {i["id"] for i in open_list}
+            for m in mine:
+                tied = m.get("pod_incidents")
+                if tied and not (set(tied) & open_ids) and not m.get("pod_healed"):
+                    m["pod_healed"] = round(self.clock(), 2)
+                    self.verify_pending = "pod healed: " + ", ".join(m.get("pod_summaries") or tied)
+
     def _open(self, f):
         arm = self.arm
-        inc = {"id": f"inc-{len(self.incidents) + 1}", "state": "open", "opened_at": round(arm.t, 2), **f}
-        inc["spoken"] = speak(f["summary"], out=RUNS / f"{self.rec.run_id}-{inc['id']}.aiff")
-        self.incidents.append(inc)
-        arm.halt_reason = f["kind"]
+        with self.lock:
+            inc = {"id": f"inc-{len(self.incidents) + 1}", "state": "open", "opened_at": round(self.clock(), 2),
+                   "sim_t": round(arm.t, 2), **f}
+            inc["spoken"] = speak(f["summary"], out=RUNS / f"{self.rec.run_id}-{inc['id']}.aiff")
+            self.incidents.append(inc)
+            arm.halt_reason = f["kind"]
         print(f"WATCHDOG {inc['id']} {f['kind']}: {f['summary']}", flush=True)
+        if self.pod:
+            self.pod.note("arm_incident", id=inc["id"], kind=f["kind"], summary=f["summary"])
+        for cb in self.on_open:
+            cb(inc)
         return inc
 
     def repair(self, action):
-        """Fix the cause (sim: the planted fault), then verify on fresh rows before closing."""
-        if action != "restart_sensor":
-            return {"ok": False, "error": f"unknown repair {action!r}; known: ['restart_sensor']"}
-        other = [i for i in self.open() if i["kind"] not in ("us_frozen", "us_stuck")]
-        if other:
-            i = other[0]
-            return {"ok": False, "error": f"restart_sensor doesn't fix {i['kind']} ({i['summary']})",
-                    "next_steps": i.get("next_steps", [])}
-        self.arm.clear("us_frozen")
-        self.arm.d_rows.clear()
-        self.arm.hold(3.5)                             # fresh readings, arm still parked
-        still = level1.run({"now": self.arm.t, "D": list(self.arm.d_rows)})
-        fixed = not any(f["kind"] in ("us_frozen", "us_stuck") for f in still)
-        if fixed:
+        """The healer's tool. restart_sensor: `us off` then `us on` through podd (sim without a pod:
+        clear the planted fault). verify: no fix, just re-check. Either way, verify() decides."""
+        if action not in self.REPAIRS:
+            return {"ok": False, "error": f"unknown repair {action!r}; known: {list(self.REPAIRS)}"}
+        did = None
+        if action == "restart_sensor":
+            if self.pod:
+                did = [self.pod.cmd("us off"), self.pod.cmd("us on")]
+                did = [{"command": r.get("command"), "ok": r.get("ok")} for r in did]
+            else:
+                self.arm.clear("us_frozen")
+        return {"ok": True, "action": action, "did": did, **self.verify(f"repair: {action}")}
+
+    def verify(self, why):
+        """Main thread only (it moves the arm). Go home with the jaws open even though motion is
+        halted, hold still on fresh readings, then close what the checks say is fixed."""
+        self.verify_pending = None
+        if not self.open():
+            return {"verified": True, "open": []}
+        arm = self.arm
+        arm._parking = True                   # the watchdog's own move is allowed while halted
+        try:
+            moved = arm.goto(self.home) if self.home else {"arrived": True}
+        finally:
+            arm._parking = False
+        arm.d_rows.clear()
+        arm.hold(3.5)
+        snap = {"now": self.clock(), "D": list(arm.d_rows)}
+        still = [f for f in level1.run(snap) if f["severity"] in ("critical", "warn")]
+        rows_ok = sum(1 for r in arm.d_rows if r.get("st") == "ok")
+        pod_crit = [i for i in (self.pod.open if self.pod else []) if i.get("severity") == "critical"]
+        resolved = []
+        with self.lock:
             for inc in self.open():
-                inc.update(state="resolved", resolved_at=round(self.arm.t, 2), fix=action)
-            self.arm.halt_reason = None
-        return {"ok": True, "action": action, "verified": fixed,
-                "still": [f["summary"] for f in still], "open": [i["id"] for i in self.open()]}
+                if inc["kind"] == "joint_stall":
+                    fixed = bool(moved.get("arrived"))
+                elif inc["kind"] in SENSOR_KINDS or inc["kind"].startswith("pod_"):
+                    fixed = not still and not pod_crit and rows_ok >= 10
+                else:
+                    fixed = not still
+                if fixed:
+                    inc.update(state="resolved", resolved_at=round(self.clock(), 2), fix=why)
+                    resolved.append(inc)
+            if not self.open():
+                arm.halt_reason = None
+        for inc in resolved:
+            print(f"WATCHDOG {inc['id']} resolved ({why})", flush=True)
+            if self.pod:
+                self.pod.note("arm_resolved", id=inc["id"], kind=inc["kind"], fix=why)
+            for cb in self.on_resolve:
+                cb(inc)
+        return {"verified": not self.open(), "home_arrived": moved.get("arrived"), "ok_rows": rows_ok,
+                "still": [f["summary"] for f in still], "pod_critical": [i.get("summary") for i in pod_crit],
+                "resolved": [i["id"] for i in resolved], "open": [i["id"] for i in self.open()]}
 
 
-def serve(*, gif=False, view=False, realtime=False):
+POD_FAULTS = {"us_frozen": "frozen", "us_no_echo": "no_echo"}     # in pod-sim mode these live in the pod
+POD_VAR = Path(os.environ.get("ARMSIM_POD_VAR") or Path(os.environ.get("TMPDIR", "/tmp")) / "armsim-pod")
+
+
+def start_podd(port, var):
+    """Olir's podd, unchanged, on the virtual pod's pty (tonight) with its own HEALER_VAR."""
+    var.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, HEALER_VAR=str(var), POD_PORT=port)
+    out = open(var / "podd.out", "a")
+    return subprocess.Popen([str(ROOT.parents[1] / "firmware" / "healer" / "bin" / "podd")], env=env,
+                            stdout=out, stderr=subprocess.STDOUT)
+
+
+def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR):
+    """pod=None: plain sim (distance from the sim itself). pod="sim": a virtual pod on a pty, read by
+    Olir's real podd. pod="real": podd is already running on the real pod; `var` is its HEALER_VAR."""
     rec = RunRecorder(RUNS, task="arm host session", joints=JOINTS)
     arm = SimArm(recorder=rec, start=prims.REST)
     skills = Skills(arm)
-    dog = Watchdog(arm, rec)
+    vpod = podd = source = None
+    if pod:
+        from .arm import SCENE_OBJECTS
+        from .podsource import PodSource, healer_client
+        arm.pod_mode, realtime = True, True           # podd stamps rows with wall-clock time
+        client = healer_client(var)
+        if pod == "sim":
+            from .podheal_sim import PodHealSim
+            from .vpod import VirtualPod
+            vpod = VirtualPod(arm)
+            podd = start_podd(vpod.port, Path(var))
+            for _ in range(100):                      # wait for podd's socket, then boot the pod
+                try:
+                    client.call("ping", timeout=0.5)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            vpod.start()
+        source = PodSource(arm, client, objects=SCENE_OBJECTS).start()
+        dog = Watchdog(arm, rec, clock=time.time, pod=source)
+        source.on_incidents.append(dog.on_pod_incidents)
+        if vpod:
+            PodHealSim(vpod, source, var).start()
+    else:
+        dog = Watchdog(arm, rec)
+    dog.home = skills.p["home"]
     if gif:
         from .render import Gif
         gif = Gif(arm, RUNS / f"{rec.run_id}.gif")
@@ -236,7 +359,9 @@ def serve(*, gif=False, view=False, realtime=False):
         clock = {"wall": time.monotonic(), "sim": arm.t}
         def pace(a):
             ahead = (a.t - clock["sim"]) - (time.monotonic() - clock["wall"])
-            if ahead > 0:
+            if ahead < -0.25:                         # the host sat idle: re-anchor, don't sprint
+                clock.update(wall=time.monotonic(), sim=a.t)
+            elif ahead > 0:
                 time.sleep(ahead)
         arm.hooks.append(pace)
 
@@ -246,7 +371,14 @@ def serve(*, gif=False, view=False, realtime=False):
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(str(SOCK))
     srv.listen(4)
-    print(f"arm host listening on {SOCK} (run record {rec.path.name})", flush=True)
+    srv.settimeout(0.5)
+    state = {"parked": True}
+    print(f"arm host listening on {SOCK} (run record {rec.path.name}"
+          f"{', pod ' + pod + ' via podd at ' + str(var) if pod else ''})", flush=True)
+
+    def park():
+        state["parked"] = True
+        return skills.park()
 
     def handle(req):
         op = req.get("op")
@@ -259,28 +391,45 @@ def serve(*, gif=False, view=False, realtime=False):
             if dog.open() and name != "park":
                 return {"ok": False, "error": "incident open; the arm stays parked until a repair is verified",
                         "incidents": dog.open()}
+            state["parked"] = False
             result = getattr(skills, name)()
             reply = {"ok": True, "skill": name, "result": result, "t": round(arm.t, 2)}
             if not result.get("halted") and name != "park":
                 dog.arrival(result)
             if result.get("halted") or dog.open():
-                reply.update(parked=skills.park(), incident=dog.open()[0] if dog.open() else None)
+                reply.update(parked=park(), incident=dog.open()[0] if dog.open() else None)
+            elif name == "park":
+                state["parked"] = True
             return reply
         if op == "read":
             return {"ok": True, "pos": arm.read()}
         if op == "distance":
-            return {"ok": True, "row": arm.distance()}
+            return {"ok": True, "row": arm.d_rows[-1] if pod and arm.d_rows else arm.distance()}
         if op == "status":
-            return {"ok": True, "status": arm.status(), "grasp": arm.grasp_check(),
-                    "incidents": [{k: i[k] for k in ("id", "kind", "summary")} for i in dog.open()]}
+            out = {"ok": True, "status": arm.status(), "grasp": arm.grasp_check(),
+                   "incidents": [{k: i[k] for k in ("id", "kind", "summary")} for i in dog.open()]}
+            if source:
+                out["pod"] = {"podd_up": source.up, "image": vpod.image if vpod else None,
+                              "incidents": [{k: i.get(k) for k in ("kind", "severity", "summary")} for i in source.open]}
+            return out
         if op == "incidents":
             return {"ok": True, "incidents": dog.incidents}
         if op == "repair":
             return dog.repair(req.get("action"))
         if op == "inject":
-            return {"ok": True, "fault": arm.inject(req["fault"], **req.get("params", {}))}
+            fault = req["fault"]
+            if vpod and fault in POD_FAULTS:
+                vpod.set_fault(POD_FAULTS[fault])
+                return {"ok": True, "fault": fault, "where": "pod"}
+            if vpod and fault == "pod_image02":
+                vpod.flash("02")                       # a bad pod image goes out (an OTA, say)
+                return {"ok": True, "fault": fault, "where": "pod", "build": vpod.build}
+            return {"ok": True, "fault": arm.inject(fault, **req.get("params", {})), "where": "arm"}
         if op == "clear":
             arm.clear(req.get("fault"))
+            if vpod:
+                for f in list(vpod.faults):
+                    vpod.set_fault(f, False)
             return {"ok": True}
         if op == "shutdown":
             return {"ok": True, "bye": True}
@@ -288,7 +437,15 @@ def serve(*, gif=False, view=False, realtime=False):
 
     try:
         while True:
-            conn, _ = srv.accept()
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:                    # idle: the main thread's own chores
+                if dog.verify_pending:
+                    print("VERIFY", dog.verify_pending, json.dumps(dog.verify(dog.verify_pending))[:300], flush=True)
+                elif dog.open() and not state["parked"]:
+                    park()                            # a pod incident while idle: park anyway
+                continue
+            conn.settimeout(None)
             with conn, conn.makefile("rw", encoding="utf-8") as f:
                 for line in f:
                     try:
@@ -305,7 +462,14 @@ def serve(*, gif=False, view=False, realtime=False):
     finally:
         srv.close()
         SOCK.unlink(missing_ok=True)
-        rec.close("host stopped")
+        rec.close("host stopped", findings=[{k: i[k] for k in ("kind", "severity", "summary")} for i in dog.incidents])
+        if source:
+            source.stop()
+        if vpod:
+            vpod.stop()
+        if podd:
+            podd.terminate()
+            podd.wait(5)
         if gif:
             print("gif:", gif.save(), flush=True)
         if viewer:
@@ -317,5 +481,8 @@ if __name__ == "__main__":
     ap.add_argument("--gif", action="store_true", help="save a GIF of the session in runs/")
     ap.add_argument("--view", action="store_true", help="open MuJoCo's viewer (on macOS, run with mjpython)")
     ap.add_argument("--realtime", action="store_true", help="pace the sim to wall-clock time")
+    ap.add_argument("--pod", choices=["sim", "real"], help="read the wrist sensor through podd: a virtual pod "
+                    "(sim), or a podd already running on the real pod (real)")
+    ap.add_argument("--var", default=str(POD_VAR), help="podd's HEALER_VAR (default $ARMSIM_POD_VAR or $TMPDIR/armsim-pod)")
     a = ap.parse_args()
-    serve(gif=a.gif, view=a.view, realtime=a.realtime)
+    serve(gif=a.gif, view=a.view, realtime=a.realtime, pod=a.pod, var=Path(a.var))
