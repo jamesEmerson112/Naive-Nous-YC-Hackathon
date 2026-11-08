@@ -42,7 +42,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         choices=[*SCENARIOS, "all"],
         default=[],
-        help="scenario to run once (repeatable): rules, code, bad, bad-late, park or all",
+        help="scenario to run once (repeatable): rules, code, bad, bad-late, park, consult or all",
     )
     p.add_argument("--canary", default=None, help="device that runs bad scenarios (default sim-2)")
     p.add_argument("--hold-after", type=float, default=HOLD_AFTER_S, help="seconds until held")

@@ -59,10 +59,12 @@ def parse[M: BaseModel](model: type[M], raw: dict[str, Any]) -> M:
 
 
 @router.post("/devices/{device_id}/checkin")
-def checkin(device_id: str, session: SessionDep, raw: dict[str, Any] = RawBody) -> dict:
+def checkin(
+    device_id: str, session: SessionDep, settings: SettingsDep, raw: dict[str, Any] = RawBody
+) -> dict:
     check_contract(raw, required=True)
     body = parse(CheckIn, raw)
-    response = devices.check_in(session, device_id, body, raw, utcnow())
+    response = devices.check_in(session, device_id, body, raw, utcnow(), settings=settings)
     session.commit()
     return response.model_dump(mode="json")
 

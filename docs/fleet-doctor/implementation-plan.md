@@ -90,11 +90,35 @@ Wave 3  PR 7 evidence + real draft/check + traces (after M8b)      PR 9 lock-in 
 
 ## 7. Tracker
 
-| PR | Status | GitHub | Notes |
+**Status Sat Nov 7, ~11:40 PM PST: every planned PR is merged.** Every PR had an independent review. #39's `batch.py` hook was also reviewed by the cloud lead's reviewer. Each was merged only after its fixes were in. The safety-critical PRs (#32, #44) had a second, focused re-review.
+
+| PR | Status | GitHub | What the review changed |
 |---|---|---|---|
-| 0a | in progress | | |
-| 0b | in progress | | |
-| 1–9 | not started | | |
+| 0a | merged | #23 | D23–D28 logged; D28 = optional additions don't bump |
+| 0b | merged | #22 | this plan + `interfaces.md` |
+| 1 | merged | #26 | lenient pointer (a bad pointer can't hide `frozen`), `budget_s` clamp, `ProposalPointer.sha256` |
+| 2 | merged | #27 | spend sum fails closed on bad `cost_usd`, parser prefers real answers, missing usage is estimated (never $0), boundary safety filter, `forget()` |
+| — | merged | #29 | `services/doctor_llm.build_doctor_llm` (shared by PR 3 and 4) |
+| 3 | merged | #34 | `doctor.asked` committed before the LLM call, failed calls cost money, device-day cap can't be dodged with random incident ids, deduped cap events |
+| 4 | merged | #35 | **serve-time safety gate**: pointer and GET re-check mode, safety confirmation and `touches_safety` per request; a stub check offers only stub drafts; reused overlay ids → 409 |
+| 5 | merged | #32 | **crash-safe mark-good** (`recover()` at boot), a failure sticks, recovery only touches our own overlay, monotonic multi-sample timer, retry on 409 |
+| 6 | merged | #33 | the gate status wins over a held close; the Doctor never hides a needs-a-person status; spend total finite |
+| 7 | merged | #44 | **check soundness**: repro must be a new test file that fails (exit 1, ids in file) then passes; no test tampering; planted `pytest.py`/`sitecustomize`/`.pth` refused; `PYTHONSAFEPATH=1`; device suite on non-test hunks only; held-out `verify/` run once (pass/fail only); flag-only fixes refused; shared coder budget and `coder_retry` |
+| 8 | merged | #30 | fullmatch, strict path and id rules, `grant` on act tools (draft, D27 deferred) |
+| 9 | merged | #39 | **fail closed**: skip the Coder only for a server-verified proposal (same device, fleet, patch sha, base, overlay, real check); proposal `touches_safety` OR'd in; `source="doctor"` gets the real replay; no early-run loop |
+| F12 interop | merged | #42 | the real cloud + unmodified fake device run F12 end to end, plus freeze; story tie-order fix |
+
+### Open follow-ups (not Doctor code; owner in brackets)
+
+| Item | Why it matters | Owner |
+|---|---|---|
+| **B5 egress (#46)**: the coder container gets only an LLM proxy, with no key inside | Until it merges, **keep `DOCTOR_DRAFT=coder` off on real device text**: the agent sees untrusted log text, and its container has a bridge network and the key | cloud lead (c9e401) |
+| K17 safety and visor path list | `SAFETY_PATHS_CONFIRMED` stays false, and every proposal is discarded, until it lands | Ishaan → Kent |
+| Real token price | `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder *(inferred)*; the dollar cap is only as good as it | Kent |
+| Gate replay hardening + `batch._drafts_this_hour` refund kinds | The planted-runner and fake-summary-line tricks the Doctor now blocks apply to the gate's replay too; zero-token Doctor drafts aren't yet refunded in the batch's count | cloud lead, in progress on `cloud/replay-hardening` |
+| L3 live sessions | D27 deferred; `romulus_contracts.tools` is a draft until Ishaan's h3 tool list | Kent + Ishaan |
+| MCAP evidence reader | `mcap` isn't a dependency; evidence is labeled "not wired" | later |
+| Adopt the device reference on the Pi | `tools/fake_device/src/fake_device/doctor.py` ("How to adopt this on the Pi"); run the applier in a supervisor process | Ishaan |
 
 ## 8. Demo settings (fake mode, honest labels)
 

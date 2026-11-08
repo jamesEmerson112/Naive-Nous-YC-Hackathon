@@ -1,20 +1,30 @@
 """FakeArm: one simulated device wired to the cloud (SimDevice + DeviceClient + Outbox + Visor).
 
-Everything the arm keeps on disk lives under `state_dir`: the outbox in `outbox/` and the
-visor's state in `visor.json`. Building a new `FakeArm` (or a new `Visor`) on the same
-directory and `SimDevice` is how tests simulate a restart.
+Everything the arm keeps on disk lives under `state_dir`: the outbox in `outbox/`, the
+visor's state in `visor.json` and the Fleet Doctor applier's in `doctor.json`. Building a
+new `FakeArm` (or a new `Visor`) on the same directory and `SimDevice` is how tests
+simulate a restart.
+
+The Fleet Doctor (`doctor.py`) rides along: `doctor` is the healer's L1 trigger hook, and
+on every tick `applier` runs its mark-good timer and takes any proposal the check-in
+points at (L2). The first tick after a start runs `applier.recover` before anything else,
+so an overlay a crash left unconfirmed is reverted. The applier's clock is the tick's
+`now`: in the sim, the time passed to `tick` is the arm's monotonic time. A proposal
+overlay that was marked good is reported `held` `proposal_hold_after_s` later, as the
+scenarios do for the healer's own overlays.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 
 from fake_device.client import DeviceClient
+from fake_device.doctor import ProposalApplier, TriggerHook
 from fake_device.outbox import Outbox
 from fake_device.recordings import Recording
 from fake_device.sim import SimDevice
@@ -37,7 +47,23 @@ class FakeArm:
         self.client = DeviceClient(http, device_id)
         self.outbox = Outbox(state_dir / "outbox")
         self.visor = Visor(self.client, self.device, self.outbox, state_dir / "visor.json")
+        self.doctor = TriggerHook(self.client)
+        self._now: datetime | None = None  # the current tick's time: the applier's clock
+        self.applier = ProposalApplier(
+            self.client,
+            self.device,
+            self.outbox,
+            state_path=state_dir / "doctor.json",
+            clock=self._clock,
+        )
+        self._booted = False
+        self.proposal_hold_after_s = 1200.0
+        """A marked-good proposal overlay is reported `held` this long after (20 min)."""
+        self._holds: dict[str, datetime] = {}  # proposal overlay id -> when to report held
         self._repeated: set[int] = set()
+
+    def _clock(self) -> float:
+        return (self._now or datetime.now(UTC)).timestamp()
 
     @property
     def device_id(self) -> str:
@@ -49,12 +75,37 @@ class FakeArm:
         A device on a "late" bad version also repeats its last fault once (flow F4's
         "canary repeated camera_occluded after install").
         """
+        self._now = now
+        if not self._booted:  # boot: finish a proposal a crash interrupted, before anything
+            self._booted = True
+            self.applier.recover(now)
         result = self.visor.tick(now)
         fw = self.device.firmware
         if self.device.bad_versions.get(fw) == "late" and fw not in self._repeated:
             self._repeated.add(fw)
             self.report_incident(now, self._repeat_incident(now))
+        self._doctor_tick(now, result)
         return result
+
+    def _doctor_tick(self, now: datetime, result: TickResult) -> None:
+        """Fleet Doctor L2: the mark-good timer first, then a new proposal, then send."""
+        ended = self.applier.tick(now)
+        if ended is not None and ended[1] == "good":
+            self._holds[ended[0]] = now + timedelta(seconds=self.proposal_hold_after_s)
+        resp = result.response
+        if resp is not None and resp.proposal is not None:
+            self.applier.handle(resp.proposal, now, frozen=resp.frozen)
+        for overlay_id, due in list(self._holds.items()):
+            if now < due:
+                continue
+            del self._holds[overlay_id]
+            if self.device.active_overlay_id() == overlay_id:  # not replaced meanwhile
+                reason = "no recurrence for 20 min"
+                held = OverlayStatus(status="held", reason=reason, occurred_at=now)
+                self.outbox.add_overlay_status(overlay_id, held)
+                self.device.overlay_held = True
+        if len(self.outbox):
+            self.outbox.drain(self.client, now)
 
     def _repeat_incident(self, now: datetime) -> IncidentReport:
         return IncidentReport(

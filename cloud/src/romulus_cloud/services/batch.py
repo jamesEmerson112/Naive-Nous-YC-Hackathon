@@ -24,7 +24,9 @@ scale; the gate caps stale re-queues per overlay):
   CODER_MAX_DRAFTS_PER_HOUR start, beyond that it waits held, "coder budget"); then the
   overlays of one draft fold alone (a draft is a whole change against the base) into a code
   version with the coder's diff applied. A failing draft, a coder error or a diff touching
-  `verify/` makes the overlay `lockin_error`, sticky, and builds nothing.
+  `verify/` makes the overlay `lockin_error`, sticky, and builds nothing. In either lane, a
+  held Fleet Doctor overlay whose proposal checks out uses that patch as its draft, with no
+  Coder call, job or budget (D24, `services/doctor_lockin.py`); the rest is unchanged.
 - **harness → one `harness` candidate:** the LLM writes one skill per overlay (FakeLlm by
   default) into the current harness tarball under `knowledge_dir`, `harness.json` bumped.
 
@@ -44,13 +46,14 @@ from datetime import datetime, timedelta
 from functools import partial
 from typing import Any
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import distinct, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import BlobStore, build_blobstore
 from romulus_cloud.adapters.coder import CodeDraft, Coder, CoderError, build_coder, redact
 from romulus_cloud.adapters.llm import FakeLlm, Llm, LlmError, build_llm
+from romulus_cloud.domain import coder_retry
 from romulus_cloud.domain.merge import (
     MergeError,
     apply_overlay,
@@ -71,7 +74,7 @@ from romulus_cloud.models import (
     Incident,
     Overlay,
 )
-from romulus_cloud.services import code_lockin, fleet, incidents, registry
+from romulus_cloud.services import code_lockin, doctor_lockin, fleet, incidents, registry
 from romulus_cloud.services.coder_runs import patch_refusal
 from romulus_cloud.services.gate import label
 from romulus_cloud.services.jobs import Done, Failed, InlineJobs, Jobs, Missing, default_jobs
@@ -82,6 +85,7 @@ ACTOR = "agent:batch"
 CONFIG_KINDS = frozenset({"rules", "params"})
 PASSTHROUGH_NOTE = "pass-through: coding agent not wired"
 LOCKIN_ERROR = "lockin_error"
+CODER_UNAVAILABLE = "coder_unavailable"  # overlay.deferred reason: a provider blip, retried
 Key = tuple[str, str]  # (device_id, overlay_id)
 
 
@@ -181,7 +185,7 @@ def maybe_run(
     tools = tools or Tools.from_settings(settings or get_settings())
     fleet_id = tools.settings.fleet_id
     if not is_due(session, now, tools.settings.batch_interval_s, fleet_id) and not (
-        tools.coding_agent and _a_draft_finished(session, tools)
+        tools.coding_agent and _a_draft_finished(session, tools, now)
     ):
         return RunResult(ran=False)
     return run(session, now, tools)
@@ -271,9 +275,10 @@ def run(session: Session, now: datetime, tools: Tools) -> RunResult:
     requested = bool(row and row.batch_requested)
     result = RunResult(ran=True)
     overlays = held_overlays(session, fleet_id)
-    ready, drafts = overlays, {}
+    ready = [ov for ov in overlays if not _proposal_pending(session, ov, now, result)]
+    drafts: dict[Key, tuple[str, str, CodeDraft]] = {}
     if tools.coding_agent:
-        ready, drafts = _await_drafts(session, overlays, now, tools, result)
+        ready, drafts = _await_drafts(session, ready, now, tools, result)
 
     items: list[_Item] = []
     for overlay in ready:
@@ -357,7 +362,12 @@ def _overlay_refs(ov: Overlay, candidate: Candidate | None = None) -> dict[str, 
 
 
 def _mark_error(
-    session: Session, overlays: list[Overlay], why: str, now: datetime, result: RunResult
+    session: Session,
+    overlays: list[Overlay],
+    why: str,
+    now: datetime,
+    result: RunResult,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     """Mark overlays `lockin_error` with the reason, so the batch doesn't retry them (and
     call the LLM again) every tick. The device keeps its local fix."""
@@ -375,7 +385,7 @@ def _mark_error(
             _overlay_refs(ov),
             f"Overlay {ov.id} from {ov.device_id} could not be locked in: {why}. It is not "
             "retried; the device keeps its local fix.",
-            data={"error": why},
+            data={"error": why, **(extra or {})},
             ts=now,
             fleet_id=ov.fleet_id,
         )
@@ -737,12 +747,17 @@ def _draft_code(
     base_rev = current.manifest.get("code_rev")
     base = session.get(CodeVersion, (current.fleet_id, base_rev))
     files = _read_tarball(tools.store, base.sha256) if base else {}
-    notes = []
+    notes, proposals = [], []
+    doctor_safety = False  # a Doctor proposal's own touches_safety (D24)
     for item in items:
         ov = item.overlay
-        draft = tools.coder.draft(
+        doctor = doctor_lockin.proposal_draft(session, ov, now, base_rev=base_rev)
+        draft = doctor or tools.coder.draft(
             ov.code_patch or "", {"id": item.incident.id}, ov.base_code_rev or base_rev
         )
+        if doctor:
+            proposals.append(doctor.proposal_id)
+            doctor_safety = doctor_safety or doctor.touches_safety
         files[f"romulus/patches/{ov.id}.diff"] = draft.diff.encode()
         notes.append(draft.notes)
     code, _ = registry.create_code(
@@ -770,8 +785,12 @@ def _draft_code(
         parent_version=current.version,
         fleet_id=current.fleet_id,
     )
-    safety = any(
-        code_touches_safety(i.overlay.code_patch, tools.settings.safety_paths) for i in items
+    safety = (
+        doctor_safety
+        or any(i.overlay.touches_safety for i in items)
+        or any(
+            code_touches_safety(i.overlay.code_patch, tools.settings.safety_paths) for i in items
+        )
     )
     return _new_candidate(
         session,
@@ -785,7 +804,10 @@ def _draft_code(
         + " ".join(i.explanation for i in items),
         touches_safety=safety,
         stub_stages=["draft_code", "replay"],
-        data={"parent_version": current.version},
+        data={
+            "parent_version": current.version,
+            **doctor_lockin.candidate_data(proposals, whole=len(proposals) == len(items)),
+        },
     )
 
 
@@ -812,17 +834,26 @@ def _base_code(session: Session, ov: Overlay) -> CodeVersion:
     return cv
 
 
-def _a_draft_finished(session: Session, tools: Tools) -> bool:
-    """A held code overlay's draft is done (or failed), so the batch should run now rather
-    than wait for BATCH_INTERVAL_S. Reads only; polls in-memory jobs."""
+def _a_draft_finished(session: Session, tools: Tools, now: datetime) -> bool:
+    """A held code overlay's draft is done (or failed), or its Fleet Doctor proposal checks
+    out (D24: it is its own draft) and changed since the last run (once, not every tick), so
+    the batch should run now rather than wait for BATCH_INTERVAL_S. Reads only; polls
+    in-memory jobs."""
+    state = session.get(FleetState, tools.settings.fleet_id)
+    since = state.batch_last_run_at if state else None
     for ov in held_overlays(session, tools.settings.fleet_id):
         if not _has_code(ov):
             continue
         try:
-            key = code_lockin.draft_key(ov, _base_code(session, ov).rev)
+            rev = _base_code(session, ov).rev
+            key = code_lockin.draft_key(ov, rev)
         except Exception:  # the run itself records why
             return True
         if isinstance(tools.jobs.poll(key), Done | Failed):
+            return True
+        if not tools.coder_blocked and doctor_lockin.newly_verified(
+            session, ov, rev, now, since=since
+        ):
             return True
     return False
 
@@ -842,13 +873,115 @@ def _coder_incident(session: Session, ov: Overlay) -> dict[str, Any]:
 
 def _drafts_this_hour(session: Session, fleet_id: str, now: datetime) -> int:
     """Coder drafts started in the last hour (from `coder.started` events, so a restart
-    doesn't reset the budget)."""
-    stmt = select(func.count(Event.id)).where(
-        Event.fleet_id == fleet_id,
-        Event.kind == "coder.started",
-        Event.ts > now - timedelta(hours=1),
+    doesn't reset the budget), minus attempts the provider turned away with exactly 0 tokens
+    spent, counted once per job attempt (overlays sharing a draft share its job)."""
+    recent = (Event.fleet_id == fleet_id, Event.ts > now - timedelta(hours=1))
+    started = select(func.count(Event.id)).where(*recent, Event.kind == "coder.started")
+    job_attempt = Event.data["job"].astext.concat(":").concat(Event.data["attempt"].astext)
+    free = select(func.count(distinct(job_attempt))).where(
+        *recent,
+        Event.kind.in_(["overlay.deferred", "batch.error"]),
+        Event.data.contains({"reason": CODER_UNAVAILABLE, "no_tokens": True}),
     )
-    return session.scalar(stmt) or 0
+    return max((session.scalar(started) or 0) - (session.scalar(free) or 0), 0)
+
+
+@dataclass(frozen=True)
+class _Blip:
+    """A draft job's transient-failure state: its latest attempt number, when it may run
+    again (None after the last attempt), and each attempt's reason."""
+
+    attempt: int = 0
+    retry_at: datetime | None = None
+    reasons: tuple[str, ...] = ()
+
+
+def _blip_state(session: Session, fleet_id: str, key: str) -> _Blip:
+    """From events (so the backoff survives a restart), per draft key: a later overlay with
+    the same patch inherits the backoff of the job it shares."""
+    stmt = (
+        select(Event)
+        .where(
+            Event.fleet_id == fleet_id,
+            Event.kind == "overlay.deferred",
+            Event.data.contains({"reason": CODER_UNAVAILABLE, "job": key}),
+        )
+        .order_by(Event.ts, Event.id)
+    )
+    by_attempt: dict[int, Event] = {}
+    for e in session.scalars(stmt):
+        by_attempt.setdefault(int(e.data.get("attempt") or 0), e)
+    if not by_attempt:
+        return _Blip()
+    last = by_attempt[max(by_attempt)]
+    return _Blip(
+        attempt=max(by_attempt),
+        retry_at=datetime.fromisoformat(last.data["retry_at"]),
+        reasons=tuple(by_attempt[n].data.get("detail", "") for n in sorted(by_attempt)),
+    )
+
+
+def _coder_failed(
+    session: Session,
+    ov: Overlay,
+    key: str,
+    outcome: coder_retry.CoderOutcome,
+    why: str,
+    now: datetime,
+    result: RunResult,
+    blips: dict[str, _Blip],
+) -> None:
+    """A failed draft: a provider blip defers the overlay with a backoff (bounded, per draft
+    key); a bad draft, or the 5th blip in a row, makes it sticky `lockin_error` (BUILD §8).
+    `blips` holds this run's new state per key, so overlays sharing one job record the same
+    attempt."""
+    verdict = coder_retry.classify(outcome)
+    if not verdict.transient:
+        _mark_error(session, [ov], why, now, result)
+        return
+    if key not in blips:
+        past = _blip_state(session, ov.fleet_id, key)
+        attempt = past.attempt + 1
+        blips[key] = _Blip(attempt, coder_retry.retry_at(attempt, now), (*past.reasons, why))
+    blip = blips[key]
+    data = {
+        "reason": CODER_UNAVAILABLE,
+        "job": key,
+        "attempt": blip.attempt,
+        "label": verdict.label,
+        "detail": why,
+        "no_tokens": outcome.tokens == 0,  # a known zero only: None may have spent tokens
+    }
+    if blip.retry_at is None:
+        listed = "; ".join(f"attempt {i}: {r}" for i, r in enumerate(blip.reasons, 1))
+        why = f"the coding agent was unavailable {blip.attempt} times in a row ({listed})"
+        _mark_error(session, [ov], why, now, result, extra=data)
+        return
+    result.deferred.append((ov.device_id, ov.id))
+    events.record(
+        session,
+        ACTOR,
+        "agent",
+        "overlay.deferred",
+        _overlay_refs(ov),
+        f"Overlay {ov.id} from {ov.device_id} stays held: coder unavailable ({verdict.label}), "
+        f"retry after {blip.retry_at:%H:%M} UTC (attempt {blip.attempt} of "
+        f"{coder_retry.MAX_TRANSIENT}). {why}.",
+        data={**data, "retry_at": blip.retry_at.isoformat()},
+        ts=now,
+        fleet_id=ov.fleet_id,
+    )
+
+
+def _outcome(draft: CodeDraft) -> coder_retry.CoderOutcome:
+    return coder_retry.CoderOutcome(
+        passed=draft.passed,
+        exit_status=draft.exit_status,
+        error=draft.error,
+        steps=draft.steps,
+        tokens=draft.tokens,
+        no_result=draft.no_result,
+    )
 
 
 def _say_once(session: Session, ov: Overlay, reason: str, why: str, now: datetime) -> None:
@@ -872,6 +1005,30 @@ def _say_once(session: Session, ov: Overlay, reason: str, why: str, now: datetim
     )
 
 
+def _proposal_pending(session: Session, ov: Overlay, now: datetime, result: RunResult) -> bool:
+    """A held code overlay whose Fleet Doctor proposal is still `offered` (the device's result
+    hasn't arrived) waits held: no Coder job yet, so a later `applied` can't orphan one."""
+    if not doctor_lockin.claims(ov) or not _has_code(ov):
+        return False
+    try:
+        rev = _base_code(session, ov).rev
+    except Exception:  # the lanes record why
+        return False
+    if not doctor_lockin.pending(session, ov, rev, now):
+        return False
+    result.deferred.append((ov.device_id, ov.id))
+    pid = (ov.raw or {}).get("proposal_id")
+    _say_once(
+        session,
+        ov,
+        "doctor_pending",
+        f"its Fleet Doctor proposal {pid} is still offered; it is locked in once the device's "
+        "result arrives, or goes to the Coder if the offer expires",
+        now,
+    )
+    return True
+
+
 def _await_drafts(
     session: Session, overlays: list[Overlay], now: datetime, tools: Tools, result: RunResult
 ) -> tuple[list[Overlay], dict[Key, tuple[str, str, CodeDraft]]]:
@@ -880,16 +1037,24 @@ def _await_drafts(
     draft).
 
     - Identical patches on the same code version share one draft (the key is their hash).
+    - A verified Fleet Doctor proposal is its own draft: no job, no budget (D24).
     - At most CODER_MAX_DRAFTS_PER_HOUR drafts start per hour; over it, the overlay waits
       `held` ("coder budget"), not sticky.
     - A failing draft, a coder error or a diff touching `verify/` marks the overlay
-      `lockin_error` (sticky: never re-drafted, so the agent isn't called again every run).
+      `lockin_error` (sticky: never re-drafted, so the agent isn't called again every run),
+      unless the failure is transient (`domain.coder_retry`: a rate limit, 5xx, timeout, or an
+      agent that spent no tokens): then it stays held and is retried after a backoff of 2 min
+      doubling to 30 min, and only the 5th transient failure in a row is sticky, listing every
+      attempt's reason. The backoff belongs to the draft key, so an overlay with the same
+      patch arriving later waits too. An attempt known to have spent 0 tokens is given back
+      to the hourly budget, once per job attempt however many overlays share it.
     - With no way to run the coder here (`coder_blocker`), code overlays just stay held: the
       worker logged why once at startup.
     """
     ready: list[Overlay] = []
     drafts: dict[Key, tuple[str, str, CodeDraft]] = {}
     consumed: set[str] = set()
+    blips: dict[str, _Blip] = {}
     budget = tools.settings.coder_max_drafts_per_hour
     started = _drafts_this_hour(session, tools.settings.fleet_id, now)
     for ov in overlays:
@@ -901,9 +1066,16 @@ def _await_drafts(
             continue
         try:
             cv = _base_code(session, ov)
-            key = code_lockin.draft_key(ov, cv.rev)
-            status = tools.jobs.poll(key)
+            # D24: a verified Doctor proposal is its own draft (no job, no budget); it still
+            # gets patch_refusal below and the gate's replay.
+            doctor = doctor_lockin.proposal_draft(session, ov, now, base_rev=cv.rev)
+            key = doctor.key if doctor else code_lockin.draft_key(ov, cv.rev)
+            status = Done(doctor) if doctor else tools.jobs.poll(key)
             if isinstance(status, Missing):  # new, or the worker restarted: (re)submit
+                wait = _blip_state(session, ov.fleet_id, key).retry_at
+                if wait is not None and now < wait:  # this job's backoff, shared by its key
+                    result.deferred.append((ov.device_id, ov.id))
+                    continue
                 if started >= budget:
                     result.deferred.append((ov.device_id, ov.id))
                     _say_once(
@@ -944,7 +1116,8 @@ def _await_drafts(
             consumed.add(key)
         if isinstance(status, Failed):
             why = redact(f"the coding agent could not run ({status.error})", tools.secrets)
-            _mark_error(session, [ov], why, now, result)
+            failed = coder_retry.CoderOutcome(False, error=redact(status.error, tools.secrets))
+            _coder_failed(session, ov, key, failed, why, now, result, blips)
         elif isinstance(status, Done):
             draft = status.result
             refused = patch_refusal(draft.diff) if draft.passed else None
@@ -957,7 +1130,7 @@ def _await_drafts(
             else:
                 summary = code_lockin.draft_summary(draft)
                 why = redact(f"the coding agent's draft did not pass: {summary}", tools.secrets)
-                _mark_error(session, [ov], why, now, result)
+                _coder_failed(session, ov, key, _outcome(draft), why, now, result, blips)
         else:  # still running: stays held, nothing written
             result.deferred.append((ov.device_id, ov.id))
     for key in consumed:  # applied below (or marked); identical patches shared it this run
@@ -974,13 +1147,17 @@ def _lock_in_drafts(
     drafts: dict[Key, tuple[str, str, CodeDraft]],
 ) -> Candidate:
     """code: the coder's diff applied to the base package → a new code version (`source =
-    coder`), a firmware manifest naming it, and a code candidate the gate replays."""
+    coder`), a firmware manifest naming it, and a code candidate the gate replays. A verified
+    Fleet Doctor proposal (D24) goes the same way with its patch as the diff, as a `source =
+    doctor` code version (the gate replays both for real) and with the proposal's own
+    `touches_safety` OR'd in."""
     base_rev = current.manifest.get("code_rev")
     base = session.get(CodeVersion, (current.fleet_id, base_rev)) if base_rev else None
     if base is None:
         raise CoderError(f"the base code {base_rev!r} is not registered")
     files = code_lockin.read_package(tools.store, base)
-    notes, diffs, raw_diffs, flags = [], [], [], []
+    notes, diffs, raw_diffs, flags, proposals = [], [], [], [], []
+    doctor_safety = False  # a Doctor proposal's own touches_safety (D24)
     applied: set[str] = set()
     for item in items:
         rev, key, draft = drafts[item.key]
@@ -991,12 +1168,24 @@ def _lock_in_drafts(
         if key in applied:  # the same draft as an earlier overlay in this part
             continue
         applied.add(key)
+        if isinstance(draft, doctor_lockin.DoctorDraft):
+            proposals.append(draft.proposal_id)
+            doctor_safety = doctor_safety or draft.touches_safety
         files = code_lockin.apply_diff(files, draft.diff)
         notes.append(redact(code_lockin.draft_summary(draft), tools.secrets))
         raw_diffs.append(draft.diff)
         diffs.append(redact(draft.diff, tools.secrets))
         flags += list(draft.flags)
     ids = ", ".join(i.overlay.id for i in items)
+    doctor = len(proposals) == len(applied)  # a part is one draft, so all or none
+    if doctor:
+        by = f"the Fleet Doctor (proposal {', '.join(proposals)}, no second Coder pass, D24)"
+        code_why = f"Code drafted by {by} on {base_rev} for overlay(s) {ids}: the base "
+        code_why += "package with the proposal's checked patch applied."
+    else:
+        by = "the coding agent"
+        code_why = f"Code drafted by the coding agent on {base_rev} for overlay(s) {ids}: the "
+        code_why += "base package with the agent's diff applied."
     code, _ = registry.create_code(
         session,
         tools.store,
@@ -1004,9 +1193,8 @@ def _lock_in_drafts(
         rev=None,
         actor=ACTOR,
         actor_class="agent",
-        why=f"Code drafted by the coding agent on {base_rev} for overlay(s) {ids}: the base "
-        "package with the agent's diff applied.",
-        source=code_lockin.SOURCE,
+        why=code_why,
+        source=doctor_lockin.SOURCE if doctor else code_lockin.SOURCE,
         parent_rev=base_rev,
         fleet_id=current.fleet_id,
     )
@@ -1017,16 +1205,18 @@ def _lock_in_drafts(
         manifest,
         actor=ACTOR,
         actor_class="agent",
-        why=f"Firmware v{version} = v{current.version} with code {code.rev} (drafted by the "
-        "coding agent).",
+        why=f"Firmware v{version} = v{current.version} with code {code.rev} (drafted by {by}).",
         source="batch",
         parent_version=current.version,
         fleet_id=current.fleet_id,
     )
-    safety = any(i.overlay.touches_safety for i in items) or any(
-        code_touches_safety(d, tools.settings.safety_paths) for d in raw_diffs
+    safety = (
+        doctor_safety
+        or any(i.overlay.touches_safety for i in items)
+        or any(code_touches_safety(d, tools.settings.safety_paths) for d in raw_diffs)
     )
     flagged = f" Flagged for review: {'; '.join(flags)}." if flags else ""
+    who = "the Fleet Doctor" if doctor else "the coding agent"
     replay = (
         " The gate replays it in fresh containers (device tests and held-out verify "
         "scripts) before any device gets it."
@@ -1039,7 +1229,7 @@ def _lock_in_drafts(
         type_="code",
         version=version,
         code_rev=code.rev,
-        why=f"the coding agent's change on code {base_rev}: {' '.join(notes)}{flagged}{replay} "
+        why=f"{who}'s change on code {base_rev}: {' '.join(notes)}{flagged}{replay} "
         + " ".join(i.explanation for i in items),
         touches_safety=safety,
         stub_stages=[],
@@ -1048,5 +1238,6 @@ def _lock_in_drafts(
             "base_code_rev": base_rev,
             "diff": "\n".join(diffs),
             "coder_flags": flags,
+            **doctor_lockin.candidate_data(proposals, whole=doctor),
         },
     )

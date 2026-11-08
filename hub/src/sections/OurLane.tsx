@@ -1,6 +1,8 @@
-import { BENCHMARK, EDGE, ISAAC, LEROBOT, LLM_CHOICE, PODS, PROPOSAL_SRC, RESET } from "../content/proposal";
+import { BY_PERSON, FEATURES, type BoxId, type PhaseLine } from "../content/features";
+import { BENCHMARK, EDGE, ISAAC, LEROBOT, LLM_CHOICE, OUR_SCHEDULE, OUR_WINDOW, PODS, PROPOSAL_SRC, RESET } from "../content/proposal";
 import { More, Section, Sources, Table, Txt } from "../ui";
-import { BudgetBar, CanaryFlow, Icon, ResetLoop, type IconName } from "../viz";
+import { BudgetBar, CanaryFlow, Icon, ResetLoop, Schedule, type IconName } from "../viz";
+import { BOXES, MARK, SAY } from "./FeatureMap";
 
 function KV({ rows }: { rows: { k: string; v: string }[] }) {
   return (
@@ -30,9 +32,97 @@ const RISKS: string[] = [
   "Gripper overload may need a power cycle",
 ];
 
+/** A box's title and color, as on the feature map. */
+const boxOf = (id: BoxId) => BOXES.find((b) => b.id === id)!;
+
+/** James's phase lines, grouped by phase in the order they appear. */
+function byPhase(lines: PhaseLine[]) {
+  const groups: { phase: string; texts: string[] }[] = [];
+  for (const l of lines) {
+    const g = groups.find((x) => x.phase === l.phase);
+    if (g) g.texts.push(l.text);
+    else groups.push({ phase: l.phase, texts: [l.text] });
+  }
+  return groups;
+}
+
+const JAMES_PHASES = byPhase(BY_PERSON.JAMES ?? []);
+/** His claimed lines in the box sections: being built first, then done. */
+const JAMES_CLAIMS = FEATURES.filter((f) => f.owners.includes("James")).sort((a, b) => Number(a.status === "done") - Number(b.status === "done"));
+const JAMES_DONE = JAMES_CLAIMS.filter((f) => f.status === "done").length;
+
+function JamesLines() {
+  return (
+    <>
+      <h3>
+        James's lines in <code>features.txt</code>
+      </h3>
+      <div className="grid-2">
+        <div className="panel">
+          <div className="head">
+            <h4>By phase</h4>
+            <span className="small muted">from BY PERSON, IN PHASE ORDER</span>
+          </div>
+          <dl className="kv">
+            {JAMES_PHASES.map((g) => (
+              <div key={g.phase} style={{ display: "contents" }}>
+                <dt>
+                  <span className="chip next">{g.phase}</span>
+                </dt>
+                <dd>
+                  <ul>
+                    {g.texts.map((t) => (
+                      <li key={t}>{t}</li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+        <div className="panel">
+          <div className="head">
+            <h4>Claimed in the boxes</h4>
+            <span className="small muted">
+              ✓ {JAMES_DONE} done · ● {JAMES_CLAIMS.length - JAMES_DONE} being built
+            </span>
+          </div>
+          <ul className="fcells">
+            {JAMES_CLAIMS.map((f) => (
+              <li key={`${f.box}-${f.text}`} className={`fcell s-${f.status} l-${boxOf(f.box).layer}`} title={`${boxOf(f.box).title} · ${f.text} · ${SAY[f.status]}`}>
+                <span className="fcell-mark" aria-hidden="true">
+                  {MARK[f.status]}
+                </span>
+                <span className="fcell-text">{f.text}</span>
+                <span className="fcell-who mono">{boxOf(f.box).title}</span>
+                <span className="sr-only">{SAY[f.status]}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function OurLane() {
   return (
-    <Section id="ours" title="Sim + control" layer="sim" owner="James + Claude" status="proposed" sub="Our lane, still a proposal: no sim is running yet. So far James + Claude built the Naïve console and fault lab (pi vs Hermes) and the Self-Healing Arm Briefing. Kent's code canary (B7) needs the sim twin below.">
+    <Section
+      id="ours"
+      title="Sim + control"
+      layer="sim"
+      owner="James + Claude"
+      status="tentative"
+      sub={
+        <>
+          Our lane is under way. P1 runs in simulation: MuJoCo SO-101, the Hermes <code>so101-arm</code> plugin, a level-1 watchdog that parks the arm, approach-then-grasp, a fault factory and a ChatTS test. It is on branch <code>james/arm-sim</code>, not pushed yet. The real arm comes Sunday 7:30 AM.
+        </>
+      }
+    >
+      <h3>Our build plan</h3>
+      <Schedule blocks={OUR_SCHEDULE} from={OUR_WINDOW.from} to={OUR_WINDOW.to} scale={OUR_WINDOW.scale} />
+      <JamesLines />
+
       <div className="jobs">
         {JOBS.map((j) => (
           <div key={j.name} className="job l-sim">

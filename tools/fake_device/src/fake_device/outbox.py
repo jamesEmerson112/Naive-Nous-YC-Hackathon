@@ -1,7 +1,8 @@
 """On-disk outbox for device reports: queue now, send when the cloud answers (D8, APIs §3).
 
-Installs, incidents, overlay statuses and recordings go into a directory as one JSON file
-each (plus a `.bin` blob for a recording), so the queue survives restarts and power cuts.
+Installs, incidents, overlay statuses, Fleet Doctor proposal results and recordings go into
+a directory as one JSON file each (plus a `.bin` blob for a recording), so the queue
+survives restarts and power cuts.
 `drain()` sends them oldest first:
 
 - **Order.** One queue for every kind, sent strictly in order: if an entry can't be sent
@@ -42,7 +43,13 @@ from typing import Any
 import httpx
 
 from fake_device.client import DeviceClient, body
-from romulus_contracts import IncidentReport, InstallResult, OverlayStatus, RecordingMeta
+from romulus_contracts import (
+    IncidentReport,
+    InstallResult,
+    OverlayStatus,
+    ProposalResult,
+    RecordingMeta,
+)
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +116,10 @@ class Outbox:
 
     def add_overlay_status(self, overlay_id: str, status: OverlayStatus) -> None:
         self._add("overlay", body(status), overlay_id=overlay_id)
+
+    def add_proposal_result(self, proposal_id: str, result: ProposalResult) -> None:
+        """Queue a Fleet Doctor `ProposalResult` (route 3.10; the proposal id is in the URL)."""
+        self._add("proposal_result", body(result), proposal_id=proposal_id)
 
     def add_recording(self, meta: RecordingMeta, data: bytes) -> None:
         """Queue the metadata and keep a copy of the blob next to it until it's uploaded."""
@@ -200,6 +211,9 @@ class Outbox:
             client.report_incident(IncidentReport.model_validate(payload))
         elif kind == "overlay":
             client.report_overlay(entry["overlay_id"], OverlayStatus.model_validate(payload))
+        elif kind == "proposal_result":
+            result = ProposalResult.model_validate(payload)
+            client.report_proposal_result(entry["proposal_id"], result)
         elif kind == "recording":
             blob = path.with_suffix(".bin")
             if not blob.exists():

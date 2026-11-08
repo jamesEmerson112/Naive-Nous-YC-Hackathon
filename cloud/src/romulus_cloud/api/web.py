@@ -68,6 +68,15 @@ def what(kind: str) -> str:
     return kind.replace(".", " ").replace("_", " ")
 
 
+def doctor_flags(hypothesis: dict[str, Any]) -> list[str]:
+    """Honesty labels for a Fleet Doctor hypothesis: `stub` when its event says so, `fake
+    model` when the model is a fake (`fake-templated`), so a demo never passes them off."""
+    flags = ["stub"] if hypothesis.get("stub") else []
+    if str(hypothesis.get("model") or "").lower().startswith("fake"):
+        flags.append("fake model")
+    return flags
+
+
 def _fleet(session, fleet_id: str) -> dict[str, Any]:
     """Fleet strip: devices (services read) and whether the fleet is frozen (latest
     fleet.frozen / fleet.unfrozen event, so the page reads events, not state)."""
@@ -127,6 +136,17 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
             }
         )
         previous = s.at
+    ledger = [
+        {
+            **h,
+            "day": day(h["at"], tz),
+            "clock": clock(h["at"], tz),
+            "iso": h["at"].isoformat(),
+            "ref": h.get(h["source"]),
+            "flags": doctor_flags(h),
+        }
+        for h in story.ledger
+    ]
     status, tone = story.status
     return {
         "incident": incidents.view(incident),
@@ -139,6 +159,7 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
         "steps": steps,
         "touches_safety": any(st["touches_safety"] for st in steps),
         "recordings": sorted({st["recording"] for st in steps if st["recording"]}),
+        "ledger": ledger,
     }
 
 

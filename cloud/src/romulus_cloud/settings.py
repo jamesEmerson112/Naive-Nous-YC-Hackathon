@@ -146,6 +146,15 @@ class Settings(BaseSettings):
     doctor_tick_s: float = 5
     doctor_max_open: int = 5  # consults advanced per tick
     doctor_job_workers: int = 2  # threads for off-tick LLM and coder jobs
+    # DOCTOR_DRAFT=coder: what one coder draft is assumed to cost (checked against the daily
+    # cap before each draft, and recorded when the coder doesn't report its tokens). An
+    # estimate (inferred); drafts also count against CODER_MAX_DRAFTS_PER_HOUR.
+    doctor_draft_estimate_usd: float = 0.10
+    # The case file's evidence (PR 7): the agent-trace tail and code excerpts at the base rev.
+    doctor_trace_tail_lines: int = 40
+    doctor_trace_tail_bytes: int = 16000
+    doctor_evidence_file_bytes: int = 4000  # per file named in the log or trace
+    doctor_evidence_code_bytes: int = 16000  # all code excerpts together
 
 
 @lru_cache

@@ -116,6 +116,77 @@ def test_story_renders_recording_refs_as_evidence(client, arm, example, db_sessi
     assert "arm-1 uploaded the incident window." in page
 
 
+def _doctor(db_session, kind, refs, why, data, ts=None):
+    events.record(
+        db_session,
+        "fleet-doctor",
+        "agent",
+        kind,
+        {"incident": RULES, "device": "arm-1", **refs},
+        why,
+        data={"incident_kind": "camera_occluded", **data},
+        ts=ts,
+    )
+
+
+def test_story_shows_the_fleet_doctor_ledger(client, arm, example, db_session):
+    client.post("/v1/devices/arm-1/incidents", json=example("incident_rules_patch"))
+    page = _text(client.get(f"/incidents/{RULES}"))
+    assert "Fleet Doctor" not in page and "doctor-ledger" not in page  # nothing to show yet
+
+    _doctor(
+        db_session,
+        "doctor.advised",
+        {"ask": "ask_1"},
+        "The Fleet Doctor answered arm-1's ask.",
+        {
+            "hypotheses": [{"claim": "Lens is covered", "how_to_check": "Grab a frame"}],
+            "model": "fake-templated",
+            "parsed_ok": True,
+        },
+    )
+    _doctor(
+        db_session,
+        "doctor.diagnosed",
+        {"consult": "cons_1"},
+        "The Fleet Doctor diagnosed the incident.",
+        {
+            "hypotheses": [
+                {"claim": "Occlusion threshold <too> low", "how_to_check": "Read vision.yaml"}
+            ],
+            "model": "",
+            "stub": True,
+        },
+    )
+    _doctor(
+        db_session,
+        "doctor.consult_closed",
+        {"consult": "cons_1"},
+        "The consult ended with advice only.",
+        {"outcome": "advised"},
+    )
+    db_session.commit()
+
+    page = _text(client.get(f"/incidents/{RULES}"))
+    assert '<section class="doctor-ledger">' in page and "hypotheses, newest first" in page
+    # Newest first, each with how to check, source, id and the honesty labels.
+    assert page.index("Occlusion threshold <too> low") < page.index("Lens is covered")
+    assert "Read vision.yaml" in page and "Grab a frame" in page
+    assert '<span class="badge tone-info">consult</span>' in page and "cons_1" in page
+    assert '<span class="badge tone-info">ask</span>' in page and "ask_1" in page
+    assert '<span class="badge tone-wait">stub</span>' in page
+    assert "fake-templated" in page and '<span class="badge tone-wait">fake model</span>' in page
+    # The steps read too, and the closed consult sets the badge.
+    assert "The Fleet Doctor sent 1 hypothesis to arm-1 (model fake-templated)." in page
+    assert "The Fleet Doctor diagnosed the incident: 1 hypothesis (stub)." in page
+    assert 'class="status tone-bad">Fleet Doctor advised only<' in page
+    # The ledger is in the story JSON too, and device-ish text stays escaped in the HTML.
+    story = client.get(f"/v1/incidents/{RULES}/story").json()
+    assert [h["source"] for h in story["ledger"]] == ["consult", "ask"]
+    raw = client.get(f"/partials/incidents/{RULES}").text
+    assert "doctor-ledger" in raw and "Occlusion threshold &lt;too&gt; low" in raw
+
+
 def test_device_strings_are_escaped(client, arm, example):
     body = example("incident_rules_patch")
     body["summary"] = "<img src=x onerror=alert(1)>"

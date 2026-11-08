@@ -6,7 +6,15 @@ models and records what arrived, which is all the fake device's tests need. The 
 side (the Pi app) can use it the same way to test its visor and outbox without the cloud.
 
 Knobs: `offline` (every request raises `httpx.ConnectError`), `fail_status` (every
-request gets that status), `corrupt` (paths whose advertised sha256 is wrong).
+request gets that status), `corrupt` (paths whose advertised sha256 is wrong),
+`doctor_timeout` (a Doctor ask raises `httpx.ReadTimeout`).
+
+Fleet Doctor routes (3.8-3.10), with the real cloud's errors: an ask gets `advice`
+(canned, the contracts example), or 409 while `frozen`. A proposal set up with
+`offer(device_id, proposal)` is pointed at by that device's check-ins (with its sha256)
+until a result for it arrives or it expires by `clock`, and served with `X-Sha256` like
+the real cloud (`proposal_body_and_sha256`); after a result or expiry the GET is 410, and
+while `frozen` it is 409.
 """
 
 from __future__ import annotations
@@ -17,21 +25,28 @@ import io
 import json
 import re
 import tarfile
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from fake_device.scenarios import D1_CODE_PATCH
 from romulus_contracts import (
     SHA256_HEADER,
     CheckIn,
+    DoctorAsk,
     IncidentReport,
     InstallResult,
     OverlayStatus,
+    Proposal,
+    ProposalResult,
     RecordingMeta,
     firmware_response,
     is_supported,
     manifest_sha256,
+    proposal_body_and_sha256,
 )
 
 _DEV = r"/v1/devices/(?P<device>[^/]+)"
@@ -45,6 +60,9 @@ ROUTES: list[tuple[str, re.Pattern[str], str]] = [
     ("POST", re.compile(_DEV + r"/overlays/(?P<overlay>[^/]+)"), "overlays"),
     ("POST", re.compile(_DEV + r"/recordings"), "recordings"),
     ("PUT", re.compile(r"/v1/recordings/(?P<recording>[^/]+)/blob"), "blob"),
+    ("POST", re.compile(_DEV + r"/doctor/ask"), "doctor_ask"),
+    ("GET", re.compile(_DEV + r"/proposals/(?P<proposal>[^/]+)"), "proposal"),
+    ("POST", re.compile(_DEV + r"/proposals/(?P<proposal>[^/]+)/result"), "proposal_result"),
 ]
 
 
@@ -60,6 +78,49 @@ V1_MANIFEST: dict[str, Any] = {
     "policy": {"name": "pick_cube", "rev": "hf:org/act@3f9e"},
 }
 """Firmware v1, as in packages/contracts/examples/firmware_response.json."""
+
+CANNED_ADVICE: dict[str, Any] = {
+    "ask_id": "ask_5b9e2f7a1c3d4e8f9a0b1c2d3e4f5a6b",
+    "hypotheses": [
+        {
+            "claim": "The threshold isn't the bug: SPEC.md says never open the gripper because "
+            "of the ultrasonic reading while holding, so any proximity release in the HOLDING "
+            "branch is wrong.",
+            "how_to_check": "Read SPEC.md's holding rule, remove the release branch in step(), "
+            "and run d1_hand_trace: the gripper should stay closed for the whole trace.",
+        },
+        {
+            "claim": "Each lower threshold only moves the release point, because the hand keeps "
+            "approaching (31, 18, 12 mm).",
+            "how_to_check": "Compare the dist_mm at each release with the threshold you set; if "
+            "it always releases just under it, stop tuning the number.",
+        },
+    ],
+    "model": "fake-templated",
+}
+"""What every Doctor ask gets, as in packages/contracts/examples/doctor_advice.json."""
+
+
+def canned_proposal(
+    now: datetime | None = None, ttl_s: float = 3600, **changes: Any
+) -> dict[str, Any]:
+    """The D1 fix as a proposal (packages/contracts/examples/proposal.json), for a seeded
+    device on firmware 1, harness 1, code `c0de001` with no overlay. It expires `ttl_s`
+    after `now` (default: the real time now). `changes` replace top-level fields; pass
+    `base={...}` to change the base."""
+    expires = (now or datetime.now(UTC)) + timedelta(seconds=ttl_s)
+    proposal = {
+        "proposal_id": "prop_8c2e4a6b0d1f4e3a9b7c5d2e1f0a3b4c",
+        "incident_id": "6d0a4c2e-9b1f-4e3a-8c5d-7f2e1a0b9c84",
+        "base": {"firmware": 1, "harness": 1, "code_rev": "c0de001", "overlay_id": None},
+        "code_patch": D1_CODE_PATCH,
+        "repro_test": "tests/test_hold_proximity.py::"
+        "test_hand_near_while_holding_keeps_gripper_closed",
+        "why": "SPEC.md forbids opening the gripper on the ultrasonic reading while holding.",
+        "checks": {"stub": False, "fails_before": True, "passes_after": True},
+        "expires_at": expires.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+    }
+    return {**proposal, **changes}
 
 
 def tarball(files: dict[str, bytes]) -> bytes:
@@ -94,9 +155,19 @@ class FakeCloud:
         self.recordings: dict[str, dict[str, Any]] = {}
         self.blobs: dict[str, bytes] = {}
 
+        # Fleet Doctor
+        self.advice: dict[str, Any] = dict(CANNED_ADVICE)
+        self.asks: list[tuple[str, dict[str, Any]]] = []  # (device, DoctorAsk body)
+        self.proposals: dict[str, tuple[str, dict[str, Any]]] = {}  # id -> (device, proposal)
+        self.offers: dict[str, str] = {}  # device -> the proposal its check-ins point at
+        self.proposal_results: dict[str, tuple[str, dict[str, Any]]] = {}  # id -> (device, body)
+
         self.offline = False
         self.fail_status: int | None = None
         self.corrupt: set[str] = set()
+        self.doctor_timeout = False
+        self.clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+        """The cloud's time, for proposal expiry. Tests set it."""
 
     # -- setup ------------------------------------------------------------------------
 
@@ -125,6 +196,25 @@ class FakeCloud:
 
     def assign(self, device_id: str, firmware: int | None = None, harness: int | None = None):
         self.assigned[device_id] = {"firmware": firmware, "harness": harness}
+
+    def offer(self, device_id: str, proposal: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Offer `proposal` (default `canned_proposal`, expiring an hour after `clock()`) to
+        `device_id`: its check-ins point at it until a result arrives or it expires.
+        Returns the proposal."""
+        proposal = proposal or canned_proposal(now=self.clock())
+        self.proposals[proposal["proposal_id"]] = (device_id, proposal)
+        self.offers[device_id] = proposal["proposal_id"]
+        return proposal
+
+    def pointer(self, device_id: str) -> dict[str, Any] | None:
+        """The check-in's `proposal` for `device_id`, with the sha256 of the served body."""
+        pid = self.offers.get(device_id)
+        if pid is None or self.frozen or self._expired(pid):
+            return None
+        proposal = self.proposals[pid][1]
+        _, sha = proposal_body_and_sha256(proposal)
+        keys = ("proposal_id", "incident_id", "expires_at")
+        return {**{k: proposal[k] for k in keys}, "sha256": sha}
 
     def http(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handle), base_url="http://cloud")
@@ -165,7 +255,13 @@ class FakeCloud:
         drop = device in self.drop_overlay
         self.drop_overlay.discard(device)
         return httpx.Response(
-            200, json={"assigned": assigned, "drop_overlay": drop, "frozen": self.frozen}
+            200,
+            json={
+                "assigned": assigned,
+                "drop_overlay": drop,
+                "frozen": self.frozen,
+                "proposal": self.pointer(device),
+            },
         )
 
     def _firmware(self, request, version):
@@ -229,4 +325,46 @@ class FakeCloud:
         if actual != request.headers.get(SHA256_HEADER) or actual != meta["sha256"]:
             return _error(409, "sha256_mismatch", f"got {actual}")
         self.blobs[actual] = request.content
+        return httpx.Response(204)
+
+    # -- Fleet Doctor (3.8-3.10) ------------------------------------------------------
+
+    def _expired(self, proposal_id: str) -> bool:
+        body = self.proposals[proposal_id][1]
+        return Proposal.model_validate(body).expires_at <= self.clock()
+
+    def _doctor_ask(self, request, device):
+        if self.doctor_timeout:
+            raise httpx.ReadTimeout("fake doctor timed out", request=request)
+        raw, _ = self._parse(request, DoctorAsk)
+        if self.frozen:
+            return _error(409, "fleet_frozen", "the kill switch is on")
+        self.asks.append((device, raw))
+        return httpx.Response(200, json={**self.advice, "ask_id": f"ask_fake{len(self.asks)}"})
+
+    def _proposal(self, request, device, proposal):
+        owner, body = self.proposals.get(proposal, (None, None))
+        if owner != device:
+            return _error(404, "unknown_proposal", proposal)
+        if self.frozen:
+            return _error(409, "fleet_frozen", "the kill switch is on")
+        if proposal in self.proposal_results or self._expired(proposal):
+            return _error(410, "proposal_gone", f"{proposal} is no longer offered")
+        content, sha = proposal_body_and_sha256(body)
+        if request.url.path in self.corrupt:
+            sha = "0" * 64
+        headers = {SHA256_HEADER: sha, "Content-Type": "application/json"}
+        return httpx.Response(200, content=content, headers=headers)
+
+    def _proposal_result(self, request, device, proposal):
+        raw, result = self._parse(request, ProposalResult)
+        if self.proposals.get(proposal, (None,))[0] != device:
+            return _error(404, "unknown_proposal", proposal)
+        if proposal in self.proposal_results:
+            _, first = self.proposal_results[proposal]
+            same = (first["result"], first.get("overlay_id")) == (result.result, result.overlay_id)
+            return httpx.Response(200) if same else _error(409, "proposal_result_conflict")
+        self.proposal_results[proposal] = (device, raw)
+        if self.offers.get(device) == proposal:
+            del self.offers[device]  # the cloud has the answer: stop pointing at it
         return httpx.Response(204)

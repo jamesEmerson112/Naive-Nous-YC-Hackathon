@@ -17,6 +17,11 @@ another with any `now`, and `__main__` runs them on real time.
   checks in `failing` and repeats the fault until the gate assigns its last good version.
 - `park_hardware`: fault D3-style, wrist servo silent → park with torque off, unresolved,
   `suspected_cause: hardware`, no overlay. Feeds F6.
+- `consult`: fault D1 again, but the healer's two threshold patches both fail verify (T2).
+  It asks the Fleet Doctor (L1) through `arm.doctor`, rolls back, parks for a consult and
+  reports the incident unresolved with `consult: {wanted, trigger: T2, attempts: 2}` and
+  the advice in its reasoning. A proposal the cloud then offers is taken on a later
+  check-in by `arm.applier` (`FakeArm.tick`). Feeds F12.
 """
 
 from __future__ import annotations
@@ -28,7 +33,16 @@ from datetime import datetime
 
 from fake_device import recordings
 from fake_device.arm import FakeArm
-from romulus_contracts import Agent, IncidentReport, Outcome, Overlay, OverlayStatus, Running
+from fake_device.doctor import HealStep
+from romulus_contracts import (
+    Agent,
+    ConsultRequest,
+    IncidentReport,
+    Outcome,
+    Overlay,
+    OverlayStatus,
+    Running,
+)
 
 HOLD_AFTER_S = 1200.0
 """When an overlay is reported `held`: 20 min without recurrence (contracts README, I0 item 2)."""
@@ -307,10 +321,117 @@ def park_hardware(arm: FakeArm, repair_after_s: float | None = None) -> list[Ste
     return steps
 
 
+# The healer's failed attempts in `consult`, as in
+# packages/contracts/examples/incident_consult_wanted.json.
+CONSULT_STEPS = (
+    HealStep("grep -n RELEASE control/hold.py", read=("control/hold.py",)),
+    HealStep("patch control/hold.py: RELEASE_THRESHOLD_MM 40 -> 25", changed=("control/hold.py",)),
+    HealStep("verify d1_hand_trace", check="fail"),
+    HealStep("patch control/hold.py: RELEASE_THRESHOLD_MM 25 -> 15", changed=("control/hold.py",)),
+    HealStep("verify d1_hand_trace", check="fail"),
+)
+CONSULT_HOLD_PY = '''\
+RELEASE_THRESHOLD_MM = 40
+
+
+def step(state, dist_mm, cmd):
+    """One control step: distance in, gripper command out (see SPEC.md)."""
+    if state == State.HOLDING:
+        if dist_mm is not None and dist_mm < RELEASE_THRESHOLD_MM:
+            log_state(State.HOLDING, State.RELEASE, reason="dist_lt_threshold", dist_mm=dist_mm)
+            return State.RELEASE, cmd.open_gripper()
+        return State.HOLDING, cmd.hold()
+'''
+
+
+def consult(arm: FakeArm, hold_after_s: float = HOLD_AFTER_S) -> list[Step]:
+    """Fault D1 the healer can't fix: an L1 ask (T2), then park and ask for a consult (L2).
+
+    The arm stays parked for the consult until a proposal overlay is marked good
+    (`FakeArm.tick` takes the proposal), or until `hold_after_s`, when the wait is over and
+    it goes back to work unfixed. A marked-good proposal overlay is reported `held`
+    `hold_after_s` after that.
+    """
+
+    def fault(now: datetime) -> None:
+        running = _incident_running(arm) or Running()
+        if running.code_rev is None:
+            running.code_rev = "c0de001"  # a consult needs the base code_rev
+        incident_id = uuid.uuid4()
+        signals = {"dist_mm": [212, 140, 64, 31, 18, 12], "gripper_closed": [1, 1, 1, 1, 1, 0]}
+        log_tail = [
+            "S HOLDING->RELEASE reason=dist_lt_threshold dist_mm=18",
+            "S HOLDING->RELEASE reason=dist_lt_threshold dist_mm=12",
+        ]
+
+        # L1: verify still fails after 2 patch attempts (T2), so the harness asks.
+        arm.doctor.start_heal(incident_id)
+        advice = arm.doctor.maybe_ask(
+            list(CONSULT_STEPS),
+            verify_failures=2,
+            tier=3,
+            context={
+                "code_rev": running.code_rev,
+                "signals": signals,
+                "log_tail": log_tail,
+                "files": [{"path": "control/hold.py", "excerpt": CONSULT_HOLD_PY}],
+            },
+        )
+        reasoning = (
+            "Tier 3: 'S HOLDING->RELEASE reason=dist_lt_threshold' while holding. Lowered "
+            "RELEASE_THRESHOLD_MM twice; d1_hand_trace still released each time, just closer. "
+            "Rolled both patches back and parked."
+        )
+        if advice:
+            reasoning += "\n\n" + advice  # what the Doctor said becomes part of the record
+        actions = ["snapshot", *(s.summary() for s in CONSULT_STEPS[1:])]
+        actions += ["ask_doctor T2" + ("" if advice else ": no answer"), "rollback", "park"]
+        agent = Agent(reasoning=reasoning, actions=actions)
+
+        labels = ["unexpected_release"]
+        evidence = [
+            recordings.log_window(log_tail, now, incident_id, running, labels),
+            recordings.agent_trace(
+                agent.reasoning, agent.actions, now, incident_id, running, labels
+            ),
+        ]
+        incident = IncidentReport(
+            incident_id=incident_id,
+            occurred_at=now,
+            kind="unexpected_release",
+            summary="Gripper opened while holding as a hand approached; two threshold patches "
+            "failed verify, so the healer parked and asked for a consult",
+            running=running,
+            agent=agent,
+            overlay=None,
+            outcome=Outcome(resolved=False, resolving_action="park", suspected_cause="software"),
+            signals=signals,
+            recordings=[meta.recording_id for meta, _ in evidence],
+            tier=3,
+            log_tail=log_tail,
+            consult=ConsultRequest(wanted=True, trigger="T2", attempts=2),
+        )
+        arm.device.park_for_consult()
+        arm.proposal_hold_after_s = hold_after_s
+        arm.report_incident(now, incident, evidence)
+
+    def wait_over(now: datetime) -> None:
+        # No fix arrived, or it reverted: back to work. A fix still under its mark-good
+        # watch unparks the arm itself once it's marked good.
+        if arm.device.consult_parked and arm.applier.timer is None:
+            arm.device.consult_parked = False
+
+    return [
+        Step(0, "unexpected_release (consult)", fault),
+        Step(hold_after_s, "consult wait over", wait_over),
+    ]
+
+
 SCENARIOS: dict[str, Callable[..., list[Step]]] = {
     "rules": rules_patch,
     "code": code_patch,
     "bad": bad_candidate,
     "bad-late": bad_candidate_late,
     "park": park_hardware,
+    "consult": consult,
 }

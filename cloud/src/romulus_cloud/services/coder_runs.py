@@ -214,14 +214,22 @@ def replay_code_patch(
     verify_files: Mapping[str, bytes] | None = None,
     timeout_s: int = 300,
     scratch_dir: str | None = None,
+    extra_env: Mapping[str, str] | None = None,
 ) -> CodeReplay:
     """Run verify + `test_cmd` on the package `files` (paths under `device/`), then on
-    files + patch. `verify_files` paths are relative to `device/` and must be under verify/."""
+    files + patch. `verify_files` paths are relative to `device/` and must be under verify/.
+    `extra_env` adds variables to every container run (the Fleet Doctor's check passes
+    `PYTHONSAFEPATH=1`, so the work dir can't shadow pytest); it can't override the two
+    this function sets."""
     extra = dict(verify_files or {})
     for name in extra:
         if PurePosixPath(name).parts[:1] != (HOLDOUT_DIR,) or ".." in PurePosixPath(name).parts:
             raise CoderError(f"verify file {name!r} must be under {HOLDOUT_DIR}/")
-    env = {"CODER_TEST_CMD": test_cmd, "CODER_TEST_TIMEOUT_S": str(timeout_s)}
+    env = {
+        **dict(extra_env or {}),
+        "CODER_TEST_CMD": test_cmd,
+        "CODER_TEST_TIMEOUT_S": str(timeout_s),
+    }
 
     def run_both(repo: ScratchRepo) -> tuple[VerifyRun, TestRun]:
         for name, data in extra.items():

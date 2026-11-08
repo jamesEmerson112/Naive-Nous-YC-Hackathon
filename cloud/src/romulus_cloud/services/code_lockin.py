@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import re
 import shutil
 import tarfile
@@ -58,6 +59,9 @@ from romulus_cloud.settings import Settings
 from romulus_contracts.codepatch import CODE_ROOT, is_under
 
 SOURCE = "coder"  # code_versions.source for a version the coding agent drafted
+# Sources the gate replays for real (`replay_code_patch`) and never treats as pass-through:
+# the coding agent's, and a verified Fleet Doctor proposal's (`doctor_lockin.SOURCE`, D24).
+REPLAYED_SOURCES = frozenset({SOURCE, "doctor"})
 OUTPUT_TAIL = 4000  # characters of each test output kept in an event
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE)
 _COUNTS = re.compile(r"\d+ (?:passed|failed|errors?|skipped)\b.*$", re.MULTILINE)
@@ -173,6 +177,39 @@ def verify_files(directory: str) -> dict[str, bytes]:
     }
 
 
+VERIFY_MANIFEST = f"{HOLDOUT_DIR}/MANIFEST.json"  # written by devicecode.verify_from_bench
+_LINEAGE_MAX = 100
+
+
+def stale_verify(session: Session, extra: Mapping[str, bytes], base: CodeVersion) -> str | None:
+    """Why CODER_VERIFY_DIR doesn't fit `base`, or None. Verify generated for a code version
+    (its MANIFEST.json's `generated_from.code_rev`) fits that version and its descendants
+    (`parent_rev` chain); anything else fails closed rather than as misleading test failures.
+    A verify dir with no manifest isn't tied to a version and always fits."""
+    raw = extra.get(VERIFY_MANIFEST)
+    if raw is None:
+        return None
+    try:
+        rev = json.loads(raw)["generated_from"]["code_rev"]
+    except (ValueError, KeyError, TypeError):
+        rev = None
+    if not isinstance(rev, str) or not rev:
+        return (
+            "stale verify: CODER_VERIFY_DIR's MANIFEST.json names no code_rev; regenerate "
+            "with `make device-verify`"
+        )
+    lineage, cv = [], base
+    while cv is not None and len(lineage) < _LINEAGE_MAX:
+        lineage.append(cv.rev)
+        cv = session.get(CodeVersion, (cv.fleet_id, cv.parent_rev)) if cv.parent_rev else None
+    if rev in lineage:
+        return None
+    return (
+        f"stale verify: CODER_VERIFY_DIR was generated from code {rev}, which is not the base "
+        f"{base.rev} or one of its ancestors; regenerate with `make device-verify`"
+    )
+
+
 def failing_tests(*outputs: str) -> list[str]:
     """Test ids pytest named as FAILED or ERROR in its short summary, in order, unique."""
     return list(dict.fromkeys(m for out in outputs for m in _FAILED.findall(out or "")))
@@ -265,16 +302,17 @@ class ReplayTools:
 
 
 def coder_version(session: Session, c: Candidate) -> CodeVersion | None:
-    """The candidate's code version if the coding agent drafted it, else None."""
+    """The candidate's code version if the coding agent (or a verified Fleet Doctor
+    proposal) drafted it, else None."""
     if c.type != "code" or not c.code_rev:
         return None
     cv = session.get(CodeVersion, (c.fleet_id, c.code_rev))
-    return cv if cv is not None and cv.source == SOURCE else None
+    return cv if cv is not None and cv.source in REPLAYED_SOURCES else None
 
 
 def is_passthrough(session: Session, c: Candidate) -> bool:
-    """A code candidate counts as pass-through unless the coding agent drafted it (fail
-    closed: a missing code version is pass-through)."""
+    """A code candidate counts as pass-through unless the coding agent or a verified Fleet
+    Doctor proposal drafted it (fail closed: a missing code version is pass-through)."""
     return coder_version(session, c) is None
 
 
@@ -298,6 +336,9 @@ def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayR
             extra = verify_files(settings.coder_verify_dir)
         except CoderError as exc:
             return g.ReplayResult(False, f"code replay could not start: {exc}")
+        stale = stale_verify(session, extra, parent)
+        if stale:
+            return g.ReplayResult(False, f"code replay failed: {stale}")
         base = read_package(tools.store, parent)
         has_verify = bool(extra) or any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
         if not settings.coder_test_cmd.strip() and not has_verify:

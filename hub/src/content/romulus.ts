@@ -1,5 +1,5 @@
 import { ext, REPO, repo, type Src, type Status } from "./meta";
-import type { IconName } from "../viz";
+import type { IconName, SchedBlock } from "../viz";
 
 /** Kent's v0 heal-and-release loop (docs/cloud-platform-planning/cloud-platform-v0-plan.md; D15 pending). */
 export const V0_LOOP: { icon: IconName; title: string; sub: string }[] = [
@@ -63,7 +63,7 @@ export const DECISIONS: Decision[] = [
  * Kent's timed build plan (cloud-platform-build-plan.md). Times are PST; Sun = day 2.
  * `done` is the real state from the build-status table (PR #21); blocks without it count as done once their time passes.
  */
-export const SCHEDULE: { id: string; what: string; from: string; to: string; flows?: string; done?: boolean }[] = [
+export const SCHEDULE: SchedBlock[] = [
   { id: "M0", what: "Scaffold, contracts v0.1, Naïve + LLM spikes · #1–#4; the live card is still pending", from: "2026-11-08T00:15:00Z", to: "2026-11-08T01:15:00Z", done: false },
   { id: "M1", what: "Walking skeleton · #5 #8", from: "2026-11-08T01:15:00Z", to: "2026-11-08T02:45:00Z", flows: "F1 F2", done: true },
   { id: "M2", what: "Incident timeline page · #9", from: "2026-11-08T02:45:00Z", to: "2026-11-08T03:30:00Z", done: true },
@@ -71,7 +71,7 @@ export const SCHEDULE: { id: string; what: string; from: string; to: string; flo
   { id: "M4", what: "Telemetry ingest · #10", from: "2026-11-08T05:30:00Z", to: "2026-11-08T06:30:00Z", flows: "F7", done: true },
   { id: "M5", what: "Work orders to Naïve · #6 #11 #15", from: "2026-11-08T06:30:00Z", to: "2026-11-08T07:30:00Z", flows: "F6", done: true },
   { id: "M7", what: "Overnight launch · kit merged (#16); the launch itself is ~12:30 AM", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:30:00Z", flows: "F10", done: false },
-  { id: "ON", what: "Overnight run, hands off", from: "2026-11-08T08:30:00Z", to: "2026-11-08T15:00:00Z" },
+  { id: "ON", what: "Overnight run, hands off", from: "2026-11-08T08:30:00Z", to: "2026-11-08T15:00:00Z", night: true },
   { id: "AM", what: "Read digest, fix breakage", from: "2026-11-08T15:00:00Z", to: "2026-11-08T15:30:00Z" },
   { id: "M6", what: "Datasets and exports · #14, built early", from: "2026-11-08T15:30:00Z", to: "2026-11-08T17:00:00Z", flows: "F8", done: true },
   { id: "RA", what: "Real arm + polish", from: "2026-11-08T17:00:00Z", to: "2026-11-08T18:00:00Z" },

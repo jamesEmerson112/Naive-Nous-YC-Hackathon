@@ -645,7 +645,10 @@ export function JourneyPlayer({ ok, fail }: { ok: { who: string; title: string; 
 }
 
 /* ---------- Schedule: time blocks on a real clock, with a live "now" line ---------- */
-export function Schedule({ blocks, from, to }: { blocks: { id: string; what: string; from: string; to: string; flows?: string; done?: boolean }[]; from: string; to: string }) {
+/** night = the hands-off overnight block, drawn striped. */
+export type SchedBlock = { id: string; what: string; from: string; to: string; flows?: string; done?: boolean; night?: boolean };
+
+export function Schedule({ blocks, from, to, scale }: { blocks: SchedBlock[]; from: string; to: string; scale?: [string, string, string] }) {
   const now = useNow();
   const t0 = Date.parse(from);
   const t1 = Date.parse(to);
@@ -653,17 +656,19 @@ export function Schedule({ blocks, from, to }: { blocks: { id: string; what: str
   const fmt = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit" });
   // A block's real state wins; without one, a block counts as done once its time has passed.
   const isDone = (b: { to: string; done?: boolean }) => b.done ?? Date.parse(b.to) <= now;
+  const labels = scale ?? [`Sat ${fmt(from)}`, "overnight run", `Sun ${fmt(to)} · hacking ends`];
   return (
     <div className="sched">
       <div className="sched-bar" role="img" aria-label={`Build plan from ${fmt(from)} to ${fmt(to)}: ${blocks.map((b) => `${b.id} ${b.what}`).join("; ")}`}>
         {blocks.map((b) => {
           const left = pct(Date.parse(b.from));
           const width = pct(Date.parse(b.to)) - left;
+          if (width <= 0) return null; // outside the window: only the list shows it
           const done = isDone(b);
           return (
             <span
               key={b.id}
-              className={`sb${b.id === "ON" ? " night" : ""}${done ? " done" : ""}`}
+              className={`sb${b.night ? " night" : ""}${done ? " done" : ""}`}
               style={{ left: `${left}%`, width: `${width}%` }}
               title={`${b.id} · ${b.what} · ${fmt(b.from)}–${fmt(b.to)}${done ? " · done" : ""}`}
             >
@@ -678,9 +683,9 @@ export function Schedule({ blocks, from, to }: { blocks: { id: string; what: str
         ) : null}
       </div>
       <div className="sched-scale">
-        <span>Sat {fmt(from)}</span>
-        <span>overnight run</span>
-        <span>Sun {fmt(to)} · hacking ends</span>
+        <span>{labels[0]}</span>
+        <span>{labels[1]}</span>
+        <span>{labels[2]}</span>
       </div>
       <ol className="sched-list">
         {blocks.map((b) => (

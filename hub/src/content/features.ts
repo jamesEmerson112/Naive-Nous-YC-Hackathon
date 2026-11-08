@@ -70,6 +70,52 @@ export function parseFeatures(src: string): Feature[] {
 
 export const FEATURES = parseFeatures(raw);
 
+/** A line in BY PERSON, IN PHASE ORDER. phase is "P0"…"P6", "Now", "Done" or "Any time". */
+export interface PhaseLine {
+  phase: string;
+  text: string;
+}
+
+const isHeader = (t: string) => /[A-Z]/.test(t) && t === t.toUpperCase();
+
+/**
+ * Reads the BY PERSON, IN PHASE ORDER section: the legend lines before the first
+ * person, then each person's phase lines. The section ends at the first diagram
+ * box (or FINISHED). Lines without a phase, like UNCLAIMED's cut order, are skipped.
+ */
+export function parsePhases(src: string): { legend: string[]; byPerson: Record<string, PhaseLine[]> } {
+  const legend: string[] = [];
+  const byPerson: Record<string, PhaseLine[]> = {};
+  let open = false;
+  let person: string | null = null;
+  for (const line of src.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const header = t.toLowerCase();
+    if (!open) {
+      open = isHeader(t) && header === "by person, in phase order";
+      continue;
+    }
+    if (isHeader(t)) {
+      if (header === "finished" || BOX_NAMES[header]) break;
+      person = t;
+      byPerson[person] = [];
+      continue;
+    }
+    if (!person) {
+      legend.push(t);
+      continue;
+    }
+    const m = /^(P[0-6])\s+(.+)$/.exec(t) ?? /^(Now|Done|Any time):\s*(.+)$/.exec(t);
+    if (m) byPerson[person].push({ phase: m[1], text: m[2].trim() });
+  }
+  return { legend, byPerson };
+}
+
+const PHASES = parsePhases(raw);
+export const PHASE_LEGEND = PHASES.legend;
+export const BY_PERSON = PHASES.byPerson;
+
 export const featuresIn = (box: BoxId) => FEATURES.filter((f) => f.box === box);
 
 /** Initials of everyone with a claimed or finished line in the box, in first-seen order. */
