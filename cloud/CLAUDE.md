@@ -36,6 +36,32 @@ v0 plan for the data model, the flows doc for what each flow test proves.
 8. **Stubs announce themselves.** A stub's event says so ("replay: stub, passed by default").
 9. **Robustness is earned.** Skip hardening until a real failure asks for it; write down the trigger.
 
+## Real device data: build on agent runs (APIs §3.11)
+Since Nov 8 (`5ac13d7`) the real sensor pod reports what its heal agent did as an **agent run
+report**: `PUT /v1/devices/{id}/agent-runs/{run_id}`, contract `romulus_contracts.AgentRunReport`,
+table `agent_runs` (key `(device_id, run_id)`; the newest report is kept verbatim in `report`). The
+edge bridge sends it, and **this is the format real logs arrive in.** The field list is in the APIs
+doc §3.11; don't copy it here.
+- **Read agent activity from `agent_runs`.** Any remaining work that needs what an agent did, why,
+  what it flashed, whether it worked or what it asked for (Fleet Doctor evidence, dataset exports,
+  work-order cards, the digest, coder context) goes through `services/agent_runs.py`
+  (`for_incident`, `get`, `unlinked`, `view`). `Incident.agent` (`actions`, `reasoning`) and
+  `agent_trace` recordings are thinner, with no thinking, write-up, firmware history or outcome.
+  Use them only as a fallback for devices that send no runs, i.e. the fake arms.
+- **Use the row's columns for state.** Filter on `state` (`running` | `finished`), `status`
+  (`working` | `fixed` | `broken` | `unknown`), `sim` and `incident_ids`. Read everything else from
+  `report` with `.get()` and a default, since reports are free-form JSON and a field may be missing.
+  Leave out `sim` runs (rehearsals) wherever real fleet behaviour is counted.
+- **Test with the real shape.** The fake arms (`tools/fake_device` scenarios) never send agent runs.
+  Make run data the way `tests/flows/test_f13_agent_runs.py` does: an `edge_bridge.fake_healer` run
+  folder (`agent_run_01`) sent by the unmodified bridge, or `edge_bridge.agent_runs.build()`. Don't
+  hand-write report dicts in a shape the bridge doesn't send. Real reports can be read on the laptop
+  cloud at `GET /v1/devices/pod-1/agent-runs/<run>`.
+- **The schema is live with real data.** `agent_runs` holds the pod's real runs, so the additive-only
+  rule below applies to it: don't rename or drop its columns, and never `make reset` the laptop cloud.
+  To change what a report carries, change the bridge (`tools/edge_bridge/.../agent_runs.py`), the
+  contract and APIs §3.11 together. An optional field needs no `CONTRACT_VERSION` bump (D28).
+
 ## How this codebase does it
 - **Transactions:** services never commit. A route or worker step commits once at the end,
   so a change and its Event land together or not at all.
