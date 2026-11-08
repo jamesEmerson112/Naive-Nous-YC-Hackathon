@@ -72,33 +72,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 5:58 PM PST_
+_Last updated: Sat Nov 7, 6:08 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged M5 (#11) and has #12 (M3b batch, gate, kill switch, F3–F5) and #14 (M6 datasets, snapshots, exports, F8) open, while drafting the Fleet Doctor proposal (D23–D27). M0's live Naïve card and LLM call are still missing. Ishaan is running 18-trial confirmations for the healer model pick. James is researching robot-learning options (e.g. Instant Policy, which needs depth cameras the bench doesn't have) *(James's session)*.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has #12 (M3b batch, gate, kill switch, F3–F5) and #14 (M6 datasets, exports, F8) open and revised the Fleet Doctor proposal to v2 (D23–D27). M0's live Naïve card and LLM call are still missing. Ishaan is running 18-trial confirmations for the healer model pick. James measured pi vs Hermes and is sketching a "System 2 / System 1" arm agent: Whisper → Hermes picks scripted skills, SmolVLA as an upgrade *(James's session)*.
 
 **Recently done:**
-- Kent merged PR #11 (`8bca41b`, 5:55 PM): M5 work orders → Naïve cards, with an outbox, spend caps, the resolve route and flow test F6. Follow-ups #15 (`62bfde2`, 5:58 PM: case-insensitive placeholder phone check, card change detection without `updated_at`) and #13 (`d61aa31`: ruff scoped to our packages)
-- Kent opened PR #14 (`cloud/m6-datasets`, 5:57 PM): M6 datasets, snapshots, exports, regression corpus and flow F8
-- Kent pushed Fleet Doctor drafts in `docs/fleet-doctor/` (`d93ed05`, 5:48 PM): concept, architecture and research, a proposal asking for decisions D23–D27 (Kent's block)
-- James pushed `docs/human-computer-labs-insights.md` (`0aafce0`, 5:43 PM): what his earlier robot repo offers the SO-101 (MuJoCo sim twin, JSON gesture library, versioned command protocol with acks and stop, benchmark and parity-test habits)
+- James pushed `docs/pi-vs-hermes.md` and the console's conversation mode (`852032e`, 6:07 PM). Same model on both sides: Hermes is 3–4× faster per step (≈2 s vs 8.6 s for "hello world"), carries ~7K base prompt vs pi's ~15.6K, and remembers across conversations via `~/.hermes/memories/MEMORY.md`; pi doesn't. Reading: Hermes for the arm's operator agent, pi for office agents in Naïve *(inferred, in the doc)*
+- Kent pushed Fleet Doctor v2 after a red-team review (`5ad95e8`, 6:06 PM): harness-code triggers with a circuit breaker for L1 advice, a polled consult state machine, no proposals until the K17 path list exists; P2, nothing built tonight
+- Kent merged M5 work orders → Naïve cards (#11, `8bca41b`) with follow-ups #15 and #13, and opened PR #14 for M6
+- James pushed `docs/human-computer-labs-insights.md` (`0aafce0`): MuJoCo sim twin, gesture library, versioned command protocol, benchmark habits
 
 **Open questions:**
-- Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4). B4 probably also holds up M0's live Naïve card and LLM call, now about 45 min late *(inferred, Kent's block)*. Olir's `firmware/toolkit/` may be the quickest fix for B8 *(inferred, James's session)*
-- Where does the ultrasonic sensor plug in? Olir's `firmware` branch reads it on the STM32 and streams CSV to the Pi over `/dev/ttyACM0`; the overview and fault catalog now say so (`dcd291f`), but the hub may still assume Pi GPIO. Team call, with Ishaan's input *(James's session)*
-- Ishaan plans to move `edge/` into the repo as `device/` once the model tests finish, which would settle B1. He still owes Kent a review of the code-package and `code_patch` formats in PR #3 (B2, B3)
-- The current Naïve key covers agents and sessions only. A key with `proxy:write` would let Hermes run the same models as pi through Naïve's proxy; one with Board scopes would let Hermes pick up and close cards (Kent owes James the Board key). Pi heal time is still unmeasured (needs the Pi's tokens per second)
+- Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17, which now also gates every Fleet Doctor proposal), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4). B4 probably also holds up M0's live Naïve card and LLM call *(inferred, Kent's block)*. Olir's `firmware/toolkit/` may be the quickest fix for B8 *(inferred)*
+- Hermes compaction fails: its summarizer can't load the ChatGPT (`openai-codex`) login, so it skips and keeps full history. Fix to try: give it its own Nous login, or report it upstream. Naïve also returned `rate_limited` several times, which can break the first Hermes run; start `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`)
+- Should pi drive the arm at all? Only if the arm's API is exposed to the internet, which is undecided (`docs/pi-vs-hermes.md`). Where the ultrasonic sensor plugs in (STM32 over `/dev/ttyACM0` per Olir's branch vs Pi GPIO in the hub) is still a team call
+- Ishaan plans to move `edge/` into the repo as `device/` once the model tests finish (settles B1), and still owes Kent a review of PR #3 formats (B2, B3). Kent owes James a Naïve key with Board scopes
 
 **Recent commits (all authors):**
+- `852032e` Sat 18:07 · jamesEmerson112 · Naive console: conversation mode and memory panels for pi vs Hermes; add pi-vs-Hermes results
+- `5ad95e8` Sat 18:06 · Kent Gang · Revise Fleet Doctor docs after red-team review (v2)
+- `24a246a` Sat 17:59 · jamesEmerson112 · Update team status and features.txt
+- `0a479a2` Sat 17:58 · Kent Gang · Update Kent status in CLAUDE.md
+- `0c71f80` Sat 17:58 · Kent Gang · Add Fleet Doctor README and strategy (decisions D23-D27 requested)
 - `62bfde2` Sat 17:58 · kgang · Work orders: case-insensitive placeholder phone check; detect card changes without updated_at (#15)
 - `8bca41b` Sat 17:55 · kgang · Romulus M5: work orders → Naïve cards (outbox, spend caps, resolve route) + F6 (#11)
 - `d61aa31` Sat 17:53 · kgang · Romulus: scope ruff to our Python packages (#13)
 - `d64b809` Sat 17:49 · Kent Gang · Update Kent status in CLAUDE.md
 - `d93ed05` Sat 17:48 · Kent Gang · Add Fleet Doctor concept, architecture and research drafts
-- `6bf0d03` Sat 17:49 · jamesEmerson112 · Update team status and features.txt
-- `0aafce0` Sat 17:43 · jamesEmerson112 · Add insights from Human-Computer-Labs for the SO-101 project
-- `dcd291f` Sat 17:35 · jamesEmerson112 · Sync notes with Olir's firmware branch (toolkit, HC-SR04 on STM32)
-- `a9c8f95` Sat 17:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `4b45b33` Sat 17:39 · jamesEmerson112 · Update team status and features.txt
 
 **Branches on GitHub:** `main`, `firmware` (Olir, not merged), `cloud/m3b-batch-gate` (Kent, PR #12 open), `cloud/m6-datasets` (Kent, PR #14 open), `cloud/m5-workorders` (Kent, merged as #11)
 <!-- team-status:end -->

@@ -2,7 +2,7 @@ FEATURES: who is on what
 Claim a line by adding "<--- Name" (several names: "<--- Olir, Andre").
 Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
-Updated Sat Nov 7, 5:58 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 6:08 PM PST from CLAUDE.md, commits and docs/.
 
 NAIVE
 Naive API key for Romulus (by 5:15 PM)
@@ -42,6 +42,7 @@ Cron pulls next board card
 Gateway phone alerts
 Hermes plugin catalog submission
 pi vs Hermes comparison (Naive console)  <--- James
+Hermes compaction fix (summarizer login)
 
 ROMULUS
 Scaffold, contracts, spikes (M0)        <--- Kent
