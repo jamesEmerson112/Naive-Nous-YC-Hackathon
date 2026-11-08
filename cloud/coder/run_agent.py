@@ -1,33 +1,51 @@
 """Entrypoint of the `coder` sandbox (D21, D22; M8): run the agent on /work, then the tests.
 
-Two modes:
+Three modes:
 - `agent` (default): read the task from stdin, run mini-swe-agent on /work with a step and
-  time limit, then run the test command.
-- `test`: run only the test command (the gate's code replay; no LLM, no network needed).
+  time limit, then run the device test command.
+- `test`: run only the device test command (the gate's code replay; no LLM, no network).
+- `verify`: run the held-out `verify/` scripts with a fixed command the code under test
+  can't configure: isolated Python, no conftest, a clean pytest config, no cache, and the
+  pass/fail/skip counts from a JUnit report.
 
-Either way the last stdout line is `ROMULUS_RESULT <json>` with the agent's exit status,
-steps and token counts and the test command's exit code and output. Everything else
-(agent logs) goes to stderr.
+Every mode ends stdout with one line, `ROMULUS_RESULT <json>`. Agent logs go to stderr.
 
 Env: LLM_BASE_URL, LLM_MODEL, LLM_API_KEY (OpenAI-compatible endpoint), CODER_TEST_CMD
 (default `python -m pytest -q`), CODER_STEP_LIMIT, CODER_TIME_LIMIT_S, CODER_TEST_TIMEOUT_S,
-CODER_MAX_TOKENS. The key is removed from the environment before the agent's shell starts,
-so the agent's commands (and the model, through their output) never see it.
+CODER_MAX_TOKENS, CODER_LLM_TIMEOUT_S.
+
+The key: this process makes itself non-dumpable first (PR_SET_DUMPABLE=0), so the agent's
+commands, which run as the same uid, can't read it from /proc/1/environ or /proc/1/mem. It
+then pops the LLM_* variables, so no child process inherits them. The host also redacts the
+key from everything it gets back and fails the draft if the key shows up at all.
 """
 
+import ctypes
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 WORK = "/work"
+VERIFY_DIR = "verify"
 MARKER = "ROMULUS_RESULT "
 OUTPUT_CAP = 20_000  # characters of test output kept (head and tail)
+PR_SET_DUMPABLE = 4
 # mini-swe-agent v2 asks for ```mswea_bash_command fences; models trained on v1 (and gpt-oss
 # in our first dry run: RepeatedFormatError) write ```bash. Accept the usual shell fences.
 ACTION_REGEX = r"```(?:mswea_bash_command|bash|sh|shell)[ \t]*\n(.*?)\n```"
+
+
+def make_undumpable() -> bool:
+    """Deny same-uid processes /proc/<pid>/environ and /proc/<pid>/mem. Linux only."""
+    if not sys.platform.startswith("linux"):
+        return False
+    libc = ctypes.CDLL(None, use_errno=True)
+    return libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) == 0
 
 
 def _cap(text: str) -> str:
@@ -37,49 +55,92 @@ def _cap(text: str) -> str:
     return f"{text[:half]}\n... [{len(text) - OUTPUT_CAP} characters cut] ...\n{text[-half:]}"
 
 
-def run_tests(cmd: str, timeout_s: int) -> dict:
-    """Run the device's test command in /work; never raises."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("LLM_")}
+def _clean_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if not k.startswith(("LLM_", "PYTEST"))}
+
+
+def _run(argv, *, shell: bool, cwd: str, timeout_s: int) -> tuple[int, str, bool]:
+    """(exit code, capped output, timed out); never raises."""
     try:
         proc = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=WORK,
-            env=env,
+            argv,
+            shell=shell,
+            cwd=cwd,
+            env=_clean_env(),
             capture_output=True,
             text=True,
             errors="replace",
             timeout=timeout_s,
         )
-        return {
-            "cmd": cmd,
-            "exit_code": proc.returncode,
-            "output": _cap(proc.stdout + proc.stderr),
-            "timed_out": False,
-        }
+        return proc.returncode, _cap(proc.stdout + proc.stderr), False
     except subprocess.TimeoutExpired as exc:
         out = exc.stdout or ""
         out = out.decode(errors="replace") if isinstance(out, bytes) else out
-        return {"cmd": cmd, "exit_code": -1, "output": _cap(out), "timed_out": True}
+        return -1, _cap(out), True
+
+
+def run_tests(cmd: str, timeout_s: int, work: str | None = None) -> dict:
+    """Run the device's test command in the work dir."""
+    code, output, timed_out = _run(cmd, shell=True, cwd=work or WORK, timeout_s=timeout_s)
+    return {"cmd": cmd, "exit_code": code, "output": output, "timed_out": timed_out}
+
+
+def run_verify(timeout_s: int, work: str | None = None, python: str = "python") -> dict:
+    """Run `verify/` as its own pytest call that ignores the code's conftest and config."""
+    work = work or WORK
+    if not (Path(work) / VERIFY_DIR).is_dir():
+        return {"ran": False, "tests": 0, "passed": 0, "exit_code": None, "output": ""}
+    tmp = Path(tempfile.mkdtemp(prefix="romulus-verify-"))
+    ini, report = tmp / "verify.ini", tmp / "verify.xml"
+    # -I: no cwd on sys.path (a planted pytest.py can't shadow pytest), no PYTHON* env, no
+    # user site. The code dir is added by the clean ini instead, after pytest has loaded.
+    ini.write_text(f"[pytest]\npythonpath = {work}\n")
+    argv = [
+        python, "-I", "-m", "pytest", VERIFY_DIR,
+        f"--rootdir={work}", "-c", str(ini), "--noconftest", "-p", "no:cacheprovider",
+        "-q", "-rA", f"--junitxml={report}",
+    ]  # fmt: skip
+    code, output, timed_out = _run(argv, shell=False, cwd=work, timeout_s=timeout_s)
+    counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    try:
+        root = ET.parse(report).getroot()
+        for suite in root.iter("testsuite"):
+            for key in counts:
+                counts[key] += int(suite.get(key, 0))
+    except (OSError, ET.ParseError, ValueError):
+        pass  # no report: zero tests, so it can't count as a pass
+    passed = counts["tests"] - counts["failures"] - counts["errors"] - counts["skipped"]
+    return {
+        "ran": True,
+        **counts,
+        "passed": max(passed, 0),
+        "exit_code": code,
+        "timed_out": timed_out,
+        "output": output,
+    }
 
 
 def run_agent(task: str) -> dict:
     """Run mini-swe-agent on /work. Returns exit status, steps and token counts."""
+    api_key = os.environ.pop("LLM_API_KEY", "")
+    base_url = os.environ.pop("LLM_BASE_URL", "")
+    model = os.environ.pop("LLM_MODEL", "")
+    # mini-swe-agent retries a failed call 10 times with up to 60 s waits; cap it, so the
+    # wall-time limit really ends the run.
+    os.environ["MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT"] = "2"
+
     import yaml
     from minisweagent import __version__, package_dir
     from minisweagent.agents.default import DefaultAgent
     from minisweagent.environments.local import LocalEnvironment
     from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
 
-    api_key = os.environ.pop("LLM_API_KEY", "")
-    base_url = os.environ.pop("LLM_BASE_URL", "")
-    model = os.environ.pop("LLM_MODEL", "")
     info = {"agent": "mini-swe-agent", "version": __version__, "model": model}
     if not (base_url and model):
         return {**info, "exit_status": "ConfigError", "error": "LLM_BASE_URL and LLM_MODEL"}
 
-    # The stock text-based config: one ```mswea_bash_command block per turn, which works
-    # with any chat model behind an OpenAI-compatible proxy (no tool-call support needed).
+    # The stock text-based config: one fenced command per turn, which works with any chat
+    # model behind an OpenAI-compatible proxy (no tool-call support needed).
     config = yaml.safe_load((Path(package_dir) / "config" / "default.yaml").read_text())
     agent_cfg = {
         **config["agent"],
@@ -97,6 +158,8 @@ def run_agent(task: str) -> dict:
             "api_key": api_key,
             # Always cap output: the Naïve proxy otherwise reserves the model's full limit.
             "max_tokens": int(os.environ.get("CODER_MAX_TOKENS", "4000")),
+            "timeout": int(os.environ.get("CODER_LLM_TIMEOUT_S", "120")),
+            "num_retries": 0,  # mini-swe-agent's own retry (capped above) is the only one
         },
         observation_template=config["model"]["observation_template"],
         format_error_template=config["model"]["format_error_template"],
@@ -144,17 +207,25 @@ def run_agent(task: str) -> dict:
 
 
 def main() -> int:
+    undumpable = make_undumpable()
     mode = sys.argv[1] if len(sys.argv) > 1 else "agent"
-    if mode not in ("agent", "test"):
-        print(f"usage: run_agent.py [agent|test], got {mode!r}", file=sys.stderr)
+    if mode not in ("agent", "test", "verify"):
+        print(f"usage: run_agent.py [agent|test|verify], got {mode!r}", file=sys.stderr)
         return 2
+    timeout_s = int(os.environ.get("CODER_TEST_TIMEOUT_S", "300"))
     result: dict = {"mode": mode}
     if mode == "agent":
-        result["agent"] = run_agent(sys.stdin.read())
-    result["tests"] = run_tests(
-        os.environ.get("CODER_TEST_CMD") or "python -m pytest -q",
-        int(os.environ.get("CODER_TEST_TIMEOUT_S", "300")),
-    )
+        if not undumpable and sys.platform.startswith("linux"):
+            # Fail closed: without it the agent could read the key from /proc/1/environ.
+            result["agent"] = {"exit_status": "SandboxError", "error": "prctl failed"}
+            os.environ.pop("LLM_API_KEY", None)
+        else:
+            result["agent"] = run_agent(sys.stdin.read())
+    if mode == "verify":
+        result["verify"] = run_verify(timeout_s)
+    else:
+        cmd = os.environ.get("CODER_TEST_CMD") or "python -m pytest -q"
+        result["tests"] = run_tests(cmd, timeout_s)
     sys.stdout.write("\n" + MARKER + json.dumps(result) + "\n")
     sys.stdout.flush()
     return 0
