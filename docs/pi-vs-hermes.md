@@ -78,6 +78,34 @@
 - **It hits Hermes too:** Hermes's background service reconnects to Naïve's MCP when it starts. If Naïve is at capacity (HTTP 429), the first Hermes run can fail with "Gateway starting: deadline". Start the service ahead of time with `hermes gateway ensure`.
 - **Accounts:** ChatGPT accounts reject some model names (`gpt-5.4-mini`, `gpt-5.5`); `gpt-6-luna` and `gpt-6-sol` work.
 
+## 7. Can it fix the fault?
+
+- **Setup:** the six faults of Ishaan's healer benchmark (`docs/healer-benchmark-progress.md`), planted in a small stand-in robot app (`prototypes/fault-lab/`), on gpt-6-sol, run twice each. Each agent works with its own tools:
+  - **pi:** in its Naïve sandbox.
+  - **Hermes:** shell and file tools in a throwaway folder, with at most 30 steps.
+- **Hidden check:** reruns each fix on fresh fake hardware, including a trace with glitches. For A5 the arm must be parked and the code unchanged.
+- **Where to see it:** in the console, under "Can it fix the fault?". Raw results are in `prototypes/fault-lab/results/`.
+
+| Task | Fault | pi fixed? | pi time | pi steps | Hermes fixed? | Hermes time | Hermes steps |
+|---|---|---|---|---|---|---|---|
+| D1 | A "safety" rule opens the gripper when something gets close (demo fault) | ✅ 2/2 | 67 s | 4.5 | ✅ 2/2 | 40 s | 14 |
+| D2 | The distance validity check is removed | ✅ 2/2 | 50 s | 4 | ✅ 2/2 | 42 s | 14 |
+| D3 | Servo reads skip `with_retries`; the bus drops 3 reads | ✅ 2/2 | 36 s | 4 | ✅ 2/2 | 42 s | 14.5 |
+| S1 | Config key typo `near_cn` | ✅ 2/2 | 48 s | 3 | ✅ 2/2 | 31 s | 11.5 |
+| S2 | The sensor read waits forever for an echo | ✅ 2/2 | 49 s | 4 | ✅ 2/2 | 41 s | 14 |
+| A5 | Gripper servo (ID 6) missing: park, change no code | ✅ 2/2 | 31 s | 2 | ✅ 2/2 | 25 s | 10.5 |
+| **All** | | **12/12** | | | **12/12** | | |
+
+Times and steps are medians of the two runs.
+
+- **Fixing:** both fixed everything.
+  - The D2 trap that fooled Ishaan's small models (guarding only `None`) didn't catch either one.
+  - On A5 both correctly parked instead of editing code.
+- **Speed:** Hermes was faster on 5 of 6 faults; D3 is the exception.
+- **Way of working:** pi uses a few big shell commands; Hermes many small file and shell steps.
+- **Cost:** pi spent $1.37 of Naïve credits (about $0.11 per fix); Hermes ran on the ChatGPT plan.
+- **Compared with Ishaan's small local models:** his best, qwen3.5:4b, passed 10/12. Our stand-in app is small, so these tasks are probably easier than his real benchmark *(inferred)*. Rerun pi and Hermes on his code once `device/`, `harness/` and `bench/` are in the repo.
+
 ## What this means for the robot arm agent *(inferred)*
 
 - **Hermes fits the arm's operator agent.** It's 3–4× faster per step, runs next to the arm, keeps long-term notes we can read and edit, and its prompt and memory are fully inspectable.

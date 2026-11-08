@@ -9,7 +9,7 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, rm, stat } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +33,8 @@ const TURN_TIMEOUT_MS = 180_000;
 // Long enough to paste a whole repo doc into one message (the fault catalog is ~25K characters).
 const MAX_MESSAGE_CHARS = 60_000;
 const PAGE = new URL("./index.html", import.meta.url);
+// Fault-lab runs (prototypes/fault-lab/run_lab.py): can pi and Hermes fix each planted fault?
+const FAULT_RESULTS = new URL("../fault-lab/results/", import.meta.url);
 // Repo docs the page may load into the message box ("Feed a document"). Read-only, fixed list.
 const DOCS = {
   "so101-research": new URL("../../docs/so101-research.md", import.meta.url),
@@ -296,6 +298,25 @@ async function runHermes(req, res) {
 // `hermes chat --reasoning` levels. Naïve agents (pi) have no effort setting, so this is Hermes-only.
 const REASONING_LEVELS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
+/** GET /api/faultlab: every saved fault-lab run, oldest first. */
+async function faultLab(res) {
+  let files = [];
+  try {
+    files = (await readdir(FAULT_RESULTS)).filter((f) => f.endsWith(".json")).sort();
+  } catch {
+    return send(res, 200, { runs: [] }); // no runs saved yet
+  }
+  const runs = [];
+  for (const f of files) {
+    try {
+      runs.push({ name: f.slice(0, -".json".length), rows: JSON.parse(await readFile(new URL(f, FAULT_RESULTS), "utf8")) });
+    } catch {
+      /* skip a file that isn't valid results */
+    }
+  }
+  return send(res, 200, { runs });
+}
+
 /** GET /api/hermes/memory: Hermes's long-term notes, injected into every new conversation. */
 async function hermesMemory(res) {
   const files = [];
@@ -380,6 +401,7 @@ createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/run") return runNaive(req, res);
     if (req.method === "POST" && pathname === "/api/hermes") return runHermes(req, res);
     if (req.method === "GET" && pathname === "/api/hermes/memory") return hermesMemory(res);
+    if (req.method === "GET" && pathname === "/api/faultlab") return faultLab(res);
     if (req.method === "GET" && pathname === "/api/hermes/session") return hermesSession(res, url.searchParams.get("id"));
     if (req.method === "GET" && pathname.startsWith("/api/docs/")) {
       const doc = DOCS[pathname.slice("/api/docs/".length)];

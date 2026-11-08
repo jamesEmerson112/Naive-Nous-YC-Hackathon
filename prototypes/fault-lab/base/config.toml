@@ -1,0 +1,7 @@
+# Robot app settings (distances in cm, angles in degrees)
+near_cm = 10
+min_valid_cm = 2
+max_valid_cm = 400
+lift_deg = 45
+rest_deg = 0
+echo_polls = 50

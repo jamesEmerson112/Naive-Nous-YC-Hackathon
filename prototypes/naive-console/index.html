@@ -101,6 +101,10 @@
       <option value="high">High</option>
       <option value="xhigh">Extra high</option>
     </select>
+    <p class="row muted small" id="lockhint" hidden>
+      <span>Locked while this conversation runs, so every turn uses the same agent, model and effort.</span>
+      <button type="button" id="newconv2">New conversation</button>
+    </p>
     <label for="msg">Message</label>
     <textarea id="msg" maxlength="60000" required>Reply with exactly: hello world</textarea>
     <div class="row presets" aria-label="Feed a document">
@@ -152,6 +156,22 @@
     <section class="panel mem naive" id="m-naive" aria-label="pi memory"></section>
     <section class="panel mem hermes" id="m-hermes" aria-label="Hermes memory"></section>
   </div>
+
+  <section class="panel" aria-labelledby="faults-h">
+    <h2 id="faults-h">Can it fix the fault? (fault lab)</h2>
+    <p class="muted small" id="faults-sub">Loading fault-lab results…</p>
+    <div class="facts" id="faults-sum"></div>
+    <div class="turns-wrap"><table class="turns">
+      <thead><tr>
+        <th>Task</th><th>Fault · right response</th>
+        <th class="naive">pi fixed?</th><th>pi time</th><th>pi steps</th>
+        <th class="hermes">Hermes fixed?</th><th>Hermes time</th><th>Hermes steps</th>
+      </tr></thead>
+      <tbody id="faultrows"></tbody>
+    </table></div>
+    <ul class="msgs" id="faultfails"></ul>
+    <p class="muted small">Both agents get the six faults of Ishaan's healer benchmark (docs/healer-benchmark-progress.md), planted in a small stand-in robot app, with the incident report and their own tools: pi in its Naïve cloud sandbox, Hermes in a throwaway folder on this Mac. A hidden check they never see reruns each fix on fresh fake hardware, including a trace with glitches; for A5 the arm must be parked and the code left alone. Times and steps are medians; steps are tool calls (pi runs a few big shell commands, Hermes many small file and shell steps). Rerun: <span class="mono">cd prototypes/fault-lab &amp;&amp; python3 run_lab.py</span>, then reload.</p>
+  </section>
 
   <section class="locked" id="locked" aria-labelledby="locked-h" hidden></section>
 </main>
@@ -245,6 +265,7 @@ function lockControls() {
   const locked = Boolean(conv?.turns.length);
   $("agent").disabled = locked;
   $("effort").disabled = locked;
+  $("lockhint").hidden = !locked;
 }
 
 function renderConvbar() {
@@ -541,6 +562,59 @@ function renderAll() {
   lockControls();
 }
 
+/* ---------- fault lab: can each agent fix the fault? ---------- */
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+async function loadFaults() {
+  let data;
+  try { data = await getJson("/api/faultlab"); } catch (e) { $("faults-sub").textContent = e.message; return; }
+  const rows = data.runs.flatMap((r) => r.rows);
+  if (!rows.length) {
+    $("faults-sub").textContent = "No fault-lab runs saved yet. Run python3 run_lab.py in prototypes/fault-lab, then reload.";
+    return;
+  }
+  const sides = ["pi", "hermes"];
+  const faults = [...new Set(rows.map((r) => r.fault))];
+  const stats = (fid, side) => {
+    const rs = rows.filter((r) => r.fault === fid && r.side === side);
+    if (!rs.length) return null;
+    return { n: rs.length, ok: rs.filter((r) => r.passed).length, wall: median(rs.map((r) => r.wall_s)),
+      steps: median(rs.map((r) => (r.tools ?? []).length)), cost: rs.reduce((s, r) => s + (r.cost_usd ?? 0), 0) };
+  };
+  const table = faults.map((fid) => ({ fid, row: rows.find((r) => r.fault === fid), pi: stats(fid, "pi"), hermes: stats(fid, "hermes") }));
+  const maxWall = Math.max(1, ...table.flatMap((t) => sides.map((s) => t[s]?.wall ?? 0)));
+  const verdict = (st) => (!st ? "–" : `${st.ok === st.n ? "✅" : st.ok === 0 ? "❌" : "⚠️"} ${st.ok}/${st.n}`);
+  const timeCell = (st, side) => el("td", { className: `num ${side === "pi" ? "naive" : "hermes"}` },
+    st ? `${Math.round(st.wall)} s` : "–", st ? el("div", { className: "bar", style: `width:${Math.round((st.wall / maxWall) * 100)}%` }) : "");
+  $("faultrows").replaceChildren(...table.map((t) => el("tr", {},
+    el("td", { className: "num", textContent: t.fid }),
+    el("td", {}, t.row.title ?? t.fid, el("div", { className: "muted small", textContent: t.row.right ? `→ ${t.row.right}` : "" })),
+    el("td", { className: "num", textContent: verdict(t.pi) }), timeCell(t.pi, "pi"), el("td", { className: "num", textContent: t.pi ? String(t.pi.steps) : "–" }),
+    el("td", { className: "num", textContent: verdict(t.hermes) }), timeCell(t.hermes, "hermes"), el("td", { className: "num", textContent: t.hermes ? String(t.hermes.steps) : "–" }),
+  )));
+
+  const total = (side) => rows.filter((r) => r.side === side);
+  const fixed = (side) => `${total(side).filter((r) => r.passed).length}/${total(side).length}`;
+  const both = table.filter((t) => t.pi && t.hermes);
+  const hermesFaster = both.filter((t) => t.hermes.wall < t.pi.wall).length;
+  const piCost = total("pi").reduce((s, r) => s + (r.cost_usd ?? 0), 0);
+  $("faults-sum").replaceChildren(
+    fact(fixed("pi"), "pi fixed (all trials)"),
+    fact(fixed("hermes"), "Hermes fixed (all trials)"),
+    fact(`${hermesFaster} of ${both.length}`, "faults where Hermes was faster (median)"),
+    fact(`$${piCost.toFixed(2)}`, "pi's Naïve credits for these runs"),
+  );
+  const models = [...new Set(rows.map((r) => `${r.side === "pi" ? "pi" : "Hermes"} on ${r.model ?? "?"}`))].join(" vs ");
+  $("faults-sub").textContent = `${data.runs.length} run${data.runs.length === 1 ? "" : "s"} saved (latest ${data.runs.at(-1).name}) · ${models}.`;
+  const fails = rows.filter((r) => !r.passed);
+  $("faultfails").replaceChildren(...fails.map((r) => el("li", {},
+    el("b", { textContent: `${r.fault} · ${r.side} · run ${r.run ?? ""}` }), r.reasons.join("; ") + (r.error ? ` (error: ${r.error})` : ""))));
+}
+
 /* ---------- start-up ---------- */
 let hasHermes = false;
 async function load() {
@@ -564,6 +638,7 @@ async function load() {
     $("go").disabled = true;
   }
   renderAll();
+  loadFaults();
   await refreshHermes(null);
 }
 
@@ -577,6 +652,7 @@ document.querySelectorAll("[data-doc]").forEach((b) => b.addEventListener("click
   } catch (e) { $("doclen").textContent = e.message; }
 }));
 
+$("newconv2").addEventListener("click", () => $("newconv").click());
 $("newconv").addEventListener("click", () => {
   conv = null;
   hermesSnap = null;
@@ -594,6 +670,7 @@ $("f").addEventListener("submit", async (e) => {
   lockControls();
   $("go").disabled = true;
   $("newconv").disabled = true;
+  $("newconv2").disabled = true;
   $("state").textContent = `Turn ${conv.turns.length + 1}: running both…`;
   const [pi, hermes] = await Promise.all([runNaive(message), runHermes(message)]);
   // Keep a short copy of long messages (a fed document) so the saved conversation stays small.
@@ -607,6 +684,7 @@ $("f").addEventListener("submit", async (e) => {
   $("state").textContent = `Turn ${turn.n} done`;
   $("go").disabled = false;
   $("newconv").disabled = false;
+  $("newconv2").disabled = false;
 });
 
 makeCol("c-naive", "Naïve · pi", "Naïve's cloud", "cost");
