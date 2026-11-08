@@ -67,6 +67,14 @@ class CodeDraft:
     passed: bool  # advisory only: the gate trusts the replay, never this (see module doc)
     notes: str
     flags: tuple[str, ...] = ()  # e.g. "test_harness: conftest.py (added)", for the gate
+    # How the agent ended, so the batch can tell a provider blip from a bad draft
+    # (`domain.coder_retry`): its exit status and error, steps, tokens (prompt + completion;
+    # None when unknown) and whether the sandbox returned no result at all.
+    exit_status: str = ""
+    error: str = ""
+    steps: int | None = None
+    tokens: int | None = None
+    no_result: bool = False
 
 
 class Coder(Protocol):
@@ -296,9 +304,17 @@ class ScratchRepo:
         return [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
 
     def apply(self, patch: str) -> str | None:
-        """Apply a unified diff to the work tree. Returns None, or why it doesn't apply."""
+        """Apply a code_patch to the work tree. Returns None, or why it doesn't apply.
+
+        Paths may be relative to `device/` or carry a `device/` prefix (APIs §2.10, B3). The
+        contract's parser decides which and `git apply -p` follows it, so what is applied is
+        what was checked; a patch it finds any problem in (mixed forms, escapes, links) is
+        refused (fail closed)."""
+        summary = summarize_code_patch(patch)
+        if summary.problems:
+            return "; ".join(summary.problems)
         try:
-            self.git("apply", "--whitespace=nowarn", "-", stdin=patch)
+            self.git("apply", f"-p{summary.strip}", "--whitespace=nowarn", "-", stdin=patch)
         except CoderError as exc:
             return str(exc)
         return None
@@ -529,7 +545,24 @@ class LocalAgent:
             passed=passed,
             notes=redact("; ".join(notes) + ".", secrets),
             flags=tuple(redact(f, secrets) for f in flags),
+            exit_status=str(agent.get("exit_status") or ""),
+            error=redact(str(agent.get("error") or ""), secrets),
+            steps=_int(agent.get("steps")),
+            tokens=_tokens(agent),
+            no_result=run.result is None,
         )
+
+
+def _int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _tokens(agent: Mapping[str, Any]) -> int | None:
+    prompt, completion = _int(agent.get("prompt_tokens")), _int(agent.get("completion_tokens"))
+    return None if prompt is None or completion is None else prompt + completion
 
 
 def build_coder(
