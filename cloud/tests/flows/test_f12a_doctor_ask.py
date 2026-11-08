@@ -54,8 +54,8 @@ class ScriptedLlm:
 
     model = "scripted-model"
 
-    def __init__(self, text: str = "", error: Exception | None = None, on_call=None) -> None:
-        self.text, self.error, self.on_call = text, error, on_call
+    def __init__(self, text="", error=None, on_call=None, tokens=(100, 50)) -> None:
+        self.text, self.error, self.on_call, self.tokens = text, error, on_call, tokens
         self.calls: list[dict] = []
 
     def complete(self, system, user, *, max_tokens=None, timeout_s=None) -> LlmReply:
@@ -64,7 +64,7 @@ class ScriptedLlm:
             self.on_call()
         if self.error:
             raise self.error
-        return LlmReply(self.text, self.model, prompt_tokens=100, completion_tokens=50)
+        return LlmReply(self.text, self.model, *self.tokens)
 
 
 @pytest.fixture
@@ -116,6 +116,7 @@ def test_ask_returns_advice_and_both_events_land_on_the_story(
     assert asked.data["trigger"] == "T4"
     assert asked.data["question"] == body["question"]
     assert asked.data["incident_kind"] == "unexpected_release"
+    assert asked.data["counts_toward_device_day"] is False  # its own reported incident
     (advised,) = _events(db_session, "doctor.advised")
     data = advised.data
     assert data["hypotheses"] == advice["hypotheses"]
@@ -221,6 +222,10 @@ def test_the_seventh_ask_on_one_incident_is_capped(client, seeded, body, db_sess
     assert blocked.refs["incident"] == INCIDENT and blocked.refs["ask"].startswith("ask_")
     assert "incident_kind" not in blocked.data  # not reported, so not known
 
+    # Asking again still answers 429, but today's refusal is already on the timeline.
+    assert client.post(ASK, json=body).status_code == 429
+    assert len(_events(db_session, "doctor.blocked_over_cap")) == 1
+
     other = body | {"incident_id": str(uuid.uuid4())}  # another incident has its own cap
     assert client.post(ASK, json=other).status_code == 200
 
@@ -237,7 +242,7 @@ def test_the_daily_spend_cap_blocks_the_next_ask(client, seeded, body, configure
 
 
 def test_an_ask_with_no_incident_counts_toward_the_device_cap(
-    client, seeded, body, configure, db_session
+    client, seeded, body, configure, example, db_session
 ):
     configure(doctor_asks_per_device_day=2)
     loose = {k: v for k, v in body.items() if k != "incident_id"} | {"question": "x" * 500}
@@ -251,8 +256,31 @@ def test_an_ask_with_no_incident_counts_toward_the_device_cap(
     assert all("incident" not in e.refs and len(e.data["question"]) == 200 for e in asked)
     (blocked,) = _events(db_session, "doctor.blocked_over_cap")
     assert blocked.data["which"] == "asks" and "incident" not in blocked.refs
-    # The device-day cap is for asks with no incident; an incident ask still goes through.
+    # An ask about an incident this device reported is exempt from the device-day cap.
+    reported = client.post("/v1/devices/arm-1/incidents", json=example("incident_consult_wanted"))
+    assert reported.status_code == 201
     assert client.post(ASK, json=body).status_code == 200
+
+
+def test_made_up_incident_ids_dont_dodge_the_device_cap(
+    client, seeded, body, configure, example, db_session
+):
+    """Only an incident reported by this device exempts an ask from the device-day cap."""
+    configure(doctor_asks_per_device_day=1)
+    first = client.post(ASK, json=body | {"incident_id": str(uuid.uuid4())})
+    assert first.status_code == 200
+    second = client.post(ASK, json=body | {"incident_id": str(uuid.uuid4())})
+    assert second.status_code == 429 and "1 of its 1 asks today" in second.json()["detail"]
+    (asked,) = _events(db_session, "doctor.asked")
+    assert asked.data["counts_toward_device_day"] is True
+
+    # arm-1's reported incident doesn't exempt sim-1 either.
+    reported = client.post("/v1/devices/arm-1/incidents", json=example("incident_consult_wanted"))
+    assert reported.status_code == 201
+    other = "/v1/devices/sim-1/doctor/ask"
+    assert client.post(other, json=body).status_code == 200
+    assert client.post(other, json=body).status_code == 429
+    assert client.post(ASK, json=body).status_code == 200  # arm-1 itself: exempt
 
 
 # --- what the LLM says, or doesn't ---------------------------------------------------------
@@ -287,7 +315,7 @@ def test_hypotheses_naming_a_safety_path_are_removed_and_counted(
 
 
 def test_an_llm_timeout_answers_504_and_records_a_decline(
-    client, seeded, body, use_llm, db_session
+    client, seeded, body, use_llm, configure, db_session
 ):
     use_llm(ScriptedLlm(error=LlmTimeout("read timed out")))
     resp = client.post(ASK, json=body)
@@ -298,12 +326,58 @@ def test_an_llm_timeout_answers_504_and_records_a_decline(
     assert declined.data["reason"] == "llm timeout" and declined.data["stage"] == "ask"
     assert declined.refs == asked.refs and declined.refs["incident"] == INCIDENT
     assert _events(db_session, "doctor.advised") == []
-    assert "cost_usd" not in declined.data  # nothing came back to price
+
+    # A timed-out call may still be billed: it carries the prompt's estimated cost...
+    data = declined.data
+    assert data["usage_estimated"] is True and data["completion_tokens"] == 0
+    assert data["prompt_tokens"] > 0
+    assert data["cost_usd"] == pytest.approx(data["prompt_tokens"] / 1000 * 0.001)
+    # ...which the spend cap sees.
+    configure(doctor_daily_usd_cap=data["cost_usd"] / 2)
+    resp = client.post(ASK, json=body)
+    assert resp.status_code == 429
+    (blocked,) = _events(db_session, "doctor.blocked_over_cap")
+    assert blocked.data["which"] == "spend"
+    assert blocked.data["spent_today_usd"] == pytest.approx(data["cost_usd"])
 
 
-def test_an_llm_error_answers_502(client, seeded, body, use_llm, db_session):
-    use_llm(ScriptedLlm(error=LlmError("proxy said 500")))
+@pytest.mark.parametrize(
+    ("llm", "error_type"),
+    [
+        (ScriptedLlm(error=LlmError("proxy said 500 for secret-host")), "LlmError"),
+        (ScriptedLlm(error=RuntimeError("adapter bug")), "RuntimeError"),
+        (ScriptedLlm('{"hypotheses": []}', tokens=(-5, 10)), "ValueError"),  # bad usage
+    ],
+)
+def test_any_llm_failure_answers_502_with_a_decline(
+    client, seeded, body, use_llm, db_session, llm, error_type
+):
+    use_llm(llm)
     resp = client.post(ASK, json=body)
     assert resp.status_code == 502 and resp.json()["error"] == "doctor_unavailable"
+    assert error_type in resp.json()["detail"] and "secret" not in resp.json()["detail"]
+    (asked,) = _events(db_session, "doctor.asked")  # it reached the LLM, so it counts
     (declined,) = _events(db_session, "doctor.declined")
-    assert declined.data["reason"] == "llm error" and "proxy said 500" in declined.data["error"]
+    assert declined.data["reason"] == "llm error" and declined.data["error_type"] == error_type
+    assert "error" not in declined.data  # the type only; the message goes to the log
+    assert declined.data["cost_usd"] > 0 and declined.refs == asked.refs
+    assert _events(db_session, "doctor.advised") == []
+
+
+def test_an_unconfigured_live_llm_answers_502_and_says_so_once(
+    client, seeded, body, configure, db_session
+):
+    # Test settings force LLM_PROVIDER=fake, which build_doctor_llm refuses for live.
+    configure(doctor_mode="live")
+    resp = client.post("/v1/devices/nope/doctor/ask", json=body)
+    assert resp.status_code == 404  # the device check still comes first
+    for _ in range(2):
+        resp = client.post(ASK, json=body)
+        assert resp.status_code == 502 and resp.json()["error"] == "doctor_unavailable"
+    (declined,) = _events(db_session, "doctor.declined")  # deduped for the day
+    assert declined.data["reason"] == "llm unconfigured"
+    assert "LLM_PROVIDER" in declined.data["error"]
+    assert _events(db_session, "doctor.asked") == []  # it never reached an LLM
+
+    assert client.post("/v1/fleet/freeze", json={"by": "kent", "why": "x"}).status_code == 200
+    assert client.post(ASK, json=body).status_code == 409  # frozen is checked before it

@@ -20,9 +20,7 @@ from fastapi import APIRouter, Depends, Request
 from romulus_cloud.adapters.llm import Llm, LlmConfigError
 from romulus_cloud.api.deps import SettingsDep
 from romulus_cloud.api.device import RawBody, check_contract, parse
-from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
-from romulus_cloud.log import log_line
 from romulus_cloud.services import doctor_ask
 from romulus_cloud.services.doctor_llm import build_doctor_llm
 from romulus_contracts import DoctorAsk
@@ -33,10 +31,11 @@ _llms: dict[tuple[str, ...], Llm] = {}
 _llms_lock = threading.Lock()
 
 
-def get_doctor_llm(settings: SettingsDep) -> Llm | None:
-    """The Doctor's LLM, cached per process for these settings; None while DOCTOR_MODE=off
-    (the service then answers 503 doctor_off, after its 404 check). A live LLM whose settings
-    are unusable answers 502 doctor_unavailable."""
+def get_doctor_llm(settings: SettingsDep) -> Llm | doctor_ask.Unconfigured | None:
+    """The Doctor's LLM, cached per process for these settings; None while DOCTOR_MODE=off.
+    A live LLM whose settings `build_doctor_llm` refuses comes back as
+    `doctor_ask.Unconfigured` (not cached), so the service answers 502 after its 404, 503 and
+    409 checks and puts the reason on the timeline."""
     if settings.doctor_mode == "off":
         return None
     key = (
@@ -51,14 +50,11 @@ def get_doctor_llm(settings: SettingsDep) -> Llm | None:
             try:
                 _llms[key] = build_doctor_llm(settings)
             except LlmConfigError as exc:
-                log_line("doctor.llm_unconfigured", level="error", error=str(exc))
-                raise ApiError(
-                    502, "doctor_unavailable", f"The Fleet Doctor's LLM isn't configured: {exc}"
-                ) from exc
+                return doctor_ask.Unconfigured(str(exc))
         return _llms[key]
 
 
-DoctorLlmDep = Annotated[Llm | None, Depends(get_doctor_llm)]
+DoctorLlmDep = Annotated[Llm | doctor_ask.Unconfigured | None, Depends(get_doctor_llm)]
 
 
 @router.post("/devices/{device_id}/doctor/ask")
