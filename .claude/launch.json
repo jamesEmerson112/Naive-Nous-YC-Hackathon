@@ -6,6 +6,13 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "hub"],
       "port": 5174
+    },
+    {
+      "name": "naive-console",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["prototypes/naive-console/server.mjs"],
+      "port": 5180,
+      "url": "http://127.0.0.1:5180"
     }
   ]
 }

@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Naïve Console</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #161a20; --panel-2: #1c2128; --ink: #e6e9ef; --muted: #9aa3ae;
+    --line: #2a3039; --accent: #6ea8ff; --ok: #6fd28a; --bad: #f27f7f;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 -apple-system, system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; display: grid; gap: 14px; }
+  h1 { margin: 0; font-size: 1.4rem; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); font-size: 0.86em; }
+  .who { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.85rem; color: var(--muted); }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; }
+  form { display: grid; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  label { font-size: 0.8rem; color: var(--muted); }
+  select, textarea, button { font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  textarea { min-height: 70px; resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { cursor: pointer; background: var(--accent); color: #08101c; border: 0; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .reply { padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 10px; white-space: pre-wrap; min-height: 48px; }
+  .reply.error { border-left-color: var(--bad); color: var(--bad); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+  .stat { padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .stat b { display: block; font-size: 1.05rem; }
+  .stat span { font-size: 0.75rem; color: var(--muted); }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+  summary { cursor: pointer; color: var(--muted); }
+  ol { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 2px; max-height: 320px; overflow: auto; }
+  li { display: grid; grid-template-columns: 3ch 1fr auto; gap: 8px; font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+  li .t { color: var(--ink); overflow-wrap: anywhere; }
+  li.msg .t { color: var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Naïve Console</h1>
+    <p class="muted">Send a message to an agent in your Naïve org and watch the run. Every run is capped at $0.25.</p>
+    <div class="who" id="who">Checking sign-in…</div>
+  </header>
+
+  <form id="f">
+    <label for="agent">Agent</label>
+    <select id="agent" required></select>
+    <label for="msg">Message</label>
+    <textarea id="msg" maxlength="4000" required>Reply with exactly: hello world</textarea>
+    <div class="row">
+      <button id="go" type="submit">Send</button>
+      <span class="muted" id="state" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <section aria-label="Reply">
+    <label>Reply</label>
+    <div class="reply" id="reply"></div>
+  </section>
+
+  <section class="stats" aria-label="Run stats">
+    <div class="stat"><b id="s-stop">–</b><span>stop reason</span></div>
+    <div class="stat"><b id="s-cost">–</b><span>cost</span></div>
+    <div class="stat"><b id="s-tok">–</b><span>tokens in / out</span></div>
+    <div class="stat"><b id="s-time">–</b><span>model time</span></div>
+  </section>
+
+  <details>
+    <summary>Event log <span id="n" class="mono"></span></summary>
+    <ol id="events"></ol>
+  </details>
+  <p class="muted mono" id="sid"></p>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const usd = (micro) => "$" + (micro / 1e6).toFixed(4);
+
+async function getJson(path) {
+  const r = await fetch(path);
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+
+async function load() {
+  try {
+    const w = await getJson("/api/whoami");
+    $("who").innerHTML = "";
+    for (const text of [`org: ${w.org?.name}`, `signed in with: ${w.principal}`, ...w.scopes]) {
+      const s = document.createElement("span");
+      s.className = "chip";
+      s.textContent = text;
+      $("who").append(s);
+    }
+    const agents = await getJson("/api/agents");
+    for (const a of agents) {
+      const o = new Option(`${a.name} · ${a.model} · ${a.harness}`, a.id);
+      if (a.name === "hello-world") o.selected = true;
+      $("agent").add(o);
+    }
+  } catch (e) {
+    $("who").textContent = `Not signed in: ${e.message}. Run naive login, then reload.`;
+    $("go").disabled = true;
+  }
+}
+
+function addEvent(ev) {
+  const li = document.createElement("li");
+  if (ev.type.startsWith("message.")) li.className = "msg";
+  const detail = ev.data?.content ?? ev.data?.stop_reason ?? "";
+  li.innerHTML = `<span></span><span class="t"></span><span></span>`;
+  li.children[0].textContent = ev.seq;
+  li.children[1].textContent = detail ? `${ev.type} · ${String(detail).slice(0, 120)}` : ev.type;
+  li.children[2].textContent = ev.created_at?.slice(11, 19) ?? "";
+  $("events").append(li);
+  $("n").textContent = `(${$("events").children.length})`;
+}
+
+function onLine(item) {
+  if (item.kind === "event") {
+    const ev = item.event;
+    addEvent(ev);
+    if (ev.type === "message.delta") $("reply").textContent += ev.data.content ?? "";
+    if (ev.type === "message.completed" && ev.data.role === "assistant") $("reply").textContent = ev.data.content;
+    if (ev.type === "session.running") $("state").textContent = "Running…";
+    if (ev.type === "session.usage") {
+      const u = ev.data;
+      $("s-cost").textContent = usd(u.consumed_micro_usd);
+      $("s-tok").textContent = `${u.token_usage.input} / ${u.token_usage.output}`;
+      $("s-time").textContent = `${u.active_seconds} s`;
+    }
+  } else if (item.kind === "session") {
+    const s = item.session;
+    $("s-stop").textContent = s.stop_reason ?? s.status;
+    $("s-cost").textContent = usd(s.consumed_micro_usd);
+    $("sid").textContent = `session ${s.id} · agent version ${s.agent_version}`;
+  } else if (item.kind === "error") {
+    $("reply").classList.add("error");
+    $("reply").textContent = item.message;
+  }
+}
+
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  for (const id of ["s-stop", "s-cost", "s-tok", "s-time"]) $(id).textContent = "–";
+  $("reply").textContent = "";
+  $("reply").classList.remove("error");
+  $("events").innerHTML = "";
+  $("sid").textContent = "";
+  $("go").disabled = true;
+  $("state").textContent = "Starting session…";
+  try {
+    const r = await fetch("/api/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agent: $("agent").value, message: $("msg").value }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error);
+    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (line) onLine(JSON.parse(line));
+      }
+    }
+    $("state").textContent = "Done";
+  } catch (err) {
+    onLine({ kind: "error", message: err.message });
+    $("state").textContent = "";
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+load();
+</script>
+</body>
+</html>
