@@ -45,7 +45,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 5:28 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 5:38 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
 
 **The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
 - **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
@@ -88,13 +88,12 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
   - **PR #3 (`84b4a93`, 4:52 PM):** `romulus-contracts` v0.1, with models, the shared `rules.evaluate`, `code_patch` checks, example payloads and a README for the device side. Ishaan should review it: it proposes the code-package and `code_patch` formats (B2, B3).
   - **PR #4 (`b76b332`, 4:54 PM):** the cloud scaffold: settings, the data model, the event log, the FastAPI app with `/healthz`, the worker, the Compose stack, a Makefile and `cloud/CLAUDE.md`.
   - **Earlier:** the workspace skeleton (PR #1) and the adapters (PR #2). M0's live Naïve card and LLM call are still to come *(inferred from the build plan)*.
-- **Merged:**
-  - **#7 (`05797bf`, 5:23 PM, M3a):** the pure gate core: overlay merge, replay, the canary verdict and the candidate state machine.
-  - **Earlier:** #5, the fake fleet and reference Pi visor/outbox (M1), and #6, work-order triage, spend caps and `parts.yaml` (M4, M5, M7).
-- **Open, with #9 and #10 built on top of #8:**
-  - **#8, `cloud/m1-skeleton` (M1, F1 and F2):** the device API Ishaan's Pi will call (I1–I3), the ops API and `/incidents/{id}/story`. **It's the bottleneck**: two more PRs are drafts until it merges *(inferred)*.
-  - **#9, `cloud/m2-timeline` (M2, D10):** the timeline page. It has a fleet strip showing the canary, health, versions and overlays, the incident list, a story page with a yellow banner when a change touches safety (K17), and a Freeze/Unfreeze button on every page.
-  - **#10, `cloud/m4-telemetry` (M4, F7):** recordings arrive as metadata and then bytes. They're stored raw and content-addressed, deduplicated, capped at 200 MB, and shown as evidence in the incident's story.
+- **M1 and M2 merged (5:28–5:29 PM):**
+  - **#8 (`422d4bb`):** the walking skeleton. It has the device API Ishaan's Pi will call (I1–I3), the registry, the ops API, `/incidents/{id}/story`, seed data and flows F1 and F2.
+  - **#9 (`33def3d`):** the incident timeline (D10). It has a fleet strip, the incident list, a story page with a yellow banner when a change touches safety (K17), and a Freeze/Unfreeze button.
+  - **Earlier:** #7 (the gate core, M3a), #5 (the fake fleet and reference Pi visor/outbox) and #6 (work-order triage, spend caps and `parts.yaml`).
+- **Open — #10, `cloud/m4-telemetry` (M4, F7):** recordings arrive as metadata and then bytes. They're stored raw and content-addressed, deduplicated, capped at 200 MB, and shown as evidence in the incident's story. It's out of draft now that #8 is in.
+- **Not yet started in code:** M3's gate wiring into the worker and the kill switch (F3–F5), and M5's live work-order cards *(inferred from the PR list)*. Also added `.claude/workflows/project-status.js`, a workflow that writes a cited status report across every lane.
 - **Behind schedule:** M0's live Naïve card and LLM call were due at 5:15 PM and still aren't in any PR. B4 is probably blocking them: either a Naïve key with `proxy:write` or James's RunPod endpoint *(inferred)*.
 - **Ask from James:** the current Naïve key covers only agents and sessions. Hermes needs a key with Board scopes to pick up and close cards, either from Kent or via `naive mcp create` (team status).
 - **Decisions locked (D0–D22):** Docker Compose, Postgres 17, FastAPI, Jinja + htmx (D17, D18). Naïve is outbound only, with caps in our code and over-cap orders blocked (D19, D19b). LLM access goes through the Naïve proxy or RunPod, with a swappable `Coder` for code patches (D21, D22). D5a is accepted, with its risk logged as K17 ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
