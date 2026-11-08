@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from romulus_cloud.adapters.coder import CoderError, Sandbox
+from romulus_cloud.adapters.coder import CoderError, ProcResult, Sandbox, SandboxRun
 from romulus_cloud.services import code_lockin, coder_runs
 from romulus_cloud.services.coder_runs import (
     CodeReplay,
@@ -309,12 +309,45 @@ def test_fake_failed_lines_do_not_fail_a_correct_patch():
 
 
 def test_an_early_exit_zero_is_not_a_pass():
-    """`os._exit(0)` on import: pytest exits 0 before any test fails, and seals nothing."""
+    """`os._exit(0)` on import: pytest exits 0 before any test fails, and never reaches the
+    seal's end marker."""
     result = replay(code_line("import os; os._exit(0)"))
     assert result.patched is not None and result.patched.exit_code == 0
-    assert result.patched.results is None
+    assert result.patched.incomplete and not result.patched.passed
     assert not result.tests_passed and not result.passed
-    assert "no sealed pytest result" in result.summary()
+    assert "pytest started but didn't finish (no end marker)" in result.summary()
+
+
+def _judged(tmp_path, cmd: str) -> TestRun:
+    """A test command run by the image's `run_tests`, judged by `TestRun.passed` alone."""
+    out = fakes.run_agent.run_tests(cmd, 60, work=str(tmp_path))
+    return coder_runs.test_run_of(SandboxRun({"tests": out}, ProcResult(0, "", "")))
+
+
+PYTEST = f"{shlex.quote(sys.executable)} -m pytest -q"
+
+
+def test_an_exit_zero_mid_session_is_not_passed_on_its_own(tmp_path):
+    """`.passed` alone (the Doctor's repro steps, `check.py`) must not fail open: pytest
+    started, a test called `os._exit(0)`, and the end marker never came."""
+    (tmp_path / "test_a.py").write_text("def test_ok():\n    pass\n")
+    (tmp_path / "test_b.py").write_text("import os\n\n\ndef test_bye():\n    os._exit(0)\n")
+    run = _judged(tmp_path, PYTEST)
+    assert run.exit_code == 0 and run.incomplete and not run.passed
+    assert run.results == {"test_a.py::test_ok": "passed"}
+
+
+def test_a_non_pytest_command_is_judged_by_its_exit_code(tmp_path):
+    run = _judged(tmp_path, "true")
+    assert run.results is None and not run.incomplete and run.passed
+    assert not _judged(tmp_path, "false").passed
+
+
+def test_a_normal_pytest_run_passes(tmp_path):
+    (tmp_path / "test_a.py").write_text("def test_ok():\n    pass\n")
+    run = _judged(tmp_path, PYTEST)
+    assert run.passed and not run.incomplete
+    assert run.results == {"test_a.py::test_ok": "passed"}
 
 
 def test_skipping_the_device_suite_from_the_code_is_not_a_pass():

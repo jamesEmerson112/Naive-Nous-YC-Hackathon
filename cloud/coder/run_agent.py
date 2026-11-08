@@ -123,6 +123,9 @@ def _send(obj):
             pass
 
 
+_send({"start": True})  # pytest is starting: from here on, no end marker = didn't finish
+
+
 def pytest_collectreport(report):
     if report.failed:
         _send({"id": "collect:" + (report.nodeid or "."), "outcome": "failed"})
@@ -156,9 +159,13 @@ _RANK = {"passed": 0, "skipped": 1, "failed": 2}
 
 
 def parse_seal(lines: list[bytes]) -> dict | None:
-    """{"tests": {node id: worst outcome}, "exitstatus"} from the seal's lines up to the first
-    end marker, or None when there is no marker (pytest didn't finish, or never ran)."""
+    """What the seal said, up to its first end marker (anything after it is ignored):
+    - None: no start marker, so this was not a sealed pytest run;
+    - {"tests": {node id: worst outcome}, "exitstatus"}: pytest started and finished;
+    - the same with "incomplete": True and no exitstatus: pytest started but never reached
+      its end (it was killed, or the code under test exited early)."""
     results: dict[str, str] = {}
+    started = False
     for raw in lines:
         try:
             item = json.loads(raw)
@@ -166,13 +173,16 @@ def parse_seal(lines: list[bytes]) -> dict | None:
             continue
         if not isinstance(item, dict):
             continue
+        if item.get("start") is True:
+            started = True
+            continue
         if item.get("end") is True:
             return {"tests": results, "exitstatus": item.get("exitstatus")}
         outcome = item.get("outcome") if item.get("outcome") in _RANK else "failed"
         key = str(item.get("id"))
         if _RANK[outcome] >= _RANK[results.get(key, "passed")]:
             results[key] = outcome
-    return None
+    return {"tests": results, "exitstatus": None, "incomplete": True} if started else None
 
 
 def write_seal(plugin_dir: Path) -> str:
@@ -234,9 +244,9 @@ def _run(
 
 
 def run_tests(cmd: str, timeout_s: int, work: str | None = None) -> dict:
-    """Run the device's test command in the work dir. `results` is the seal's per-test
-    outcomes from the pytest it ran (`parse_seal`), or None (not a pytest command, or pytest
-    never reached its end)."""
+    """Run the device's test command in the work dir. `results` is `parse_seal`'s reading of
+    the pytest it ran: None when it ran no sealed pytest, `incomplete` when pytest started
+    but never reached its end."""
     work = work or WORK
     with tempfile.TemporaryDirectory(prefix="romulus-seal-") as tmp:
         if Path(tmp).resolve().is_relative_to(Path(work).resolve()):
@@ -282,6 +292,7 @@ def run_verify(timeout_s: int, work: str | None = None, python: str = "python") 
     return {
         "ran": True,
         "results": results,
+        "incomplete": sealed is None or bool(sealed.get("incomplete")),
         "tests": len(outcomes),
         "passed": outcomes.count("passed"),
         "failures": outcomes.count("failed"),

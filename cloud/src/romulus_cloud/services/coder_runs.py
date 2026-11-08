@@ -83,6 +83,7 @@ PYTEST_DEPS = {"pytest", "_pytest", "pluggy", "iniconfig", "packaging", "py", "e
 PYTEST_DEPS |= {"tomli"}
 RESERVED_MODULES = frozenset(n.casefold() for n in sys.stdlib_module_names | PYTEST_DEPS)
 OK_OUTCOMES = ("passed", "skipped")
+INCOMPLETE = "pytest started but didn't finish (no end marker)"
 
 
 @dataclass(frozen=True)
@@ -94,15 +95,19 @@ class TestRun:
     timed_out: bool = False
     configured: bool = True  # False: no test command, so nothing ran (and nothing failed)
     # The image's result seal: {test id: "passed" | "skipped" | "failed"} from the pytest the
-    # command ran; None when there was none (not pytest, or it never reached its end).
+    # command ran. `results is None` <=> it was not a (sealed) pytest run: then only the exit
+    # code speaks. `incomplete`: pytest started but never reached its end marker (killed, or
+    # the code under test exited early); that is never a pass.
     results: Mapping[str, str] | None = None
+    incomplete: bool = False
 
     @property
     def passed(self) -> bool:
-        """Exit 0, and the sealed results (if any) agree: some tests, none failed."""
+        """Exit 0, pytest (if it ran) reached its end, and the sealed results agree: some
+        tests, none failed."""
         if not self.configured:
             return True
-        if self.exit_code != 0 or self.timed_out:
+        if self.exit_code != 0 or self.timed_out or self.incomplete:
             return False
         r = self.results
         return r is None or (bool(r) and all(o in OK_OUTCOMES for o in r.values()))
@@ -114,8 +119,10 @@ class TestRun:
         skipped it too): no deselecting, skipping or exiting the suite away."""
         if not self.configured or base.results is None:
             return None
+        if self.incomplete:
+            return INCOMPLETE
         if self.results is None:
-            return "no sealed pytest result (the base run had one): pytest didn't finish"
+            return "no sealed pytest result (the base run had one): pytest didn't run"
         missing = sorted(set(base.results) - set(self.results))
         if missing:
             return f"{len(missing)} base tests missing: {', '.join(missing[:5])}"
@@ -139,12 +146,15 @@ class VerifyRun:
     output: str = ""
     timed_out: bool = False
     results: Mapping[str, str] | None = None  # the seal's {test id: outcome}
+    incomplete: bool = False  # pytest started (or should have) but never reached its end
 
     def all_passed(self, expected: int) -> bool:
-        """Exactly `expected` tests ran and passed, none skipped, pytest exited 0."""
+        """Exactly `expected` tests ran and passed, none skipped, pytest exited 0 and reached
+        its end."""
         return (
             self.ran
             and not self.timed_out
+            and not self.incomplete
             and self.exit_code == 0
             and self.skipped == 0
             and self.tests == expected
@@ -230,6 +240,8 @@ class CodeReplay:
                 return "timed out"
             if run.exit_code is None:
                 return "no result"
+            if run.exit_code == 0 and run.incomplete:
+                return f"fail ({INCOMPLETE})"
             if run.exit_code == 0 and not run.passed:
                 r = run.results or {}
                 failed = sum(o not in OK_OUTCOMES for o in r.values())
@@ -276,6 +288,8 @@ def test_run_of(run: SandboxRun) -> TestRun:
         tests.get("output", ""),
         timed_out=bool(tests.get("timed_out")) or run.proc.timed_out,
         results=_results(tests.get("results")),
+        incomplete=isinstance(tests.get("results"), dict)
+        and bool(tests["results"].get("incomplete")),
     )
 
 
@@ -303,6 +317,7 @@ def _verify_run(run: SandboxRun) -> VerifyRun:
         output=v.get("output", ""),
         timed_out=bool(v.get("timed_out")) or run.proc.timed_out,
         results=_results({"tests": v["results"]}) if "results" in v else None,
+        incomplete=bool(v.get("incomplete")),
     )
 
 
