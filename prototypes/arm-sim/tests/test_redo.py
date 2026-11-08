@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE))
 
 import fake_manager  # noqa: E402
 from armsim import dispatch, events, orders  # noqa: E402
+from armsim.board import FileBoard  # noqa: E402
 from armsim.escalation import ESCALATION_SCHEMA, validate  # noqa: E402
 from armsim.manager import ManagerClient  # noqa: E402
 from armsim.redo import Redo  # noqa: E402
@@ -36,13 +37,16 @@ class Bench(Host):
       fault_on="approach"  the corrected (redo) approach opens a us_stuck incident and halts
     Every skill reply is the host's shape ({ok, skill, result}); self.skills records (name, offset_mm)."""
 
-    def __init__(self, *, block=(30, 0), finds=None, fault_on=None, arm="sim", **kw):
+    def __init__(self, *, block=(30, 0), finds=None, fault_on=None, arm="sim", window_ok=True, **kw):
         super().__init__(**kw)
         self.block, self.finds, self.fault_on, self.arm = block, None if finds is None else list(finds), fault_on, arm
+        self.window_ok = window_ok              # False: an older host without the window op
         self.at, self.holding, self.skills = (0, 0), False, []
 
     def __call__(self, op, **f):
         if op == "window":
+            if not self.window_ok:
+                return {"ok": False, "error": "unknown op 'window'"}
             return {**super().__call__(op, **f), "arm": self.arm, "kinematics": self.arm == "sim"}
         if op != "skill" or self.open():
             return super().__call__(op, **f)
@@ -170,6 +174,9 @@ def test_two_failed_redos_go_to_a_person_and_the_arm_parks():
     assert blocked.startswith("BLOCKED: grasp_missed during grip") and "it needs a person" in blocked, blocked
     assert all(c["status"] == "blocked" for c in inc_cards(board)) and len(inc_cards(board)) == 2
     assert evs(log, "heal")[-1]["ok"] is False
+    (held,) = host.open()                                  # round 2, finding 8: the host holds it for the person
+    assert held["kind"] == "grasp_missed" and held["handed_off"] and "redo gave up" in held["handoff_reason"], held
+    assert "the arm host holds inc-1 for them" in evs(log, "handoff")[0]["text"]
 
 
 def test_no_plan_means_no_redo_the_arm_parks_for_a_person():
@@ -236,6 +243,177 @@ def test_on_the_real_arm_nothing_is_reversed_or_redone():
     assert texts(board, card["id"])[-1] == "BLOCKED: grip: the gripper isn't holding the block"
     assert [n for n, _ in host.skills] == ["go_home", "reach", "approach", "grip"], host.skills    # no move after
     assert not evs(log, "reverse") and not evs(log, "escalation") and "sim only" in evs(log, "handoff")[0]["text"]
+
+
+def test_a_host_that_doesnt_say_sim_gets_no_redo():
+    # finding 9: fail closed. The window op failed (an older host, a host error): arm is unknown, so nothing
+    # is reversed or redone, as on the real arm
+    board, card, host, log, jobs = bench("no-window", block=(30, 0), window_ok=False)
+    assert board.card(card["id"])["status"] == "blocked"
+    assert texts(board, card["id"])[-1] == "BLOCKED: grip: the gripper isn't holding the block"
+    assert [n for n, _ in host.skills] == ["go_home", "reach", "approach", "grip"], host.skills
+    assert not evs(log, "reverse") and not evs(log, "escalation")
+    assert "didn't say this arm is the sim" in evs(log, "handoff")[0]["text"], evs(log, "handoff")[0]["text"]
+
+
+def test_a_fault_that_opens_while_the_manager_thinks_makes_the_redo_plan_stale():
+    # nit 12: the check reads the host's real state instead of assuming the arm still waits where it was left
+    host_ref = {}
+
+    class Faulty(Stub):
+        def ask(self, esc):
+            host_ref["host"]._open("us_stuck", "Distance stuck at 95 mm")      # the watchdog parks the arm meanwhile
+            return super().ask(esc)
+    _, board, log, emit = fresh("stale-redo")
+    _, card = orders.place(board, "pick", source="test")
+    host = host_ref["host"] = Bench(block=(30, 0))
+    worker = Worker(Faulty(from_step="approach", correction="relocate"), emit=emit, deadline_s=10,
+                    packet_dir=TMP / "stale-redo-packets")
+    ex = dispatch.ScriptedExecutor(board, call=host, emit=emit, poll_s=0.01, pod_clear_s=0.05, hold_s=0.05,
+                                   worker=worker, redo=Redo(worker))
+    dispatch.Dispatcher(board, ex, call=host, emit=emit, every=0.01, sleep=lambda s: None).run(once=True)
+    check = evs(log, "plan_check")[0]
+    assert check["ok"] is False and "no longer halted" in check["reason"], check
+    assert "locate" not in [n for n, _ in host.skills], host.skills                  # nothing was redone
+    assert board.card(card["id"])["status"] == "blocked"
+
+
+def test_a_card_run_again_gets_a_fresh_redo_budget():
+    # nit 12: the budget was keyed by card and never reset, so a card a person moved back to todo had none left
+    _, board, log, emit = fresh("rerun")
+    _, card = orders.place(board, "pick", source="test")
+    srv, url = fake_manager.start("good", delay=0.05)
+    worker = Worker(ManagerClient(url, label="fake", poll_s=0.05), emit=emit, deadline_s=10,
+                    packet_dir=TMP / "rerun-packets")
+    host = Bench(block=(60, 0))                                   # past the scan: 2 failed redos, then a person
+    ex = dispatch.ScriptedExecutor(board, call=host, emit=emit, poll_s=0.01, pod_clear_s=0.05, hold_s=0.05,
+                                   worker=worker, redo=Redo(worker))
+    d = dispatch.Dispatcher(board, ex, call=host, emit=emit, every=0.01, sleep=lambda s: None)
+    d.run(once=True)
+    assert board.card(card["id"])["status"] == "blocked"
+    assert host.open() and host.open()[0]["handed_off"], host.incidents     # the host holds it for a person
+    host("repair", action="verify")                               # a person checks the arm at home...
+    board.move(card["id"], status="todo")                         # ...and runs the card again
+    d.run(once=True)
+    srv.shutdown()
+    checks = evs(log, "plan_check")
+    assert len(checks) == 4 and all(c["ok"] for c in checks), [(c["ok"], c["reason"]) for c in checks]
+    assert [n for n, _ in host.skills].count("locate") == 4, host.skills
+
+
+class Answers:
+    """A manager client that answers one fixed action for a wrong action (park, handoff_human, ...)."""
+    label = "stub"
+
+    def __init__(self, action):
+        self.action, self.asked = action, []
+
+    def ask(self, esc):
+        self.asked.append(esc)
+        return json.dumps({"schema": "arm-fixplan/v1", "incident_id": esc["incident_id"], "action": self.action,
+                           "args": {}, "kind": "grasp_missed", "confidence": 0.6, "touches_safety": False,
+                           "why": "stub"}), "ok"
+
+
+def test_a_park_in_the_redo_sticks_the_next_order_waits_for_a_person():
+    # round 2, finding 8 (the reviewer's p7_redo.py): a give-up in the redo parks the arm and blocks the card,
+    # and now the next order waits too: the host holds an incident for the person
+    for action in ("park", "handoff_human"):
+        _, board, log, emit = fresh(f"redo-{action}")
+        cards = [orders.place(board, "pick", source="test")[1] for _ in range(2)]
+        host, client = Bench(block=(30, 0)), Answers(action)
+        worker = Worker(client, emit=emit, deadline_s=10, packet_dir=TMP / f"redo-{action}-packets")
+        ex = dispatch.ScriptedExecutor(board, call=host, emit=emit, poll_s=0.01, pod_clear_s=0.05, hold_s=0.05,
+                                       worker=worker, redo=Redo(worker))
+        d = dispatch.Dispatcher(board, ex, call=host, emit=emit, every=0.01, sleep=lambda s: None)
+        d.run(once=True)
+        d.run(once=True)
+        assert [board.card(c["id"])["status"] for c in cards] == ["blocked", "todo"], (action, host.calls)
+        assert len(client.asked) == 1, (action, len(client.asked))     # the second order never ran
+        (held,) = host.open()
+        assert held["kind"] == "grasp_missed" and held["handed_off"], held
+        assert any(e["kind"] == "waiting" and "waiting for a person" in e["text"] for e in evs(log)), action
+        host("repair", action="verify")                            # a person checks the arm at home
+        host.block = (0, 0)                                        # ...and puts the block back
+        d.run(once=True)
+        assert board.card(cards[1]["id"])["status"] == "done", (action, texts(board, cards[1]["id"]))
+
+
+def story_rig(name):
+    """story_redo against a fake host (armsim.stories.call patched) and a file board in a temp dir
+    (armsim.board.open_board patched: FileBoard's default path is fixed at import, runs/board.json)."""
+    import os
+    from armsim import board as board_mod
+    from armsim import stories
+    d = TMP / f"story-{name}-{time.time_ns()}"
+    d.mkdir(parents=True)
+    host = Bench(block=(0, 0))
+    calls = []
+    fb = FileBoard(d / "board.json", board_id="brd_local")
+
+    def call(op, **f):
+        calls.append((op, f.get("fault") or f.get("name") or f.get("action")))
+        if op == "inject" and f.get("fault") == "block_shift":
+            host.block = (f["params"]["dx_mm"], f["params"]["dy_mm"])
+            return {"ok": True, "fault": "block_shift", "where": "scene"}
+        if op == "clear" and f.get("fault") == "block_shift":
+            host.block = (0, 0)
+            return {"ok": True}
+        return host(op, **f)
+    env = {"ARMSIM_SOCK": str(d / "armsim.sock")}
+    old = {k: os.environ.get(k) for k in (*env, "ARMSIM_MANAGER_URL")}
+    os.environ.update(env)
+    real_call, stories.call = stories.call, call
+    real_open, board_mod.open_board = board_mod.open_board, lambda kind=None, board_id=None: fb
+
+    def undo():
+        stories.call, board_mod.open_board = real_call, real_open
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    return stories, host, calls, fb, undo
+
+
+def test_story_redo_with_a_manager_that_would_refuse_moves_nothing():
+    # round 2, finding 11: `stories redo --manager hermes` checked the manager only inside the dispatcher, after
+    # the block moved and the order was placed; a refusing preflight left both behind
+    import os
+    stories, host, calls, board, undo = story_rig("refused")
+    try:
+        os.environ["ARMSIM_MANAGER_URL"] = fake_manager.start("refused")[1]
+        try:
+            stories.story_redo(False, "hermes", 30.0, "good")
+            raise AssertionError("story redo started against a manager it can't check")
+        except SystemExit as exc:
+            assert "won't start" in str(exc) and "fails closed" in str(exc), exc
+        assert not [c for c in calls if c[0] in ("skill", "inject")], calls      # nothing moved
+        assert host.block == (0, 0) and board.show("todo") == [], board.show()   # no order left behind
+    finally:
+        undo()
+
+
+def test_story_redo_puts_the_block_back_and_blocks_a_card_the_dispatcher_never_ran():
+    from armsim import dispatch as dispatch_mod
+    stories, host, calls, board, undo = story_rig("dispatcher-exits")
+    real_main = dispatch_mod.main
+
+    def refuses(argv):
+        raise SystemExit("another dispatcher already works this board or drives this arm")
+    dispatch_mod.main = refuses
+    try:
+        try:
+            stories.story_redo(False, "fake", 30.0, "good")
+            raise AssertionError("the dispatcher's SystemExit was swallowed")
+        except SystemExit as exc:
+            assert "another dispatcher" in str(exc), exc
+        assert host.block == (0, 0) and ("clear", "block_shift") in calls, calls      # the block is back
+        (card,) = board.show()
+        assert card["status"] == "blocked" and "nothing ran on the arm" in texts(board, card["id"])[-1], card
+    finally:
+        dispatch_mod.main = real_main
+        undo()
 
 
 def test_wrong_action_redo_needs_the_manager():

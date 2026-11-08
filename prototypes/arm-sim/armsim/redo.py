@@ -26,12 +26,16 @@ default `off` the card is blocked as before.
    correction; one `redo` event a step.
 6. Verify (plain code): the same missed-grasp check on the redone grip (and lift): holding. Passed: the
    job goes on from the next step. Failed: back to 2 with the new evidence, at most MAX_REDOS (2) times.
-On the real arm (the host's window op says arm real) nothing is reversed or redone: the card is blocked
-as with `--wrong-action off`, because none of this has run on hardware yet.
-Anything else (no plan, a refused plan, park, handoff_human, no_action, a fault during the redo, two
-failed redos) ends the same way: reverse to a safe pose, park, and the card is blocked for a person.
-There is no scripted fallback for a wrong action. The person isn't a host incident, so the dispatcher
-may start the next job (inferred: acceptable in sim tonight; see the report).
+Only on the sim (the host's window op says arm sim) is anything reversed or redone. On the real arm, or
+when the host doesn't say (the window op failed, an older host), the card is blocked as with
+`--wrong-action off`: none of this has run on hardware yet, so it fails closed.
+Anything else (no plan, a manager that wasn't asked because its tools can act, a refused plan, park,
+handoff_human, no_action, a fault during the redo, two failed redos, a bug in the redo) ends the same
+way: reverse to a safe pose, park, the card is blocked, and a person takes it, and that sticks: the
+arm host holds an incident for the person (ScriptedExecutor.hand_to_person: the open fault's incident,
+or one the host opens, kind grasp_missed, already handed off), so the dispatcher starts no job until a
+person's check at home closes it (Mission Control's "a person fixed it": clear, then `repair verify`).
+There is no scripted fallback for a wrong action.
 
 Host side (sim only; armsim/host.py calls these): shift_block() plants the wrong action (`inject
 block_shift`, `clear block_shift`), locate() is the scan (`skill locate`), approach_at() is the approach
@@ -47,6 +51,7 @@ import math
 import time
 
 from .escalation import ESCALATION_SCHEMA, MAX_OFFSET_MM, MAX_REDOS, SAFETY, check_plan, parse_plan, validate
+from .worker import job_key
 
 COARSE_MM = 15         # the scan's grid: a 30 mm block always covers at least one point
 FINE_MM = 2            # each edge is bisected to this
@@ -250,7 +255,7 @@ class Redo:
     def __init__(self, worker, *, max_redos=MAX_REDOS):
         self.worker, self.max_redos = worker, max_redos
         self.n = 0
-        self.redos = {}                       # card -> redo_steps run (check_plan's redos_this_job)
+        self.redos = {}                       # job run (worker.job_key) -> redo_steps run (check_plan's redos_this_job)
 
     def _ev(self, ex, kind, text, src="worker", **fields):
         return self.worker.emit(src, kind, text, **ex.ctx, **fields)
@@ -261,15 +266,22 @@ class Redo:
         try:
             return self._run(ex, step, reply, t0)
         except Exception as exc:  # a bug here must not leave the arm loose: park, and a person takes it
-            self._ev(ex, "error", f"the wrong-action redo failed ({type(exc).__name__}: {exc}); the arm parks")
             ex.host("skill", name="park")
+            why = f"the wrong-action redo failed ({type(exc).__name__}: {exc})"
+            ex.hand_to_person(None, why, kind="grasp_missed", summary=f"{step}: the gripper isn't holding the block; {why}")
+            try:
+                self._ev(ex, "error", f"{why}; the arm parks for a person")
+            except Exception:  # noqa: BLE001 (the event log may be what failed)
+                pass
             return False, f"{step}: the gripper isn't holding the block, and the redo failed ({type(exc).__name__})"
 
     def _run(self, ex, step, reply, t0):
         inc = self._incident(ex, step, reply, (getattr(ex, "replies", None) or {}).get("approach"))
-        if inc.get("arm") == "real":              # never run on hardware yet: the real arm behaves as with redo off
-            self._ev(ex, "handoff", "the wrong-action redo is sim only tonight: nothing is reversed or redone on the "
-                                    "real arm, the card is blocked as before", ok=False, incident_id=inc["id"], step=step)
+        if inc.get("arm") != "sim":               # never run on hardware yet, and fail closed when the host doesn't say
+            where = "on the real arm" if inc.get("arm") == "real" else (
+                f"here: the arm host didn't say this arm is the sim (arm {inc.get('arm')!r})")
+            self._ev(ex, "handoff", f"the wrong-action redo is sim only tonight: nothing is reversed or redone {where}, "
+                                    "the card is blocked as before", ok=False, incident_id=inc["id"], step=step)
             return False, f"{step}: the gripper isn't holding the block"
         tried, moved = [], True
         for attempt in range(1, self.max_redos + 1):
@@ -282,8 +294,8 @@ class Redo:
             if plan["action"] != "redo_step":
                 return self._give_up(ex, inc, step, t0, self._not_redo(plan), reverse=False, action=plan["action"])
             out = self._redo(ex, inc, step, plan)
-            card = ex.ctx.get("card")
-            self.redos[card] = self.redos.get(card, 0) + 1
+            key = job_key(ex)
+            self.redos[key] = self.redos.get(key, 0) + 1
             tried.append({"action": "redo_step", "verified": out["ok"], "args": plan["args"]})
             detail = (f"the manager ({self.worker.label}) planned redo_step from {plan['args']['from_step']} "
                       f"({_correction_text(plan['args'])}), plain code checked and ran it: {out['detail']}")
@@ -350,10 +362,15 @@ class Redo:
     # ---- 3-4. escalate, plan, check ---------------------------------------------------------------------
     def _ask(self, ex, inc, step, tried):
         """Escalate this incident and check the answer: (plan, said) or (None, why there is none)."""
-        from .worker import build_escalation, worker_answer
+        from .worker import build_escalation, job_key, worker_answer
         w = self.worker
         self.esc_id = esc_id = f"inc-{w.token}-{inc['id']}-{len(tried) + 1}"
         w.cur = {"iid": inc["id"], "source": "plan", "note": None, "plan": None, "inc_card": None}
+        why_not = w.tools_problem()                   # the startup preflight's rule, again, before each ask
+        if why_not:
+            self._ev(ex, "error", f"the worker didn't ask the manager ({w.label}): {why_not}; there is no scripted "
+                                  "redo, so the arm parks for a person", tools=why_not, step=step)
+            return None, f"no plan from the manager (it wasn't asked: {why_not})"
         job = {"card_id": ex.ctx.get("card") or "", "steps": list(ex.job_steps), "failed_step": step}
         esc, meta = build_escalation(inc, ex.host, esc_id=esc_id, job=job, tried=tried, device_id=w.device_id,
                                      deadline_s=w.deadline_s, category="wrong_action", status=ex.host("status"))
@@ -393,8 +410,13 @@ class Redo:
         self._ev(ex, "fix_plan", f"the manager ({w.label}) answers {said}", src="manager", ok=True, escalation=esc_id,
                  plan=obj if isinstance(obj, dict) else None, raw=None if isinstance(obj, dict) else short(text, 400),
                  seconds=round(time.time() - t_ask, 1), run=getattr(w.client, "last", {}).get("run_id"))
-        state = {"incident_open": True, "halted": True, "now": time.time(), "asked_at": t_ask,
-                 "heals_this_job": len(ex.healed), "redos_this_job": self.redos.get(ex.ctx.get("card"), 0),
+        # What the host says now, not assumed: the wrong action is the worker's own incident (no host incident),
+        # open until the redo ends or the dispatcher stops; the job is still paused where the reverse left it only
+        # if the host answers and no watchdog incident parked the arm while the manager was thinking.
+        st = ex.host("status")
+        state = {"incident_open": not ex.stop.is_set(),
+                 "halted": bool(st.get("ok")) and not st.get("incidents"), "now": time.time(), "asked_at": t_ask,
+                 "heals_this_job": len(ex.healed), "redos_this_job": self.redos.get(job_key(ex), 0),
                  "tried": tried}
         ok, reason = check_plan(text, esc, state)
         self._ev(ex, "plan_check", (f"plain code checked the plan: ok, {obj['action']} is allowed, bounded and within "
@@ -485,16 +507,22 @@ class Redo:
         return True, None
 
     def _give_up(self, ex, inc, step, t0, why, *, reverse=True, full=False, action="handoff_human"):
-        """Reverse to a safe pose (unless a fault already parked the arm), park, and hand to a person."""
+        """Reverse to a safe pose (unless a fault already parked the arm), park, and hand to a person: the
+        arm host holds an incident for them (hand_to_person), so the next order waits until a person's check
+        at home closes it."""
         if reverse:
             ok, rev_why = self._reverse(ex, inc, step, full=full)
             if not ok:
                 why = f"{why}; {rev_why}"
         park = ex.host("skill", name="park")
+        held = ex.hand_to_person(None, f"the wrong-action redo gave up: {why}", kind=inc["kind"],
+                                 summary=f"{inc['summary']} (a wrong action the redo couldn't fix)")
         secs = round(time.time() - t0, 1)
         self._ev(ex, "handoff", f"handed to a person: {why}; " + ("the arm is parked" if park.get("ok") else
-                                                                    f"park refused: {short(park.get('error'), 80)}"),
-                 ok=False, action=action, incident_id=inc["id"], step=step)
+                                                                    f"park refused: {short(park.get('error'), 80)}")
+                 + (f"; the arm host holds {held.get('id')} for them" if held.get("ok") else
+                    f"; the arm host didn't take the hand-off ({short(held.get('error'), 80)}): no job starts until it does"),
+                 ok=False, action=action, incident_id=inc["id"], step=step, held=held.get("id"))
         ex._ev("heal", f"couldn't heal grasp_missed (a wrong action): {why} ({secs:.0f} s)", step=step, ok=False,
                action=action, verified=False, seconds=secs, category="wrong_action",
                incident={"id": inc["id"], "kind": inc["kind"], "summary": inc["summary"]})

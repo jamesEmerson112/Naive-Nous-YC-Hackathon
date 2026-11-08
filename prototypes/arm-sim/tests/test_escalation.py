@@ -111,6 +111,17 @@ CASES = [
     ("a second pod_rollback", J(plan(action="pod_rollback", kind="us_mismatch")),
      {**ESC, "allowed_actions": ["pod_rollback", "verify", "park", "handoff_human", "no_action"]},
      {"tried": [{"action": "pod_rollback", "verified": True}]}, False, "pod_rollback already ran"),
+    # park and handoff_human hand the arm to a person: never a "failed fix" for the repeat rule (finding 3)
+    ("park again after a park", J(plan(action="park")), ESC, {"tried": [{"action": "park", "verified": False}]},
+     True, "ok"),
+    ("handoff_human again after one", J(plan(action="handoff_human")), ESC,
+     {"tried": [{"action": "handoff_human", "verified": False}]}, True, "ok"),
+    # a packet that offers no corrections allows none (fail closed, finding 12)
+    ("a NaN confidence", J(plan()).replace('"confidence": 0.86', '"confidence": NaN'), ESC, {}, False,
+     "NaN is not a JSON number"),
+    ("a correction when none are offered", J(redo(correction="relocate")), WRONG, {}, False, "not offered"),
+    ("an offset when none are offered", J(redo(correction="offset", dx_mm=10, dy_mm=0)), WRONG, {}, False,
+     "none offered"),
 ]
 
 
@@ -151,6 +162,22 @@ def test_allowed_actions_follow_the_table():
     for kind in ("us_frozen", "pod_clock_skew", "joint_stall", "who_knows"):
         acts = allowed_actions({"kind": kind})
         assert "no_action" in acts and "handoff_human" in acts and "redo_step" not in acts, (kind, acts)
+
+
+def test_a_repeat_refusal_names_the_fix_the_fallback_skips():
+    # finding 11: the scripted fallback must not run the fix check_plan just refused for repeating it
+    from armsim.escalation import repeat_refused
+    for action, tried, want in (("restart_sensor", [{"action": "restart_sensor", "verified": False}], "restart_sensor"),
+                                ("no_action", [{"action": "verify", "verified": False}], "verify"),
+                                ("pod_rollback", [{"action": "pod_rollback", "verified": True}], "pod_rollback")):
+        esc = {**ESC, "allowed_actions": [action, "verify", "park", "handoff_human", "no_action"]}
+        text = J(plan(action=action))
+        ok, reason = check_plan(text, esc, {**STATE, "tried": tried})
+        assert not ok and repeat_refused(text, reason) == want, (action, reason)
+    for text, change in ((J(plan(action="pod_rollback")), {}), (J(plan()), {"heals_this_job": 2}),
+                         ("not json", {}), (J(plan(touches_safety=True)), {})):
+        ok, reason = check_plan(text, ESC, {**STATE, **change})
+        assert not ok and repeat_refused(text, reason) is None, reason
 
 
 def test_parse_plan_tolerates_one_fence_only():

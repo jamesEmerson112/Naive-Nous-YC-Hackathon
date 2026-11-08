@@ -25,11 +25,15 @@ The two messages:
     a correction must be offered in state.corrections, needs the arm's kinematics and a from_step of
     reach or approach, and dx_mm/dy_mm come only with `offset`, within MAX_OFFSET_MM);
   5 no safety changes (touches_safety: true is refused; the worker parks and hands off, K17);
-  6 within budget: 2 heals a job, 1 pod_rollback an incident, 2 redo_steps a job, never an action again
-    after its check failed (a redo_step counts as the same only with the same from_step and correction,
-    and `relocate` may run again: it measures the block afresh each time (inferred));
+  6 within budget: 2 heals a job, 1 pod_rollback plan an incident (carried out as a wait for the pod's own
+    healer: plain code can't flash the pod, armsim/worker.py execute), 2 redo_steps a job, never a fix
+    again after its check failed (a redo_step counts as the same only with the same from_step and
+    correction, and `relocate` may run again: it measures the block afresh each time (inferred)). park
+    and handoff_human are not fixes: they hand the arm to a person, so the repeat rule skips them;
   7 still current: before the deadline, and the arm still halted.
 `state` is plain data the worker reads from the host just before the check (keys under check_plan).
+A refusal under rule 6 for repeating a fix contains AGAIN: the scripted fallback then skips that fix too
+(`repeat_refused`, armsim/dispatch.py ScriptedExecutor._heal).
 """
 import json
 import re
@@ -45,6 +49,8 @@ MAX_OFFSET_MM = 40          # the bound on a correction's shift of the approach,
 CORRECT_FROM = ("reach", "approach")            # a correction moves the approach, so the redo starts there or earlier
 SAFETY = "touches_safety"   # a reason that starts with this: park and hand off, no fallback
 MAYBE_POD_KINDS = ("us_offset", "us_scale", "us_residual")   # the same as dispatch.py: podd may explain them
+NOT_FIXES = ("park", "handoff_human")   # they hand the arm to a person: never a "failed fix" for the repeat rule
+AGAIN = "it is not tried again"         # in a refusal for repeating a fix (rule 6): the fallback skips it too
 
 _FINDING = {"type": "object", "additionalProperties": False, "required": ["src", "kind", "severity", "summary"],
             "properties": {"src": {"enum": ["watchdog", "podd", "l3a", "dispatcher"]},
@@ -189,6 +195,13 @@ def allowed_actions(inc, state=None):
 _FENCE = re.compile(r"```[A-Za-z]*[ \t]*\n?(.*?)\n?[ \t]*```", re.S)
 
 
+def _no_constant(name):
+    raise ValueError(f"{name} is not a JSON number")
+
+
+_STRICT = json.JSONDecoder(parse_constant=_no_constant)     # Python's json takes NaN and Infinity by default
+
+
 def parse_plan(text):
     """(object, None) when `text` is exactly one JSON object, bare or in one code fence; else (None, why).
     A run's output is unchecked text: prose around the JSON, a second object or a second fence is refused."""
@@ -203,9 +216,11 @@ def parse_plan(text):
     if "```" in s:
         return None, "the answer has more than one code fence, or text around its fence"
     try:
-        obj, end = json.JSONDecoder().raw_decode(s)
+        obj, end = _STRICT.raw_decode(s)
     except json.JSONDecodeError as exc:
         return None, f"the answer is not one JSON object ({exc.msg} at character {exc.pos})"
+    except ValueError as exc:                   # NaN / Infinity: not JSON, and NaN slips past minimum/maximum
+        return None, f"the answer is not one JSON object ({exc})"
     if s[end:].strip():
         return None, "the answer has text or a second JSON value after the first object"
     if not isinstance(obj, dict):
@@ -217,6 +232,20 @@ def _same(action):
     return "verify" if action == "no_action" else action       # no_action runs as verify
 
 
+def same_action(action):
+    """The fix an action runs as: no_action runs as verify."""
+    return _same(action)
+
+
+def repeat_refused(plan, reason):
+    """The fix a refusal says must not run again (rule 6: it already ran and failed its check, or the
+    pod_rollback budget is spent), or None. The scripted fallback skips it as well."""
+    if AGAIN not in (reason or ""):
+        return None
+    obj, _ = parse_plan(plan)
+    return _same(obj.get("action")) if isinstance(obj, dict) else None
+
+
 def _redo_key(args):
     args = args or {}
     return (args.get("from_step"), args.get("correction") or "none", args.get("dx_mm"), args.get("dy_mm"))
@@ -225,7 +254,7 @@ def _redo_key(args):
 def _repeats(t, action, args):
     """Is the tried entry `t` the same fix as (action, args)? A redo_step is the same only with the same
     from_step and correction; a relocate never is, since it measures the block afresh (inferred)."""
-    if _same(t.get("action")) != _same(action):
+    if action in NOT_FIXES or _same(t.get("action")) != _same(action):
         return False
     if action != "redo_step":
         return True
@@ -255,7 +284,7 @@ def check_plan(plan, esc, state):
     if obj["incident_id"] != esc.get("incident_id"):
         return False, f"the plan is for incident {obj['incident_id']!r}, not {esc.get('incident_id')!r}"
     if state.get("incident_open") is False:
-        return False, f"incident {esc.get('incident_id')} is no longer open on the arm host"
+        return False, f"incident {esc.get('incident_id')} is no longer open"
     # 3 an allowed action
     action = obj["action"]
     allowed = esc.get("allowed_actions") or []
@@ -278,8 +307,8 @@ def check_plan(plan, esc, state):
             return False, f"from_step {start!r} comes after the failed step {failed!r}"
         corr = args.get("correction") or "none"
         offered = (esc.get("state") or {}).get("corrections")
-        if corr != "none" and offered is not None and corr not in offered:
-            return False, f"the correction {corr!r} is not offered for this incident ({', '.join(offered) or 'none'})"
+        if corr != "none" and corr not in (offered or ()):     # a packet that offers none allows none (fail closed)
+            return False, f"the correction {corr!r} is not offered for this incident ({', '.join(offered or []) or 'none offered'})"
         if corr != "none" and not (esc.get("state") or {}).get("kinematics"):
             return False, f"the correction {corr!r} needs the arm's kinematics, and they are off"
         if corr != "none" and start not in CORRECT_FROM:
@@ -301,11 +330,11 @@ def check_plan(plan, esc, state):
         return False, f"this job already used its {MAX_HEALS} heals"
     tried = list(state.get("tried") or (esc.get("state") or {}).get("tried") or [])
     if action == "pod_rollback" and sum(t.get("action") == "pod_rollback" for t in tried) >= MAX_POD_ROLLBACKS:
-        return False, f"pod_rollback already ran {MAX_POD_ROLLBACKS} time for this incident"
+        return False, f"pod_rollback already ran {MAX_POD_ROLLBACKS} time for this incident; {AGAIN}"
     if action == "redo_step" and state.get("redos_this_job", 0) >= MAX_REDOS:
         return False, f"redo_step already ran {MAX_REDOS} time{'s' if MAX_REDOS > 1 else ''} in this job"
     if any(_repeats(t, action, args) and t.get("verified") is False for t in tried):
-        return False, f"{_same(action)} already ran for this incident and its check failed; it is not tried again"
+        return False, f"{_same(action)} already ran for this incident and its check failed; {AGAIN}"
     # 7 still current
     now, asked = state.get("now"), state.get("asked_at")
     if now is not None and asked is not None and now > asked + float(esc.get("deadline_s", 0)):

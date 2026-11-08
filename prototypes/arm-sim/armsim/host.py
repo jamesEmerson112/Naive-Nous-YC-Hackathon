@@ -10,6 +10,9 @@ also wants exactly one long-lived owner of the servo bus (note, "Traps").
     {"op": "repair", "action": "restart_sensor"}  the healer's tool: fix the cause, then verify
     {"op": "window", "seconds": 6, "until": ts}   the distance rows before `until` (the worker's packet)
     {"op": "handoff", "id": "inc-1", "reason": ...}  a person takes an open incident (the arm stays parked)
+    {"op": "handoff", "open": {"kind", "summary"}, "reason": ...}  a person is needed for something with no
+        open incident (a wrong action the redo gave up on, a plan's park whose incident closed first): the
+        host opens one, handed off at once (Watchdog.hold)
     {"op": "skill", "name": "locate"} / {"op": "skill", "name": "approach", "offset_mm": [dx, dy]}
         the wrong-action redo's scan for the block, and the approach over it (sim only, armsim/redo.py)
     {"op": "inject", "fault": "block_shift", "params": {"dx_mm": 30}}  the block moves (sim only; clear restores)
@@ -17,6 +20,11 @@ also wants exactly one long-lived owner of the servo bus (note, "Traps").
 The watchdog is plain code (level 1, `level1.py`): on each distance row it checks the last few
 seconds. The first critical finding opens an incident: the sentence is spoken, motion halts, the
 arm parks, and motion stays blocked until a repair is verified.
+
+A handed-off incident is a person's: the host never moves the arm for it on its own. The verify it
+queues when the pod heals is skipped while any open incident is handed off (Watchdog.verify auto), and
+no verify is queued for a handed-off incident at all. Only an explicit `repair` (a person's check at
+home: Mission Control's "a person fixed it" runs `clear`, then `repair verify`) closes it.
 """
 import argparse
 import json
@@ -288,7 +296,9 @@ class Watchdog:
 
     def on_pod_incidents(self, open_list):
         """podd's open incidents, every second (pod thread). A critical one parks the arm; once
-        every pod incident tied to our incidents has resolved, a verify is queued."""
+        every pod incident tied to our incidents has resolved, a verify is queued, except for an
+        incident handed to a person: the pod healing itself doesn't give the arm back (a person's
+        `repair verify` closes it)."""
         crit = [i for i in open_list if i.get("severity") == "critical"]
         with self.lock:
             mine = self.open()
@@ -305,7 +315,7 @@ class Watchdog:
             open_ids = {i["id"] for i in open_list}
             for m in mine:
                 tied = m.get("pod_incidents")
-                if tied and not (set(tied) & open_ids) and not m.get("pod_healed"):
+                if tied and not (set(tied) & open_ids) and not m.get("pod_healed") and not m.get("handed_off"):
                     m["pod_healed"] = round(self.clock(), 2)
                     self.verify_pending = "pod healed: " + ", ".join(m.get("pod_summaries") or tied)
 
@@ -342,13 +352,20 @@ class Watchdog:
                                                   **({"did": did} if did else {})})
         return {"ok": True, "action": action, "did": did, **self.verify(f"repair: {action}")}
 
-    def verify(self, why):
+    def verify(self, why, *, auto=False):
         """Main thread only (it moves the arm). Go home with the jaws open even though motion is
-        halted, hold still on fresh readings, then close what the checks say is fixed."""
+        halted, hold still on fresh readings, then close what the checks say is fixed.
+        auto=True is the host's own verify (queued when the pod healed, run by the chores): while any
+        open incident is handed to a person it doesn't move the arm or close anything. A `repair`
+        (the healer's, or a person's check at home) is never auto."""
         self.verify_pending = None
         if not self.open():
             self.arm.hold(0.6)                    # no incident: refresh the servo status bits
             return {"verified": True, "open": [], "status": self.arm.status()}
+        held = [i["id"] for i in self.open() if i.get("handed_off")]
+        if auto and held:
+            return {"verified": False, "skipped": f"{', '.join(held)} handed to a person: the host doesn't move the arm "
+                                                  "for it on its own", "open": [i["id"] for i in self.open()]}
         arm = self.arm
         arm._parking = True                   # the watchdog's own move is allowed while halted
         try:
@@ -417,6 +434,27 @@ class Watchdog:
             for cb in self.on_handoff:
                 cb(inc)
         return {"ok": True, "id": iid, "handed_off": inc["handed_off"], "handoff_reason": inc["handoff_reason"]}
+
+    def hold(self, finding, reason):
+        """A person is needed for something with no open incident on the host (a wrong action the redo gave
+        up on, armsim/redo.py; a manager's park whose incident closed before its handoff landed): open one
+        and hand it off at once, so the arm stays parked (motion is blocked while it is open), the dispatcher
+        waits, and a person's `repair verify` closes it, as for any other hand-off. If an incident is open
+        already, that one is handed off instead. Its side effects are those of any incident and hand-off:
+        the summary is spoken, podd gets a note, and Romulus a hand-off report (notify_human)."""
+        finding = finding if isinstance(finding, dict) else {}
+        with self.lock:
+            open_ = self.open()
+        if open_:
+            return {**self.handoff(open_[0]["id"], reason), "held": "an incident was already open"}
+        sev = finding.get("severity") if finding.get("severity") in ("info", "warn", "critical") else "warn"
+        kind = str(finding.get("kind") or "person_needed")[:40]
+        summary = " ".join(str(finding.get("summary") or reason or kind).split())[:300]
+        inc = self._open({"kind": kind, "severity": sev, "summary": summary, "evidence": {}, "hypotheses": [],
+                          "next_steps": ["a person checks the arm, then the check at home (repair verify)"],
+                          "src": str(finding.get("src") or "healer")[:40],     # the shape of a level-1 finding (_f)
+                          **({"of": str(finding["of"])[:64]} if finding.get("of") else {})})
+        return {**self.handoff(inc["id"], reason), "held": "opened for a person"}
 
 
 def state_path():
@@ -727,6 +765,8 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
                     "rows": [r for r in list(arm.d_rows) if until - secs <= r["ts"] <= until],
                     "arm": getattr(arm, "kind", "sim"), "kinematics": bool(getattr(arm, "use_ik", True))}
         if op == "handoff":
+            if req.get("open"):                       # nothing open to hand off: open one for a person (Watchdog.hold)
+                return dog.hold(req["open"], req.get("reason") or "held for a person by the healer")
             return dog.handoff(req.get("id"), req.get("reason") or "handed to a person by the healer")
         if op == "repair":
             state["activity"] = {"what": f"repair: {req.get('action')}", "since": round(time.time(), 2)}
@@ -774,9 +814,10 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
 
     def _chores():
         if dog.verify_pending:
-            state["activity"] = {"what": f"verify: {dog.verify_pending}", "since": round(time.time(), 2)}
-            try:
-                print("VERIFY", dog.verify_pending, json.dumps(dog.verify(dog.verify_pending))[:300], flush=True)
+            why = dog.verify_pending
+            state["activity"] = {"what": f"verify: {why}", "since": round(time.time(), 2)}
+            try:                                      # auto: skipped while a person has an open incident
+                print("VERIFY", why, json.dumps(dog.verify(why, auto=True))[:300], flush=True)
             finally:
                 state["activity"] = None
         elif dog.open() and not state["parked"]:

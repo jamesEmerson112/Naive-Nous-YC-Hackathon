@@ -1,6 +1,8 @@
-# Merge these keys into ~/.hermes/profiles/manager/config.yaml (the file `hermes profile create manager --clone`
-# copied from the default profile). Keep the cloned `model:` block: it is the ChatGPT-plan login (openai-codex)
-# with gpt-6-sol at default reasoning, the same as the default profile (docs/pi-vs-hermes.md:12, 16).
+# setup.sh applies these keys to ~/.hermes/profiles/manager/config.yaml (the file `hermes profile create manager
+# --clone` copied from the default profile) with `hermes -p manager config set`, one key each; config_pairs.py
+# reads this file, so keep it to nested maps, plain scalars and one-line lists (no quotes). The cloned `model:`
+# block stays: it is the ChatGPT-plan login (openai-codex) with gpt-6-sol at default reasoning, the same as the
+# default profile (docs/pi-vs-hermes.md:12, 16).
 # H:L<n> = a line in docs/raw/hermes-llms-full.txt. Design: docs/worker-manager-healer.md §2.1.
 
 delegation:
@@ -19,9 +21,26 @@ delegation:
 agent:
   # "remains authoritative" (H:L20395), applied after per-platform config (H:L4829-4840). --clone copies the
   # default profile's plugins too (H:L9028), so so101_arm would otherwise be on (H:L16354-16357).
-  disabled_toolsets: [terminal, code_execution, file, browser, web, so101_arm, mcp-naive_board]
+  # The API server's default keeps everything but clarify, tts, computer_use and kanban (H:L56075-56077), so
+  # every other default toolset is named here: the worker refuses to ask a manager with anything on but
+  # delegation, memory and skills (armsim/manager.py toolset_problems). Removal is per tool (H:L4844-4845):
+  # never list a composite here (coding, safe, debugging), it would strip delegate_task, memory or the skill tools.
+  # so101_arm and mcp-naive_board stay here even with platform_toolsets below: enabled plugin toolsets are
+  # still added to an explicit list (H:L38901-38903, H:L38626-38627).
+  disabled_toolsets: [terminal, code_execution, file, browser, web, vision, image_gen, todo, cronjob, session_search, so101_arm, mcp-naive_board]
   # web: added to the design's list (inferred: the analysts read only the packet). Add `memory` too if
   # incidents start leaking into each other through the profile's memory (H:L4833-4834, H:L14365).
+platform_toolsets:
+  # The API server's own list, written out (replaces the hermes-api-server default, as Blank Slate does for the
+  # CLI so nothing new loads after `hermes update`, H:L396; the per-platform key H:L20390, its name H:L102983).
+  # no_mcp keeps the default profile's MCP servers out (H:L38630-38632, H:L38947: inferred that the api_server
+  # list reads it as ACP's does; an unknown name is dropped, H:L35035, and then check.sh names any MCP toolset).
+  api_server: [delegation, memory, skills, no_mcp]
+skills:
+  # The skills toolset is on so the manager can read arm-incident-manager (skill_view, H:L12660-12664), and it
+  # brings skill_manage (H:L56060): stage every skill write for a person instead (H:L13153-13170; inferred
+  # that this covers API-server runs). setup.sh also locks the skill (`curator lock`, H:L13186-13190).
+  write_approval: true
 approvals:
   unattended_mode: deny          # the defaults (H:L10764-10783), written down so a clone can't change them
   single_query_mode: deny

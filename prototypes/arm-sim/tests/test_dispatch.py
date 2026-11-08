@@ -46,6 +46,8 @@ class FakeHost:
                                       arm stands still); its healer fixes it after n status polls
       pod_on={"approach": n}          `approach` sees the bad image first (us_offset, podd's us_mismatch
                                       tied to it); fixed after n status polls
+    As on the real host (host.py Watchdog.verify auto), the pod healing itself closes only incidents that
+    aren't handed to a person: a handed-off one waits for an explicit repair (a person's check at home).
     """
 
     def __init__(self, *, fail=None, fixable=True, pod_between=None, pod_on=None, handed_off=False):
@@ -80,7 +82,8 @@ class FakeHost:
                 if self.pod_polls <= 0:               # the pod healer rolled back; the host's check passed
                     self.pod_crit, self.pod_polls = [], None
                     for i in self.open():
-                        i["state"] = "resolved"
+                        if not i.get("handed_off"):   # a person's incident waits for a person's repair
+                            i["state"] = "resolved"
             return {"ok": True, "incidents": [{k: i[k] for k in ("id", "kind", "summary")} for i in self.open()],
                     "handed_off": [{k: i.get(k) for k in ("id", "kind", "summary", "handoff_reason")}
                                    for i in self.open() if i.get("handed_off")],

@@ -12,9 +12,11 @@ Options: --board file|naive (default $ARMSIM_BOARD_KIND, else file), --board-id 
 (seconds; Hermes is killed after it, the scripted commander stops between steps).
 The worker/manager healer (armsim/worker.py, docs/worker-manager-healer.md), scripted commander only:
 --manager off|fake|hermes (default off: today's scripted heal), --manager-url (default $ARMSIM_MANAGER_URL;
-the key is $ARMSIM_MANAGER_KEY), --manager-deadline 90, --fake-mode good|bad_json|off_list|unsafe|slow|429|
-500|failed|refused (--manager fake), --worker-lm off|ollama, --ollama URL, --worker-model qwen3.5:4b,
---exec-via code|lm (lm: the worker's model issues the checked action, gated to that exact call).
+the key is $ARMSIM_MANAGER_KEY), --manager-deadline 90 (3-120 s, the packet's bounds), --fake-mode good|
+bad_json|off_list|unsafe|slow|429|500|failed|refused|redo_offset|park|trickle|errstr (--manager fake),
+--worker-lm off|ollama, --ollama URL, --worker-model qwen3.5:4b, --exec-via code|lm (lm: the worker's model
+issues the checked action, gated to that exact call). --manager hermes reads the manager's /v1/toolsets
+first and won't start if it has tools that can act, or if that can't be read (armsim/worker.py preflight).
 --wrong-action off|redo (default off; redo needs --manager): a missed grasp is a wrong action (category 2,
 armsim/redo.py): reverse it, the manager corrects the command, the arm redoes it, at most twice.
 
@@ -26,8 +28,9 @@ How it works, one card at a time (there is one arm):
    names another arm is that arm's dispatcher's, and is left alone.
 2. While idle it lists the todo cards that orders.place made (an ARM JOB card with an order id,
    armsim/orders.py), oldest first; a story's "ARM JOB: ..." card has no order id and is never taken.
-   Before claiming one it reads the arm host's status: an incident handed off to a person, or a host that
-   doesn't answer, means wait (said once in the event log, not once per poll).
+   Before claiming one it reads the arm host's status: an incident handed off to a person, a hand-off the
+   host hasn't taken yet (ScriptedExecutor.holds, delivered first), or a host that doesn't answer, means
+   wait (said once in the event log, not once per poll).
 3. Claim: the card moves to doing only if it is still in todo (`move(expect="todo")`), then gets a
    `CLAIMED: ... (claim <token> on arm <host>:<socket>)` comment. The job starts only once the latest
    `CLAIMED:` on the card is ours; a later one means another dispatcher won, and the card is left to it.
@@ -188,6 +191,16 @@ def skill_text(step, reply):
     return f"{step}: " + (", ".join(bits) or "done")
 
 
+def held_words(r):
+    """How a hand-off went (ScriptedExecutor.hand_to_person's reply), for a detail: "" when the host took it."""
+    if not r.get("ok"):
+        return (f" (the arm host didn't take the hand-off: {short(r.get('error'), 80)}; no job starts until it "
+                "does)")
+    if r.get("held") == "opened for a person":
+        return f" (it had closed first, so the host opened {r.get('id')} for the person)"
+    return ""
+
+
 class ScriptedExecutor:
     """The commander without an LLM: the card's steps as host skills, healing what the watchdog reports.
 
@@ -198,6 +211,14 @@ class ScriptedExecutor:
       a sensor kind (us_*)   -> `repair restart_sensor` (podd's `us off`, `us on`, then the check at home)
       joint_stall, the rest  -> `repair verify` (a checked retry at home)
       still open             -> a person: BLOCKED.
+    With the worker (--manager), the manager's checked plan runs first; when it falls back, the fix a
+    refused plan repeated is skipped here too (worker.cur["skip"]), and podd isn't given its hold_s twice.
+    The host is read again after the manager's round trip: an incident a person took meanwhile is theirs
+    (nothing runs), and one that closed meanwhile needs nothing (its own check passed).
+
+    A hand-off must stick (hand_to_person): the host's handoff op, or, with nothing open to hand off, the
+    host opens an incident already handed off. One the host doesn't take (it doesn't answer) is kept in
+    self.holds; the dispatcher delivers it before the next job and starts none until it has.
     """
 
     name = "scripted"
@@ -213,6 +234,8 @@ class ScriptedExecutor:
         self.max_heals, self.pod_wait_s, self.pod_clear_s = max_heals, pod_wait_s, pod_clear_s
         self.hold_s, self.poll_s, self.sleep = hold_s, poll_s, sleep
         self.ctx, self.healed, self.pod_seen = {}, [], {}
+        self.job_key = None                   # this run of the job: the worker's and redo's per-job budgets
+        self.holds = []                       # hand-offs the host didn't take yet (Dispatcher.arm_ready waits on them)
         self.stop = threading.Event()         # set: block the card at the next step instead of going on
 
     def _ev(self, kind, text, **fields):
@@ -223,6 +246,7 @@ class ScriptedExecutor:
         job = parse_card(card)
         self.ctx = {"card": card["id"], "order": job["order"], "job": job["job"], "exec": self.name}
         self.healed, self.replies = [], {}
+        self.job_key = f"{card['id']}/{uuid.uuid4().hex[:8]}"   # a re-run card gets fresh budgets (not in ctx)
         t0 = time.time()
         steps = self.job_steps = job["steps"]
         self._ev("job_started", f"the scripted commander starts {JOBS[job['job']]['title']}: {', '.join(steps)}",
@@ -302,11 +326,27 @@ class ScriptedExecutor:
         if handed:
             return False, f"{kind} was handed to a person: {handed.get('handoff_reason') or summary}"
         done = self.worker.heal(self, inc, step) if self.worker else None   # None: the scripted heal below
+        hint, gone = {}, False
+        if self.worker and not done:
+            hint = dict(self.worker.cur or {})     # read before closed() clears it
+            st = self.host("status")               # the manager's round trip took time: read the host again
+            handed = self._handed_off(st, iid)     # a person took it meanwhile: it's theirs, nothing runs
+            gone = (bool(st.get("ok")) and not st.get("unreachable") and not handed
+                    and not any(i.get("id") == iid for i in st.get("incidents") or []))
+        skip = set(hint.get("skip") or ())         # a fix a refused plan repeated: it isn't run again here
+        pod = not (done or handed or gone) and (self._pod_side(inc, st) or (
+            kind in MAYBE_POD_KINDS and not hint.get("held") and self._hold_for_pod(inc)))
         if done:
             ok, action, detail = done
-        elif self._pod_side(inc, st) or (kind in MAYBE_POD_KINDS and self._hold_for_pod(inc)):
+        elif handed:
+            ok, action, detail = False, "none", (f"a person took {iid} while the manager thought "
+                                                 f"({handed.get('handoff_reason') or summary}): the scripted heal didn't run")
+        elif gone:
+            ok, action, detail = True, "none", (f"{iid} closed on the arm host while the manager thought (its own "
+                                                "check passed): nothing more ran")
+        elif pod and "pod_rollback" not in skip:
             ok, action, detail = self._wait_for_pod(inc)
-        elif kind.startswith("us_"):
+        elif kind.startswith("us_") and not pod and "restart_sensor" not in skip:
             r = self.host("repair", action="restart_sensor")
             if r.get("verified"):
                 ok, action, detail = True, "restart_sensor", "restarted the sensor through podd; the check at home passed"
@@ -315,7 +355,7 @@ class ScriptedExecutor:
             else:
                 ok, action, detail = False, "restart_sensor", ("restarted the sensor, but the check at home still "
                                                                f"fails: {self._still(r)}")
-        else:
+        elif "verify" not in skip:
             r = self.host("repair", action="verify")
             if r.get("verified"):
                 ok, action, detail = True, "verify", "a checked retry at home passed"
@@ -323,6 +363,10 @@ class ScriptedExecutor:
                 handed = self._handed_off(self.host("status"), iid)
                 ok, action, detail = False, "verify", ((handed or {}).get("handoff_reason")
                                                        or f"still failing after a checked retry at home: {self._still(r)}")
+        else:                                      # every scripted fix for it already ran and failed its check
+            why = f"the scripted fixes for it ({', '.join(sorted(skip))}) already ran and failed their checks"
+            r = self.hand_to_person(iid, why, kind=kind, summary=summary)
+            ok, action, detail = False, "handoff_human", f"{why}; the arm stays parked for a person" + held_words(r)
         if self.worker:
             detail = self.worker.closed(self, inc, step, ok, action, detail)
         secs = round(time.time() - t0, 1)
@@ -338,6 +382,43 @@ class ScriptedExecutor:
     @staticmethod
     def _handed_off(st, iid):
         return next((i for i in st.get("handed_off") or [] if i.get("id") == iid), None)
+
+    # ---- a person takes it ----------------------------------------------------------------------
+    def _send_hand_off(self, iid, reason, kind=None, summary=None):
+        r = self.host("handoff", id=iid, reason=reason) if iid else {"ok": False}
+        if not r.get("ok") and not r.get("unreachable"):     # nothing open to hand off: the host opens one
+            r = self.host("handoff", reason=reason, open={"kind": kind or "person_needed", "src": "dispatcher",
+                                                          "summary": summary or reason, **({"of": iid} if iid else {})})
+        return r
+
+    def hand_to_person(self, iid, reason, *, kind=None, summary=None):
+        """A person takes it, and that sticks: the host hands off the open incident `iid`, or, when there is
+        none to hand off (it closed meanwhile; a wrong action is never the host's), opens one handed off at
+        once. The dispatcher then waits for the person (the host's handed_off), and a person's check at home
+        closes it. One the host doesn't take is kept in self.holds, delivered before the next job
+        (Dispatcher.arm_ready). Returns the host's reply, with "kept" when it was kept."""
+        r = self._send_hand_off(iid, reason, kind, summary)
+        if r.get("ok"):
+            return r
+        self.holds.append({"incident": iid, "kind": kind, "summary": summary, "reason": reason,
+                           "since": time.time(), "error": r.get("error")})
+        self._ev("error", f"the arm host didn't take the hand-off of {iid or kind} ({short(r.get('error'), 120)}); "
+                          "no job starts until it does", incident={"id": iid, "kind": kind, "summary": summary})
+        return {**r, "kept": True}
+
+    def deliver_holds(self):
+        """Send the hand-offs the host didn't take (self.holds) again. (True, None) once it has them all,
+        else (False, why)."""
+        for h in list(self.holds):
+            r = self._send_hand_off(h["incident"], h["reason"], h["kind"], h["summary"])
+            if not r.get("ok"):
+                h["error"] = r.get("error")
+                return False, f"{h['incident'] or h['kind']}: {short(r.get('error'), 120)}"
+            self.holds.remove(h)
+            self._ev("dispatcher", f"the arm host took the hand-off of {h['incident'] or h['kind']} "
+                                   f"({time.time() - h['since']:.0f} s late): a person has it now",
+                     incident={"id": h["incident"], "kind": h["kind"]}, held=r.get("id"))
+        return True, None
 
     @staticmethod
     def _still(r):
@@ -748,12 +829,24 @@ class Dispatcher:
         return "job" if out in ("done", "blocked", "unsettled") else (out or "error")
 
     def arm_ready(self):
+        """No job starts while the host doesn't answer, while a hand-off the host didn't take is still
+        ours to deliver (the executor's holds), or while a person has an incident (the host's handed_off)."""
         st = self.host("status")
         if not st.get("ok"):
             self._say_once("host", "down", "error", f"can't start a job: {st.get('error')}; "
                                                     f"trying again every {self.every:g} s")
             return False
         self._cleared("host", "the arm host answers again")
+        if getattr(self.exec, "holds", None):
+            delivered, why = self.exec.deliver_holds()
+            if not delivered:
+                self._say_once("hold", why, "waiting", f"waiting for a person: a hand-off the arm host didn't take "
+                                                       f"yet ({why}); no job starts until it has it")
+                return False
+            self._cleared("hold", "the arm host took the hand-off: it waits for the person now")
+            st = self.host("status")
+            if not st.get("ok"):
+                return False
         handed = st.get("handed_off") or []
         if handed:
             ids = ",".join(sorted(i.get("id", "?") for i in handed))
@@ -923,7 +1016,8 @@ def main(argv=None):
                     help="the manager's Hermes API server, with /p/manager when the gateway multiplexes profiles")
     ap.add_argument("--manager-deadline", type=float, default=90.0, help="seconds the manager gets (3-120)")
     ap.add_argument("--fake-mode", default="good", choices=["good", "bad_json", "off_list", "unsafe", "slow", "429",
-                                                           "500", "failed", "refused", "redo_offset"],
+                                                           "500", "failed", "refused", "redo_offset", "park",
+                                                           "trickle", "errstr"],
                     help="--manager fake only")
     ap.add_argument("--worker-lm", choices=["off", "ollama"], default="off", help="the worker's model writes its answer")
     ap.add_argument("--ollama", default=os.environ.get("ARMSIM_OLLAMA", "http://127.0.0.1:11434/v1"),
@@ -941,10 +1035,17 @@ def main(argv=None):
         raise SystemExit("--exec-via lm needs --worker-lm ollama: the worker's model issues the call")
     if a.manager != "off" and a.exec != "scripted":
         raise SystemExit("--manager works with --exec scripted only: the Hermes commander heals with its own rules")
+    if a.manager != "off" and not 3 <= a.manager_deadline <= 120:
+        raise SystemExit(f"--manager-deadline must be 3-120 s (the escalation packet's bounds), not {a.manager_deadline:g}: "
+                         "outside them every packet would fail its schema and every heal would fall back")
     kind = a.board or os.environ.get("ARMSIM_BOARD_KIND", "file")
     if a.exec == "hermes" and kind == "file":
         raise SystemExit("--exec hermes needs --board naive: Hermes reads and closes cards only through its "
                          "naive_board MCP, so it can't see the file board. Use --exec scripted with the file board.")
+    worker = None
+    if a.exec != "hermes":                 # before the board and the lock: --manager hermes may refuse to start
+        from .worker import make as make_worker     # (worker.preflight reads the manager's /v1/toolsets)
+        worker = make_worker(a)
     board = open_board(kind, a.board_id)
     lock = take_lock(lock_path(board))
 
@@ -964,8 +1065,6 @@ def main(argv=None):
         executor = HermesExecutor(board)
     else:
         from .redo import make as make_redo
-        from .worker import make as make_worker
-        worker = make_worker(a)
         executor = ScriptedExecutor(board, worker=worker, redo=make_redo(a, worker))
     try:
         Dispatcher(board, executor, every=a.every, job_timeout=a.job_timeout, stop=stop).run(
