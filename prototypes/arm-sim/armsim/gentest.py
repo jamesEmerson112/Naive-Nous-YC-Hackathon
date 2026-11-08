@@ -74,6 +74,23 @@ def planned_points(rec, pan):
     return out
 
 
+SQUEEZE = 1.0          # the gripper command while grasping: 99% closed (0 = shut, 100 = open), as wave already does
+
+
+def squeezed(frames):
+    """Every grasp squeezes to 99% closed, from the moment the jaws start closing until they open for the drop.
+    recording_2 alone stops at ~31 (69% closed) and recording_3 at ~20 (80%), loose enough for the bag to slip."""
+    ev, out, grasping = GripEvents(), [], False
+    for f in frames:
+        event = ev.step(f[5])
+        if event == "close_at":
+            grasping = True
+        elif event == "open_at":
+            grasping = False
+        out.append([*f[:5], min(f[5], SQUEEZE)] if grasping else list(f))
+    return out
+
+
 def candidates(n):
     out = [(r, 0.0) for r in RECORDINGS] + [(r, off) for off in OFFSETS for r in RECORDINGS]
     return out[:n]
@@ -83,7 +100,7 @@ def candidates(n):
 def trial(rec, pan, speed=1.0):
     from .real import RealArm
     prim = json.loads((LIB / f"{rec}.json").read_text())
-    prim = {**prim, "frames": [[f[0] + pan, *f[1:]] for f in prim["frames"]]}
+    prim = {**prim, "frames": squeezed([[f[0] + pan, *f[1:]] for f in prim["frames"]])}
     arm = RealArm().connect()
     rest = arm.read()
     seen = {"holding_s": 0.0, "widest_hold": 0.0, "peak_grip_load_nm": 0.0, "last": time.monotonic(),
@@ -118,7 +135,7 @@ def trial(rec, pan, speed=1.0):
            "holding_s": round(seen["holding_s"], 2), "widest_hold": round(seen["widest_hold"], 1),
            "peak_grip_load_nm": round(seen["peak_grip_load_nm"], 2), "alarms": arm.status(),
            "back_at_rest": back.get("arrived"), "close_at": seen["close_at"], "open_at": seen["open_at"],
-           "points": "measured"}
+           "points": "measured", "squeeze_pct": round(100 - SQUEEZE)}
     arm.disconnect()                                   # torque off, folded on its stops
     return out
 
@@ -235,8 +252,8 @@ def plan(history, before, after):
     """Hermes debugs the last try and designs the next test. The code clamps whatever it asks for."""
     tries = []
     for h in history[-12:]:
-        row = {k: h.get(k) for k in ("try", "recording", "pan_offset", "speed", "grasped", "holding_s",
-                                     "widest_hold", "peak_grip_load_nm", "arrived", "eye", "debug")}
+        row = {k: h.get(k) for k in ("try", "recording", "pan_offset", "speed", "squeeze_pct", "grasped", "holding_s",
+                                     "widest_hold", "peak_grip_load_nm", "arrived", "eye", "debug", "bag_estimate")}
         if h.get("close_at") or h.get("open_at"):
             row.update(gripper_closed_at=h.get("close_at"), gripper_opened_at=h.get("open_at"), points="measured")
         else:
@@ -259,10 +276,26 @@ def plan(history, before, after):
          "gripper tip was (and the joint angles) when the jaws closed for the grasp and opened for the drop. "
          "The structured context, all tries oldest first (also saved as context.json):\n" + rows + "\n"
          f"Use your vision tool on both camera images of the last try: BEFORE {before} and AFTER {after}. The camera "
-         "faces the arm from the front at about table height, so it may not see inside the box. Then reply with ONE "
+         "faces the arm from the front at about table height, so it may not see inside the box. "
+         "The grip: tries with squeeze_pct 99 squeezed the gripper to 99% closed while grasping. Tries without it "
+         "squeezed as recorded: wave to 99%, recording_2 only to ~69% and recording_3 to ~80%, so a short hold with "
+         "those two may have been too loose a grip rather than a wrong grasp point. "
+         "The red bag has some white labels on it: they are part of the same bag, not a separate object, so measure "
+         "the whole bag including them, and don't take a white label for a gap or for the bag's edge. "
+         f"Measure {GOAL} in the AFTER image before you design the test: its length, width and thickness in cm "
+         "(for scale, the arm's upper arm and forearm are each about 12-13 cm long, and the box is in view), and where "
+         "its centre and the edge nearest the arm are, in the arm's coordinate frame above. Compare with your earlier "
+         "bag_estimate in the tries (if any) and correct it. Advice from the person at the bench: grabbing the bag by "
+         "its edge (the flat sealed rim, or the side nearest the arm) is usually easier than grabbing its full body, so "
+         "don't steer the grasp toward the middle of the bag; a grasp on the edge that held briefly is close, so make "
+         "it bite deeper into that edge. Then do the math: the jaws must close on the bag's edge, so aim the grasp "
+         "point there, and pick pan so the measured gripper_closed_at moves onto it. "
+         "Then reply with ONE "
          'JSON object and nothing else: {"verdict": "INSIDE" or "NOT" or "UNSURE" (is ' + GOAL + ' inside the box '
          'in the AFTER image: it counts as INSIDE when it sits within the box walls, even if part of it sticks out '
-         'above the rim), "debug": "one or two sentences: what happened on the last try and why", '
+         'above the rim), "bag": {"size_cm": [length, width, thickness], "centre_m": [x, y], '
+         '"near_edge_m": [x, y], "confidence": "high" or "medium" or "low"}, '
+         '"debug": "one or two sentences: what happened on the last try and why", '
          '"next": {"recording": "wave" or "recording_2" or "recording_3", "pan": number, "speed": number, '
          '"why": "one sentence"}}. Use the coordinates: say where the grasp point was relative to where the bag '
          'appears in the images, and move it toward the bag. Design the next test to fix what went wrong; do not repeat a try that failed '
@@ -283,6 +316,7 @@ def plan(history, before, after):
         pan, speed = None, None
     verdict = reply.get("verdict") if reply.get("verdict") in ("INSIDE", "NOT", "UNSURE") else "UNSURE"
     return {"verdict": verdict, "debug": str(reply.get("debug") or "no reply from Hermes")[:400],
+            "bag": reply.get("bag") if isinstance(reply.get("bag"), dict) else None,
             "next": None if rec is None or pan is None else {"recording": rec, "pan": round(pan, 1),
                                                               "speed": round(speed, 2), "why": str(nxt.get("why", ""))[:200]},
             "plan_s": round(time.time() - t0, 1)}
@@ -304,6 +338,7 @@ def guided(max_trials):
     for k, h in enumerate(history):                  # each guided try's diagnosis was written with the next try
         if str(h.get("try", "")).startswith("g") and k + 1 < len(history) and history[k + 1].get("hermes_debug_before"):
             history[k]["debug"] = history[k + 1]["hermes_debug_before"]
+            history[k]["bag_estimate"] = history[k + 1].get("hermes_bag_before")
     before = after = snap("now")
     print(f"Hermes-guided generate and test, goal: {GOAL} into the box; up to {max_trials} tries, "
           f"{len(history)} earlier tries as data; "
@@ -316,7 +351,10 @@ def guided(max_trials):
             if history:
                 history[-1]["eye"] = p["verdict"]
                 history[-1]["debug"] = p["debug"]
+                history[-1]["bag_estimate"] = p["bag"]
             print(f"Hermes ({p['plan_s']} s): {p['debug']}", flush=True)
+            if p["bag"]:
+                print(f"Hermes bag: {json.dumps(p['bag'])}", flush=True)
             if p["verdict"] == "INSIDE" and history:
                 print(f"SUCCESS: the eye sees the bag in the box after try {history[-1]['try']}", flush=True)
                 break
@@ -338,7 +376,7 @@ def guided(max_trials):
             row = {"try": f"g{i}", **res, "plan": n, "before": str(before), "after": str(after), "ts": time.time()}
             history.append(row)
             with open(PLAN_LOG, "a") as f:
-                f.write(json.dumps({**row, "hermes_debug_before": p["debug"]}) + "\n")
+                f.write(json.dumps({**row, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"]}) + "\n")
             print(f"  -> {'GRASPED' if res['grasped'] else 'no grasp'} (held {res['holding_s']} s, widest "
                   f"{res['widest_hold']}, peak grip load {res['peak_grip_load_nm']} N*m), {res['seconds']} s, "
                   f"alarms {res['alarms']}", flush=True)
