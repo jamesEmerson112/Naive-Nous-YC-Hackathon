@@ -3,7 +3,7 @@ import json
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from romulus_cloud.models import Device, Overlay, WorkOrder
+from romulus_cloud.models import Device, DoctorConsult, Incident, Overlay, WorkOrder
 
 
 def _devices(session, *ids):
@@ -43,6 +43,27 @@ def test_max_usd_reads_back_as_a_json_safe_float(db_session):
     wo = db_session.get(WorkOrder, "wo_1")
     assert isinstance(wo.max_usd, float) and wo.max_usd == 40.5
     assert json.loads(json.dumps({"max_usd": wo.max_usd})) == {"max_usd": 40.5}
+
+
+def test_one_doctor_consult_per_incident_attempt(db_session, now):
+    _devices(db_session, "sim-1")
+    db_session.add(
+        Incident(id="i-1", device_id="sim-1", occurred_at=now, received_at=now, kind="k")
+    )
+    db_session.flush()
+
+    def consult(cid, attempt):
+        return DoctorConsult(
+            id=cid, device_id="sim-1", incident_id="i-1", origin="device", attempt=attempt
+        )
+
+    db_session.add_all([consult("cons_1", 1), consult("cons_2", 2)])
+    db_session.flush()
+    nested = db_session.begin_nested()
+    db_session.add(consult("cons_3", 2))  # a racing tick opening attempt 2 again
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    nested.rollback()
 
 
 def test_one_work_order_per_incident(db_session):

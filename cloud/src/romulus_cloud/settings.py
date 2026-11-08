@@ -102,6 +102,36 @@ class Settings(BaseSettings):
     # Set once the overnight run starts; `reset` then refuses unless FORCE=1 (build plan K7).
     overnight_started: bool = False
 
+    # Fleet Doctor (docs/fleet-doctor/interfaces.md §7; D23-D26). Off by default: the ask
+    # route answers 503 and the worker's doctor.tick does nothing.
+    # off | fake (FakeLlm) | live (the LLM_* provider above)
+    doctor_mode: Literal["off", "fake", "live"] = "off"
+    # The cloud opens consults on unresolved non-hardware incidents by itself (D26).
+    doctor_auto_consult: bool = False
+    doctor_draft: Literal["none", "fake", "coder"] = "fake"
+    doctor_check: Literal["stub", "sandbox"] = "stub"
+    # Offer proposals whose check is only a stub (demos and F12); the event says so.
+    doctor_offer_stub_checked: bool = False
+    # False until the K17 list replaces `safety_paths`; while false every proposal is
+    # discarded with "safety paths unknown" (D25).
+    safety_paths_confirmed: bool = False
+    doctor_asks_per_incident: int = 6
+    doctor_asks_per_device_day: int = 30  # asks with no incident
+    doctor_consults_per_incident: int = 2
+    # Daily spend across asks and consults, checked before spending.
+    doctor_daily_usd_cap: float = 5.0
+    doctor_usd_per_1k_tokens: float = 0.001  # an estimate (inferred); set the real price
+    doctor_ask_timeout_s: float = 15
+    doctor_ask_max_tokens: int = 400
+    doctor_diagnose_timeout_s: float = 120
+    doctor_diagnose_max_tokens: int = 4000
+    doctor_proposal_ttl_s: int = 3600
+    # Consults only open for incidents received this recently: never backfill history.
+    doctor_lookback_s: int = 21600
+    doctor_tick_s: float = 5
+    doctor_max_open: int = 5  # consults advanced per tick
+    doctor_job_workers: int = 2  # threads for off-tick LLM and coder jobs
+
 
 @lru_cache
 def get_settings() -> Settings:

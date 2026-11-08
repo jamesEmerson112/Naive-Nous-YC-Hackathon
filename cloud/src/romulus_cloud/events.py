@@ -15,6 +15,10 @@ Standard `refs` keys (values are ids as strings):
     dataset     "ds_…"     export  "exp_…"
     firmware / harness  version int;  code_rev  "a1b2c3d"
     touches_safety  true, on overlay/candidate events whose diff touches safety or visor paths
+    ask         "ask_…", a Fleet Doctor L1 ask (it has no table: its `doctor.asked` and
+                `doctor.advised` events are the record)
+    consult     "cons_…", a Fleet Doctor consult (`doctor_consults`)
+    proposal    "prop_…", a Fleet Doctor proposal (`doctor_proposals`)
 Always include `incident` when it is known, so an incident's story is one `find` query.
 Query refs with `find` (or `Event.refs.contains(...)`, i.e. `@>`), which uses the GIN
 index; `Event.refs["incident"].astext == ...` does not.

@@ -13,11 +13,17 @@ Notes from the live spike (Sat Nov 7):
   token limit and returns empty content, which is why an empty answer raises LlmError.
 - `max_tokens` is always sent: without it the proxy holds the model's full output limit
   against the org balance for the call.
+
+`complete` (Fleet Doctor, docs/fleet-doctor/interfaces.md §6.3) is the one generic call: a
+system and a user message in, an `LlmReply` with the token counts out, so callers can price
+it. No `response_format` is sent (not every provider has JSON mode); the prompt asks for
+JSON and `domain.doctor.parse_hypotheses` tolerates prose.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
@@ -36,6 +42,28 @@ class LlmError(Exception):
     """A live LLM call failed; the caller should fall back (e.g. to FakeLlm text)."""
 
 
+class LlmTimeout(LlmError):
+    """The call ran past its timeout (the Doctor's ask answers 504 instead of 502)."""
+
+
+@dataclass(frozen=True)
+class LlmReply:
+    """One reply. `usage_estimated` is True when the token counts are `len(text) // 4`
+    estimates rather than the provider's (no usage reported, or FakeLlm), so a cost never
+    reads as $0 and the spend cap can't fail open. Callers put it in event data."""
+
+    text: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    usage_estimated: bool = False
+
+
+def estimate_tokens(text: str) -> int:
+    """A rough token count when the provider reports none: about 4 characters a token."""
+    return len(text) // 4
+
+
 class LlmConfigError(ValueError):
     """The LLM settings don't describe a usable provider."""
 
@@ -49,6 +77,18 @@ class Llm(Protocol):
 
     def write_skill(self, incident: dict[str, Any]) -> str:
         """A harness skill (markdown) distilled from an incident."""
+        ...
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+    ) -> LlmReply:
+        """One chat call: the reply's text and token counts. Raises LlmError (LlmTimeout
+        when it ran out of time)."""
         ...
 
 
@@ -76,6 +116,27 @@ class FakeLlm:
             f"{FAKE_BANNER}\n\n"
             f"Learned from incident {iid} on {device}. "
             "When this fault appears, park the arm, check health, and apply the known fix.\n"
+        )
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+    ) -> LlmReply:
+        """The banner plus prose echoing the first 80 characters of `user`. Tokens are
+        `len // 4` estimates (the reply cut to `max_tokens`), so caps and spend can be tested."""
+        text = f"{FAKE_BANNER} Likely cause, from the request: {user[:80]!r}."
+        if max_tokens is not None:
+            text = text[: max(max_tokens, 0) * 4]
+        return LlmReply(
+            text=text,
+            model=self.model,
+            prompt_tokens=estimate_tokens(system + user),
+            completion_tokens=estimate_tokens(text),
+            usage_estimated=True,
         )
 
 
@@ -135,6 +196,47 @@ class OpenAICompatLlm:
 
     def write_skill(self, incident: dict[str, Any]) -> str:
         return self._chat(SKILL_SYSTEM, incident)
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+    ) -> LlmReply:
+        """One chat call. A per-call `timeout_s` is a hard budget, so that call isn't retried.
+        Usage comes from `resp.usage`; a count the provider leaves out is estimated from the
+        text (`usage_estimated=True`), never 0."""
+        client = self._client
+        if timeout_s is not None:
+            client = client.with_options(timeout=timeout_s, max_retries=0)
+        try:
+            resp = client.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        except openai.APITimeoutError as exc:
+            raise LlmTimeout(f"LLM call to {self.model} timed out: {exc}") from exc
+        except openai.OpenAIError as exc:
+            raise LlmError(f"LLM call to {self.model} failed: {exc}") from exc
+        text = resp.choices[0].message.content if resp.choices else None
+        if not text or not text.strip():
+            raise LlmError(f"LLM {self.model} returned an empty answer")
+        text = text.strip()
+        prompt = getattr(resp.usage, "prompt_tokens", None)
+        completion = getattr(resp.usage, "completion_tokens", None)
+        return LlmReply(
+            text=text,
+            model=self.model,
+            prompt_tokens=int(prompt) if prompt else estimate_tokens(system + user),
+            completion_tokens=int(completion) if completion else estimate_tokens(text),
+            usage_estimated=not (prompt and completion),
+        )
 
 
 def build_llm(

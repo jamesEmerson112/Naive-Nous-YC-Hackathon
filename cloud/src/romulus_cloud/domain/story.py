@@ -399,6 +399,43 @@ LABELS.update(
     }
 )
 
+# --- Fleet Doctor (docs/fleet-doctor/interfaces.md §8). PR 6 adds LINES, STAGE and STATUS.
+
+
+def _stub(e: EventLike, label: str) -> str:
+    return f"{label} (stub)" if _data(e).get("stub") else label
+
+
+def _checked_label(e: EventLike) -> str:
+    d = _data(e)
+    if d.get("stub"):
+        return "check: stub"
+    return "check ✓" if d.get("passed") else "check ✗"
+
+
+LABELS.update(
+    {
+        "doctor.asked": lambda e: "asked the Fleet Doctor",
+        "doctor.advised": lambda e: "Fleet Doctor advised",
+        "doctor.blocked_over_cap": lambda e: "Fleet Doctor: over cap",
+        "doctor.declined": lambda e: "Fleet Doctor declined",
+        "doctor.consult_opened": lambda e: "Fleet Doctor consult",
+        "doctor.diagnosed": lambda e: _stub(e, "diagnosed"),
+        "doctor.drafted": lambda e: _stub(e, "fix drafted"),
+        "doctor.checked": _checked_label,
+        "doctor.proposal_discarded": lambda e: "fix discarded",
+        "doctor.proposal_offered": lambda e: "fix offered",
+        "doctor.proposal_result": lambda e: f"fix {_words(_data(e).get('result') or 'reported')}",
+        "doctor.proposal_expired": lambda e: "fix expired",
+        "doctor.consult_closed": lambda e: (
+            f"consult closed: {_words(_data(e)['outcome'])}"
+            if _data(e).get("outcome")
+            else "consult closed"
+        ),
+        "doctor.gave_up": lambda e: "Fleet Doctor gave up",
+    }
+)
+
 # Kinds about a device, a version, the fleet or a dataset, never one incident: their
 # events don't carry `refs.incident`, so they need no chain label. A kind that starts
 # carrying an incident moves into `LABELS` (the label test checks both lists).

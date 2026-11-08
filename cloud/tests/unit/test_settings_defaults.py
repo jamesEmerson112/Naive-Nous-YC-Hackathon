@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from romulus_cloud.settings import Settings
 
 ARCH_ENV_VARS = [
@@ -46,6 +48,28 @@ def test_defaults_are_fake_and_offline():
     assert s.canary_window_s == 120 and s.batch_interval_s == 120
     assert s.allow_passthrough_code_promotion is False
     assert s.overnight_started is False
+
+
+def test_fleet_doctor_defaults_are_off_and_safe():
+    """interfaces.md §7: the Doctor ships off, never offers unchecked proposals, and
+    discards every proposal until the safety paths are confirmed."""
+    s = Settings(_env_file=None)
+    assert s.doctor_mode == "off" and s.doctor_auto_consult is False
+    assert (s.doctor_draft, s.doctor_check) == ("fake", "stub")
+    assert s.doctor_offer_stub_checked is False and s.safety_paths_confirmed is False
+    assert (s.doctor_asks_per_incident, s.doctor_asks_per_device_day) == (6, 30)
+    assert s.doctor_consults_per_incident == 2
+    assert (s.doctor_daily_usd_cap, s.doctor_usd_per_1k_tokens) == (5.0, 0.001)
+    assert (s.doctor_ask_timeout_s, s.doctor_ask_max_tokens) == (15, 400)
+    assert (s.doctor_diagnose_timeout_s, s.doctor_diagnose_max_tokens) == (120, 4000)
+    assert (s.doctor_proposal_ttl_s, s.doctor_lookback_s) == (3600, 21600)
+    assert (s.doctor_tick_s, s.doctor_max_open, s.doctor_job_workers) == (5, 5, 2)
+
+
+def test_doctor_modes_are_closed_sets(monkeypatch):
+    monkeypatch.setenv("DOCTOR_MODE", "turbo")
+    with pytest.raises(ValueError, match="doctor_mode"):
+        Settings(_env_file=None)
 
 
 def test_every_architecture_variable_is_a_setting():
