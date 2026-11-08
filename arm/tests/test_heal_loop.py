@@ -43,8 +43,8 @@ def latched_pod(**kw):
     return pod
 
 
-REPORT = ("Root cause: release v1.8 added near_hold() to hcsr04.c. Its keep-alive tests held_mm instead of the new "
-          "reading, so once a hand came within 250 mm the hold refreshes itself on every ping and never expires: the "
+REPORT = ("Root cause: release v1.8 added near_hold() to hcsr04.c. It holds the nearest near reading, but nothing ever "
+          "releases held_mm: HCSR04_HOLD_MS is never used, so once a hand came within 200 mm the hold never expires: the "
           "distance is stuck at 78 mm while the echo says ~900 mm. Not an obstruction. Fix: rolled back to known-good "
           "v1.0. Verified: arm_run exit 0, no reflex, 663 of 663 frames played, range coverage 1.0 on every joint.")
 
@@ -54,7 +54,7 @@ GOOD_AGENT = [
     turn(("telemetry_recent", {"kind": "D", "limit": 5}),
          thinking="us_mismatch: echo ~5250 us should be ~900 mm, but mm stays at 78. Look at raw samples."),
     turn(("src_log", {}), ("src_diff", {"rev_a": "v1.0"}), thinking="Echo is long, so nothing is close. What changed?"),
-    turn(("note", {"text": "v1.8 near_hold: the keep-alive tests held_mm, not mm, so it refreshes itself every ping"}),
+    turn(("note", {"text": "v1.8 near_hold: nothing ever releases held_mm; HCSR04_HOLD_MS is never used"}),
          ("fw_rollback", {"reason": "v1.8 holds a near distance forever once something came close; restore known-good"})),
     turn(("arm_run", {}), thinking="Launch the job and check the motion."),
     turn(("arm_state", {}), thinking="Back at rest?"),
@@ -115,7 +115,7 @@ def test_good_agent_fixes_launches_the_job_and_verifies_the_motion(tmp_path):
     samples = json.loads(d.results[2][0][2])["rows"]
     assert all(r["mm"] == samples[0]["mm"] < 100 and r["us"] > 5000 for r in samples)      # stuck mm, long echo
     diff = json.loads(d.results[3][1][2])["diff"]
-    assert "+    if (held_mm < HCSR04_HOLD_NEAR_MM)" in diff
+    assert "+    return held_mm ? held_mm : mm;" in diff
     job = json.loads(d.results[5][0][2])
     assert job["exit"] == 0 and job["motion_report"]["playback"]["complete"]
     state = json.loads(d.results[6][0][2])
@@ -180,7 +180,7 @@ def test_live_view_and_replay_show_the_reasoning_and_the_motion(tmp_path):
     live = buf.getvalue()
     for want in ("what woke the agent", "us_mismatch", "Echo is long, so nothing is close", "▶ fw_rollback",
                  "flash ok · now running v1.0 BAADB704", "ARM JOB OK", "playback: 663 of 663 frames",
-                 "range reached: shoulder_pan 1.0", "reflex:", "never cleared", "+static uint32_t held_mm = UINT32_MAX;",
+                 "range reached: shoulder_pan 1.0", "reflex:", "never cleared", "+static uint32_t held_mm;",
                  "Root cause: release v1.8", "run finished · stop: end_turn"):
         assert want in live, want
     buf2 = io.StringIO()
@@ -199,7 +199,7 @@ def test_the_agent_gets_no_answer_in_what_wakes_it(tmp_path):
     kickoff = agent.arm_kickoff(job, agent.open_incidents(pod), note=heal_test.OPERATOR_NOTE)
     assert job["exit"] == 4 and "us_mismatch" in kickoff
     assert not re.search(r"held_mm|near_hold|keep-?alive|refresh|latch|never (expire|lets go)|stale|\bstuck|v1\.8|"
-                         r"250 ?mm|500 ?ms", kickoff, re.I), kickoff
+                         r"500 ?ms", kickoff, re.I), kickoff
 
 
 def _args(*extra):
@@ -270,12 +270,14 @@ def test_watch_kickoff_names_the_arm_goal_only_when_the_arm_is_there(tmp_path):
 
 
 # ---------------------------------------------------------------------------------- forward fixes (Nov 8)
-FIX_EDIT = {"path": "src/hcsr04.c", "old": "    if (held_mm < HCSR04_HOLD_NEAR_MM)", "new": "    if (mm < HCSR04_HOLD_NEAR_MM)"}
+FIX_EDIT = {"path": "src/hcsr04.c", "old": "    if (mm < HCSR04_HOLD_NEAR_MM) {",
+            "new": "    if (held_mm && now_ms - held_ms >= HCSR04_HOLD_MS)\n        held_mm = 0;\n"
+                   "    if (mm < HCSR04_HOLD_NEAR_MM) {"}
 WRONG_EDIT = {"path": "src/hcsr04.h", "old": "#define HCSR04_HOLD_MS        500u", "new": "#define HCSR04_HOLD_MS        300u"}
-FORWARD_REPORT = ("Root cause: release v1.8's near_hold() keep-alive tests held_mm instead of the new reading, so the "
-                  "hold refreshes itself on every ping and never expires once a hand came near: firmware, not an "
+FORWARD_REPORT = ("Root cause: release v1.8's near_hold() never releases held_mm (HCSR04_HOLD_MS is never used), so "
+                  "the hold never expires once a hand came near: firmware, not an "
                   "obstruction. Rolled back to known-good first and the arm ran 663 of 663 frames. Then fixed it "
-                  "forward (the keep-alive now tests mm), built and flashed it: triage clean, and arm_run played 663 of "
+                  "forward (added the release after HCSR04_HOLD_MS), built and flashed it: triage clean, and arm_run played 663 of "
                   "663 frames, no reflex, range coverage 1.0 on every joint. Running: my build. A person should "
                   "re-test with a hand in front of the sensor.")
 
@@ -287,10 +289,10 @@ def forward_agent(edit=FIX_EDIT, rollback=True, recheck=True):
         turns += [turn(("fw_rollback", {"reason": "v1.8 reports a distance its own echo contradicts"})),
                   turn(("arm_run", {}), thinking="Stable on known-good; check the arm.")]
     turns += [turn(("src_edit", edit)), turn(("fw_build", {})),
-              turn(("fw_flash", {"image": "latest", "reason": "forward fix: the keep-alive tests the new reading"}))]
+              turn(("fw_flash", {"image": "latest", "reason": "forward fix: the hold lets go after HCSR04_HOLD_MS"}))]
     if recheck:
         turns += [turn(("triage", {}), ("arm_run", {}), thinking="Check the arm on my build.")]
-    return turns + [turn(("src_commit", {"message": "hcsr04: the near hold's keep-alive tests the new reading"})),
+    return turns + [turn(("src_commit", {"message": "hcsr04: the near hold lets go after HCSR04_HOLD_MS"})),
                     turn(text=FORWARD_REPORT)]
 
 

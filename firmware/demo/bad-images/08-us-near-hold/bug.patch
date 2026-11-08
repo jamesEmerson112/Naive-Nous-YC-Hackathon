@@ -1,5 +1,5 @@
 diff --git a/src/hcsr04.c b/src/hcsr04.c
-index d86357c..51d1c0e 100644
+index d86357c..f297f91 100644
 --- a/src/hcsr04.c
 +++ b/src/hcsr04.c
 @@ -19,6 +19,12 @@ static uint8_t  active;          /* a measurement is in progress */
@@ -9,51 +9,47 @@ index d86357c..51d1c0e 100644
 +/* Near-object hold. At 10 pings a second a hand moving through the beam can fall between two pings,
 + * and the arm's start gate would miss it. So a near reading is held: the nearest distance is reported
 + * until nothing has been near for HCSR04_HOLD_MS. */
-+static uint32_t held_mm = UINT32_MAX;
-+static uint32_t held_ms;
++static uint32_t held_mm;         /* the nearest distance being held, 0 = nothing held */
++static uint32_t held_ms;         /* when something was last near */
 +
  static int echo_high(void)
  {
      return (ECHO_PORT->IDR >> ECHO_PIN) & 1u;
-@@ -108,6 +114,15 @@ void hcsr04_start(uint32_t now_ms)
+@@ -108,6 +114,16 @@ void hcsr04_start(uint32_t now_ms)
      trig_pulse();
  }
  
 +static uint32_t near_hold(uint32_t mm, uint32_t now_ms)
 +{
-+    if (mm < held_mm || now_ms - held_ms >= HCSR04_HOLD_MS)
-+        held_mm = mm;                   /* nearer, or the hold ran out: take the new reading */
-+    if (held_mm < HCSR04_HOLD_NEAR_MM)
-+        held_ms = now_ms;               /* something near: keep holding */
-+    return held_mm;
++    if (mm < HCSR04_HOLD_NEAR_MM) {
++        if (held_mm == 0 || mm < held_mm)
++            held_mm = mm;               /* something near: hold the nearest */
++        held_ms = now_ms;
++    }
++    return held_mm ? held_mm : mm;      /* while something is held, report it */
 +}
 +
  int hcsr04_poll(uint32_t now_ms, hcsr04_result_t *out)
  {
      if (!active) return 0;
-@@ -119,8 +134,9 @@ int hcsr04_poll(uint32_t now_ms, hcsr04_result_t *out)
+@@ -119,7 +135,7 @@ int hcsr04_poll(uint32_t now_ms, hcsr04_result_t *out)
      } else if (pulse_done) {
          uint32_t us = pulse_us;
          out->echo_us = us;
 -        out->dist_mm = (us * 343u + 1000u) / 2000u;   /* us * 0.343 mm/us / 2, rounded */
--        out->status  = (us < HCSR04_MIN_ECHO_US || us > HCSR04_MAX_ECHO_US) ? HCSR04_OUT_OF_RANGE : HCSR04_OK;
 +        out->dist_mm = near_hold((us * 343u + 1000u) / 2000u, now_ms);   /* us * 0.343 mm/us / 2, rounded */
-+        /* the status describes the distance reported: a held hand in front of open space is "ok" */
-+        out->status  = (out->dist_mm < HCSR04_MIN_MM || out->dist_mm > HCSR04_MAX_MM) ? HCSR04_OUT_OF_RANGE : HCSR04_OK;
+         out->status  = (us < HCSR04_MIN_ECHO_US || us > HCSR04_MAX_ECHO_US) ? HCSR04_OUT_OF_RANGE : HCSR04_OK;
      } else if (now_ms - start_ms >= HCSR04_TIMEOUT_MS) {
          /* Rose but never fell within 60 ms: past max range. Never rose: no echo at all. */
-         out->status = rise_seen ? HCSR04_OUT_OF_RANGE : HCSR04_NO_ECHO;
 diff --git a/src/hcsr04.h b/src/hcsr04.h
-index 8c3bc39..5d3e0e9 100644
+index 8c3bc39..a6abf3f 100644
 --- a/src/hcsr04.h
 +++ b/src/hcsr04.h
-@@ -18,6 +18,10 @@
+@@ -18,6 +18,8 @@
  #define HCSR04_MIN_ECHO_US    116u     /* ~2 cm: the sensor's rated minimum */
  #define HCSR04_MAX_ECHO_US    23300u   /* ~400 cm: the rated maximum. No object gives ~38 ms */
  #define HCSR04_TIMEOUT_MS     60u      /* give up on a measurement after this long */
-+#define HCSR04_MIN_MM         20u      /* the same 2-400 cm, as distances */
-+#define HCSR04_MAX_MM         4000u
-+#define HCSR04_HOLD_NEAR_MM   250u     /* readings nearer than this are held ... */
++#define HCSR04_HOLD_NEAR_MM   200u     /* readings nearer than this are held ... */
 +#define HCSR04_HOLD_MS        500u     /* ... until nothing has been near for this long */
  
  typedef enum {

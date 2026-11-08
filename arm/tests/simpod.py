@@ -40,11 +40,11 @@ SCENARIOS = {"07": "v1.7", "08": "v1.8"}
 BAD_DIR = RELEASE_DIRS["v1.7"]
 IMAGES = {"v1.0": {"crc": "BAADB704", "version": "v1.0", "status": "known-good"},
           "v1.7": {"crc": "A12774C3", "version": "v1.7", "status": "candidate"},
-          "v1.8": {"crc": "359A86DC", "version": "v1.8", "status": "candidate"}}
+          "v1.8": {"crc": "8FB0FA2D", "version": "v1.8", "status": "candidate"}}
 GOOD, BAD = IMAGES["v1.0"], IMAGES["v1.7"]
 US_PER_MM = 2 / 0.343
 PING_S = 0.1                                          # the pod pings the HC-SR04 at 10 Hz (main.c, US_STREAM_HZ)
-HOLD_NEAR_MM, HOLD_MS, MIN_MM, MAX_MM = 250, 500, 20, 4000      # v1.8 hcsr04.h
+HOLD_NEAR_MM, HOLD_MS = 200, 500                      # v1.8 hcsr04.h
 
 
 class FakeClock:
@@ -93,18 +93,21 @@ def mm_v17(us):
 
 
 class NearHold:
-    """v1.8's near_hold() from its bug.patch, line for line in uint32 arithmetic. fixed=True is what it was meant to
-    be: the keep-alive tests the new reading (mm), not the held one (held_mm)."""
+    """v1.8's near_hold() from its bug.patch, line for line in uint32 arithmetic: it holds the nearest reading under
+    HOLD_NEAR_MM and nothing ever lets go of it (HCSR04_HOLD_MS is never used). fixed=True adds the release it was
+    meant to have: once nothing has been near for HOLD_MS, drop the held reading."""
 
     def __init__(self, fixed=False):
-        self.held_mm, self.held_ms, self.fixed = 0xFFFFFFFF, 0, fixed
+        self.held_mm, self.held_ms, self.fixed = 0, 0, fixed
 
     def __call__(self, mm, now_ms):
-        if mm < self.held_mm or ((now_ms - self.held_ms) & 0xFFFFFFFF) >= HOLD_MS:
-            self.held_mm = mm                  # nearer, or the hold ran out: take the new reading
-        if (mm if self.fixed else self.held_mm) < HOLD_NEAR_MM:
-            self.held_ms = now_ms              # something near: keep holding
-        return self.held_mm
+        if self.fixed and self.held_mm and ((now_ms - self.held_ms) & 0xFFFFFFFF) >= HOLD_MS:
+            self.held_mm = 0                   # the fix: nothing near for HOLD_MS, let go
+        if mm < HOLD_NEAR_MM:
+            if self.held_mm == 0 or mm < self.held_mm:
+                self.held_mm = mm              # something near: hold the nearest
+            self.held_ms = now_ms
+        return self.held_mm if self.held_mm else mm   # while something is held, report it
 
 
 # The agent's own builds (fw_build in the simulator): the workspace's hcsr04.c is compiled on the host with gcc, with
@@ -321,11 +324,10 @@ class SimPod:
         us = round(self.scene_mm(t) * US_PER_MM) + self.rng.randint(-12, 12)
         if self.proc:                                      # an agent build: its own compiled driver
             mm, st = self.proc.ping(us, now_ms)
-        elif self.firmware == "v1.8":
-            mm = self.hold(mm_v10(us), now_ms)
-            st = "ok" if MIN_MM <= mm <= MAX_MM else "out_of_range"
         else:
             mm = (mm_v17 if self.firmware == "v1.7" else mm_v10)(us)
+            if self.firmware == "v1.8":
+                mm = self.hold(mm, now_ms)
             st = "ok" if 116 <= us <= 23300 else "out_of_range"
         return {"type": "D", "t": now_ms, "mm": mm, "us": us, "st": st, "ts": t}
 
