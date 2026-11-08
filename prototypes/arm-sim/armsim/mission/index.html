@@ -706,13 +706,14 @@ function renderHeal() {
       lane = box[0] > laneEnd[0] + 8 ? 0 : box[0] > laneEnd[1] + 8 ? 1 : -1;
       if (lane >= 0) break;
     }
-    if (lane < 0) lane = laneEnd[0] <= laneEnd[1] ? 0 : 1;
-    laneEnd[lane] = Math.max(box[1], b);
+    const quiet = lane < 0;                      // no room for any label: the bar alone (its title has it)
+    if (quiet) lane = laneEnd[0] <= laneEnd[1] ? 0 : 1;
+    laneEnd[lane] = Math.max(quiet ? b : box[1], b);
     const y = laneI[lane];
     const fill = i.outcome === "healed" ? "#33d69f" : i.outcome === "person" ? "#ff4d63" : "url(#hatch)";
     const glow = i.outcome === "healed" ? "rgba(51,214,159,0.55)" : i.outcome === "person" ? "rgba(255,77,99,0.6)" : "rgba(251,191,58,0.6)";
     out += `<rect x="${a}" y="${y - 9}" width="${b - a}" height="18" rx="6" fill="${fill}" style="filter: drop-shadow(0 0 6px ${glow})"><title>${esc(i.summary || i.kind)}</title></rect>`;
-    out += `<text x="${end ? b : a}" y="${y - 15}" text-anchor="${end ? "end" : "start"}" fill="${i.outcome === "healed" ? "#bff5df" : i.outcome === "person" ? "#ffc2ca" : "#ffe3a3"}" font-size="13.5" font-weight="700" font-family="Inter Display, Inter, -apple-system, sans-serif">${esc(label)}${kind ? `<tspan fill="#8a9bb5" font-weight="500" font-size="11.5"> ${esc(kind)}</tspan>` : ""}</text>`;
+    if (!quiet) out += `<text x="${end ? b : a}" y="${y - 15}" text-anchor="${end ? "end" : "start"}" fill="${i.outcome === "healed" ? "#bff5df" : i.outcome === "person" ? "#ffc2ca" : "#ffe3a3"}" font-size="13.5" font-weight="700" font-family="Inter Display, Inter, -apple-system, sans-serif">${esc(label)}${kind ? `<tspan fill="#8a9bb5" font-weight="500" font-size="11.5"> ${esc(kind)}</tspan>` : ""}</text>`;
   }
   out += `<line x1="${W - 6}" x2="${W - 6}" y1="4" y2="${axisY + 4}" stroke="rgba(58,209,247,0.7)" stroke-dasharray="3 3"/><text x="${W - 10}" y="13" fill="#3ad1f7" font-size="10.5" text-anchor="end" letter-spacing="1.4">NOW</text>`;
   out += `</svg>`;
@@ -779,7 +780,7 @@ function renderPod() {
   if (!pod) return setHTML($("pod"), `<div class="offline"><div class="big">No pod link</div>This arm host runs without podd (start it with <code>--pod sim</code>).</div>`);
   const img = IMAGES[pod.image] || (pod.image ? [pod.image, "", ""] : ["real pod", "", "build from the pod itself"]);
   const healing = pod.healer_busy;
-  let html = arm.stale ? `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd"></span>unknown · last seen ${esc(ago(arm.age_s))} ago</span></div>`
+  let html = arm.stale ? `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd"></span>no signal</span></div>`
     : `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd ${pod.podd_up ? "ok" : "bad"}"></span>${pod.podd_up ? "running" : "down"}</span></div>`;
   html += `<div class="fw ${healing ? "warn" : img[1]}"><div class="k">Firmware</div><div class="v">${esc(healing ? "rolling back…" : img[0])}</div><div class="s">${esc(healing ? "pod healer flashing the known-good image" : img[2])}</div></div>`;
   const incs = pod.incidents || [];

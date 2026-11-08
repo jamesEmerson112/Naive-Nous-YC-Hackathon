@@ -39,7 +39,7 @@ export HF_HOME=/workspace/hf HF_HUB_ENABLE_HF_TRANSFER=1
 echo "START $(date -u +%H:%M:%S)" > out/status.txt
 # transformers 4.52 refuses torch.load on torch < 2.6 (CVE-2025-32434), and ChatTS ships .bin weights:
 # torch 2.6 for CUDA 12.4 (the image's driver) first. Attempt 1 failed on exactly this.
-timeout 7200 bash -c 'pip install -q "torch==2.6.0" --index-url https://download.pytorch.org/whl/cu124 > out/pip.log 2>&1 \
+timeout 7200 bash -c 'pip install -q "torch==2.6.0" "torchvision==0.21.0" "torchaudio==2.6.0" --index-url https://download.pytorch.org/whl/cu124 > out/pip.log 2>&1 \
   && pip install -q "transformers==4.52.4" accelerate hf_transfer >> out/pip.log 2>&1 \
   && python chatts_test.py > out/chatts.log 2>&1; echo "EXIT $?" >> out/chatts.log'
 cp -f /workspace/chatts_results.jsonl out/ 2>/dev/null
