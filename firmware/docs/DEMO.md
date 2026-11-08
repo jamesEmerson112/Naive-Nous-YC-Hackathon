@@ -71,6 +71,7 @@ What healthy looks like (`heal telemetry_stats seconds=5`):
 | 4 ⚠ | v1.4 | telemetry overruns the UART; distance starves | `tx_overrun` | `telemetry_stats` (byte budget) | runtime `rate acc 50`, then code: fit the budget. **Keep runs short: the probe's serial bridge can wedge after ~20 s** |
 | 5 | v1.5 | accelerometer reads 0.5 g at rest | `acc_gravity` | `pod_cmd "acc regs"` (FS bits) | code: mg/digit = 2 for ±4 g |
 | 6 | v1.6 | missing sensor → hang → watchdog loop → safe mode | `watchdog`, `reboot_loop` | boot `last_cp`, `chip_halt_sample` | code: restore I2C timeouts, then a human replugs |
+| 7 | v1.7 | ultrasonic reads 0–32 mm whatever is in front; the arm never starts | `us_mismatch` (critical) | `telemetry_recent kind=D` (us vs mm), `src_diff rev_a=v1.0` | arm task: `fw_rollback` to known-good, then the agent's own `arm_run` plays the wave; later code: drop the cast |
 | P1 | v1.0 | ultrasonic covered | `us_blocked` | `telemetry_stats` | none needed: wait / human |
 | P2 | v1.0 | loose ECHO wire | `us_intermittent` (+ motion) | `pod_cmd "us check"` | human reseats the wire |
 | P3 | v1.0 | LIS3DH unplugged | `acc_error` (nack) | `pod_cmd "i2c scan"` | human reconnects; firmware keeps running |
@@ -361,6 +362,51 @@ disconnected sensor shouldn't take down the whole pod).
 
 **Talking point:** the agent fixes what software can fix and hands the rest to a human with precise
 instructions. That's the trust story: it knows what it can't fix.
+
+---
+
+## 7. v1.7: "us: tidy the distance conversion" (the arm never starts)
+
+**Start:** `demo/scenario start 07`, with the HC-SR04 pointed at open space more than 200 mm away. The whole
+loop, arm included, is `python3 arm/heal_test.py` (see `arm/README.md`, "Self-healing test").
+
+**The bug:** one misplaced cast in `hcsr04.c`:
+```c
+out->dist_mm = (uint16_t)(us * 343u + 1000u) / 2000u;   /* v1.7 */
+out->dist_mm = (us * 343u + 1000u) / 2000u;             /* v1.0 */
+```
+The cast applies to the numerator, not to the result, so `us × 343 + 1000` is cut to 16 bits before
+the divide. Every real echo (116–23300 µs) comes out as 0–32 mm (65535 / 2000 = 32). The echo time
+itself is untouched, so each `D` line contradicts itself: `us=5240` means 899 mm, but `mm=15`.
+The release has no comment explaining the cast and a neutral commit message, so nothing but the code
+change itself points at the bug.
+`arm/tests/test_bad_image.py` compiles both lines with gcc and checks every echo value.
+
+**What the logs show:**
+```
+critical us_mismatch - Ultrasonic distance disagrees with its own echo time: echo 5240 us means ~899 mm,
+                       but the firmware reports 15 mm (20 of 20 samples wrong)
+```
+The arm's job (`arm/safe_replay.py --on-blocked reflex`) thinks something is within 30 mm, so its obstacle
+reflex makes the arm flail: the base swings back and forth with twitches, the wrist rolls and the gripper
+flinches, for 8 s. Then it gives up (exit 4) and returns to rest. With `--on-blocked refuse` the gate just
+says `object at 13 mm (limit 200 mm)`, `NOT MOVING.`
+
+**Investigation:** physical or firmware? An object at 15 mm would return an echo under ~90 µs, and the
+echo says ~900 mm, so it isn't an obstruction (the rule also keeps `us_blocked` quiet when the echo is
+long). `src_log` shows v1.7, and `src_diff rev_a=v1.0` shows only the cast changed.
+
+**Fix (arm task):** `fw_rollback` to known-good, then `arm_run` to launch the job and check its motion report. The harness's arm
+rules make restoring service the fix, so the agent gets no edit or build tools in this task. The forward
+fix (drop the cast, or cast the result) is a person's follow-up.
+
+**Verify:** `chip_status` shows the known-good build, `us_mismatch` is gone, and the agent's own `arm_run`
+plays the whole wave: 663 of 663 frames, no reflex, every joint at about 0.97–0.99 of its commanded range.
+
+**Talking point:** the sensor is fine and the arm is fine; a one-line integer truncation in C blocks the robot.
+The deterministic rule tells "something is close" apart from "the firmware can't do arithmetic" by checking
+the pod's two numbers against each other, with no model. The model then only has to read one diff and decide
+to roll back.
 
 ---
 

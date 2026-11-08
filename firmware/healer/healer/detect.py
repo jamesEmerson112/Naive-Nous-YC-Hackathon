@@ -13,11 +13,14 @@ The rules check physical invariants, so they work without the robot arm:
   - a real MEMS sensor always has a noise floor; zero variance means stale data
   - the MCU's clock must agree with the host's wall clock
   - telemetry must fit the UART byte budget (115200 baud 8N1 = 11520 bytes/s)
+  - an ultrasonic distance must match its own echo time (mm = us * 0.343 / 2)
 """
 import math
 import statistics
 
 from .config import UART_BYTES_PER_S
+
+US_TO_MM = 0.343 / 2      # HC-SR04: mm per microsecond of echo (sound at 20 C, out and back)
 
 
 def _f(kind, severity, summary, evidence=None, hypotheses=None, next_steps=None):
@@ -236,9 +239,36 @@ def check_ultrasonic(s):
                        "marginal wiring or a target at the edge of the beam",
                        "soft or angled target that doesn't reflect"],
                       ["pod_cmd 'us check'", "notify_human: reseat the HC-SR04 wires (ECHO -> D3 divider, TRIG -> A0)"]))
+    # The firmware reports both the echo time and the distance it computed from it, so the two can be
+    # checked against each other: distance = echo_us * 0.343 / 2 (speed of sound at 20 C, out and back).
+    # A mismatch is a firmware fault, whatever is in front of the sensor. Both fields feed safety
+    # decisions (the arm's start gate reads mm), so a wrong distance is critical in either direction.
+    timed = [d for d in D if d.get("st") in ("ok", "out_of_range") and (d.get("us") or 0) > 0 and "mm" in d]
+    if len(timed) >= 10:
+        def expect(d):
+            return d["us"] * US_TO_MM
+
+        bad = [d for d in timed if abs(d["mm"] - expect(d)) > max(10.0, 0.05 * expect(d))]
+        if len(bad) / len(timed) > 0.5:
+            ex = bad[-3:]
+            out.append(_f("us_mismatch", "critical",
+                          "Ultrasonic distance disagrees with its own echo time: echo %d us means ~%d mm, "
+                          "but the firmware reports %d mm (%d of %d samples wrong)"
+                          % (ex[-1]["us"], round(expect(ex[-1])), ex[-1]["mm"], len(bad), len(timed)),
+                          {"n": len(timed), "mismatched": len(bad), "formula": "mm = us * 0.343 / 2",
+                           "samples": [{"us": d["us"], "mm_reported": d["mm"], "mm_from_echo": round(expect(d)),
+                                        "st": d.get("st")} for d in ex],
+                           "mm_reported_range": [min(d["mm"] for d in bad), max(d["mm"] for d in bad)]},
+                          ["the firmware computes the distance from the echo time wrongly",
+                           "not a real obstruction: the echo time is the physical measurement, and an object at the "
+                           "reported distance would return a much shorter echo"],
+                          ["telemetry_recent kind=D (compare us and mm in each sample)",
+                           "src_log / src_diff (what changed since the known-good release?)"]))
     if len(ok) >= 10:
         mm = [d["mm"] for d in ok]
-        if statistics.fmean(mm) < 30 and _std(mm) < 3:
+        # Covered sensor: short distance AND a short echo. A short distance with a long echo is us_mismatch.
+        echo_short = statistics.fmean(d.get("us", 0) for d in ok) < 300
+        if statistics.fmean(mm) < 30 and _std(mm) < 3 and echo_short:
             out.append(_f("us_blocked", "info", "Ultrasonic reads a constant %.0f mm: something is covering it" % statistics.fmean(mm),
                           {"mean_mm": round(statistics.fmean(mm), 1), "std_mm": round(_std(mm), 2), "n": len(ok)},
                           ["object or hand right against the sensor (its minimum range is ~20 mm)"],

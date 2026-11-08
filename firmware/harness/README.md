@@ -10,6 +10,8 @@ on top of Olir's `heal` tools. Nothing under `healer/`, `pod/` or `demo/` is cha
 | `agent.py` | The loop: system prompt from `system_info`, tools from `healer/tools.json` in file order, risk gate, one tool call at a time, transcripts. `run` handles the open incidents once; `watch` wakes on new ones (10 s debounce). |
 | `evaluate.py` | Blind runs of scenarios 01, 02, 03, 05 and 06: operator steps, agent run, scoring from the bench. Holds the answers, so never show it to the agent. |
 | `tests/test_harness.py` | Offline tests: fake bench, scripted model, fake Ollama server, scorer cases. |
+| `console.py` | The live view: streams the model's thinking and text as it's generated, each tool call with the gate's decision, and a readable summary of each result. |
+| `view.py` | Replays a saved run through the same view (`python3 view.py` for the newest; `--thinking brief`, `--delay 0.4` for an audience). |
 
 ## Drivers
 - **`ollama`** (the default): a local model, `qwen3.5:4b` with thinking on by default, 32k context, stdlib
@@ -45,6 +47,36 @@ uv venv .venv && uv pip install --python .venv/bin/python anthropic pytest   # a
 The bench needs `demo/scenario setup` and `build-images` done once, and `healer/bin/podd` running. Each
 scenario run starts and ends with `demo/scenario reset`. Runs land in `runs/<time>-<label>/`
 (`transcript.jsonl`, `report.md`, `score.json`) and `runs/results.jsonl`.
+
+## Watching a run
+Every `agent.py run` and `watch` streams to the terminal (`--view full`, the default; `brief` keeps the first
+lines of each thinking block, `off` hides thinking, `none` prints only the JSON summary). For each turn it
+shows the thinking (`┊`) and text (`▌`) as Ollama generates them, then each call (`▶ name args [risk]`, or
+`REFUSED by the harness: why`) and its result (`◀ seconds summary`): triage findings by severity, diffs in
+colour, flash verification, arm jobs with their motion (reflex swings, frames played, range reached per joint). The transcript holds everything, so `view.py` can replay
+any run the same way.
+
+## The arm task (`--tools arm`)
+The robot arm depends on the pod's ultrasonic distance. `--tools arm` offers 17 `heal` tools (observe, read
+the source and history, flash, notify; no edits or builds) plus three harness tools that run `arm/` scripts on
+the bench:
+- **`arm_run`** launches the arm's job (`safe_replay.py --on-blocked reflex`): only the start gate without
+  `--arm-port`, the real motion with it. It returns the log and motion report and is capped at `--arm-cap`
+  runs (default 4).
+- **`arm_state`** reads the joints from the servo bus without touching torque.
+- **`arm_report`** reports what a job did against its plan.
+
+The system prompt gains the arm rules (`ARM_RULES`):
+- a real obstruction goes to a person;
+- a firmware fault gets `fw_rollback` to known-good;
+- after a fix, the agent launches the job itself and checks the motion report (exit 0, no reflex, every frame
+  played, every joint at its commanded range) before reporting.
+
+`arm/heal_test.py` is the scenario test: bad release v1.7 → the arm flails → `us_mismatch` → rollback → the
+agent's own job plays the wave. It scores from the bench; see `arm/README.md`.
+
+All runs also get one turn-budget notice, appended to a tool result and marked `[harness: ...]`, when a
+quarter of the turns are left (in `agent.py`, `budget_notice`).
 
 ## What the loop enforces
 - **Only the tools.** No shell. The model sees `system_info` (plus a few operating rules), the tool list
