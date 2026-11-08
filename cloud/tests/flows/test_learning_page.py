@@ -108,7 +108,7 @@ def test_empty_state_shows_the_data_strip_and_no_review(client, learning_setting
     assert "THE FLEET'S OWN DATA" in page.upper()
     assert "heal runs" in page and "training rows" in page
     assert "Repeat rate after a change: <b>—</b>" in page
-    assert "NEXT, not built" in page
+    assert "Next, not built" in page
     assert 'hx-get="/partials/learning"' in page and "every 3s" in page
     assert "recorded Naïve session" not in page and "staged for" not in page
 
@@ -123,7 +123,7 @@ def test_recorded_session_and_probe_show_the_staged_hero(client, seeded, learnin
     assert "31 s" in page and "7¢" in page and "staged for Olir" in page
     assert "recorded Naïve session · ses_test_frozen" in page and "is-recorded" in page
     # Stages: three done, the engineer is next; each has a mark or word.
-    assert page.count('class="st-done"') == 3 and 'class="st-active"' in page
+    assert page.count('class="st-done"') == 3 and 'class="st-active is-you"' in page
     assert "waiting on its engineer" in page and ">now<" in page
     # The lesson is the proposal's pattern, the number is computed from the probe.
     assert f'<h1 class="tc-verdict-text">{VERDICT}</h1>' in page
@@ -259,8 +259,10 @@ def test_a_promoted_skill_shows_lesson_to_every_arm_and_zero_clicks(
     assert "A gripper that stalls twice needs a reseat, not a third retry." in page
     assert "the gate decides (D6)" in page
     assert "recorded Naïve session" not in page
-    # Rollout: only installed devices get ✓; the real arm is queued.
-    assert '<b>sim-1</b> <span class="lr-mark">✓</span> <span class="lr-tag">SIM</span>' in page
+    # Rollout: only installed devices get the check icon; the real arm is queued.
+    check = '<svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>'
+    sim1 = f'<b>sim-1</b> <span class="lr-mark">{check}</span> <span class="lr-tag">SIM</span>'
+    assert sim1 in page
     assert '<span class="lr-tag">SIM·canary</span>' in page
     assert (
         '<b>arm-1</b> <span class="lr-mark">queued</span> <span class="lr-tag">REAL</span>' in page
@@ -511,7 +513,7 @@ def test_a_mirrored_skill_shows_its_naive_skills_version(
     )
     db_session.commit()
     page = _text(client.get("/learning"))
-    assert "✓ mirrored to Naïve Skills · v2" in page
+    assert "mirrored to Naïve Skills · v2" in page and "lr-published" in page
     assert "romulus-healer-playbook v2 · mirrored after the gate promoted it" in page
 
 
