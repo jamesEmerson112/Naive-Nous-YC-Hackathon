@@ -357,6 +357,47 @@ def test_a_store_hiccup_is_rechecked_before_the_part_card_gives_up(
     assert not part["staged"] and "429" in part["blocked_reason"]
 
 
+def test_replay_needs_no_setup_and_shows_the_recorded_session(
+    client, seeded, sessions, db_session, tech_settings, monkeypatch
+):
+    """`?mode=replay` with TECHNICIAN_REPLAY_FILE empty plays the bundled demo recording; the
+    badge names its real session id and capture time."""
+    recording = json.loads((FIXTURES / "joint_stall_live2.json").read_text())
+    session_id = recording["session"]["id"]
+    clients: dict = {}
+    monkeypatch.setattr(technician, "_clients", clients)
+    incident_id = _report_incident(client, "sim-1")
+    run_tick(
+        [Step("workorders.triage_new", partial(workorders.triage_new, settings=tech_settings))],
+        sessions,
+        T0,
+        {},
+    )
+    order = _only_order(client, incident_id)
+    resp = client.post(f"/v1/work-orders/{order['id']}/technician?mode=replay")
+    assert resp.status_code == 200, resp.text
+    case = _case(db_session, order["id"])
+    assert case.mode == "replay"
+    naive, _ = technician.naive_for(case, tech_settings)  # the worker's client for this case
+    naive.now, naive.play_seconds = (lambda: T0), 0  # play it all at once in the test
+    shop = FakeShop({(ORIGIN, HANDLE): _product()})
+    for i in range(3):
+        steps = [
+            Step(
+                "technician.sync",
+                partial(technician.sync, settings=tech_settings, shop=shop),
+            )
+        ]
+        assert set(run_tick(steps, sessions, T0 + timedelta(seconds=3 * i), {}).values()) == {"ok"}
+    case = _case(db_session, order["id"])
+    assert case.status == "waiting" and case.naive_session_id == session_id
+    v = technician.view(db_session, case, settings=tech_settings)
+    assert v["badge"].startswith(f"Recorded Naïve session {session_id} · ")
+    assert v["verdict"] == "Elbow blocked or servo failing: needs hands"
+    assert any(f["text"].startswith("Searched “") for f in v["feed"])
+    assert v["cost_label"] == f"${recording['session']['consumed_micro_usd'] / 1e6:.2f}"
+
+
 def test_the_live_recording_replays_with_the_schema_gate_beat(
     client, seeded, sessions, db_session, tech_settings
 ):

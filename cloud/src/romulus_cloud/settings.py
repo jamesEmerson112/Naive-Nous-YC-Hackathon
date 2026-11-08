@@ -222,7 +222,8 @@ class Settings(BaseSettings):
     technician_session_usd: float = 3
     technician_daily_usd_cap: float = 10
     technician_timeout_s: float = 600
-    # A recorded session (fixture JSON) that `?mode=replay` plays back over N seconds.
+    # A recorded session (fixture JSON) that `?mode=replay` plays back over N seconds; empty
+    # = the bundled demo recording (cloud/tests/fixtures/technician/joint_stall_live2.json).
     technician_replay_file: str = ""
     technician_replay_seconds: float = 20
 

@@ -45,13 +45,11 @@ ACTOR = "worker:technician"
 NO_PART = "(none)"  # services.workorders.NO_PART (not imported: workorders imports models only)
 MODES = ("fake", "replay", "live")
 ACTIVE = ("open", "diagnosing", "waiting")
-FAKE_FIXTURE = (
-    Path(__file__).resolve().parents[3]
-    / "tests"
-    / "fixtures"
-    / "technician"
-    / "joint_stall_fake.json"
-)
+# Bundled recordings (cloud/tests/fixtures/technician; `make dev` mounts them read-only).
+FIXTURES = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "technician"
+FAKE_FIXTURE = FIXTURES / "joint_stall_fake.json"
+DEMO_RECORDING = FIXTURES / "joint_stall_live2.json"
+"""The live demo recording ?mode=replay plays when TECHNICIAN_REPLAY_FILE is empty."""
 STUDIO_URL = "https://app.usenaive.ai"
 EMAIL_FROM_LABEL = "Romulus Technician (Naïve agent)"
 EMAIL_VIA = "sent by Romulus through the Naïve Technician's inbox"
@@ -175,7 +173,7 @@ def spent_today(session: Session, now: datetime, settings: Settings) -> float:
 
 def _fixture_path(mode: str, settings: Settings) -> Path:
     if mode == "replay":
-        return Path(settings.technician_replay_file)
+        return Path(settings.technician_replay_file or DEMO_RECORDING)
     return FAKE_FIXTURE
 
 
@@ -197,11 +195,13 @@ def mode_problem(mode: str, settings: Settings) -> str | None:
             f"the fake fixture {FAKE_FIXTURE} is not here (a built image has no tests/); use "
             "`make dev`, or copy it under data/ and open the case with ?mode=replay"
         )
-    if mode == "replay":
-        if not settings.technician_replay_file:
-            return "replay needs TECHNICIAN_REPLAY_FILE (a recorded session fixture)"
-        if not Path(settings.technician_replay_file).is_file():
+    if mode == "replay" and not _fixture_path(mode, settings).is_file():
+        if settings.technician_replay_file:
             return f"TECHNICIAN_REPLAY_FILE {settings.technician_replay_file} is not a file"
+        return (
+            f"the bundled recording {DEMO_RECORDING} is not here (a built image has no "
+            "tests/); use `make dev`, or set TECHNICIAN_REPLAY_FILE"
+        )
     return None
 
 
