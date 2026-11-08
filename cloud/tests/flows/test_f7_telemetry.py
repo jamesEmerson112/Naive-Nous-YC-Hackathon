@@ -18,8 +18,11 @@ from mcap.reader import make_reader
 from mcap.writer import Writer
 from sqlalchemy import func, select
 
+from fake_device import recordings as fake_recordings
+from fake_device.client import DeviceClient
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.models import Blob, Label, MetricSample, Recording
+from romulus_contracts import Running
 
 AT = datetime(2026, 11, 7, 22, 2, 11, tzinfo=UTC)  # incident_rules_patch.json occurred_at
 
@@ -364,3 +367,24 @@ def test_f7_checkin_metrics_are_kept_as_history(client, arm, example, db_session
         "servo_temp_c_max": 41.5,
         "bus_voltage_v": 12.1,
     }
+
+
+def test_f7_fake_device_uploads_through_the_real_api(client, arm, example):
+    """The fake device's own evidence files and client agree with the cloud's routes."""
+    inc = incident(example)
+    assert client.post("/v1/devices/arm-1/incidents", json=inc).status_code == 201
+    device = DeviceClient(client, "arm-1")
+    iid, running = uuid.UUID(inc["incident_id"]), Running(firmware=1, harness=1)
+    made = [
+        fake_recordings.log_window(["S safe_pose"], AT, iid, running, ["camera_occluded"]),
+        fake_recordings.agent_trace("dark frames", ["safe_pose"], AT, iid, running, []),
+        fake_recordings.incident_window(AT, iid, running, ["camera_occluded"]),
+    ]
+    for meta_model, data in made:
+        assert device.upload_recording(meta_model, data).upload == "needed"
+        assert device.upload_recording(meta_model, data).upload == "exists"  # a resend
+    evidence = story(client, inc["incident_id"])["evidence"]
+    assert sorted(e["kind"] for e in evidence) == ["agent_trace", "incident_window", "log_window"]
+    assert all(e["stored"] for e in evidence)
+    for meta_model, data in made:
+        assert client.get(f"/v1/recordings/{meta_model.recording_id}/blob").content == data
