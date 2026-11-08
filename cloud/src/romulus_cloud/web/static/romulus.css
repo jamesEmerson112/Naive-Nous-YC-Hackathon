@@ -404,7 +404,11 @@ a.turn:hover { box-shadow: 0 0 0 2px var(--sun), 0 12px 30px color-mix(in oklch,
 .today .is-work, .today .is-work b { color: var(--sky-ink); }
 .turn-body { display: flex; flex-direction: column; min-width: 0; }
 .turn-body .turn-t, .turn-body .turn-s { display: block; }
-.frozen-note { color: var(--clay-ink); font-weight: 600; margin: 0 0 12px; }
+.frozen-note {
+  margin: 0 0 12px; font-size: 0.833rem; font-weight: 600;
+  color: var(--clay-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.frozen-note .icon { margin-right: 6px; }
 
 /* Fleet: one card per arm. */
 .fleet {
