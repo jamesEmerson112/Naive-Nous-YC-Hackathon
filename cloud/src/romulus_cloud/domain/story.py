@@ -7,6 +7,10 @@ if they want a nicer line or chain label than the default, by adding an entry to
 `LINES` / `LABELS` (and `STAGE` for tie order), and, if the kind changes where an
 incident stands, to `STATUS`. Nothing here needs rewriting.
 
+Evidence (M4): `recording.*` events carry an `evidence` dict in their data (kind, format,
+size, download link, whether the bytes are stored). Their steps carry it too, and
+`Story.evidence` lists each recording once, with its latest state.
+
 Order is by when things happened (`ts`, the device's `occurred_at` for device events),
 never by when the server received them (K9). Events with the same `ts` are ordered by
 their stage in the loop (`STAGE`), then by the order they were given in.
@@ -40,6 +44,7 @@ class Step:
     why: str
     label: str
     refs: dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] | None = None  # recording steps only (M4)
 
 
 @dataclass(frozen=True)
@@ -49,8 +54,19 @@ class Story:
 
     @property
     def chain(self) -> str:
-        """One line for the timeline: `camera_occluded → agent acted → overlay ov-12 → held`."""
-        return " → ".join(s.label for s in self.steps)
+        """One line for the timeline: `camera_occluded → agent acted → overlay ov-12 → held`.
+        Steps with an empty label (follow-ups such as "bytes stored") are left out."""
+        return " → ".join(s.label for s in self.steps if s.label)
+
+    @property
+    def evidence(self) -> tuple[dict[str, Any], ...]:
+        """Each recording once, in order of first appearance, with its latest state."""
+        latest: dict[str, dict[str, Any]] = {}
+        for s in self.steps:
+            if s.evidence and s.evidence.get("recording"):
+                rid = str(s.evidence["recording"])
+                latest[rid] = {**latest.get(rid, {}), **s.evidence}
+        return tuple(latest.values())
 
     @property
     def status(self) -> tuple[str, str]:
@@ -63,22 +79,26 @@ class Story:
         return ("no events", "info") if not self.steps else ("open", "bad")
 
     def to_dict(self) -> dict[str, Any]:
+        steps = []
+        for s in self.steps:
+            step = {
+                "at": s.at.isoformat(),
+                "actor": s.actor,
+                "actor_class": s.actor_class,
+                "kind": s.kind,
+                "line": s.line,
+                "why": s.why,
+                "label": s.label,
+                "refs": s.refs,
+            }
+            if s.evidence is not None:
+                step["evidence"] = s.evidence
+            steps.append(step)
         return {
             "incident_id": self.incident_id,
             "chain": self.chain,
-            "steps": [
-                {
-                    "at": s.at.isoformat(),
-                    "actor": s.actor,
-                    "actor_class": s.actor_class,
-                    "kind": s.kind,
-                    "line": s.line,
-                    "why": s.why,
-                    "label": s.label,
-                    "refs": s.refs,
-                }
-                for s in self.steps
-            ],
+            "steps": steps,
+            "evidence": list(self.evidence),
         }
 
 
@@ -124,6 +144,42 @@ def _applied_line(e: EventLike) -> str:
     return f"The agent patched {_device(e)} locally as overlay {overlay}: {what}.{safety}"
 
 
+def _evidence(e: EventLike) -> dict[str, Any] | None:
+    ev = _data(e).get("evidence")
+    return dict(ev) if isinstance(ev, Mapping) else None
+
+
+def _size(n: Any) -> str:
+    if not isinstance(n, int) or isinstance(n, bool):
+        return "size unknown"
+    for unit, scale in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= scale:
+            return f"{n / scale:.1f} {unit}"
+    return f"{n} B"
+
+
+def _evidence_line(e: EventLike) -> str:
+    ev = _evidence(e) or {}
+    what = f"{ev.get('kind', 'recording')} ({ev.get('format', '?')}, {_size(ev.get('size_bytes'))})"
+    link = f" Download: {ev.get('download')}" if ev.get("stored") else ""
+    return f"Evidence from {_device(e)}: {what}.{link}"
+
+
+def _stored_line(e: EventLike) -> str:
+    ev = _evidence(e) or {}
+    return (
+        f"The {ev.get('kind', 'recording')} bytes arrived and matched their sha256. "
+        f"Download: {ev.get('download')}"
+    )
+
+
+def _linked_line(e: EventLike) -> str:
+    ev = _evidence(e) or {}
+    added = _data(e).get("labels_added") or []
+    labels = f"; labels added: {', '.join(map(str, added))}" if added else ""
+    return f"The {ev.get('kind', 'recording')} recording was linked to this incident{labels}."
+
+
 # Plain-English line per kind. Unknown kinds fall back to `_default_line`.
 LINES: dict[str, Callable[[EventLike], str]] = {
     "incident.reported": lambda e: (
@@ -137,6 +193,9 @@ LINES: dict[str, Callable[[EventLike], str]] = {
     "overlay.locked_in": _overlay_line("was locked into a fleet version"),
     "overlay.dropped": _overlay_line("was dropped"),
     "overlay.superseded": _overlay_line("was superseded by a new version"),
+    "recording.received": _evidence_line,
+    "recording.blob_stored": _stored_line,
+    "recording.linked": _linked_line,
 }
 
 # Short label per kind for the one-line chain. Unknown kinds use the kind itself.
@@ -149,6 +208,15 @@ LABELS: dict[str, Callable[[EventLike], str]] = {
     "overlay.locked_in": lambda e: "locked in",
     "overlay.dropped": lambda e: "dropped",
     "overlay.superseded": lambda e: "superseded",
+    "recording.received": lambda e: f"evidence {(_evidence(e) or {}).get('kind', 'recording')}",
+    "recording.blob_stored": lambda e: "",  # a follow-up; kept out of the chain
+    # A recording the incident listed but that didn't name it: its `received` step isn't in
+    # this story, so the link is where it first shows.
+    "recording.linked": lambda e: (
+        f"evidence {(_evidence(e) or {}).get('kind', 'recording')}"
+        if _data(e).get("linked")
+        else ""
+    ),
 }
 
 # Where an incident stands after a step of this kind: (words for a badge, tone), with tone
@@ -178,6 +246,9 @@ STAGE: dict[str, int] = {
     "incident.reported": 0,
     "incident.agent_acted": 1,
     "overlay.applied": 2,
+    "recording.received": 10,
+    "recording.blob_stored": 11,
+    "recording.linked": 12,
 }
 _DEFAULT_STAGE = 50
 
@@ -200,6 +271,7 @@ def build_story(events: Iterable[EventLike], incident_id: str) -> Story:
             why=e.why,
             label=LABELS.get(e.kind, lambda ev: ev.kind)(e),
             refs=dict(e.refs),
+            evidence=_evidence(e) if "recording" in e.refs else None,
         )
         for _, e in indexed
     )

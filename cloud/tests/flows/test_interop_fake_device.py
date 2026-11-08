@@ -3,8 +3,8 @@
 It runs through the `device_http` bridge (cloud/tests/conftest.py), so its DeviceClient,
 visor and outbox behave as they do against a live cloud. Covers F1 (pull → install →
 last_good), then F2 with the rules-patch and D1 code-patch scenarios, ending with the
-stories, then a new firmware superseding an overlay. Recordings are M4: until then the
-outbox dead-letters them on 404, which this test tolerates.
+stories, then a new firmware superseding an overlay. Since M4 the fake device's
+recordings land too, as evidence steps in each story; `_loop` drops them from the chain.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -20,6 +20,11 @@ def _tick_all(arms, now):
     return {
         a.device_id: [(r.type, r.version, r.result) for r in a.tick(now).installs] for a in arms
     }
+
+
+def _loop(chain):
+    """The chain without its `evidence <kind>` steps, whose place depends on device clocks."""
+    return " → ".join(p for p in chain.split(" → ") if not p.startswith("evidence "))
 
 
 def _story(client, device_id):
@@ -60,11 +65,14 @@ def test_fake_fleet_through_version_sync_and_incident_stories(
 
     rules = _story(client, "sim-1")
     assert rules["chain"].startswith("camera_occluded → agent acted → overlay ov-sim-1-")
-    assert rules["chain"].endswith("→ held")
+    assert _loop(rules["chain"]).endswith("→ held")
+    kinds = {e["kind"] for e in rules["evidence"]}
+    assert kinds == {"log_window", "agent_trace", "incident_window"}
+    assert all(e["stored"] for e in rules["evidence"])
     assert rules["steps"][1]["why"].startswith("Frames dark for 3 s")
     d1 = _story(client, "sim-3")
     assert d1["chain"].startswith("unexpected_release → agent acted → overlay ov-sim-3-")
-    assert d1["chain"].endswith("→ held")
+    assert _loop(d1["chain"]).endswith("→ held")
     assert "code control/hold.py" in d1["steps"][2]["line"]
     devices = {d["id"]: d for d in client.get("/v1/devices").json()}
     assert devices["sim-1"]["overlay_id"].startswith("ov-sim-1-")
@@ -79,5 +87,6 @@ def test_fake_fleet_through_version_sync_and_incident_stories(
     assert sim1["running"]["firmware"] == sim1["last_good"]["firmware"] == 2
     assert sim1["overlay_id"] is None
     rules = _story(client, "sim-1")
-    assert rules["chain"].endswith("→ held → superseded")
-    assert "replaced by firmware 2" in rules["steps"][-1]["why"]
+    assert _loop(rules["chain"]).endswith("→ held → superseded")
+    loop_steps = [st for st in rules["steps"] if not st["kind"].startswith("recording.")]
+    assert "replaced by firmware 2" in loop_steps[-1]["why"]

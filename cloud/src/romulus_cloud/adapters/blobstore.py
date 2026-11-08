@@ -2,8 +2,10 @@
 
 Absorbs the storage backend: today a content-addressed directory tree at
 `<root>/sha256/ab/cd/<hash>`; later an S3-compatible store (Garage) behind the same Protocol.
-Writes stream to a temp file, verify the sha256 while writing, and rename atomically, so a
-half-written or corrupted upload never becomes a blob.
+Writes stream to a temp file under `<root>/incoming/`, verify the sha256 while writing, and
+rename atomically, so a half-written or corrupted upload never becomes a blob. `writer()`
+exposes that temp file to callers that receive bytes in chunks (a streamed HTTP upload), so
+a large upload is written to disk once.
 """
 
 from __future__ import annotations
@@ -40,6 +42,14 @@ class BlobNotFound(BlobError):
     """No blob is stored under this hash."""
 
 
+class BlobTooLarge(BlobError):
+    """More bytes arrived than the writer's `max_bytes` allows."""
+
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__(f"blob larger than {max_bytes} bytes")
+        self.max_bytes = max_bytes
+
+
 class BlobStore(Protocol):
     def put(self, sha256: str, stream: BinaryIO) -> int:
         """Store the stream under its hash; return its size. Safe to repeat."""
@@ -59,11 +69,70 @@ class BlobStore(Protocol):
         """Remove the blob; return whether it existed (for the disk budget)."""
         ...
 
+    def writer(self, max_bytes: int | None = None) -> BlobWriter:
+        """A temp file in the store to write chunks into, then `commit(sha256)`."""
+        ...
+
 
 def _check_hash(sha256: str) -> str:
     if not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256):
         raise InvalidHash(f"not a lowercase hex sha256: {sha256!r}")
     return sha256
+
+
+class BlobWriter:
+    """A temp file inside the store, hashed and counted as chunks arrive.
+
+    `commit(sha256)` fsyncs, checks the hash and renames the file into place (or drops it if
+    that blob already exists). Leaving the `with` block without committing deletes it.
+    """
+
+    def __init__(self, store: FsBlobStore, max_bytes: int | None = None) -> None:
+        self._store = store
+        self.max_bytes = max_bytes
+        incoming = store.root / "incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        # Same filesystem as the blobs, so the final rename is atomic.
+        fd, name = tempfile.mkstemp(dir=incoming, prefix=".tmp-", suffix=".part")
+        self._tmp = Path(name)
+        self._out = os.fdopen(fd, "wb")
+        self._digest = hashlib.sha256()
+        self.size = 0
+
+    def write(self, chunk: bytes) -> None:
+        self.size += len(chunk)
+        if self.max_bytes is not None and self.size > self.max_bytes:
+            raise BlobTooLarge(self.max_bytes)
+        self._digest.update(chunk)
+        self._out.write(chunk)
+
+    @property
+    def sha256(self) -> str:
+        return self._digest.hexdigest()
+
+    def commit(self, sha256: str) -> int:
+        """Keep the bytes under `sha256` and return their size. Raises HashMismatch."""
+        final = self._store.path_for(sha256)
+        self._out.flush()
+        os.fsync(self._out.fileno())
+        self._out.close()
+        if self.sha256 != sha256:
+            raise HashMismatch(sha256, self.sha256)
+        if final.exists():
+            return final.stat().st_size  # already stored under its hash
+        final.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(self._tmp, final)
+        return self.size
+
+    def close(self) -> None:
+        self._out.close()
+        self._tmp.unlink(missing_ok=True)
+
+    def __enter__(self) -> BlobWriter:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
 
 class FsBlobStore:
@@ -76,32 +145,18 @@ class FsBlobStore:
         h = _check_hash(sha256)
         return self.root / "sha256" / h[:2] / h[2:4] / h
 
+    def writer(self, max_bytes: int | None = None) -> BlobWriter:
+        return BlobWriter(self, max_bytes)
+
     def put(self, sha256: str, stream: BinaryIO) -> int:
         final = self.path_for(sha256)
         if final.exists():
             # Idempotent re-put: the bytes are already here under their hash. Drain nothing.
             return final.stat().st_size
-        final.parent.mkdir(parents=True, exist_ok=True)
-        # Temp file in the same directory, so the rename is atomic (same filesystem).
-        fd, tmp_name = tempfile.mkstemp(dir=final.parent, prefix=".tmp-", suffix=".part")
-        tmp = Path(tmp_name)
-        digest = hashlib.sha256()
-        size = 0
-        try:
-            with os.fdopen(fd, "wb") as out:
-                while chunk := stream.read(CHUNK_SIZE):
-                    digest.update(chunk)
-                    out.write(chunk)
-                    size += len(chunk)
-                out.flush()
-                os.fsync(out.fileno())
-            actual = digest.hexdigest()
-            if actual != sha256:
-                raise HashMismatch(sha256, actual)
-            os.replace(tmp, final)
-        finally:
-            tmp.unlink(missing_ok=True)
-        return size
+        with self.writer() as w:
+            while chunk := stream.read(CHUNK_SIZE):
+                w.write(chunk)
+            return w.commit(sha256)
 
     def get(self, sha256: str) -> BinaryIO:
         path = self.path_for(sha256)

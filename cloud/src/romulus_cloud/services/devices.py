@@ -21,6 +21,7 @@ from romulus_cloud.models import (
     FleetState,
     HarnessVersion,
     InstallReport,
+    MetricSample,
     Overlay,
 )
 from romulus_cloud.services import registry
@@ -258,6 +259,11 @@ def check_in(
     device.overlay_id = body.overlay_id
     device.health = body.health
     device.metrics = body.metrics
+    numbers = body.numeric_metrics()
+    if numbers:  # environmental history (telemetry §2); routine, so no event (APIs §1)
+        session.add(
+            MetricSample(fleet_id=device.fleet_id, device_id=device_id, ts=now, metrics=numbers)
+        )
     device.contract_version = body.contract_version
     device.last_seen_at = now
     device.raw = raw
