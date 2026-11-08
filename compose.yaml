@@ -60,7 +60,7 @@ services:
     build:
       context: .
       dockerfile: tools/fake_device/Dockerfile
-    command: ["--n", "${FAKE_DEVICES_N:-4}"]
+    command: ["--n", "${FAKE_DEVICES_N:-3}"]
     environment:
       CLOUD_URL: http://api:8000
     depends_on:

@@ -87,7 +87,7 @@ def test_unknown_kinds_get_a_default_line_and_label():
     ev = Ev("workorder.something_new", actor="worker", refs={"incident": INC, "work_order": "w1"})
     (step,) = build_story([ev], INC).steps
     assert step.line == "worker: workorder something new."
-    assert step.label == "workorder.something_new"
+    assert step.label == "workorder something new"  # words, never the dotted raw kind
     assert step.refs == {"incident": INC, "work_order": "w1"}
 
 
@@ -153,7 +153,7 @@ def test_work_order_events_read_as_a_chain_and_set_the_status():
         ),
     ]
     s = build_story(evs, INC)
-    assert s.chain == f"work order wo_1 → card posted → in_progress → done: {note}"
+    assert s.chain == f"work order wo_1 → card posted → in progress → done: {note}"
     assert s.status == ("part ordered", "good")
     assert "posted to Naïve as card crd_1, assigned to fleet-ops" in s.steps[1].line
     assert s.steps[0].line.endswith("(1 x servo); status pending.")
@@ -161,6 +161,6 @@ def test_work_order_events_read_as_a_chain_and_set_the_status():
 
 def test_a_blocked_work_order_shows_as_waiting_for_a_person():
     s = build_story([Ev("workorder.created", refs=_wo_refs("blocked_over_cap"))], INC)
-    assert s.chain == "work order wo_1 (blocked_over_cap)"
+    assert s.chain == "work order wo_1 (blocked over cap)"
     assert s.status == ("blocked: over cap", "bad")
     assert "no catalogued part" in s.steps[0].line

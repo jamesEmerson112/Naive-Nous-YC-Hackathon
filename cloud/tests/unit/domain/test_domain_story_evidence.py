@@ -50,7 +50,7 @@ def test_received_recording_is_an_evidence_step():
         data={"evidence": _ev(False)},
     )
     s = build_story([received, _incident()], INC)
-    assert s.chain == "camera_occluded → evidence log_window"
+    assert s.chain == "camera_occluded → evidence: log window"
     step = s.steps[1]
     assert step.evidence == _ev(False)
     assert step.line == "Evidence from arm-1: log_window (mcap, 2.0 KB)."
@@ -69,7 +69,7 @@ def test_stored_step_has_the_link_and_stays_out_of_the_chain():
         ),
     ]
     s = build_story(evs, INC)
-    assert s.chain == "camera_occluded → evidence log_window"
+    assert s.chain == "camera_occluded → evidence: log window"
     assert s.steps[-1].label == ""
     assert s.steps[-1].line.endswith(f"Download: /v1/recordings/{REC}/blob")
 
@@ -132,7 +132,7 @@ def test_a_new_link_shows_in_the_chain_as_evidence():
         data={"evidence": _ev(True, kind="audit"), "labels_added": [], "linked": True},
     )
     s = build_story([_incident(), linked], INC)
-    assert s.chain == "camera_occluded → evidence audit"
+    assert s.chain == "camera_occluded → evidence: audit"
 
 
 def test_evidence_steps_never_change_the_status():

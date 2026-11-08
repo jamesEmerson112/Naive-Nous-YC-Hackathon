@@ -1,4 +1,4 @@
-"""Run a fake fleet against the cloud: `python -m fake_device --n 4 --url http://api:8000`.
+"""Run a fake fleet against the cloud: `python -m fake_device --n 3 --url http://api:8000`.
 
 Devices are `sim-1` … `sim-N` (A18); `--canary` (default `sim-2`, matching `make seed`)
 marks the one that runs the bad-candidate scenarios. Which device is the canary is the
@@ -27,7 +27,7 @@ log = logging.getLogger("fake_device")
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m fake_device", description=__doc__.split("\n")[0])
-    p.add_argument("--n", type=int, default=4, help="number of fake arms (default 4)")
+    p.add_argument("--n", type=int, default=3, help="number of fake arms (default 3)")
     p.add_argument(
         "--url",
         default=os.environ.get("CLOUD_URL", "http://localhost:8000"),

@@ -59,6 +59,7 @@ Request:
 - `running` is `null` on first boot. `mcu_build` is the STM32's C-firmware build id; the healer reflashes it on the device, so the cloud tracks it as reported, not assigned (device side, `docs/project-overview.md`).
 - `health` is `ok`, `degraded` or `failing`.
 - `metrics` is a free-form dict of numbers, kept as environmental history ([telemetry](cloud-platform-telemetry.md) §3).
+- `kind` (optional extra: `real`, `sim` or `test`) is read only when the check-in registers a device the cloud hasn't seen; a device that sends none, or something else, registers as `unknown`, which counts as real for safety (never a canary until a person sets its kind with `PATCH /v1/devices/{id}`). **Real hardware sends `kind: "real"` or no kind; only simulators send `"sim"` or `"test"`.** K17 relies on this (a `touches_safety` candidate needs a non-real canary), so it is an **I0 item for the device teammate** (contracts README, open item 7). The fake device sends `"sim"`. No model or `CONTRACT_VERSION` change: `CheckIn` already keeps extra fields.
 
 Response:
 ```json
@@ -191,7 +192,7 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 | `POST /v1/firmware/{v}/retire` | Hide from new assignments (versions are never deleted) |
 | `POST /v1/harness` (multipart tarball), `GET /v1/harness`, `GET /v1/harness/{v}`, `POST /v1/harness/{v}/retire` | Same, for harness packages (CRUD on the embedded SRE) |
 | `POST /v1/code` (multipart tarball), `GET /v1/code`, `GET /v1/code/{rev}` | Code versions: seeded by hand, then created by the coding agent (D21) |
-| `GET /v1/devices`, `POST /v1/devices`, `PATCH /v1/devices/{id}` | Register devices; set `role` (normal/canary) and `device_class` |
+| `GET /v1/devices`, `POST /v1/devices`, `PATCH /v1/devices/{id}` | Register devices; set `role` (normal/canary), `device_class` and `kind` (real/sim/test/unknown; an `unknown` device can't be a canary: `409 unknown_kind`) |
 
 ### 4.2 Harness updates: incidents, batch and gate
 

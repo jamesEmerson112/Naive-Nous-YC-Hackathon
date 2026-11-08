@@ -65,6 +65,8 @@ def seed(settings: Settings) -> int:
     finally:
         engine.dispose()
     print(f"seed: created {', '.join(result.created) or 'nothing'}", end="")
+    if result.updated:
+        print(f"; set kind and role on {', '.join(result.updated)}", end="")
     print(f"; already there: {', '.join(result.existing)}." if result.existing else ".")
     return 0
 

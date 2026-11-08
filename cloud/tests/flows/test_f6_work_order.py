@@ -94,7 +94,7 @@ def test_park_hardware_from_the_fake_device_becomes_a_card_and_an_ordered_part(
     assert story["chain"].startswith("servo_absent → agent acted → ")
     wo_steps = [s for s in story["steps"] if s["kind"].startswith("workorder.")]
     assert " → ".join(s["label"] for s in wo_steps) == (
-        f"work order {order['id']} → card posted → in_progress"
+        f"work order {order['id']} → card posted → in progress"
         " → done: RESULT: ordered ORDER_REF=FAKE-0001 COST_USD=12.00"
     )
     assert wo_steps[0]["why"].startswith("servo_absent on sim-1 is unresolved and the healer")
@@ -115,7 +115,7 @@ def test_over_cap_is_blocked_until_a_person_approves(
     assert order["status"] == "blocked_over_cap" and naive.cards == {}
     story = _story(client, incident_id)
     assert "MAX_USD $40.00 is over ORDER_MAX_USD $20.00" in story["steps"][-1]["why"]
-    assert story["chain"].endswith(f"work order {order['id']} (blocked_over_cap)")
+    assert story["chain"].endswith(f"work order {order['id']} (blocked over cap)")
 
     resp = client.post(
         f"/v1/work-orders/{order['id']}/resolve",
@@ -209,7 +209,7 @@ def test_an_overspend_in_the_note_needs_a_person(client, seeded, sessions, make_
     assert "over MAX_USD $40" in order["result"]
     story = _story(client, incident_id)
     assert story["chain"].endswith(
-        "needs_human: RESULT: ordered ORDER_REF=FAKE-0001 COST_USD=99.00"
+        "needs human: RESULT: ordered ORDER_REF=FAKE-0001 COST_USD=99.00"
     )
 
     # A person checks the overspend and accepts it.

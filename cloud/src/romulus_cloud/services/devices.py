@@ -28,7 +28,10 @@ from romulus_cloud.models import (
 from romulus_cloud.services import registry
 from romulus_contracts import Assigned, CheckIn, CheckInResponse, InstallResult
 
-DEVICE_KINDS = ("real", "sim", "test")
+# `unknown`: auto-registered from a check-in that didn't say what it is. It counts as real
+# for safety (never a canary until a person sets its kind), so a mystery device can't
+# become the simulated canary a `touches_safety` candidate needs (K17).
+DEVICE_KINDS = ("real", "sim", "test", "unknown")
 ROLES = ("normal", "canary")
 # Overlay statuses after which the device should drop its local patch (the fleet has it).
 DROP_STATUSES = ("locked_in", "dropped")
@@ -91,6 +94,7 @@ def register(
         raise ApiError(422, "invalid_request", f"kind must be one of {DEVICE_KINDS}.")
     if role not in ROLES:
         raise ApiError(422, "invalid_request", f"role must be one of {ROLES}.")
+    _check_canary_kind(role, kind, device_id)
     if session.get(Device, device_id) is not None:
         raise ApiError(409, "device_exists", f"Device {device_id!r} is already registered.")
     firmware, harness = registry.default_assignment(session, device_class, fleet_id)
@@ -118,6 +122,27 @@ def register(
         fleet_id=fleet_id,
     )
     return device
+
+
+def _check_canary_kind(role: str, kind: str, device_id: str) -> None:
+    if role == "canary" and kind == "unknown":
+        raise ApiError(
+            409,
+            "unknown_kind",
+            f"{device_id} has kind unknown, so it can't be a canary; set its kind "
+            "(real, sim or test) first.",
+        )
+
+
+def kind_from_checkin(raw: dict[str, Any]) -> tuple[str, str]:
+    """(kind, where it came from) for a device first seen through a check-in: the payload's
+    optional `kind` if it is a known kind, else `unknown` (never `real` by default)."""
+    said = raw.get("kind")
+    if isinstance(said, str) and said in DEVICE_KINDS and said != "unknown":
+        return said, "sent by the device in its check-in"
+    if said is None:
+        return "unknown", "the check-in sent no kind"
+    return "unknown", f"the check-in sent an unrecognised kind {str(said)[:40]!r}"
 
 
 def _fleet_frozen(session: Session, fleet_id: str) -> bool:
@@ -171,6 +196,7 @@ def check_in(
     actor = f"device:{device_id}"
     device = session.get(Device, device_id)
     registered_now = False
+    kind, kind_source = kind_from_checkin(raw)
     if device is None:
         # ON CONFLICT DO NOTHING: two first check-ins racing in never raise; the loser
         # waits for the winner's commit and then reads its row.
@@ -178,7 +204,9 @@ def check_in(
         registered_now = (
             session.execute(
                 pg_insert(Device)
-                .values(id=device_id, assigned_firmware=firmware, assigned_harness=harness)
+                .values(
+                    id=device_id, kind=kind, assigned_firmware=firmware, assigned_harness=harness
+                )
                 .on_conflict_do_nothing(index_elements=[Device.id])
                 .returning(Device.id)
             ).scalar()
@@ -190,7 +218,14 @@ def check_in(
     _fill_assignment(session, device, now, quiet=registered_now)
     session.flush()
     if first:
-        what = "registered it and assigned" if registered_now else "it is assigned"
+        what = "it is assigned"
+        data: dict[str, Any] = {"running": body.running.model_dump() if body.running else None}
+        if registered_now:
+            safety = (
+                "; treated as real for safety until a person sets it" if kind == "unknown" else ""
+            )
+            what = f"registered it as kind {kind} ({kind_source}{safety}) and assigned"
+            data |= {"kind": kind, "kind_source": kind_source}
         events.record(
             session,
             actor,
@@ -199,7 +234,7 @@ def check_in(
             {"device": device_id},
             f"{device_id} checked in for the first time (health {body.health}); {what} "
             f"firmware {device.assigned_firmware} and harness {device.assigned_harness}.",
-            data={"running": body.running.model_dump() if body.running else None},
+            data=data,
             ts=now,
             fleet_id=device.fleet_id,
         )
@@ -429,11 +464,12 @@ def update(
     harness: int | None = None,
     role: str | None = None,
     device_class: str | None = None,
+    kind: str | None = None,
     actor: str,
     actor_class: events.ActorClass,
     why: str = "",
 ) -> Device:
-    """Assign versions and/or change role or class, recording each change."""
+    """Assign versions and/or change role, class or kind, recording each change."""
     device = get_device(session, device_id)
     registry.check_assignable(session, firmware, harness, device.fleet_id)
     note = f" {why.strip()}" if why.strip() else ""
@@ -459,6 +495,13 @@ def update(
         changes["role"] = role
     if device_class is not None and device_class != device.device_class:
         changes["device_class"] = device_class
+    if kind is not None and kind != device.kind:
+        if kind not in DEVICE_KINDS:
+            raise ApiError(422, "invalid_request", f"kind must be one of {DEVICE_KINDS}.")
+        changes["kind"] = kind
+    _check_canary_kind(
+        changes.get("role", device.role), changes.get("kind", device.kind), device_id
+    )
     if changes:
         events.record(
             session,
