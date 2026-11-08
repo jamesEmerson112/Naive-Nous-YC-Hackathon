@@ -39,7 +39,7 @@ def _probe(**changes) -> dict:
         "limits": ["still misses a 3.5 s freeze (4 of 30)"],
         "command": "uv run python cloud/scripts/lesson_probe.py",
         "rev": "abc1234",
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": "2026-11-08T17:20:00+00:00",  # before the recorded session (17:31)
         "seconds": 0.74,
     }
     return probe | changes
