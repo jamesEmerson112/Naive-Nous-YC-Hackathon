@@ -24,7 +24,9 @@ scale; the gate caps stale re-queues per overlay):
   CODER_MAX_DRAFTS_PER_HOUR start, beyond that it waits held, "coder budget"); then the
   overlays of one draft fold alone (a draft is a whole change against the base) into a code
   version with the coder's diff applied. A failing draft, a coder error or a diff touching
-  `verify/` makes the overlay `lockin_error`, sticky, and builds nothing.
+  `verify/` makes the overlay `lockin_error`, sticky, and builds nothing. In either lane, a
+  held Fleet Doctor overlay whose proposal checks out uses that patch as its draft, with no
+  Coder call, job or budget (D24, `services/doctor_lockin.py`); the rest is unchanged.
 - **harness → one `harness` candidate:** the LLM writes one skill per overlay (FakeLlm by
   default) into the current harness tarball under `knowledge_dir`, `harness.json` bumped.
 
@@ -71,7 +73,7 @@ from romulus_cloud.models import (
     Incident,
     Overlay,
 )
-from romulus_cloud.services import code_lockin, fleet, incidents, registry
+from romulus_cloud.services import code_lockin, doctor_lockin, fleet, incidents, registry
 from romulus_cloud.services.coder_runs import patch_refusal
 from romulus_cloud.services.gate import label
 from romulus_cloud.services.jobs import Done, Failed, InlineJobs, Jobs, Missing, default_jobs
@@ -737,12 +739,14 @@ def _draft_code(
     base_rev = current.manifest.get("code_rev")
     base = session.get(CodeVersion, (current.fleet_id, base_rev))
     files = _read_tarball(tools.store, base.sha256) if base else {}
-    notes = []
+    notes, proposals = [], []
     for item in items:
         ov = item.overlay
-        draft = tools.coder.draft(
+        draft = doctor_lockin.proposal_draft(session, ov, now) or tools.coder.draft(
             ov.code_patch or "", {"id": item.incident.id}, ov.base_code_rev or base_rev
         )
+        if isinstance(draft, doctor_lockin.DoctorDraft):
+            proposals.append(draft.proposal_id)
         files[f"romulus/patches/{ov.id}.diff"] = draft.diff.encode()
         notes.append(draft.notes)
     code, _ = registry.create_code(
@@ -785,7 +789,10 @@ def _draft_code(
         + " ".join(i.explanation for i in items),
         touches_safety=safety,
         stub_stages=["draft_code", "replay"],
-        data={"parent_version": current.version},
+        data={
+            "parent_version": current.version,
+            **doctor_lockin.candidate_data(proposals, whole=len(proposals) == len(items)),
+        },
     )
 
 
@@ -880,6 +887,7 @@ def _await_drafts(
     draft).
 
     - Identical patches on the same code version share one draft (the key is their hash).
+    - A verified Fleet Doctor proposal is its own draft: no job, no budget (D24).
     - At most CODER_MAX_DRAFTS_PER_HOUR drafts start per hour; over it, the overlay waits
       `held` ("coder budget"), not sticky.
     - A failing draft, a coder error or a diff touching `verify/` marks the overlay
@@ -901,8 +909,11 @@ def _await_drafts(
             continue
         try:
             cv = _base_code(session, ov)
-            key = code_lockin.draft_key(ov, cv.rev)
-            status = tools.jobs.poll(key)
+            # D24: a verified Doctor proposal is its own draft (no job, no budget); it still
+            # gets patch_refusal below and the gate's replay.
+            doctor = doctor_lockin.proposal_draft(session, ov, now)
+            key = doctor.key if doctor else code_lockin.draft_key(ov, cv.rev)
+            status = Done(doctor) if doctor else tools.jobs.poll(key)
             if isinstance(status, Missing):  # new, or the worker restarted: (re)submit
                 if started >= budget:
                     result.deferred.append((ov.device_id, ov.id))
@@ -974,13 +985,15 @@ def _lock_in_drafts(
     drafts: dict[Key, tuple[str, str, CodeDraft]],
 ) -> Candidate:
     """code: the coder's diff applied to the base package → a new code version (`source =
-    coder`), a firmware manifest naming it, and a code candidate the gate replays."""
+    coder`), a firmware manifest naming it, and a code candidate the gate replays. A verified
+    Fleet Doctor proposal (D24) goes the same way with its patch as the diff: `source = coder`
+    is what makes the gate replay it for real, so only the texts and `data` say "doctor"."""
     base_rev = current.manifest.get("code_rev")
     base = session.get(CodeVersion, (current.fleet_id, base_rev)) if base_rev else None
     if base is None:
         raise CoderError(f"the base code {base_rev!r} is not registered")
     files = code_lockin.read_package(tools.store, base)
-    notes, diffs, raw_diffs, flags = [], [], [], []
+    notes, diffs, raw_diffs, flags, proposals = [], [], [], [], []
     applied: set[str] = set()
     for item in items:
         rev, key, draft = drafts[item.key]
@@ -991,12 +1004,20 @@ def _lock_in_drafts(
         if key in applied:  # the same draft as an earlier overlay in this part
             continue
         applied.add(key)
+        if isinstance(draft, doctor_lockin.DoctorDraft):
+            proposals.append(draft.proposal_id)
         files = code_lockin.apply_diff(files, draft.diff)
         notes.append(redact(code_lockin.draft_summary(draft), tools.secrets))
         raw_diffs.append(draft.diff)
         diffs.append(redact(draft.diff, tools.secrets))
         flags += list(draft.flags)
     ids = ", ".join(i.overlay.id for i in items)
+    doctor = len(proposals) == len(applied)  # a part is one draft, so all or none
+    by = (
+        f"the Fleet Doctor (proposal {', '.join(proposals)}, no second Coder pass, D24)"
+        if doctor
+        else "the coding agent"
+    )
     code, _ = registry.create_code(
         session,
         tools.store,
@@ -1004,8 +1025,8 @@ def _lock_in_drafts(
         rev=None,
         actor=ACTOR,
         actor_class="agent",
-        why=f"Code drafted by the coding agent on {base_rev} for overlay(s) {ids}: the base "
-        "package with the agent's diff applied.",
+        why=f"Code drafted by {by} on {base_rev} for overlay(s) {ids}: the base package with "
+        "the diff applied.",
         source=code_lockin.SOURCE,
         parent_rev=base_rev,
         fleet_id=current.fleet_id,
@@ -1017,8 +1038,7 @@ def _lock_in_drafts(
         manifest,
         actor=ACTOR,
         actor_class="agent",
-        why=f"Firmware v{version} = v{current.version} with code {code.rev} (drafted by the "
-        "coding agent).",
+        why=f"Firmware v{version} = v{current.version} with code {code.rev} (drafted by {by}).",
         source="batch",
         parent_version=current.version,
         fleet_id=current.fleet_id,
@@ -1027,6 +1047,7 @@ def _lock_in_drafts(
         code_touches_safety(d, tools.settings.safety_paths) for d in raw_diffs
     )
     flagged = f" Flagged for review: {'; '.join(flags)}." if flags else ""
+    who = "the Fleet Doctor" if doctor else "the coding agent"
     replay = (
         " The gate replays it in fresh containers (device tests and held-out verify "
         "scripts) before any device gets it."
@@ -1039,7 +1060,7 @@ def _lock_in_drafts(
         type_="code",
         version=version,
         code_rev=code.rev,
-        why=f"the coding agent's change on code {base_rev}: {' '.join(notes)}{flagged}{replay} "
+        why=f"{who}'s change on code {base_rev}: {' '.join(notes)}{flagged}{replay} "
         + " ".join(i.explanation for i in items),
         touches_safety=safety,
         stub_stages=[],
@@ -1048,5 +1069,6 @@ def _lock_in_drafts(
             "base_code_rev": base_rev,
             "diff": "\n".join(diffs),
             "coder_flags": flags,
+            **doctor_lockin.candidate_data(proposals, whole=doctor),
         },
     )
