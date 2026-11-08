@@ -117,7 +117,7 @@ Wave 3  PR 7 evidence + real draft/check + traces (after M8b)      PR 9 lock-in 
 | K17 safety and visor path list | `SAFETY_PATHS_CONFIRMED` stays false, and every proposal is discarded, until it lands | Ishaan → Kent |
 | Real token price | `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder *(inferred)*; the dollar cap is only as good as it | Kent |
 | ~~Gate replay hardening + `batch._drafts_this_hour` refund kinds~~ | Done in #53 (result seal, process-isolated verify, stdlib- and pytest-named files refused, refunds) | cloud lead, merged |
-| Gate requires held-out verify (#58) | The gate's twin of `DOCTOR_OFFER_UNVERIFIED`: a coder or Doctor candidate with no held-out verify waits in `replaying` unless `CODER_ALLOW_UNVERIFIED=true`; also guards `OSError` reading `CODER_VERIFY_DIR` | cloud lead (c9e401), open |
+| ~~Gate requires held-out verify (#58)~~ | The gate's twin of `DOCTOR_OFFER_UNVERIFIED`: a coder or Doctor candidate with no held-out verify waits in `replaying` unless `CODER_ALLOW_UNVERIFIED=true`; also guards `OSError` reading `CODER_VERIFY_DIR` | cloud lead, merged (Sun 2:50 AM, `b30d09f`) |
 | Verify scripts for real-mode checks | Real devices ship no `verify/`, so real checks close `advised` until `make device-verify` writes `data/verify/device` and `CODER_VERIFY_DIR` points to it (§8) | Kent |
 | L3 live sessions | D27 deferred; `romulus_contracts.tools` is a draft until Ishaan's h3 tool list | Kent + Ishaan |
 | MCAP evidence reader | `mcap` isn't a dependency; evidence is labeled "not wired" | later |
