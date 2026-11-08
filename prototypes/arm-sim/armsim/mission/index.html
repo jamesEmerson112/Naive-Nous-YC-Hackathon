@@ -729,9 +729,9 @@ function renderJobs(mode) {
   let html = "";
   for (const [key, label] of cols) {
     const mine = cards.filter((c) => c.status === key);
-    html += `<div class="kcol ${key}"><h3><span>${label}</span><span class="n">${mine.length}</span></h3>`;
+    html += `<div class="kcol ${key}" data-extra="${Math.max(0, mine.length - 12)}"><h3><span>${label}</span><span class="n">${mine.length}</span></h3>`;
     if (!mine.length) html += `<div class="kempty">${key === "todo" && !cards.length ? "Press 1 to place an order" : "–"}</div>`;
-    for (const c of mine.slice(0, 6)) {
+    for (const c of mine.slice(0, 12)) {
       const isRes = /^RESULT:/i.test(c.last || ""), isBlk = /^BLOCKED:/i.test(c.last || "");
       const parked = key === "doing" && (mode.cls === "bad" || mode.cls === "person" || mode.cls === "warn");
       const oid = c.order ? "#" + c.order.slice(-4) : (c.id || "").slice(-6);
@@ -743,7 +743,6 @@ function renderJobs(mode) {
       } else if (c.last && key !== "todo") html += `<div class="r ${isRes ? "res" : isBlk ? "blk" : ""}">${esc(c.last.replace(/^(RESULT|BLOCKED):\s*/i, ""))}</div>`;
       html += `</div>`;
     }
-    if (mine.length > 6) html += `<div class="kmore">+${mine.length - 6} more</div>`;
     html += `</div>`;
   }
   setHTML($("kanban"), html);
@@ -859,12 +858,13 @@ function fit(box, sel) {
   rows.forEach((r) => (r.style.display = ""));
   const more = box.querySelector(".kmore.fit"); if (more) more.remove();
   let hidden = 0;
+  const extra = +(box.dataset.extra || 0);
   const limit = box.clientHeight;
   for (const r of rows) if (r.offsetTop + r.offsetHeight > limit + 1) { r.style.display = "none"; hidden++; }
-  if (hidden) {
-    const m = document.createElement("div"); m.className = "kmore fit"; m.textContent = `+${hidden} more`;
+  if (hidden + extra) {
+    const m = document.createElement("div"); m.className = "kmore fit"; m.textContent = `+${hidden + extra} more`;
     box.appendChild(m);
-    if (m.offsetTop + m.offsetHeight > limit + 1) { const vis = rows.filter((r) => r.style.display !== "none").pop(); if (vis) { vis.style.display = "none"; m.textContent = `+${hidden + 1} more`; } }
+    if (m.offsetTop + m.offsetHeight > limit + 1) { const vis = rows.filter((r) => r.style.display !== "none").pop(); if (vis) { vis.style.display = "none"; m.textContent = `+${hidden + extra + 1} more`; } }
   }
 }
 function render() {
