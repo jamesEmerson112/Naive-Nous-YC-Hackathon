@@ -285,6 +285,17 @@ code, .mono { font-family: var(--mono); font-size: 0.88em; }
   transition: background-color 150ms var(--ease);
 }
 .btn-link:hover { background: var(--well); }
+.btn.btn-sm { padding: 5px 12px; font-size: 0.833rem; border-radius: 10px; }
+
+/* Page furniture every page shares: the back link, the page title, an empty state, the label
+   in front of a "why". */
+.back { margin: 24px 0 4px; font-size: 0.833rem; }
+.back a { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; color: var(--muted); transition: color 150ms var(--ease); }
+.back a:hover { color: var(--ink); }
+.back .icon { transform: rotate(180deg); }
+.page-h { font-size: 1.728rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 8px 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.empty { padding: 32px; text-align: center; background: var(--surface); border: 1px dashed var(--line-strong); border-radius: var(--r-card); }
+.why-label { font-weight: 600; color: var(--muted); margin-right: 4px; }
 
 /* Section headings: the meta goes after the heading, never as a kicker above it. */
 .section-h {
@@ -493,15 +504,6 @@ a.turn:hover { box-shadow: 0 0 0 2px var(--sun), 0 12px 30px color-mix(in oklch,
 /* ==== page: incident ==== */
 /* The incident story (/incidents/{id}): a header that isn't a card, the your-turn callout, the
    Fleet Doctor ledger, the timeline on a rail, the evidence rows. Lane 4 (ui/incident). */
-/* shared? `.back`, `.page-h`, `.empty` and `.why-label` are used by other pages too. */
-.back { margin: 24px 0 4px; font-size: 0.833rem; }
-.back a { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; color: var(--muted); transition: color 150ms var(--ease); }
-.back a:hover { color: var(--ink); }
-.back .icon { transform: rotate(180deg); }
-.page-h { font-size: 1.728rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; margin: 8px 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
-.empty { padding: 32px; text-align: center; background: var(--surface); border: 1px dashed var(--line-strong); border-radius: var(--r-card); }
-.why-label { font-weight: 600; color: var(--muted); margin-right: 4px; }
-
 /* Header: the title and pill, the summary, a meta line, the full heal line, then quiet lines. */
 .story-head { padding: 4px 0 0; }
 .story-title {
@@ -740,8 +742,6 @@ details[open] > summary.block-h { margin-bottom: 12px; }
 .versions li + li { border-top: 1px solid var(--line); }
 form.inline { display: inline; }
 form.add-label { display: inline-flex; align-items: center; gap: 6px; }
-/* shared? a small button size. */
-.btn.btn-sm { padding: 5px 12px; font-size: 0.833rem; border-radius: 10px; }
 .label-pill { cursor: pointer; margin: 0 4px 4px 0; transition: background-color 150ms var(--ease); }
 .label-pill:hover { background: var(--line); }
 .label-pill .icon { font-size: 0.9em; }
