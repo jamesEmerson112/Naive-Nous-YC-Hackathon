@@ -142,7 +142,13 @@ def report_schema(origins: list[str]) -> dict[str, Any]:
             "technician_brief",
         ],
         "properties": {
-            "verdict": s(140, description="One line: what is wrong and what it needs."),
+            "verdict": s(
+                80,
+                description=(
+                    "Plain words for a video caption, at most ~8 words, no joint ids, numbers"
+                    " or units. Example: Elbow blocked or servo failing: needs hands"
+                ),
+            ),
             "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
             "joint": {"type": "string", "enum": JOINT_ENUM},
             "hypotheses": {
