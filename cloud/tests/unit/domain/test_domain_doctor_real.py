@@ -452,6 +452,9 @@ def test_only_behavioural_failures_in_the_repro_file_count():
         (_run(0, passed_ids=[OTHER_ID]), f"these repro tests didn't pass: {REPRO_ID}"),
         (_run(0, patch_error="no"), "doesn't pass with the fix (refused: no"),
         (_run(0, timed_out=True), "doesn't pass with the fix"),
+        # exit 0 and the ids passed, but the replay's own verdict (TestRun.passed) says no
+        (_run(0, tests_passed=False), "with the fix, the sealed repro run doesn't pass"),
+        (_run(0, tests_passed=None), "with the fix, the sealed repro run doesn't pass"),
     ],
 )
 def test_the_same_repro_ids_must_pass_with_the_fix(after_repro, why):

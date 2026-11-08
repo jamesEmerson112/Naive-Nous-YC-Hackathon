@@ -1262,8 +1262,10 @@ def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list
 
 def repro_passes(run: Mapping[str, Any] | None, ids: Iterable[str]) -> str:
     """Why the repro tests that failed before don't all pass with the full patch, or "" when
-    they do: pytest exited 0, the run is sealed, and the seal reports every one of `ids` as
-    passed (`passed_ids`). Printed `PASSED` lines never count."""
+    they do: pytest exited 0, the run is sealed, the replay's own verdict on it passed
+    (`tests_passed`: `TestRun.passed`, exit 0 and every sealed test passed or skipped), and
+    the seal reports every one of `ids` as passed (`passed_ids`). Printed `PASSED` lines
+    never count."""
     ids = list(ids)
     if not isinstance(run, Mapping):
         return "the repro test was never run with the fix"
@@ -1271,6 +1273,8 @@ def repro_passes(run: Mapping[str, Any] | None, ids: Iterable[str]) -> str:
         return f"the repro test doesn't pass with the fix ({_describe(run)})"
     if run.get("sealed") is not True:
         return f"with the fix, the repro test has {NO_SEAL} ({_describe(run)})"
+    if run.get("tests_passed") is not True:
+        return f"with the fix, the sealed repro run doesn't pass ({_describe(run)})"
     passed = set(run.get("passed_ids") or [])
     missing = [i for i in ids if i not in passed]
     if missing:

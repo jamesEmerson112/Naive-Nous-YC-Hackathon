@@ -17,6 +17,7 @@ the coder or the sandbox.
 import io
 import json
 import os
+import re
 import sys
 import tarfile
 import uuid
@@ -36,6 +37,7 @@ from romulus_cloud.models import Blob, DoctorConsult, DoctorProposal, Event, Rec
 from romulus_cloud.services import batch, code_lockin, datasets, doctor, doctor_code, registry
 from romulus_cloud.services.coder_runs import CodeReplay, TestRun, VerifyRun
 from romulus_cloud.services.doctor_jobs import InlineJobs
+from romulus_cloud.settings import SEALABLE_PYTEST
 from romulus_cloud.worker import Step, run_tick
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
@@ -758,6 +760,12 @@ def test_the_checks_view_of_a_run_trusts_only_a_complete_seal(run, sealed, passe
     no_verify = VerifyRun(False)
     view = doctor_code._run(CodeReplay(TestRun(1, ""), no_verify, run, no_verify), [])
     assert (view["sealed"], view["passed_ids"], view["failed"]) == (sealed, passed_ids, {})
+
+
+def test_the_repro_command_is_a_form_the_image_seals():
+    """The image seals only `python [flags] -m pytest` (the pattern CODER_TEST_CMD must match);
+    any other repro command would never be sealed, so every repro would fail closed."""
+    assert re.search(SEALABLE_PYTEST, doctor_code.repro_command(REPRO_PATH))
 
 
 @pytest.mark.parametrize(
