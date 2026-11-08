@@ -171,3 +171,12 @@ code { font-size: 0.9em; }
   .step { grid-template-columns: 1fr; gap: 0.25rem; }
   .top { flex-wrap: wrap; }
 }
+
+/* Data page (M6) */
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.data-table th, .data-table td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.data-card { background: var(--panel); padding: 0.6rem 0.8rem; border-radius: 0.3rem; margin-bottom: 0.6rem; }
+form.inline { display: inline; }
+.data-table input, .data-card button, .data-table button { font: inherit; font-size: 0.85rem; }
+.nav { margin-right: auto; margin-left: 1rem; font-weight: 600; }
+.data-table button.status { border: 0; cursor: pointer; }

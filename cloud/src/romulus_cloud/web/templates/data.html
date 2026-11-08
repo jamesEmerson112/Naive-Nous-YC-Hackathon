@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Romulus · data{% endblock %}
+{% block content %}
+<p class="back"><a href="/">← incident timeline</a></p>
+<p><label>Your name, recorded on every change you make here
+  <input id="by-name" autocomplete="name" placeholder="operator"></label></p>
+
+<section aria-labelledby="exp-h">
+  <h1 id="exp-h" class="section-h">Exports <span class="muted">newest first</span></h1>
+  {% if exports %}
+  <table class="data-table">
+    <thead><tr><th>Export</th><th>Dataset</th><th>Format</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for e in exports %}
+      <tr>
+        <td><code>{{ e.id }}</code></td>
+        <td><code>{{ e.dataset_id }}</code> v{{ e.n }}</td>
+        <td>{{ e.format }}</td>
+        <td><span class="status {% if e.status == 'built' %}tone-good{% elif e.status == 'failed' %}tone-bad{% else %}tone-wait{% endif %}">{{ e.status }}</span>
+          {% if e.error %}<span class="muted">{{ e.error }}</span>{% endif %}</td>
+        <td>{% if e.download %}<a href="{{ e.download }}">download</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No exports yet.</p>{% endif %}
+</section>
+
+<section aria-labelledby="ds-h">
+  <h2 id="ds-h" class="section-h">Datasets <span class="muted">snapshots never change</span></h2>
+  {% for d in datasets %}
+  <div class="data-card">
+    <p><strong>{{ d.name }}</strong> <span class="muted">{{ d.purpose }} · <code>{{ d.id }}</code> · filter <code>{{ d.filter | tojson }}</code></span></p>
+    <form method="post" action="/data/datasets/{{ d.id }}/versions">
+      <input type="hidden" name="by" class="by">
+      <button type="submit">Take snapshot v{{ d.versions | length + 1 }}</button>
+    </form>
+    <ul>
+    {% for v in d.versions %}
+      <li>v{{ v.n }}: {{ v.recording_ids | length }} recordings, {{ v.incident_ids | length }} incidents
+        <span class="muted">sha256 {{ (v.manifest_sha256 or '')[:12] }}</span>
+        {% for f in formats %}
+        <form method="post" action="/data/datasets/{{ d.id }}/versions/{{ v.n }}/exports" class="inline">
+          <input type="hidden" name="format" value="{{ f }}">
+          <input type="hidden" name="by" class="by">
+          <button type="submit">Export {{ f }}</button>
+        </form>
+        {% endfor %}
+      </li>
+    {% endfor %}
+    </ul>
+  </div>
+  {% else %}
+  <p class="muted">No datasets yet. Create one with <code>POST /v1/datasets</code>.</p>
+  {% endfor %}
+</section>
+
+<section aria-labelledby="rec-h">
+  <h2 id="rec-h" class="section-h">Recordings <span class="muted">newest first</span></h2>
+  {% if recordings %}
+  <table class="data-table">
+    <thead><tr><th>When</th><th>Recording</th><th>Labels</th><th>Add label</th></tr></thead>
+    <tbody>
+    {% for r in recordings %}
+      <tr>
+        <td>{{ r.when }}</td>
+        <td>{{ r.kind }} <span class="muted">({{ r.format }}) · {{ r.device }}</span><br>
+          <a href="/v1/recordings/{{ r.id }}">{{ r.id[:8] }}</a>
+          {% if r.incident %} · <a href="/incidents/{{ r.incident }}">incident</a>{% endif %}</td>
+        <td>
+          {% for l in r.labels %}
+          <form method="post" action="/data/recordings/{{ r.id }}/labels" class="inline">
+            <input type="hidden" name="label" value="{{ l }}">
+            <input type="hidden" name="action" value="remove">
+            <input type="hidden" name="by" class="by">
+            <button type="submit" class="status tone-info" title="Remove {{ l }}">{{ l }} ×</button>
+          </form>
+          {% endfor %}
+        </td>
+        <td>
+          <form method="post" action="/data/recordings/{{ r.id }}/labels" class="inline">
+            <input type="hidden" name="action" value="add">
+            <input type="hidden" name="by" class="by">
+            <input name="label" required placeholder="key:value" aria-label="Label for {{ r.id }}">
+            <button type="submit">Add</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No recordings yet.</p>{% endif %}
+</section>
+<script>
+// Every form here sends the name typed above as `by` (recorded as human:<name>).
+document.addEventListener("submit", (ev) => {
+  const name = (document.getElementById("by-name").value || "").trim();
+  ev.target.querySelectorAll("input.by").forEach((i) => { i.value = name; });
+});
+</script>
+{% endblock %}

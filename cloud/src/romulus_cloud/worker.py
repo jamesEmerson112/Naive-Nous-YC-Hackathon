@@ -16,9 +16,10 @@ from datetime import datetime
 from sqlalchemy.orm import Session, sessionmaker
 
 from romulus_cloud import db
+from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
-from romulus_cloud.services import workorders
+from romulus_cloud.services import datasets, workorders
 from romulus_cloud.settings import get_settings
 
 
@@ -29,12 +30,24 @@ class Step:
     every_s: float = 0  # 0 = every tick
 
 
+def _run_exports(session: Session, now: datetime) -> object:
+    settings = get_settings()
+    store = build_blobstore(settings.blob_dir)
+    return datasets.run_exports(session, now, export_dir=settings.export_dir, store=store)
+
+
 STEPS: list[Step] = []
 
 # M5: hardware incidents → work orders (every tick); post and poll Naïve cards (every 15 s).
 STEPS += [
     Step("workorders.triage_new", workorders.triage_new),
     Step("workorders.sync", workorders.sync, every_s=15),
+]
+
+# M6: resolved incidents join the regression corpus; requested exports get built.
+STEPS += [
+    Step("datasets.sync_regression_cases", datasets.sync_regression_cases, every_s=30),
+    Step("datasets.run_exports", _run_exports, every_s=5),
 ]
 
 
