@@ -317,6 +317,20 @@ PLAN_LOG = OUT / "hermes-trials.jsonl"
 GOAL = os.environ.get("ARMSIM_GOAL", "the red bag of chips")      # the bag the demo uses
 
 
+ASTRA_LOG = OUT / "astra"
+
+
+def keep(kind, q, reply_text):
+    """Save the exact prompt sent to Astra and its raw reply (runs/gentest/astra/HHMMSS-<kind>-prompt|reply.txt)."""
+    try:
+        ASTRA_LOG.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%H%M%S")
+        (ASTRA_LOG / f"{stamp}-{kind}-prompt.txt").write_text(q)
+        (ASTRA_LOG / f"{stamp}-{kind}-reply.txt").write_text(reply_text or "")
+    except OSError:
+        pass
+
+
 def last_json(text):
     """The last JSON object in Hermes's reply (it may be pretty-printed over several lines)."""
     best, depth, start = None, 0, None
@@ -421,6 +435,7 @@ def ask_plan(q):
     try:
         r = subprocess.run(["hermes", "chat", "--oneshot", *HERMES_MODEL, "-t", "vision", "-q", q], capture_output=True, text=True,
                            timeout=180)
+        keep("plan", q, r.stdout)
         reply = last_json(r.stdout) or {}
     except subprocess.TimeoutExpired:
         reply = {}
@@ -530,6 +545,7 @@ def probe_check(image, bag):
     try:
         r = subprocess.run(["hermes", "chat", "--oneshot", *HERMES_MODEL, "-t", "vision", "-q", q], capture_output=True,
                            text=True, timeout=120)
+        keep("check", q, r.stdout)
         reply = last_json(r.stdout) or {}
     except subprocess.TimeoutExpired:
         reply = {}
