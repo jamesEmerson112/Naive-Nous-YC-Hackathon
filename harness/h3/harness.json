@@ -1,0 +1,16 @@
+{
+  "version": 3,
+  "framework": "mini-swe-agent",
+  "prompt": "prompt.md",
+  "knowledge_dir": "skills/",
+  "tools_dir": "tools/",
+  "show_files": ["config.toml", "control.py", "sensors.py", "app.py"],
+  "guides": {
+    "crash-traceback.md": "kind: (crash|stopped_early)",
+    "hang.md": "kind: (hang|timeout)",
+    "spec-violation.md": "kind: spec_violation",
+    "sensor-readings.md": "NoneType",
+    "servo-bus.md": "motor|status packet"
+  },
+  "hardware_evidence": "Missing motor IDs|motor check failed|There is no status packet|Failed to sync read|could not open port"
+}

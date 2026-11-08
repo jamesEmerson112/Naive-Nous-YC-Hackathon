@@ -1,0 +1,29 @@
+# Robot app config. The healer may edit this file.
+
+[app]
+backend = "mock"            # "mock" = fake hardware in ../sim; "real" = Pi 5 + SO-101 + HC-SR04
+loop_hz = 20
+log_every = 10              # print a telemetry line every N steps
+
+[arm]
+port = "/dev/ttyACM0"       # on the Pi, prefer the /dev/serial/by-id/... path
+id = "follower"
+read_retries = 5            # retries for a flaky servo-bus read before giving up
+gripper_closed = 10.0       # LeRobot gripper units, 0..100
+gripper_open = 90.0
+lift_max_deg = 35.0         # extra shoulder lift when something is very close
+
+[arm.hold_pose]             # degrees
+shoulder_pan = 0.0
+shoulder_lift = -20.0
+elbow_flex = 60.0
+wrist_flex = 30.0
+wrist_roll = 0.0
+
+[sensor]
+trigger_pin = 23            # BCM numbering
+echo_pin = 24
+min_valid_cm = 2.0          # the HC-SR04's range is 2-400 cm
+max_valid_cm = 400.0
+near_cm = 15.0              # at or below this, lift the object fully away
+far_cm = 60.0               # at or above this, normal hold pose

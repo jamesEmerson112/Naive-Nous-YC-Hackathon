@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "framework": "mini-swe-agent",
+  "prompt": "prompt.md",
+  "knowledge_dir": "skills/",
+  "tools_dir": "tools/",
+  "guides": {
+    "crash-traceback.md": "kind: (crash|stopped_early)",
+    "hang.md": "kind: (hang|timeout)",
+    "spec-violation.md": "kind: spec_violation",
+    "sensor-readings.md": "NoneType",
+    "servo-bus.md": "motor|status packet"
+  }
+}
