@@ -159,7 +159,7 @@ Every `lerobot_v3_tar` recording uses the same LeRobot features (schema **v0.1**
 
 - **`code_rev`** in the firmware manifest names a code version in the platform's registry. It isn't a git ref the device has to fetch.
 - **Code packages:** a code version is a `.tar.gz` of `device/` at that version, with a sha256. The device pulls it like a harness package (§3.3c) and installs it with hash check, health check and rollback (D7).
-- **`code_patch`** in an overlay (§2.5) is a **unified diff** against the overlay's base `code_rev`, with paths relative to the `device/` root, for example `--- a/control/gripper.py`. It is `null` if the agent only changed rules or params.
+- **`code_patch`** in an overlay (§2.5) is a **unified diff** against the overlay's base `code_rev`, with paths relative to the `device/` root, for example `--- a/control/gripper.py`. It is `null` if the agent only changed rules or params. It changes regular text files only: symlinks and submodules (git modes `120000` and `160000`), binary changes and paths outside `device/` are reported as problems, and the patch is treated as touching the safety layer (fail closed, K17).
 
 ## 3. Device-facing routes
 

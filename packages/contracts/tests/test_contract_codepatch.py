@@ -356,3 +356,56 @@ def test_broken_quoted_rename_is_a_problem():
     s = summary(patch)
     assert any("line 3: can't read the quoted path" in p for p in s.problems)
     assert touches_safety(patch, [])
+
+
+NEW_SYMLINK = """\
+diff --git a/vdir b/vdir
+new file mode 120000
+index 0000000..1b2c3d4
+--- /dev/null
++++ b/vdir
+@@ -0,0 +1 @@
++/some/host/dir
+\\ No newline at end of file
+"""
+
+CHANGED_SYMLINK = """\
+diff --git a/link b/link
+index 1111111..2222222 120000
+--- a/link
++++ b/link
+@@ -1 +1 @@
+-old
++/etc/passwd
+"""
+
+GITLINK = """\
+diff --git a/sub b/sub
+new file mode 160000
+index 0000000..3333333
+--- /dev/null
++++ b/sub
+@@ -0,0 +1 @@
++Subproject commit 3333333333333333333333333333333333333333
+"""
+
+FILE_TO_SYMLINK = "diff --git a/x.py b/x.py\nold mode 100644\nnew mode 120000\n"
+
+
+@pytest.mark.parametrize(
+    "patch,kind",
+    [
+        (NEW_SYMLINK, "symlink"),
+        (CHANGED_SYMLINK, "symlink"),
+        (GITLINK, "submodule"),
+        (FILE_TO_SYMLINK, "symlink"),
+    ],
+)
+def test_symlinks_and_submodules_are_problems_and_fail_closed(patch, kind):
+    assert any(kind in p for p in summary(patch).problems), summary(patch).problems
+    assert touches_safety(patch, SAFETY) is True
+
+
+def test_regular_file_modes_are_fine():
+    patch = "diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n"
+    assert validate_code_patch(patch) == []
