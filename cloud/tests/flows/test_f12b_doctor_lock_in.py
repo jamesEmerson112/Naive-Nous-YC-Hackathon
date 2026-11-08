@@ -100,9 +100,9 @@ class Rig:
             base_url=settings.llm_base_url, model="test-model", api_key=KEY, sandbox=sandbox
         )
         self.tools = batch.Tools(settings, FakeLlm(), coder, store, self.jobs)
-        code = code_lockin.ReplayTools(settings, self.jobs, sandbox, store)
+        self.code = code_lockin.ReplayTools(settings, self.jobs, sandbox, store)
         self.steps = [
-            Step("gate.tick", partial(gate.tick, settings=settings, code=code)),
+            Step("gate.tick", partial(gate.tick, settings=settings, code=self.code)),
             Step("batch.maybe_run", partial(batch.maybe_run, settings=settings, tools=self.tools)),
         ]
         self.sessions, self.clock = sessions, clock
@@ -494,3 +494,82 @@ def test_f12b_passthrough_lane_skips_the_fake_coder_for_a_verified_proposal(
     assert detail["stub_stages"] == ["draft_code", "replay"]
     assert detail["status"] == "awaiting_canary" and detail["replay"]["stub"]
     assert rig.jobs.submitted == [] and rig.docker.calls == []
+
+
+# --- the gate requires a held-out verify (no in-process-only pass) -----------------------
+
+
+def test_f12b_a_doctor_candidate_whose_base_has_verify_replays_and_passes(
+    client, arms, tick_arms, now, settings, toy_fleet, sessions, clock, db_session, count_events
+):
+    rig = Rig(sessions, settings, clock, agent=fakes.fix_like_a_careful_engineer)
+    _held(arms, tick_arms, now, "sim-3")
+    _propose(db_session, arms, "sim-3", now)
+    rig.work(now + 40 * S)
+    rig.work(now + 41 * S)
+    doctor = client.get(f"/v1/candidates/{_code_cands(client)['sim-3']['id']}").json()
+    assert db_session.get(CodeVersion, ("default", doctor["code_rev"])).source == "doctor"
+    assert doctor["replay"]["passed"] and "held-out verify scripts" in doctor["replay"]["why"]
+    assert doctor["status"] == "awaiting_canary"
+    assert count_events("candidate.awaiting_verify") == count_events("candidate.unverified") == 0
+
+
+@pytest.fixture
+def bare_toy_fleet(seeded, settings, monkeypatch):
+    """As `toy_fleet`, but code toy0001 ships no verify/ (no `make device-verify`)."""
+    monkeypatch.setattr("fake_device.scenarios.D1_CODE_PATCH", fakes.TOY_PATCH)
+    store = build_blobstore(settings.blob_dir)
+    bare = {k: v for k, v in fakes.toy_files().items() if "/verify/" not in k}
+    registry.create_code(seeded, store, registry.build_tarball(bare), rev="toy0001", **KW)
+    registry.create_firmware(seeded, FIRMWARE_V1 | {"version": 2, "code_rev": "toy0001"}, **KW)
+    for d in seeded.scalars(select(Device)):
+        d.assigned_firmware = 2
+    seeded.commit()
+    return seeded
+
+
+def test_f12b_a_doctor_candidate_with_no_verify_waits_at_the_gate_then_proceeds(
+    client,
+    arms,
+    tick_arms,
+    now,
+    settings,
+    bare_toy_fleet,
+    sessions,
+    clock,
+    db_session,
+    count_events,
+    tmp_path,
+):
+    # CODER_ALLOW_UNVERIFIED stays false (DOCTOR_OFFER_UNVERIFIED is not on main yet; the
+    # proposal here has real checks, so it locks in without the Coder either way).
+    rig = Rig(sessions, settings, clock, agent=fakes.fix_like_a_careful_engineer)
+    _held(arms, tick_arms, now, "sim-3")
+    ov = _propose(db_session, arms, "sim-3", now)
+    rig.work(now + 40 * S)  # the batch locks the proposal in: no Coder pass
+    assert count_events("coder.started") == 0 and _status(db_session, ov) == "locked_in"
+    for t in range(41, 300, 9):  # gate ticks across two batch intervals
+        tick_arms(now + t * S)
+        rig.work(now + t * S)
+    doctor = client.get(f"/v1/candidates/{_code_cands(client)['sim-3']['id']}").json()
+    assert doctor["status"] == "replaying" and doctor["replay"] is None
+    waits = [e for e in doctor["events"] if e["kind"] == "candidate.awaiting_verify"]
+    assert len(waits) == 1  # one event, not one per tick or batch run
+    assert "no held-out verify for this code version" in waits[0]["why"]
+    # Nothing failed or went sticky: no lock-in error, no rollback, no Coder retry loop.
+    assert _status(db_session, ov) == "locked_in"
+    assert count_events("overlay.lockin_error") == count_events("candidate.rolled_back") == 0
+    assert count_events("coder.started") == 0 and count_events("doctor.declined") == 0
+    assert not [k for k in rig.jobs.submitted if k.startswith("coder.replay")]
+
+    # Verify scripts appear (`make device-verify`): the next tick replays it and it proceeds.
+    vdir = tmp_path / "verify"
+    for name, data in fakes.toy_files().items():
+        if name.startswith("device/verify/"):
+            (vdir / name.removeprefix("device/verify/")).parent.mkdir(parents=True, exist_ok=True)
+            (vdir / name.removeprefix("device/verify/")).write_bytes(data)
+    rig.code.settings = settings.model_copy(update={"coder_verify_dir": str(vdir)})
+    rig.work(now + 400 * S)
+    doctor = client.get(f"/v1/candidates/{doctor['id']}").json()
+    assert doctor["replay"]["passed"] and "unverified" not in doctor["replay"]["why"]
+    assert doctor["status"] == "awaiting_canary"

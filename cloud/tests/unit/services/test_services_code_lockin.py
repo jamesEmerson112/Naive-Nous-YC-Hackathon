@@ -173,11 +173,65 @@ def test_no_test_command_and_no_verify_scripts_fails_closed(db_session, settings
         db_session, store, fixed, rev="bfix001", source="coder", parent_rev="bare001", **KW
     )
     jobs = StuckJobs()
-    tools = _tools(settings, store, jobs, coder_test_cmd="")
+    tools = _tools(settings, store, jobs, coder_test_cmd="", coder_allow_unverified=True)
     result = code_lockin.gate_replay(db_session, _cand("bfix001"), tools)
     assert not result.passed and not result.stub
     assert "nothing can check the coder's change" in result.why
     assert jobs.submitted == []
+
+
+def _bare(db_session, settings, source="coder"):
+    """A base with no verify/ and a `source` child with the toy's fix (and its tests)."""
+    store = build_blobstore(settings.blob_dir)
+    bare = {k: v for k, v in fakes.toy_files().items() if "/verify/" not in k}
+    registry.create_code(db_session, store, registry.build_tarball(bare), rev="bare001", **KW)
+    fixed = registry.build_tarball(code_lockin.apply_diff(bare, fakes.TOY_PATCH))
+    registry.create_code(
+        db_session, store, fixed, rev="bfix001", source=source, parent_rev="bare001", **KW
+    )
+    db_session.flush()
+    return store
+
+
+@pytest.mark.parametrize("source", ["coder", "doctor"])
+def test_device_tests_but_no_verify_waits_for_verify(db_session, settings, source):
+    jobs = StuckJobs()
+    tools = _tools(settings, _bare(db_session, settings, source), jobs)
+    result = code_lockin.gate_replay(db_session, _cand("bfix001"), tools)
+    assert isinstance(result, code_lockin.AwaitingVerify)
+    assert "no held-out verify for this code version" in result.why
+    assert "in-process tests alone can't be trusted" in result.why
+    assert "make device-verify" in result.why
+    assert jobs.submitted == []  # nothing ran, nothing to retry
+
+
+def test_allow_unverified_passes_on_device_tests_marked_unverified(db_session, settings):
+    jobs = InlineJobs()
+    store = _bare(db_session, settings)
+    tools = _tools(settings, store, jobs, coder_allow_unverified=True)
+    cand = _cand("bfix001")
+    result = code_lockin.gate_replay(db_session, cand, tools)
+    assert result.passed and not result.stub, result.why
+    assert result.why.startswith(code_lockin.UNVERIFIED)
+    assert code_lockin.gate_replay_applied(cand, tools)["replay_unverified"] is True
+
+
+def test_with_verify_the_replay_is_unchanged(db_session, settings, code_versions):
+    jobs = InlineJobs()
+    tools = _tools(settings, code_versions, jobs)
+    cand = _cand("fix0001")
+    result = code_lockin.gate_replay(db_session, cand, tools)
+    assert result.passed and "held-out verify scripts" in result.why
+    assert "unverified" not in result.why
+    assert code_lockin.gate_replay_applied(cand, tools)["replay_unverified"] is False
+
+
+def test_fake_mode_passthrough_keeps_the_stub_without_verify(db_session, settings):
+    store = _bare(db_session, settings, source="passthrough")
+    result = code_lockin.gate_replay(
+        db_session, _cand("bfix001"), _tools(settings, store, StuckJobs())
+    )
+    assert result.stub and result.passed
 
 
 def test_a_blocked_worker_waits_instead_of_submitting(db_session, settings, code_versions):

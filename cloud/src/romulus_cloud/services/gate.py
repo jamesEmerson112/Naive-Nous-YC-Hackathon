@@ -17,7 +17,10 @@ reason and the rest go on.
   and pass-through code candidates get a labeled stub. A code candidate the coding agent
   drafted (M8b) replays as a job off the tick (`code_lockin.gate_replay`: device tests +
   held-out verify scripts in fresh containers); it stays `replaying` until the job is done,
-  and the tick never waits for it.
+  and the tick never waits for it. With no held-out verify scripts it also stays
+  `replaying`, with one `candidate.awaiting_verify` event, and replays once they exist
+  (in-process device tests alone can be forged); `CODER_ALLOW_UNVERIFIED=true` lets them
+  decide, and each such replay records a `candidate.unverified` warning.
 - **canary** (`start_canary`): assign the class's `role = canary` device, remember what it
   had (`canary_prev_version`), set `canary_started_at = now`. Evidence is that device's
   check-ins (`canary_checkins`), install reports and incidents received since then, on the
@@ -206,8 +209,9 @@ def _incidents(session: Session, c: Candidate) -> list[Incident]:
     return [i for i in rows if i is not None]
 
 
-def _replay(session: Session, c: Candidate) -> g.ReplayResult | None:
-    """The replay; None while a code replay job is still running."""
+def _replay(session: Session, c: Candidate) -> g.ReplayResult | code_lockin.AwaitingVerify | None:
+    """The replay; None while a code replay job is still running, `AwaitingVerify` while a
+    code candidate has no held-out verify scripts."""
     if c.type == "code":
         code = session.info.get(CODE_TOOLS)
         if code is None:
@@ -729,6 +733,9 @@ def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now)
     replay = g.ReplayResult.from_json(c.replay)
     if c.status == "replaying" and replay is None and not frozen:
         replay = _replay(session, c)
+        if isinstance(replay, code_lockin.AwaitingVerify):
+            _await_verify(session, c, replay.why, now)
+            replay = None
         if replay is not None:  # None: a code replay job still running; check next tick
             c.replay = replay.to_json()
             if replay.stub and "replay" not in (c.stub_stages or []):
@@ -736,6 +743,17 @@ def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now)
             code = session.info.get(CODE_TOOLS)
             output = code_lockin.gate_replay_applied(c, code) if code and c.type == "code" else {}
             _record(session, c, "candidate.replayed", replay.why, now, replay=c.replay, **output)
+            if output.get("replay_unverified") and replay.passed:
+                _record(
+                    session,
+                    c,
+                    "candidate.unverified",
+                    f"WARNING {code_lockin.UNVERIFIED}: {label(c)} passed its replay with no "
+                    "held-out verify scripts, because CODER_ALLOW_UNVERIFIED=true; code under "
+                    "test can forge in-process results, so run `make device-verify`",
+                    now,
+                    level="warning",
+                )
     inputs, k17 = _inputs(session, c, settings, frozen, replay)
     t = g.next_state(c.status, inputs, now)
     if t.state == c.status:
@@ -744,6 +762,15 @@ def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now)
         t = t._replace(why=t.why.replace("no canary device is available", K17_WAIT))
     _apply(session, c, t, now)
     return True
+
+
+def _await_verify(session: Session, c: Candidate, why: str, now: datetime) -> None:
+    """The candidate waits in `replaying` for held-out verify scripts: one event per
+    candidate (not one per tick), no failure, no retry count."""
+    if not events.find(session, {"candidate": c.id}, kinds=["candidate.awaiting_verify"]):
+        _record(
+            session, c, "candidate.awaiting_verify", f"{label(c).capitalize()} waits: {why}", now
+        )
 
 
 def _error(session: Session, candidate_id: str, exc: Exception, now: datetime) -> None:
