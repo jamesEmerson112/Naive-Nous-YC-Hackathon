@@ -58,8 +58,8 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 8:31 PM P
 - **Research:** bring a router, Ethernet and a backup video, because venue Wi-Fi sinks demos ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)). Everything else is in [`docs/cloud-platform-planning/README.md`](docs/cloud-platform-planning/README.md).
 - **Now:** two PRs are open: #28 (M8b, the coding agent wired into the gate; F11) and the draft #30 (Fleet Doctor L3 device-tool contract, not wired; D27 deferred). Up next ([`features.txt`](features.txt)): P0 is the Stripe direction with James. Then P1, the live Naïve card and first live work order. Then P2, the overnight launch by 12:30 AM.
 - **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3 #7, #12, #18 · M4 #10 · M5 #11, #15 · M6 #14 · M7 #16 · M8a #19 · B8 toolchain #24 · edge bridge #25 · docs #21 · Fleet Doctor plan #22, decisions #23, contracts #26, foundation #27, LLM helper #29 · triage #6 · lint #13 · device kinds #17 · decisions D0–D28 locked (D27 deferred).
-- **Blocked:** almost nothing. B4 is clear: the team key reaches the Naïve proxy, and the live card waits only on Kent's go-ahead (#21). B1 is nearly cleared: Ishaan pushed `device/`, `harness/` and `bench/` on `ishaan/device-healer`, but there's no PR yet. The K17 path list is still missing and also gates the Fleet Doctor.
-- **Asks:** Ishaan: open a PR for `ishaan/device-healer` (B1), review the contracts (I0: B2, B3), send the K17 safety and visor paths. James: decide the Stripe direction with Kent (bill the robot's owner, or pay the supplier). Owed to James: a Naïve key with Board scopes.
+- **Blocked:** only on the K17 safety and visor path list, which also gates the Fleet Doctor. B4 is clear (the live card waits only on Kent's go-ahead, #21), and B1 cleared when Ishaan's device code merged as #31 (`device/`, `harness/`, `bench/`).
+- **Asks:** Ishaan: review the contracts (I0: B2, B3) and send the K17 safety and visor paths. James: decide the Stripe direction with Kent (bill the robot's owner, or pay the supplier). Owed to James: a Naïve key with Board scopes.
 <!-- romulus-sync:end -->
 
 ### Device-side healer (Ishaan)
