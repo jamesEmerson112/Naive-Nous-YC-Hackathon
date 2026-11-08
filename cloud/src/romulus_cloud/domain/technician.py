@@ -80,6 +80,16 @@ def vendor_origins(vendors: Sequence[Mapping[str, Any]]) -> list[str]:
     return out
 
 
+def vendors_for_arm(
+    vendors: Sequence[Mapping[str, Any]], servo_variant: str
+) -> list[dict[str, Any]]:
+    """The vendor entries for the arm's servo variant (`C018-12V` matches a label naming
+    `C018`); all of them when none matches, so a mislabelled list never hides every part."""
+    key = servo_variant.split("-")[0].strip().upper()
+    found = [dict(v) for v in vendors if key and key in str(v.get("label") or "").upper()]
+    return found or [dict(v) for v in vendors]
+
+
 def report_schema(vendors: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """The report's JSON Schema for one session. `part.origin` is an enum of the vendors'
     origins, so the model can only name an allowlisted store (design §2.1)."""
@@ -374,7 +384,7 @@ def session_outcome(
             return "fail", f"no report within {timeout_s:.0f} s (TECHNICIAN_TIMEOUT_S)"
         return "wait", None
     why = FAILED_STOP_REASONS.get(stop_reason or "") or FAILED_STOP_REASONS.get(state)
-    if state == "idle" and not has_output:
+    if state == "idle" and not has_output and not why:
         why = f"the session ended ({stop_reason or 'idle'}) without a typed report"
     return "fail", why or f"the session is {state} ({stop_reason or 'no stop reason'})"
 
@@ -424,5 +434,5 @@ def feed_line(e: EventLike) -> str:
     if e.kind == "message" and e.text:
         return _clip(" ".join(e.text.split()), FEED_TEXT_MAX)
     if e.kind == "output":
-        return "Report ready"
+        return "Submitted the typed report"
     return ""

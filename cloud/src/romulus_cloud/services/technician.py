@@ -55,7 +55,7 @@ FAKE_FIXTURE = (
 STUDIO_URL = "https://app.usenaive.ai"
 EMAIL_FROM_LABEL = "Romulus Technician (Naïve agent)"
 EMAIL_VIA = "sent by Romulus through the Naïve Technician's inbox"
-EMAIL_MAX_ATTEMPTS = 3
+EMAIL_MAX_ATTEMPTS = 10
 MAX_STEPS = 12
 TIMEOUT_S = 5.0
 
@@ -414,7 +414,7 @@ def case_file(session: Session, case: TechnicianCase, *, settings: Settings) -> 
             "servo": f"Feetech STS3215 ({settings.arm_servo_variant})",
             "servo_variant": settings.arm_servo_variant,
         },
-        "vendors": [dict(v) for v in settings.technician_vendors],
+        "vendors": rules.vendors_for_arm(settings.technician_vendors, settings.arm_servo_variant),
     }
 
 
@@ -505,12 +505,14 @@ def _start(
             )
             return
     body = _request(session, case, settings)
+    waited = (now - (case.created_at or now)).total_seconds()
     try:
         state = naive.create_session(body, idempotency_key=case.id)
     except NaiveError as exc:
         attempts = int(_raw(case).get("start_attempts") or 0) + 1
         _note(case, start_attempts=attempts, start_error=str(exc))
-        if exc.retryable and attempts < 3:
+        if exc.retryable and waited < settings.technician_timeout_s:
+            # Naïve is overloaded at times (429): keep the frozen body, try again next tick.
             case.why = f"starting the session failed ({exc}); retrying with the same key"
             return
         _fail(session, case, f"couldn't start the Naïve session: {exc}", now, naive, settings)
@@ -528,18 +530,27 @@ def _pull_events(case: TechnicianCase, naive: Any, settings: Settings) -> None:
     if not new:
         return
     raw_events = list(_raw(case).get("events") or [])
+    last_at = _raw(case).get("last_event_at")
     for e in new:
         if e.seq <= case.last_event_seq:
             continue
         case.last_event_seq = e.seq
         raw_events.append(e.raw)
+        if e.at is not None:
+            last_at = e.at.isoformat()
         _feed(case, e.at, rules.feed_line(e), settings)
-    _note(case, events=raw_events)
+    _note(case, events=raw_events, last_event_at=last_at)
 
 
 def _duration_s(case: TechnicianCase, state: Any) -> float | None:
-    if state is not None and state.created_at and state.ended_at:
-        return max(0.0, (state.ended_at - state.created_at).total_seconds())
+    """Session created → report. An idle session has no `ended_at`, so the last event's time
+    (`session.idle`) ends it; a replay keeps the recorded times, so it shows the real run."""
+    end = state.ended_at if state is not None else None
+    last = _raw(case).get("last_event_at")
+    if end is None and isinstance(last, str):
+        end = datetime.fromisoformat(last)
+    if state is not None and state.created_at and end:
+        return max(0.0, (end - state.created_at).total_seconds())
     if case.started_at and case.reported_at:
         return max(0.0, (case.reported_at - case.started_at).total_seconds())
     return None
@@ -964,7 +975,9 @@ def view(
             "to": email.get("to"),
             "subject": email.get("subject"),
             "sent_at_label": _local(email.get("sent_at"), tz),
-            "from_label": EMAIL_FROM_LABEL,
+            "from_label": f"{EMAIL_FROM_LABEL} · {email['from']}"
+            if email.get("from")
+            else EMAIL_FROM_LABEL,
             "via": EMAIL_VIA,
             "error": email.get("error"),
         }
