@@ -67,6 +67,28 @@ The healer reads the same data at three levels. Each level only takes over what 
   4. Hold out whole runs.
   - **Gate:** beat level 1 on the subtle faults with **0 false alarms** on healthy runs.
   - **Add real data:** Olir's overnight podd logs and the first real arm runs (`samples/`).
+- **L3a result** (Sun ~3:20 AM PST; `prototypes/arm-sim/armsim/level3.py`, `python -m armsim.level3 train`, 16 s on CPU):
+  - **Setup:**
+    - 2,000 fault-factory runs (seed 1), split 60/20/20 into train, calibrate and test.
+    - Gradient-boosted trees on 38 features from each run's distance rows (the residual against the kinematic prediction, jitter, the longest unchanged echo streak, no-echo while in range) and joint rows (tracking error, wrong direction, load).
+    - It alarms when P(healthy) < 0.98, a threshold set on the calibration split.
+  - **Fresh batch** (600 runs, seed 99, never seen in training):
+
+    | Planted fault | Runs | Level 1 caught | Level 3 caught |
+    |---|---|---|---|
+    | none (false alarms) | 74 | 0 | **0** |
+    | joint_offset | 66 | 21 | 66 |
+    | joint_reversed | 78 | 23 | 78 |
+    | joint_stuck | 65 | 65 | 65 |
+    | us_frozen | 68 | 40 | 68 |
+    | us_noisy | 77 | 14 | 77 |
+    | us_offset | 78 | 30 | 78 |
+    | us_scale | 94 | 56 | 94 |
+
+  - **Leakage checks:**
+    - Shuffled labels score 0.115, about chance (0.125).
+    - Without the row-count features, real labels still score 0.99.
+  - **Caveat:** this is in-distribution, simulator-only data, and the simulator's faults are cleaner than real ones. The first real runs (`samples/`) are the test that counts *(inferred)*.
 - **L3b, in the loop** *(inferred design)*:
   - The classifier runs beside the watchdog as a second opinion. When it flags a run the rules passed, it opens an incident at `warn` severity, which the commander checks with `arm_check`. It never moves the arm.
   - **Optional:** a LoRA fine-tune of Olir's `qwen3.5:4b` on the labeled traces, so the healer can explain a finding in one sentence.
