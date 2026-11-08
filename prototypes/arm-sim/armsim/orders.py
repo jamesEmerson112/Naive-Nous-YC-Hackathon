@@ -28,12 +28,18 @@ JOBS = {
     "pick": {"title": "pick up the block",
              "steps": ["go_home", "reach", "approach", "grip", "lift", "release", "go_home"],
              "brief": "Pick up the 3 cm block: reach, approach, grip, lift 30 mm, then release it and go home."},
-    # The key stays "wave" (the skill's name, and a real wave in sim). On the real arm the wave skill plays
-    # Andre's taught motion: pick up the bag of chips next to the arm and put it in the box.
-    "wave": {"title": "pack the chips",
+    # The chips jobs. The key stays "wave" (the skill's name, and a real wave in sim). On the real arm the wave
+    # skill plays Andre's taught motion: pick up a bag of chips next to the arm and put it in the box.
+    # "wave" (the red bag) is the default and the demo's; "wave_any" takes any one bag. Same steps, same
+    # skill: only the title and the brief (what Hermes reads on the card) differ.
+    "wave": {"title": "pack the red bag",
              "steps": ["go_home", "wave", "go_home"],
-             "brief": "Pick up the bag of chips and put it in the box with the arm's taught pick-and-place "
-                      "(the wave skill), then go home."},
+             "brief": "Pick up the red bag of chips and put it in the box with the arm's taught pick-and-place "
+                      "(the wave skill), then go home. Only the red bag counts: other bags don't."},
+    "wave_any": {"title": "pack any bag",
+                 "steps": ["go_home", "wave", "go_home"],
+                 "brief": "Pick up any one bag of chips and put it in the box with the arm's taught "
+                          "pick-and-place (the wave skill), then go home. Any colour counts."},
 }
 RULES = ("Heal any fault and retry that step once. When it's done, comment 'RESULT:' with what you did and any fault "
          "you healed, and move this card to done. If you can't finish, comment 'BLOCKED:' with the reason.")
@@ -76,8 +82,9 @@ def parse_card(card):
     body, title = card.get("body") or "", card.get("title") or ""
     fields = dict(re.findall(r"^(job|order|source|steps):\s*(.+)$", body, flags=re.M))
     job = fields.get("job", "").strip()
-    if job not in JOBS:
-        job = "wave" if "wave" in title.lower() else "pick"
+    if job not in JOBS:                       # a hand-written card: a "wave" title is the red bag, the default
+        t = title.lower()
+        job = "wave_any" if "wave_any" in t else "wave" if "wave" in t else "pick"
     m = ORDER_RE.search(fields.get("order", "")) or ORDER_RE.search(title)
     steps = [s.strip() for s in fields["steps"].split(",")] if fields.get("steps") else JOBS[job]["steps"]
     return {"job": job, "order": m.group(0) if m else None, "source": fields.get("source", "").strip() or None,

@@ -149,6 +149,26 @@ def test_happy_path_closes_the_card_with_a_note():
     assert k.count("skill") == 7 and jobs[0]["outcome"] == "done", (k, jobs)
 
 
+def test_both_chips_orders_run_the_wave_skill_and_differ_only_in_the_brief():
+    """"wave" packs the red bag (the default); "wave_any" packs any bag. Same steps, same skill."""
+    assert orders.JOBS["wave_any"]["steps"] == orders.JOBS["wave"]["steps"] == ["go_home", "wave", "go_home"]
+    assert "red bag" in orders.JOBS["wave"]["brief"] and "red" not in orders.JOBS["wave_any"]["brief"]
+    for job, title in (("wave", "pack the red bag"), ("wave_any", "pack any bag")):
+        _, board, log, emit = fresh(job)
+        _, card = orders.place(board, job, source="test")
+        assert card["title"].endswith(f": {title}"), card
+        assert orders.parse_card(card)["job"] == job, card
+        host = FakeHost()
+        jobs = scripted(board, host, emit).run(once=True)
+        assert jobs[0]["outcome"] == "done" and board.card(card["id"])["status"] == "done", jobs
+        assert [n for op, n in host.calls if op == "skill"] == ["go_home", "wave", "go_home"], host.calls
+        assert texts(board, card["id"])[-1].startswith(f"RESULT: {title}"), texts(board, card["id"])
+    # a hand-written card (no job line) goes by its title; "wave" alone is the red bag
+    assert orders.parse_card({"title": "ARM JOB: wave"})["job"] == "wave"
+    assert orders.parse_card({"title": "ARM JOB: wave_any"})["job"] == "wave_any"
+    assert orders.parse_card({"title": "ARM JOB: pick up the block"})["job"] == "pick"
+
+
 def test_an_incident_heals_and_the_step_is_retried():
     _, board, log, emit = fresh("heal")
     _, card = orders.place(board, "pick", source="test")
