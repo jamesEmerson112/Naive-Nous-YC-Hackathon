@@ -14,5 +14,9 @@ on. It carries one planted fault shaped like D1 in `docs/fault-catalog.md`.
 
 ## Tests
 
-`python -m pytest -q` from this directory runs everything. `tests/test_verify_d1.py` is the
-fault's verify check: a hand at 30 mm for 2 s while holding must not open the gripper.
+`python -m pytest -q` from this directory runs the device suite in `tests/`. It passes on the
+planted bug: the suite never covered the case.
+
+`verify/test_verify_d1.py` is the fault's verify check (a hand at 30 mm for 2 s while holding
+must not open the gripper). It fails on the bug. The coder holds `verify/` out: the agent
+never sees it, and the replay runs it as its own pytest call with a clean config.

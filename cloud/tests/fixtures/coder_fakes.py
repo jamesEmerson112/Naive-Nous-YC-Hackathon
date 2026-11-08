@@ -6,6 +6,7 @@ with this interpreter (the toy device is our own fixture code) and prints the sa
 `ROMULUS_RESULT` line as `cloud/coder/run_agent.py`.
 """
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -18,6 +19,11 @@ from romulus_cloud.adapters.coder import RESULT_MARKER, WORKDIR, ProcResult
 FIXTURES = Path(__file__).resolve().parent
 TOY = FIXTURES / "toy_device"
 TOY_PATCH = (FIXTURES / "toy_device_d1.patch").read_text()
+ENTRYPOINT = FIXTURES.parents[1] / "coder" / "run_agent.py"
+
+_spec = importlib.util.spec_from_file_location("coder_run_agent", ENTRYPOINT)
+run_agent = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(run_agent)
 
 
 def toy_files() -> dict[str, bytes]:
@@ -73,6 +79,7 @@ class FakeDocker:
         self.extra_output = extra_output
         self.calls: list[dict] = []
         self.saw_git_in_work = False
+        self.saw_verify_in_work = False
 
     def __call__(self, argv, *, stdin=None, env=None, timeout=None) -> ProcResult:
         self.calls.append({"argv": list(argv), "stdin": stdin, "env": dict(env or {})})
@@ -81,6 +88,7 @@ class FakeDocker:
         work = Path(argv[argv.index("-v") + 1].removesuffix(f":{WORKDIR}"))
         mode = argv[-1]
         self.saw_git_in_work = (work / ".git").exists()
+        self.saw_verify_in_work = (work / "verify").exists()
         if mode == "agent" and self.agent:
             self.agent(work)
         if self.timed_out:
@@ -88,7 +96,10 @@ class FakeDocker:
         result: dict = {"mode": mode}
         if mode == "agent":
             result["agent"] = self.agent_result
-        result["tests"] = self._run_tests(work, (env or {}).get("CODER_TEST_CMD", ""))
+        if mode == "verify":  # the image's own fixed verify command, on this interpreter
+            result["verify"] = run_agent.run_verify(120, work=str(work), python=sys.executable)
+        else:
+            result["tests"] = self._run_tests(work, (env or {}).get("CODER_TEST_CMD", ""))
         return ProcResult(0, f"banner\n{RESULT_MARKER}{json.dumps(result)}\n", "")
 
     def _run_tests(self, work: Path, cmd: str) -> dict:

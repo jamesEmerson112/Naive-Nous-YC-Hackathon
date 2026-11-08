@@ -8,14 +8,24 @@ Absorbs which coding agent does the work:
   the same container and returns the diff, the test output and whether they passed.
 - `naive_session` (a Naïve managed session) is a later option, if `local_agent` is weak.
 
-The sandbox sees only a scratch copy of the device code at /work. Its git metadata lives
-next to it, outside the mount, so nothing the agent writes can change how the host's
-`git diff` behaves (a planted `.git/config` could otherwise run commands on the host).
+**`CodeDraft.passed` is advisory.** The agent controlled the container its tests ran in, so
+the gate must decide on `services.coder_runs.replay_code_patch` (fresh containers, no network,
+held-out verify scripts) and never on `passed`.
 
-Known gap: the container's network is not restricted to the LLM endpoint. That needs an
-egress allowlist proxy; add it before the coder runs on anything but our own toy or device
-code, or as soon as a run is seen reaching another host. Test-only runs (the gate's code
-replay) use `--network none`.
+Safety rules here:
+- The sandbox sees only a scratch copy of the device code at /work, without `verify/` (held
+  out). Its git metadata lives beside it, outside the mount, so nothing the agent writes can
+  change how the host's `git diff` behaves (a planted `.git/config` could run commands).
+- A diff with a symlink, a submodule, a binary change or a path outside `device/` fails the
+  draft (`summarize_code_patch` problems), and so does any symlink or nested `.git` left in
+  the work dir. Host-side writes go through `safe_write`, which never follows a symlink.
+- The LLM key is passed to `docker run` by name only, redacted from every field returned,
+  and its appearance anywhere in the agent's output or diff fails the draft.
+
+Known gap: the agent container's network is not restricted to the LLM endpoint. That needs
+an egress allowlist proxy (ideally one that also injects the key, so the container never
+holds it); add it before the coder runs on anything but our own toy or device code, or as
+soon as a run is seen reaching another host. Test-only runs use `--network none`.
 """
 
 from __future__ import annotations
@@ -25,7 +35,7 @@ import os
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
@@ -37,19 +47,26 @@ DEFAULT_AGENT = "mini-swe-agent"
 DEFAULT_TEST_CMD = "python -m pytest -q"
 RESULT_MARKER = "ROMULUS_RESULT "
 WORKDIR = "/work"
+HOLDOUT_DIR = "verify"
+"""Verify scripts under `device/verify/` never reach the agent; only the replay runs them."""
+
 _GIT_ID = ["-c", "user.name=romulus", "-c", "user.email=romulus@localhost"]
 # Host git ignores the user's global and system config (hooks, signing, fsmonitor).
 _GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 # Written by test runs; never part of a change.
 _EXCLUDES = "__pycache__/\n*.pyc\n.pytest_cache/\n.ruff_cache/\n.mypy_cache/\n"
+_PYTEST_CONFIG = {"conftest.py", "pytest.ini", ".pytest.ini", "pyproject.toml", "setup.cfg"}
+_PYTEST_CONFIG |= {"tox.ini"}
+_STATUS = {"A": "added", "M": "modified", "D": "deleted", "T": "type changed"}
 
 
 @dataclass(frozen=True)
 class CodeDraft:
     diff: str
     test_output: str
-    passed: bool
+    passed: bool  # advisory only: the gate trusts the replay, never this (see module doc)
     notes: str
+    flags: tuple[str, ...] = ()  # e.g. "test_harness: conftest.py (added)", for the gate
 
 
 class Coder(Protocol):
@@ -140,11 +157,75 @@ def _text(out: str | bytes | None) -> str:
     return out.decode(errors="replace") if isinstance(out, bytes) else (out or "")
 
 
-def redact(text: str, secrets: list[str]) -> str:
+def redact(text: str, secrets: Iterable[str]) -> str:
     for secret in secrets:
         if secret:
             text = text.replace(secret, "[redacted]")
     return text
+
+
+# --- host-side file safety ----------------------------------------------------------------
+
+
+def device_relative(name: str) -> str | None:
+    """`device/a/b.py` -> `a/b.py`; None for anything outside `device/` or unsafe."""
+    parts = PurePosixPath(name.removeprefix("./")).parts
+    if len(parts) < 2 or parts[0] != CODE_ROOT or ".." in parts or "" in parts:
+        return None
+    return str(PurePosixPath(*parts[1:]))
+
+
+def safe_write(root: Path, rel: str, data: bytes) -> None:
+    """Write `root/rel` without following any symlink, and never outside `root`."""
+    parts = PurePosixPath(rel).parts
+    if not parts or PurePosixPath(rel).is_absolute() or ".." in parts:
+        raise CoderError(f"refusing to write {rel!r}: not a plain relative path")
+    path = root
+    for part in parts[:-1]:
+        path = path / part
+        if path.is_symlink():
+            raise CoderError(f"refusing to write {rel!r}: {path.name} is a symlink")
+        path.mkdir(exist_ok=True)
+    path = path / parts[-1]
+    if path.is_symlink():
+        raise CoderError(f"refusing to write {rel!r}: it is a symlink")
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise CoderError(f"refusing to write {rel!r}: it resolves outside the scratch dir")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+
+
+def find_escapes(work: Path) -> list[str]:
+    """Symlinks and nested `.git` entries anywhere under `work` (none may survive a run)."""
+    found = []
+    for dirpath, dirnames, filenames in os.walk(work, followlinks=False):
+        for name in dirnames + filenames:
+            path = Path(dirpath) / name
+            rel = path.relative_to(work).as_posix()
+            if path.is_symlink():
+                found.append(f"{rel} is a symlink")
+            elif name == ".git":
+                found.append(f"{rel} is a nested git repository")
+        dirnames[:] = [d for d in dirnames if d != ".git" and not (Path(dirpath) / d).is_symlink()]
+    return found
+
+
+def harness_flags(changes: Iterable[tuple[str, str]]) -> tuple[str, ...]:
+    """Flag a change to test config, an existing test, or the held-out verify scripts."""
+    flags = []
+    for status, path in changes:
+        parts = PurePosixPath(path).parts
+        name = parts[-1]
+        word = _STATUS.get(status[:1], status)
+        is_test = "tests" in parts[:-1] or name.startswith("test_") or name.endswith("_test.py")
+        if parts[0] == HOLDOUT_DIR:
+            flags.append(f"verify_scripts: {path} ({word})")
+        elif name in _PYTEST_CONFIG:
+            flags.append(f"test_harness: {path} ({word})")
+        elif is_test and status[:1] != "A":
+            flags.append(f"existing_test: {path} ({word})")
+    return tuple(flags)
 
 
 # --- the scratch repo ---------------------------------------------------------------------
@@ -159,18 +240,20 @@ class ScratchRepo:
         self.base = ""
 
     @classmethod
-    def create(cls, root: Path, files: Mapping[str, bytes]) -> ScratchRepo:
-        """Unpack the `device/` part of a code package and commit it as the base."""
+    def create(
+        cls, root: Path, files: Mapping[str, bytes], exclude: Iterable[str] = ()
+    ) -> ScratchRepo:
+        """Unpack the `device/` part of a code package (minus `exclude` top-level dirs) and
+        commit it as the base."""
         repo = cls(root)
         repo.work.mkdir(parents=True)
+        skip = set(exclude)
         written = 0
         for name, data in files.items():
             rel = device_relative(name)
-            if rel is None:
+            if rel is None or PurePosixPath(rel).parts[0] in skip:
                 continue
-            path = repo.work / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
+            safe_write(repo.work, rel, data)
             written += 1
         if written == 0:
             raise CoderError(f"the code package has no files under {CODE_ROOT}/")
@@ -201,6 +284,13 @@ class ScratchRepo:
         self.git("add", "-A")
         return self.git("diff", "--cached", "--no-color", "--no-ext-diff", self.base)
 
+    def changes(self) -> list[tuple[str, str]]:
+        """(status letter, path) for each file changed since the base."""
+        self.git("add", "-A")
+        out = self.git("diff", "--cached", "--name-status", "--no-renames", "-z", self.base)
+        fields = out.split("\0")
+        return [(fields[i], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
+
     def apply(self, patch: str) -> str | None:
         """Apply a unified diff to the work tree. Returns None, or why it doesn't apply."""
         try:
@@ -208,14 +298,6 @@ class ScratchRepo:
         except CoderError as exc:
             return str(exc)
         return None
-
-
-def device_relative(name: str) -> str | None:
-    """`device/a/b.py` -> `a/b.py`; None for anything outside `device/` or unsafe."""
-    parts = PurePosixPath(name.removeprefix("./")).parts
-    if len(parts) < 2 or parts[0] != CODE_ROOT or ".." in parts:
-        return None
-    return str(PurePosixPath(*parts[1:]))
 
 
 # --- the sandbox container ----------------------------------------------------------------
@@ -234,6 +316,10 @@ class SandboxRun:
     def agent(self) -> dict[str, Any]:
         return (self.result or {}).get("agent") or {}
 
+    @property
+    def verify(self) -> dict[str, Any]:
+        return (self.result or {}).get("verify") or {}
+
 
 @dataclass
 class Sandbox:
@@ -243,6 +329,7 @@ class Sandbox:
     runner: Runner = subprocess_runner
     docker: str = "docker"
     memory: str = "2g"
+    cpus: str = "2"
     pids_limit: int = 512
 
     def run(
@@ -260,7 +347,8 @@ class Sandbox:
             self.docker, "run", "--rm", "-i", "--name", name,
             "--network", network,
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-            "--memory", self.memory, "--pids-limit", str(self.pids_limit),
+            "--memory", self.memory, "--memory-swap", self.memory, "--cpus", self.cpus,
+            "--pids-limit", str(self.pids_limit),
             "-v", f"{work.resolve()}:{WORKDIR}",
         ]  # fmt: skip
         if hasattr(os, "getuid"):  # files the agent writes stay owned by the host user
@@ -306,9 +394,19 @@ def build_task_prompt(patch: str, incident: Mapping[str, Any], code_rev: str) ->
         "read any SPEC.md first, keep the intended behaviour, remove dead code rather than "
         "commenting it out, and add a regression test next to the existing tests that "
         f"fails without your fix. Run the tests (`{DEFAULT_TEST_CMD}`) and make them pass. "
-        "Don't weaken or delete existing tests. Delete any scratch scripts you made, so only "
-        "the fix and its test remain."
+        "Don't weaken or delete existing tests or change the test configuration. Don't create "
+        "symlinks. Delete any scratch scripts you made, so only the fix and its test remain."
     )
+
+
+@dataclass(frozen=True)
+class _Inspection:
+    """What the host found in the work dir after the agent ran."""
+
+    diff: str
+    changes: list[tuple[str, str]]
+    escapes: list[str]
+    error: str = ""
 
 
 @dataclass
@@ -346,7 +444,7 @@ class LocalAgent:
             "CODER_MAX_TOKENS": str(self.max_tokens),
         }
         with tempfile.TemporaryDirectory(prefix="romulus-coder-", dir=self.scratch_dir) as tmp:
-            repo = ScratchRepo.create(Path(tmp), files)
+            repo = ScratchRepo.create(Path(tmp), files, exclude=[HOLDOUT_DIR])
             run = self.sandbox.run(
                 repo.work,
                 "agent",
@@ -356,18 +454,24 @@ class LocalAgent:
                 timeout_s=self.time_limit_s + self.test_timeout_s + 60,
                 network="bridge",
             )
-            diff = repo.diff()
-        return self._to_draft(run, diff, incident, code_rev)
+            escapes = find_escapes(repo.work)
+            try:
+                found = _Inspection(repo.diff(), repo.changes(), escapes)
+            except CoderError as exc:  # e.g. a nested repo git can't add
+                found = _Inspection("", [], escapes, error=str(exc))
+        return self._to_draft(run, found, incident, code_rev)
 
     def _to_draft(
-        self, run: SandboxRun, diff: str, incident: Mapping[str, Any], code_rev: str
+        self, run: SandboxRun, found: _Inspection, incident: Mapping[str, Any], code_rev: str
     ) -> CodeDraft:
         secrets = [self.api_key]
-        agent, tests = run.agent, run.tests
+        agent, tests, diff = run.agent, run.tests, found.diff
+        failures: list[str] = []
         notes = [f"local_agent on {code_rev} for incident {incident.get('id', 'unknown')}"]
+        notes.append("verify/ held out of the agent's copy (the replay runs it)")
         if run.result is None:
             why = "timed out" if run.proc.timed_out else f"exited {run.proc.returncode}"
-            notes.append(
+            failures.append(
                 f"sandbox {why} without a result; stderr tail: {run.proc.stderr.strip()[-400:]!r}"
             )
         if agent:
@@ -388,27 +492,38 @@ class LocalAgent:
         if tests:
             state = "timed out" if tests.get("timed_out") else f"exit {tests.get('exit_code')}"
             notes.append(f"tests `{tests.get('cmd', self.test_cmd)}`: {state}")
+            if tests.get("timed_out") or tests.get("exit_code") != 0:
+                failures.append("the device tests did not pass")
+        if found.error:
+            failures.append(f"could not collect the diff: {found.error}")
+        failures += [f"work dir: {e}" for e in found.escapes]
         if diff.strip():
             summary = summarize_code_patch(diff)
             notes.append(f"diff touches {', '.join(summary.paths) or 'nothing readable'}")
-            notes += [f"diff problem: {p}" for p in summary.problems]
-        else:
-            notes.append("the agent changed nothing")
-        passed = (
-            run.result is not None
-            and not run.proc.timed_out
-            and not tests.get("timed_out")
-            and tests.get("exit_code") == 0
-            and bool(diff.strip())
-        )
+            failures += [f"diff problem: {p}" for p in summary.problems]
+        elif not found.error:
+            failures.append("the agent changed nothing")
+        flags = harness_flags(found.changes)
+        if flags:
+            notes.append("flagged for review: " + "; ".join(flags))
+        everything = run.proc.stdout + run.proc.stderr + diff
+        if any(s and s in everything for s in secrets):
+            failures.append(
+                "the LLM key appeared in the agent's output or diff (redacted); rotate it"
+            )
+        passed = not failures
         test_output = tests.get("output")
         if test_output is None:
             test_output = "(tests did not run: the sandbox returned no result)"
+        if failures:
+            notes.append("FAILED: " + "; ".join(failures))
+        notes.append("advisory only: the gate decides on the replay")
         return CodeDraft(
-            diff=diff,
+            diff=redact(diff, secrets),
             test_output=redact(test_output, secrets),
             passed=passed,
             notes=redact("; ".join(notes) + ".", secrets),
+            flags=tuple(redact(f, secrets) for f in flags),
         )
 
 

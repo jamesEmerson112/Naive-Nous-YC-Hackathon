@@ -12,6 +12,7 @@ from romulus_cloud.adapters.coder import (
     build_coder,
     build_task_prompt,
     device_relative,
+    safe_write,
 )
 from romulus_contracts.codepatch import summarize_code_patch
 
@@ -87,31 +88,77 @@ def test_good_agent_run_returns_a_clean_diff_that_passes():
     assert "tests `python -m pytest -q`: exit 0" in draft.notes
 
 
-def test_agent_never_sees_git_metadata():
+def test_agent_never_sees_git_metadata_or_the_verify_scripts():
     docker = fakes.FakeDocker(agent=fakes.fix_like_a_careful_engineer)
-    make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
+    draft = make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
     assert docker.saw_git_in_work is False
+    assert docker.saw_verify_in_work is False
+    assert "verify/ held out" in draft.notes
+    assert "advisory only" in draft.notes
 
 
 def test_failing_tests_mean_not_passed():
-    def blunt_and_wrong(work: Path) -> None:  # touches a file but leaves the bug
-        (work / "control" / "gripper.py").write_text(
-            (work / "control" / "gripper.py").read_text() + "\n# looked at it\n"
+    def breaks_idle(work: Path) -> None:
+        gripper = work / "control" / "gripper.py"
+        gripper.write_text(
+            gripper.read_text().replace('return "IDLE", "open"', 'return "IDLE", "x"')
         )
 
-    docker = fakes.FakeDocker(agent=blunt_and_wrong)
+    docker = fakes.FakeDocker(agent=breaks_idle)
     draft = make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
     assert draft.passed is False
-    assert "test_hand_near_while_holding_keeps_the_gripper_closed" in draft.test_output
-    assert "exit 1" in draft.notes
+    assert "test_idle_stays_open_until_a_grasp" in draft.test_output
+    assert "exit 1" in draft.notes and "the device tests did not pass" in draft.notes
 
 
 def test_no_change_is_not_a_pass_even_if_tests_pass():
-    files = fakes.toy_files()
-    del files["device/tests/test_verify_d1.py"]  # the suite now passes on the bug
-    draft = make_agent(fakes.FakeDocker()).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", files)
+    draft = make_agent(fakes.FakeDocker()).draft(
+        fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files()
+    )
     assert draft.passed is False and draft.diff == ""
     assert "the agent changed nothing" in draft.notes
+
+
+def test_a_symlink_left_in_work_fails_the_draft():
+    def plants_a_link(work: Path) -> None:
+        fakes.fix_like_a_careful_engineer(work)
+        (work / "evil_link").symlink_to("/etc/passwd")
+
+    draft = make_agent(fakes.FakeDocker(agent=plants_a_link)).draft(
+        fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files()
+    )
+    assert draft.passed is False
+    assert "evil_link is a symlink" in draft.notes
+    assert "symlink (mode 120000)" in draft.notes  # the diff check catches it too
+
+
+def test_a_nested_repo_fails_the_draft():
+    def plants_a_repo(work: Path) -> None:
+        fakes.fix_like_a_careful_engineer(work)
+        (work / "sub" / ".git").mkdir(parents=True)
+        (work / "sub" / ".git" / "config").write_text("[core]\n\tfsmonitor = touch /tmp/pwned\n")
+
+    draft = make_agent(fakes.FakeDocker(agent=plants_a_repo)).draft(
+        fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files()
+    )
+    assert draft.passed is False
+    assert "sub/.git is a nested git repository" in draft.notes
+
+
+def test_touching_test_config_or_existing_tests_is_flagged():
+    def games_the_suite(work: Path) -> None:
+        fakes.fix_like_a_careful_engineer(work)
+        (work / "conftest.py").write_text('collect_ignore_glob = ["tests/test_g*"]\n')
+        test = work / "tests" / "test_gripper.py"
+        test.write_text(test.read_text() + "\n# weakened\n")
+
+    draft = make_agent(fakes.FakeDocker(agent=games_the_suite)).draft(
+        fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files()
+    )
+    assert "test_harness: conftest.py (added)" in draft.flags
+    assert "existing_test: tests/test_gripper.py (modified)" in draft.flags
+    assert not any("test_regression_d1" in f for f in draft.flags)  # new tests are welcome
+    assert "flagged for review" in draft.notes
 
 
 def test_timeout_kills_the_container_and_fails():
@@ -137,6 +184,7 @@ def test_sandbox_argv_mounts_only_work_and_keeps_the_key_out_of_argv():
     assert argv.count("-v") == 1 and argv[argv.index("-v") + 1].endswith(":/work")
     assert argv[argv.index("--network") + 1] == "bridge"
     assert "ALL" == argv[argv.index("--cap-drop") + 1]
+    assert argv[argv.index("--cpus") + 1] == "2" and argv[argv.index("--memory") + 1] == "2g"
     assert argv[-2:] == ["romulus-coder:test", "agent"]
     assert KEY not in " ".join(argv)
     assert "LLM_API_KEY" in argv  # passed by name; the value comes from the env
@@ -157,6 +205,34 @@ def test_secrets_never_reach_notes_or_test_output():
     draft = make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
     assert KEY not in draft.notes and KEY not in draft.test_output and KEY not in draft.diff
     assert "[redacted]" in draft.notes and "[redacted]" in draft.test_output
+    assert draft.passed is False and "the LLM key appeared" in draft.notes
+
+
+def test_a_key_written_into_the_code_is_redacted_from_the_diff_and_fails():
+    def exfiltrates(work: Path) -> None:
+        fakes.fix_like_a_careful_engineer(work)
+        (work / "control" / "notes.py").write_text(f'KEY = "{KEY}"\n')
+
+    draft = make_agent(fakes.FakeDocker(agent=exfiltrates)).draft(
+        fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files()
+    )
+    assert KEY not in draft.diff and "[redacted]" in draft.diff
+    assert KEY not in draft.notes + draft.test_output + "".join(draft.flags)
+    assert draft.passed is False and "the LLM key appeared" in draft.notes
+
+
+def test_safe_write_refuses_symlinks_and_escapes(tmp_path):
+    root, outside = tmp_path / "work", tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "vdir").symlink_to(outside)
+    (root / "f.py").symlink_to(outside / "target.py")
+    for rel in ("vdir/test_v.py", "f.py", "../x.py", "/abs.py"):
+        with pytest.raises(CoderError, match="refusing to write"):
+            safe_write(root, rel, b"x")
+    assert list(outside.iterdir()) == []
+    safe_write(root, "ok/new.py", b"fine")
+    assert (root / "ok" / "new.py").read_bytes() == b"fine"
 
 
 def test_bad_inputs_raise_coder_error():

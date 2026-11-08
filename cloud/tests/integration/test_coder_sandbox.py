@@ -13,6 +13,7 @@ settings variable before each test (so ordinary tests can never call out).
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -38,10 +39,55 @@ def sandbox() -> Sandbox:
     return Sandbox(image=IMAGE, runner=subprocess_runner)
 
 
+CONFTEST_SKIP = (
+    "diff --git a/conftest.py b/conftest.py\nnew file mode 100644\n--- /dev/null\n"
+    '+++ b/conftest.py\n@@ -0,0 +1 @@\n+collect_ignore_glob = ["verify/*"]\n'
+)
+
+
+def test_agent_mode_hides_the_key_and_gives_up_fast(sandbox, tmp_path):
+    """No LLM needed: the endpoint is unreachable (--network none). The test command runs
+    as a child of the entrypoint, as the agent's commands do, and tries to read the key."""
+    work = tmp_path / "work"
+    work.mkdir()
+    key = "sk-integration-FAKE-0123456789"
+    probe = "cat /proc/1/environ; echo; cat /proc/1/mem; env; echo probe-done"
+    started = time.monotonic()
+    run = sandbox.run(
+        work,
+        "agent",
+        env={
+            "LLM_BASE_URL": "http://10.255.255.1:9/v1",
+            "LLM_MODEL": "none",
+            "LLM_API_KEY": key,
+            "CODER_TEST_CMD": probe,
+            "CODER_TIME_LIMIT_S": "20",
+            "CODER_LLM_TIMEOUT_S": "5",
+        },
+        stdin="say hi",
+        timeout_s=240,
+        network="none",
+    )
+    elapsed = time.monotonic() - started
+    output = run.tests.get("output", "")
+    print(f"{elapsed:.0f} s; agent: {run.agent}; probe output:\n{output}")
+    assert "probe-done" in output and "Permission denied" in output
+    assert key not in run.proc.stdout + run.proc.stderr
+    assert run.agent.get("exit_status") not in ("", "Submitted", "SandboxError")
+    assert elapsed < 120  # the retry cap and request timeout end the run
+
+
 def test_sandbox_replays_the_device_patch(sandbox):
     result = replay_code_patch(fakes.toy_files(), fakes.TOY_PATCH, sandbox=sandbox)
     print(result.summary())
-    assert result.caught_fault and result.passed, (result.base.output, result.patched)
+    assert result.caught_fault and result.passed, result.summary()
+    assert result.expected_verify == 2
+
+
+def test_real_image_is_not_fooled_by_a_conftest_skip(sandbox):
+    result = replay_code_patch(fakes.toy_files(), CONFTEST_SKIP, sandbox=sandbox)
+    print(result.summary())
+    assert not result.passed and "test_harness: conftest.py (added)" in result.flags
 
 
 @pytest.mark.skipif(not (LLM["LLM_BASE_URL"] and LLM["LLM_MODEL"]), reason="needs LLM_* env")
@@ -68,8 +114,7 @@ def test_real_agent_fixes_the_toy_device(sandbox):
         assert LLM["LLM_API_KEY"] not in draft.notes + draft.test_output + draft.diff
     assert draft.passed, draft.notes
 
-    # The agent's diff must also pass a fresh, offline replay with the original verify test.
-    verify = {"tests/test_verify_d1.py": (fakes.TOY / "tests" / "test_verify_d1.py").read_bytes()}
-    replay = replay_code_patch(fakes.toy_files(), draft.diff, sandbox=sandbox, extra_files=verify)
+    # What the gate trusts: a fresh, offline replay with the held-out verify scripts.
+    replay = replay_code_patch(fakes.toy_files(), draft.diff, sandbox=sandbox)
     print("--- replay\n" + replay.summary())
-    assert replay.passed
+    assert replay.caught_fault and replay.passed
