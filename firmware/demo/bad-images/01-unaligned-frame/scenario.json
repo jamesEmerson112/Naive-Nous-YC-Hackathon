@@ -1,0 +1,11 @@
+{
+  "version": "v1.1",
+  "date": "2026-11-02T14:10:00+00:00",
+  "commit": "frame: pack fields with direct stores (faster than byte shifts)",
+  "title": "HardFault crash loop from unaligned stores (Cortex-M0)",
+  "trigger": {
+    "kind": "none",
+    "how": "Crashes by itself ~1 s after boot, at the first radio frame. After 3 crashes the firmware enters safe mode."
+  },
+  "name": "01-unaligned-frame"
+}

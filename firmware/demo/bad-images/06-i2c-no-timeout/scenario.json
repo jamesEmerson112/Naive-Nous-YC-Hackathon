@@ -1,0 +1,15 @@
+{
+  "version": "v1.6",
+  "date": "2026-11-06T17:40:00+00:00",
+  "commit": "i2c: simplify flag waits (sensor is soldered on in production)",
+  "title": "Sensor unplugged -> I2C wait without timeout -> watchdog reset loop -> safe mode",
+  "trigger": {
+    "kind": "physical_or_inject",
+    "commands": [
+      "inject acc_gone"
+    ],
+    "after_s": 5,
+    "how": "Physically: pull the LIS3DH SDA wire (D4/A4) or its VIN. Or inject acc_gone (firmware talks to a wrong I2C address, as if the sensor were gone; persists across resets until 'scenario reset')."
+  },
+  "name": "06-i2c-no-timeout"
+}

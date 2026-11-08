@@ -1,0 +1,26 @@
+diff --git a/src/main.c b/src/main.c
+index df35cb0..db8ec1b 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -45,9 +45,7 @@ void SysTick_Handler(void)
+     g_uptime_ms++;
+ }
+ 
+-/* 8 MHz HSI -> /2 -> PLL x12 -> 48 MHz. HSI/PREDIV is used rather than the
+- * fixed HSI/2 source because CMSIS's SystemCoreClockUpdate() misreads HSI/2 on
+- * the F042 and reports 96 MHz (measured on this board; see the hello project). */
++/* 8 MHz HSI -> /2 -> PLL x12 -> 48 MHz, using the PLL's fixed HSI/2 input. */
+ static void clock_init(void)
+ {
+     if ((RCC->CFGR & RCC_CFGR_SWS) == RCC_CFGR_SWS_PLL) {
+@@ -58,9 +56,8 @@ static void clock_init(void)
+     while (RCC->CR & RCC_CR_PLLRDY) {}
+ 
+     FLASH->ACR = FLASH_ACR_PRFTBE | FLASH_ACR_LATENCY;
+-    RCC->CFGR2 = RCC_CFGR2_PREDIV_DIV2;
+     RCC->CFGR = (RCC->CFGR & ~(RCC_CFGR_PLLSRC | RCC_CFGR_PLLMUL | RCC_CFGR_HPRE | RCC_CFGR_PPRE))
+-              | RCC_CFGR_PLLSRC_HSI_PREDIV | RCC_CFGR_PLLMUL12;
++              | RCC_CFGR_PLLSRC_HSI_DIV2 | RCC_CFGR_PLLMUL12;
+     RCC->CR |= RCC_CR_PLLON;
+     while (!(RCC->CR & RCC_CR_PLLRDY)) {}
+     RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_PLL;

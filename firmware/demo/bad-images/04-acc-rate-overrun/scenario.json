@@ -1,0 +1,11 @@
+{
+  "version": "v1.4",
+  "date": "2026-11-05T11:20:00+00:00",
+  "commit": "acc: stream at 400 Hz for vibration analysis",
+  "title": "Telemetry exceeds the UART byte budget: lines dropped",
+  "trigger": {
+    "kind": "none",
+    "how": "Broken from boot: ~19 kB/s of accelerometer lines into an 11.5 kB/s link."
+  },
+  "name": "04-acc-rate-overrun"
+}

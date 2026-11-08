@@ -1,0 +1,11 @@
+{
+  "version": "v1.2",
+  "date": "2026-11-03T09:30:00+00:00",
+  "commit": "clock: use the fixed HSI/2 PLL input; PREDIV setup not needed",
+  "title": "Wrong clock assumption: UART at half baud (garbled), time and distances halved",
+  "trigger": {
+    "kind": "none",
+    "how": "Broken from boot: serial output is garbage at 115200 baud."
+  },
+  "name": "02-clock-hsi2"
+}

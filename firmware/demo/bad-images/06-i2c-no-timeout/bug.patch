@@ -1,0 +1,27 @@
+diff --git a/src/i2c.c b/src/i2c.c
+index 89305c4..ce91735 100644
+--- a/src/i2c.c
++++ b/src/i2c.c
+@@ -100,18 +100,12 @@ static int fail(int err)
+     return err;
+ }
+ 
+-/* Wait for an ISR flag, giving up on NACK, bus error, arbitration loss or timeout. */
++/* Wait for an ISR flag. The sensor is soldered to the board in production,
++ * so the error checks were dropped to keep the hot path short. */
+ static int wait_isr(uint32_t flag)
+ {
+-    uint32_t t0 = g_uptime_ms;
+-    for (;;) {
+-        uint32_t isr = I2C1->ISR;
+-        if (isr & flag)           return I2C_OK;
+-        if (isr & I2C_ISR_NACKF)  return I2C_ERR_NACK;
+-        if (isr & I2C_ISR_BERR)   return I2C_ERR_BUS;
+-        if (isr & I2C_ISR_ARLO)   return I2C_ERR_ARLO;
+-        if (g_uptime_ms - t0 > I2C_TIMEOUT_MS) return I2C_ERR_TIMEOUT;
+-    }
++    while (!(I2C1->ISR & flag)) {}
++    return I2C_OK;
+ }
+ 
+ static int finish(void)

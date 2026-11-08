@@ -1,0 +1,713 @@
+[
+  {
+    "name": "system_info",
+    "description": "Static description of the system: hardware, wiring, telemetry line format, firmware commands, self-diagnostics, how builds/flashing/rollback work, and the rules for changing code. Read this first.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "status",
+    "description": "One-call overview: serial link state, last boot event, latest health record, open incidents, what is deployed, and the source workspace state.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "triage",
+    "description": "Run all deterministic triage rules on the last few seconds of telemetry now. Returns findings with severity, evidence, hypotheses and suggested next tool calls. Start every investigation here.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "incidents",
+    "description": "Incidents recorded by podd's background triage (opened when a rule fires, resolved after it stays quiet for 10 s).",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "include_resolved": {
+          "type": "boolean",
+          "default": false
+        },
+        "minutes": {
+          "type": "number",
+          "default": 60,
+          "description": "how far back for resolved ones"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "telemetry_stats",
+    "description": "Summary statistics of recent telemetry: accelerometer (rate, per-axis mean/std/min/max, |a| magnitude, stale count, MCU time gaps), distance (rate, status counts, mm stats), latest health record, latest decoded radio frame, recent events, link byte rate.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "seconds": {
+          "type": "number",
+          "default": 10
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "telemetry_recent",
+    "description": "Recent records of one line type from podd's memory. kind: A (accel), D (distance), H (health), E (events, incl. host events), F (radio frames), R (command responses), '#' (comments), raw (every raw line as received, including garbage).",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "A",
+            "D",
+            "H",
+            "E",
+            "F",
+            "R",
+            "#",
+            "raw"
+          ]
+        },
+        "seconds": {
+          "type": "number",
+          "default": 10
+        },
+        "limit": {
+          "type": "integer",
+          "default": 40
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    }
+  },
+  {
+    "name": "events",
+    "description": "Event history from the durable log (survives podd restarts): firmware E lines (boot, crash, watchdog_reset, safe_mode, acc_err, acc_cfg_lost, acc_init), host events (flash_start, baud_changed, incident_open, agent_note, ...). Filter by event names.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "minutes": {
+          "type": "number",
+          "default": 30
+        },
+        "kinds": {
+          "type": "string",
+          "description": "comma-separated ev names, e.g. 'boot,crash'"
+        },
+        "limit": {
+          "type": "integer",
+          "default": 60
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "log_search",
+    "description": "Regex search over a log file, newest last. logs: events, health, telemetry, incidents, serial (raw lines as received, with host timestamps), audit (tool calls).",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string"
+        },
+        "log": {
+          "type": "string",
+          "default": "events",
+          "enum": [
+            "events",
+            "health",
+            "telemetry",
+            "incidents",
+            "serial",
+            "audit"
+          ]
+        },
+        "minutes": {
+          "type": "number",
+          "default": 60
+        },
+        "limit": {
+          "type": "integer",
+          "default": 50
+        }
+      },
+      "required": [
+        "pattern"
+      ]
+    }
+  },
+  {
+    "name": "link_baud_scan",
+    "description": "Listen to the serial port at several baud rates (~1.2 s each) and report which one yields valid telemetry. Use when the link is garbled: a clean result at another baud means the MCU's clock assumption is off by that ratio.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "link_raw_capture",
+    "description": "Capture raw bytes from the serial port for a few seconds, optionally at another baud.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "seconds": {
+          "type": "number",
+          "default": 2
+        },
+        "baud": {
+          "type": "integer"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "link_set_baud",
+    "description": "Make podd listen at a different baud rate (e.g. to read a firmware whose UART runs at the wrong speed). Reset to 115200 after. fw_flash resets it automatically.",
+    "risk": "runtime",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "baud": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "baud"
+      ]
+    }
+  },
+  {
+    "name": "pod_cmd",
+    "description": "Send one command line to the pod firmware and return its R response lines. Read-only commands: help, info, health, stats, crash, acc regs, i2c scan, i2c r <addr> <reg> [n], i2c lines, us check. State-changing (reversible): acc init, acc on|off, i2c recover, i2c w <addr> <reg> <val>, stream a|d|f on|off, rate acc|us <hz>, safe on|off, crash clear, reset. Settings made here are lost on reset. Fault injection ('inject ...') is reserved for the operator.",
+    "risk": "runtime",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "number",
+          "default": 2.0
+        }
+      },
+      "required": [
+        "command"
+      ]
+    }
+  },
+  {
+    "name": "chip_status",
+    "description": "Over SWD (independent of the firmware and its UART): which build is in flash, whether it is in the image registry, whether the CPU is running (uptime counter advancing) and how fast the firmware's millisecond counter runs relative to real time.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "chip_clock",
+    "description": "Over SWD: decode the real clock tree from the RCC registers and compare it with what the firmware believes (SystemCoreClock). Derives the actual UART baud, SysTick period and TIM3 tick.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "chip_halt_sample",
+    "description": "Over SWD: briefly halt the CPU several times and record where it is (pc/lr/sp), symbolized. Shows where a hung or slow firmware spends its time. The CPU resumes after each sample.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "samples": {
+          "type": "integer",
+          "default": 5
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "chip_read",
+    "description": "Over SWD: read memory by address or by global variable name (resolved with the ELF of the build in flash), without halting. E.g. symbol='g_app', 'g_i2c_stats', 'g_uart_stats', 'g_diag', 'SystemCoreClock'.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string",
+          "description": "hex"
+        },
+        "words": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "chip_regs",
+    "description": "Over SWD: dump a peripheral's main registers (hex). peripheral: RCC, GPIOA, GPIOB, I2C1, USART2, TIM3, IWDG, SCB, SYSTICK, DBGMCU",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "peripheral": {
+          "type": "string",
+          "enum": [
+            "RCC",
+            "GPIOA",
+            "GPIOB",
+            "I2C1",
+            "USART2",
+            "TIM3",
+            "IWDG",
+            "SCB",
+            "SYSTICK",
+            "DBGMCU"
+          ]
+        }
+      },
+      "required": [
+        "peripheral"
+      ]
+    }
+  },
+  {
+    "name": "chip_reset",
+    "description": "Over SWD: reset the MCU (works even if the firmware is hung).",
+    "risk": "runtime",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "fw_symbolize",
+    "description": "Map a code address (crash pc/lr, halt sample) to function, source file:line (including inlined frames), the surrounding source lines from that build's own source snapshot, and disassembly. For lr pass it as-is; the Thumb bit is handled and the call site is the instruction before it.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": "string",
+          "description": "hex, e.g. 0x08002B9A"
+        },
+        "image": {
+          "type": "string",
+          "default": "chip",
+          "description": "build crc (crash build_crc), 'chip' (what's in flash), 'deployed', 'known-good'"
+        },
+        "is_return_address": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "address"
+      ]
+    }
+  },
+  {
+    "name": "fw_images",
+    "description": "List firmware images in the registry (crc, build ID, version, status, origin) and recent deployments.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "fw_mark",
+    "description": "Set an image's status: candidate, known-good or bad (with a note).",
+    "risk": "runtime",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "candidate",
+            "known-good",
+            "bad"
+          ]
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "image",
+        "status"
+      ]
+    }
+  },
+  {
+    "name": "src_status",
+    "description": "Workspace state: current revision (git describe), branch, uncommitted changes.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "src_list",
+    "description": "List files in the firmware source workspace with line counts.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "default": "."
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "src_read",
+    "description": "Read a source file with line numbers (optionally a line range).",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "start": {
+          "type": "integer"
+        },
+        "end": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ]
+    }
+  },
+  {
+    "name": "src_search",
+    "description": "Search the source with an extended regex (git grep). Returns path, line, text.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "ignore_case": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "pattern"
+      ]
+    }
+  },
+  {
+    "name": "src_log",
+    "description": "Commit history of the firmware source (tags mark releases; v1.0 is the known-good baseline).",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "default": 15
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "src_show",
+    "description": "Show one commit (message + patch, or just the file stats).",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "rev": {
+          "type": "string"
+        },
+        "stat_only": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "rev"
+      ]
+    }
+  },
+  {
+    "name": "src_diff",
+    "description": "git diff. No revs: all uncommitted changes (vs HEAD). One rev: that rev vs working tree. Two: between them. E.g. rev_a='v1.0' rev_b='HEAD' shows everything changed since the known-good release.",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "rev_a": {
+          "type": "string"
+        },
+        "rev_b": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "stat": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "src_edit",
+    "description": "Replace an exact text snippet in a source file (must match exactly once unless replace_all). Returns the resulting diff. Code changes are a last resort: see the rules in system_info.",
+    "risk": "code",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "old": {
+          "type": "string"
+        },
+        "new": {
+          "type": "string"
+        },
+        "replace_all": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "path",
+        "old",
+        "new"
+      ]
+    }
+  },
+  {
+    "name": "src_write",
+    "description": "Create or overwrite a whole file in the workspace.",
+    "risk": "code",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "content"
+      ]
+    }
+  },
+  {
+    "name": "src_revert",
+    "description": "Discard uncommitted changes (one file, or everything).",
+    "risk": "code",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "src_restore",
+    "description": "Make the working tree match an older revision (e.g. 'v1.0'); commit afterwards to keep it.",
+    "risk": "code",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "rev": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rev"
+      ]
+    }
+  },
+  {
+    "name": "src_commit",
+    "description": "Commit all workspace changes with a message (explain the fault and the fix).",
+    "risk": "code",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ]
+    }
+  },
+  {
+    "name": "fw_build",
+    "description": "Compile the workspace firmware. On success the image is archived in the registry as a candidate (with its source diff) and its crc is returned for fw_flash. Returns warnings/errors and flash/RAM use. Does not touch the device.",
+    "risk": "code",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "clean": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "fw_flash",
+    "description": "Write an image to the device and verify it: backs up the current flash, programs and verifies the image, checks the build ID over SWD, waits for its boot line, then watches telemetry for watch_seconds (no reboots/crashes, health flowing, normal mode). On failure it marks the image bad and, if auto_rollback, re-flashes what was running before (or the known-good image). Also returns a triage run at the end, so functional problems that don't crash are visible.",
+    "risk": "flash",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "crc from fw_build/fw_images, 'known-good', 'latest'"
+        },
+        "watch_seconds": {
+          "type": "number",
+          "default": 15
+        },
+        "auto_rollback": {
+          "type": "boolean",
+          "default": true
+        },
+        "reason": {
+          "type": "string",
+          "description": "why this flash (logged)"
+        }
+      },
+      "required": [
+        "image"
+      ]
+    }
+  },
+  {
+    "name": "fw_rollback",
+    "description": "Flash the known-good image (or another image) back, with the same verification as fw_flash.",
+    "risk": "flash",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "default": "known-good"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "notify_human",
+    "description": "Ask a person to do something only a person can (reseat a wire, power-cycle, replace a part) or report an incident. Recorded in var/notifications.jsonl and the event log.",
+    "risk": "notify",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "actions": {
+          "type": "string",
+          "description": "specific instructions"
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warn",
+            "critical"
+          ],
+          "default": "warn"
+        }
+      },
+      "required": [
+        "summary"
+      ]
+    }
+  },
+  {
+    "name": "note",
+    "description": "Record a hypothesis, decision or conclusion in the event log (for the incident report).",
+    "risk": "read",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  }
+]
