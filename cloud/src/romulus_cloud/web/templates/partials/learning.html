@@ -3,11 +3,12 @@
    from 5 m: who acted and the measured end state, the four stages, the lesson (the largest
    text), the probe's number (second largest), the routing, then the fleet's own data. Every
    status carries a word or a mark, never colour alone. #}
+{% from "partials/ui.html" import icon %}
 {% set h = v.head %}
 {% set d = v.data %}
 {% set n = v.numbers %}
 {% macro rec_tag() %}{% if h.recorded %}<span class="tc-rec-tag" title="{{ h.badge }}">recorded</span>{% endif %}{% endmacro %}
-{% macro sim_tag() %}{% if d.sim_fleet %}<span class="lr-sim" title="{{ d.fleet_line }}">SIM</span>{% endif %}{% endmacro %}
+{% macro sim_tag() %}{% if d.sim_fleet %}<span class="lr-sim" title="{{ d.fleet_line }}">sim fleet</span>{% endif %}{% endmacro %}
 
 <div class="tc lr lr-{{ v.state }}">
 
@@ -47,26 +48,32 @@
 
   <ol class="tc-stages" aria-label="Story">
     {% for s in v.stages %}
-    <li class="st-{{ s.state }}"><span class="tc-st-mark" aria-hidden="true">{% if s.state == 'done' %}✓{% elif s.state == 'failed' %}✕{% endif %}</span><span class="tc-st-label">{{ s.label }}</span>{% if s.state == 'active' %}<span class="tc-st-now">now</span>{% elif s.state == 'failed' %}<span class="tc-st-off">failed</span>{% endif %}<span class="sr-only"> ({{ s.state }})</span></li>
+    {# Staged: the live station waits on a person (its engineer), so it's sun, not sky #}
+    <li class="st-{{ s.state }}{% if s.state == 'active' and v.state == 'staged' %} is-you{% endif %}"><span class="tc-st-mark" aria-hidden="true">{% if s.state == 'done' %}{{ icon('check') }}{% elif s.state == 'failed' %}{{ icon('x') }}{% endif %}</span><span class="tc-st-label">{{ s.label }}</span>{% if s.state == 'active' %}<span class="tc-st-now">now</span>{% elif s.state == 'failed' %}<span class="tc-st-off">failed</span>{% endif %}<span class="sr-only"> ({{ s.state }})</span></li>
     {% endfor %}
   </ol>
 
   <section class="tc-verdict lr-verdict{% if v.state == 'reviewing' %} is-working{% elif v.state in ('rejected', 'rolled_back', 'stopped') %} is-bad{% endif %}" aria-live="polite">
-    <p class="tc-kicker">{{ 'Lesson' if v.verdict else 'Fleet learning' }}{{ rec_tag() }}{{ sim_tag() }}
-      {% if v.state == 'staged' %}<span class="chip chip-warn">● staged, not shipped</span>{% endif %}
-      {% if v.state == 'promoted' %}<span class="chip chip-good">✓ promoted by the gate</span>{% endif %}
-      {% if v.state == 'canary' %}<span class="chip chip-wait">● on the canary</span>{% endif %}
-      {% if v.state == 'rejected' %}<span class="chip chip-bad">✕ rejected by the checks</span>{% endif %}
-      {% if v.state == 'rolled_back' %}<span class="chip chip-bad">✕ rolled back</span>{% endif %}
+    {# The meta goes after the heading, never above it (DESIGN.md: no kickers) #}
+    {% macro meta() %}{% if v.state != 'empty' %}
+    <p class="lr-meta">{% if v.verdict %}<span>Lesson</span>{% endif %}{{ rec_tag() }}{{ sim_tag() }}
+      {% if v.state == 'staged' %}<span class="chip chip-you">{{ icon('person') }}staged, not shipped</span>{% endif %}
+      {% if v.state == 'promoted' %}<span class="chip chip-good">{{ icon('check') }}promoted by the gate</span>{% endif %}
+      {% if v.state == 'canary' %}<span class="chip chip-wait">{{ icon('auto') }}on the canary</span>{% endif %}
+      {% if v.state == 'rejected' %}<span class="chip chip-bad">{{ icon('x') }}rejected by the checks</span>{% endif %}
+      {% if v.state == 'rolled_back' %}<span class="chip chip-bad">{{ icon('x') }}rolled back</span>{% endif %}
       {% if v.touches_safety %}<span class="safety">touches safety</span>{% endif %}
       {% if v.lane %}<span class="chip">{{ v.lane }}</span>{% endif %}
-      {% if v.published %}<span class="chip chip-good lr-published" title="{{ v.published.slug }} v{{ v.published.version }}">✓ mirrored to Naïve Skills · v{{ v.published.version }}</span>{% endif %}
+      {% if v.published %}<span class="chip chip-good lr-published" title="{{ v.published.slug }} v{{ v.published.version }}">{{ icon('check') }}mirrored to Naïve Skills · v{{ v.published.version }}</span>{% endif %}
     </p>
+    {% endif %}{% endmacro %}
     {% if v.state == 'reviewing' %}
     <h1 class="tc-verdict-text tc-verdict-wait"><span class="tc-shimmer">Reviewing the failure cluster</span><span class="tc-dots" aria-hidden="true"><i></i><i></i><i></i></span></h1>
+    {{ meta() }}
     <p class="tc-why">A Naïve agent session is reading the failed runs. Its typed proposal lands here, then plain code checks it.</p>
     {% elif v.verdict %}
     <h1 class="tc-verdict-text">{{ v.verdict }}</h1>
+    {{ meta() }}
     {% if v.subtitle %}<p class="tc-why">{{ v.subtitle }}</p>{% endif %}
     {% else %}
     <h1 class="tc-verdict-text tc-verdict-wait">No cluster review yet</h1>
@@ -79,7 +86,7 @@
     <p class="lr-route">{% if v.routing %}<b>{{ v.routing }}</b>{% endif %}{% if v.limit_headline %}{% if v.routing %} · {% endif %}limit: {{ v.limit_headline }}{% endif %}</p>
     {% endif %}
     {% if v.failures %}
-    <ul class="lr-fails">{% for f in v.failures %}<li><span aria-hidden="true">✕</span> {{ f }}</li>{% endfor %}</ul>
+    <ul class="lr-fails">{% for f in v.failures %}<li>{{ icon('x') }} {{ f }}</li>{% endfor %}</ul>
     {% endif %}
   </section>
 
@@ -88,7 +95,7 @@
     <span class="lr-roll-h">Rollout</span>
     <ul class="lr-roll">
       {% for c in v.rollout %}
-      <li class="lr-chip is-{{ c.status | replace(' ', '-') }}"><b>{{ c.device }}</b> <span class="lr-mark">{% if c.installed %}✓{% else %}{{ c.status }}{% endif %}</span> <span class="lr-tag">{{ c.tag }}</span><span class="sr-only"> ({{ c.status }})</span></li>
+      <li class="lr-chip is-{{ c.status | replace(' ', '-') }}"><b>{{ c.device }}</b> <span class="lr-mark">{% if c.installed %}{{ icon('check') }}{% else %}{{ c.status }}{% endif %}</span> <span class="lr-tag">{{ c.tag }}</span><span class="sr-only"> ({{ c.status }})</span></li>
       {% endfor %}
     </ul>
   </section>
@@ -96,31 +103,33 @@
 
   <section class="lr-data" aria-labelledby="lr-data-h">
     <h2 id="lr-data-h" class="lr-data-h">The fleet's own data {{ sim_tag() }}<span class="muted">{{ d.fleet_line }} · from {{ d.source }}</span></h2>
+    {# Flat figures on the one card, number first (the Technician figure trio). A step that
+       produced its output is leaf; the label always says what it is. #}
     <ol class="lr-flow" aria-label="Runs to training rows">
-      <li class="kpi"><span class="kpi-n">{{ d.runs_total }}</span><span class="kpi-l">heal runs</span><span class="lr-split">across the fleet</span></li>
-      <li class="lr-arrow" aria-hidden="true">→</li>
-      <li class="kpi kpi-good"><span class="kpi-n">{{ d.labelled }}</span><span class="kpi-l">labelled by a verifier</span><span class="lr-split">{{ d.passed }} pass · {{ d.failed }} fail</span></li>
-      <li class="lr-arrow" aria-hidden="true">→</li>
-      <li class="kpi"><span class="kpi-n">{{ d.regression_cases }}</span><span class="kpi-l">regression tests</span><span class="lr-split">guarding every release</span></li>
-      <li class="lr-arrow" aria-hidden="true">→</li>
-      <li class="kpi"><span class="kpi-n">{{ d.training_rows if d.training_rows is not none else '—' }}</span><span class="kpi-l">training rows</span><span class="lr-split">{{ 'no export yet' if d.training_rows is none else 'completed = verdict' }}</span></li>
+      <li class="lr-step"><span class="lr-step-n">{{ d.runs_total }}</span><span class="lr-step-l">heal runs</span><span class="lr-split">across the fleet</span></li>
+      <li class="lr-arrow" aria-hidden="true">{{ icon('arrow') }}</li>
+      <li class="lr-step{% if d.labelled %} is-done{% endif %}"><span class="lr-step-n">{{ d.labelled }}</span><span class="lr-step-l">labelled by a verifier</span><span class="lr-split">{{ d.passed }} pass · {{ d.failed }} fail</span></li>
+      <li class="lr-arrow" aria-hidden="true">{{ icon('arrow') }}</li>
+      <li class="lr-step{% if d.regression_cases %} is-done{% endif %}"><span class="lr-step-n">{{ d.regression_cases }}</span><span class="lr-step-l">regression tests</span><span class="lr-split">guarding every release</span></li>
+      <li class="lr-arrow" aria-hidden="true">{{ icon('arrow') }}</li>
+      <li class="lr-step{% if d.training_rows %} is-done{% elif d.training_rows is none %} is-none{% endif %}"><span class="lr-step-n">{{ d.training_rows if d.training_rows is not none else '—' }}</span><span class="lr-step-l">training rows</span><span class="lr-split">{{ 'no export yet' if d.training_rows is none else 'completed = verdict' }}</span></li>
     </ol>
     <p class="lr-unlabelled">Not labelled: {{ d.unverified }} unverified (nothing independent checked them) · {{ d.excluded }} excluded (rehearsals, still running). Only a verifier labels, never a model.</p>
     <div class="lr-export">
       {% if d.export %}
-      <a class="lr-dl" href="{{ d.export.download }}" download><span aria-hidden="true">↓</span> {{ d.export.file_label }}</a>
+      <a class="lr-dl" href="{{ d.export.download }}" download>{{ icon('arrow') }}{{ d.export.file_label }}</a>
       <span class="lr-exp-meta">{% if d.export.format == 'trajectories' %}Hermes trajectories · completed = verdict · {% endif %}{% if d.export.redact %}redacted · {% endif %}sha256 <span class="mono">{{ d.export.sha_short }}…</span> · {{ d.dataset.name }} v{{ d.export.n }}</span>
       {% elif d.dataset %}
-      <span class="lr-dl is-off"><span aria-hidden="true">↓</span> no export built yet</span>
+      <span class="lr-dl is-off">no export built yet</span>
       <span class="lr-exp-meta">dataset {{ d.dataset.name }} · {{ d.dataset.versions }} snapshot{{ '' if d.dataset.versions == 1 else 's' }}</span>
       {% else %}
-      <span class="lr-dl is-off"><span aria-hidden="true">↓</span> no training export yet</span>
+      <span class="lr-dl is-off">no training export yet</span>
       <span class="lr-exp-meta">the standing dataset <span class="mono">fleet-runs</span> appears once runs are labelled</span>
       {% endif %}
     </div>
     <div class="lr-next-row">
       <p class="lr-repeat">Repeat rate after a change: <b>{{ '%.0f%%' % (v.repeat_rate * 100) if v.repeat_rate is not none else '—' }}</b></p>
-      <p class="lr-next"><span class="lr-next-tag">NEXT, not built</span> the healer's model trains on this</p>
+      <p class="lr-next"><span class="pill lr-next-tag">Next, not built</span> the healer's model trains on this</p>
     </div>
   </section>
 
@@ -190,7 +199,7 @@
     <p class="tc-ids">
       {% if h.session_id %}Naïve session <span class="mono">{{ h.session_id }}</span> · {% endif %}
       {% if v.origin == 'fixture' %}from a recorded session (fixture), routed by the page until the review service lands{% elif v.origin == 'event' %}from the event log{% else %}no review recorded{% endif %}
-      {% if h.session_id %}<a class="btn-link tc-studio" href="{{ h.studio_url }}" target="_blank" rel="noopener noreferrer">Open in Naïve Studio ↗</a>{% endif %}
+      {% if h.session_id %}<a class="btn-link tc-studio" href="{{ h.studio_url }}" target="_blank" rel="noopener noreferrer">Open in Naïve Studio{{ icon('out') }}</a>{% endif %}
     </p>
   </section>
 
