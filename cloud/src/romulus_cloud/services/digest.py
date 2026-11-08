@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from romulus_cloud.domain.digest import Digest, render_text, summarize
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import ensure_utc
-from romulus_cloud.models import Blob, Event
+from romulus_cloud.models import Blob, Device, Event
 from romulus_cloud.services import overnight
 from romulus_cloud.services.telemetry import GB, size_text
 
@@ -50,6 +50,13 @@ class Report:
     blob_bytes: int
     budget_bytes: int
     overnight_started_at: datetime | None
+    simulated: int = 0
+    real: int = 0
+    """Arms that checked in since the window began, simulated vs real."""
+
+    @property
+    def fleet(self) -> str:
+        return f"{self.simulated} simulated arms + {self.real} real"
 
     def text(self, tz: str | None = None) -> str:
         zone = ZoneInfo(tz) if tz else None
@@ -57,7 +64,7 @@ class Report:
             f"Blob store: {size_text(self.blob_bytes)} of a {size_text(self.budget_bytes)} "
             f"budget ({'under' if self.blob_bytes <= self.budget_bytes else 'OVER'})"
         )
-        return render_text(self.digest, zone, self.now) + storage + "\n"
+        return render_text(self.digest, zone, self.now, self.fleet) + storage + "\n"
 
     def to_dict(self) -> dict[str, Any]:
         d = self.digest
@@ -96,6 +103,7 @@ class Report:
                 for w in d.waiting_for_person
             ],
             "storage": {"blob_bytes": self.blob_bytes, "budget_bytes": self.budget_bytes},
+            "fleet": {"simulated": self.simulated, "real": self.real},
         }
 
 
@@ -115,6 +123,21 @@ def blob_bytes(session: Session) -> int:
     return int(session.scalar(select(func.coalesce(func.sum(Blob.size_bytes), 0))) or 0)
 
 
+def is_simulated(device: Device) -> bool:
+    """`kind` sim/test, or a `sim-N` id (A18): a fake arm that checks in on its own is
+    auto-registered with the default kind, so the id is the reliable sign."""
+    return device.kind in ("sim", "test") or device.id.startswith("sim-")
+
+
+def active_fleet(session: Session, since: datetime, fleet_id: str) -> tuple[int, int]:
+    """(simulated, real) arms that checked in at or after `since`."""
+    rows = session.scalars(
+        select(Device).where(Device.fleet_id == fleet_id, Device.last_seen_at >= since)
+    )
+    sims = [is_simulated(d) for d in rows]
+    return sum(sims), len(sims) - sum(sims)
+
+
 def report(
     session: Session,
     now: datetime,
@@ -131,4 +154,5 @@ def report(
         start = started or now - DEFAULT_WINDOW
     end = parse_since(until, now) if until else None
     digest = summarize(events_for(session, start, end, fleet_id), start, end)
-    return Report(digest, now, blob_bytes(session), int(budget_gb * GB), started)
+    simulated, real = active_fleet(session, start, fleet_id)
+    return Report(digest, now, blob_bytes(session), int(budget_gb * GB), started, simulated, real)

@@ -6,7 +6,7 @@ import pytest
 
 from romulus_cloud import events
 from romulus_cloud.errors import ApiError
-from romulus_cloud.models import Blob, FleetState
+from romulus_cloud.models import Blob, Device, FleetState
 from romulus_cloud.services import digest, overnight
 
 
@@ -52,6 +52,15 @@ def test_report_counts_the_window_and_old_waiting_orders(db_session, now):
     _ev(db_session, "incident.agent_acted", now - timedelta(hours=2), "agent")
     _ev(db_session, "candidate.promoted", now - timedelta(hours=1))
     db_session.add(Blob(sha256="a" * 64, size_bytes=1000, path="a" * 64))
+    seen = now - timedelta(minutes=5)
+    db_session.add_all(
+        [
+            Device(id="sim-1", kind="sim", last_seen_at=seen),
+            Device(id="sim-4", kind="real", last_seen_at=seen),  # auto-registered fake arm
+            Device(id="arm-1", kind="real", last_seen_at=seen),
+            Device(id="arm-2", kind="real", last_seen_at=now - timedelta(days=1)),  # idle
+        ]
+    )
     db_session.flush()
 
     r = digest.report(db_session, now, budget_gb=1)
@@ -67,7 +76,9 @@ def test_report_counts_the_window_and_old_waiting_orders(db_session, now):
     assert d["storage"] == {"blob_bytes": 1000, "budget_bytes": 1024**3}
     assert d["waiting_for_person"][0]["status"] == "needs_human"
     text = r.text("America/Los_Angeles")
-    assert "In 12.0 h: 1 incidents" in text and "0 human actions" in text
+    assert "In 12.0 h on 2 simulated arms + 1 real: 1 incidents" in text
+    assert "0 human actions, 1 waiting for a person" in text
+    assert d["fleet"] == {"simulated": 2, "real": 1}
     assert "PST" in text and "Blob store: 1000 B of a 1.0 GB budget (under)" in text
 
     assert digest.report(db_session, now, since="3h", until="90m").digest.incidents == 1
