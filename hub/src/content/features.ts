@@ -45,8 +45,10 @@ export function parseFeatures(src: string): Feature[] {
       box = null;
       continue;
     }
-    if (t === t.toUpperCase() && BOX_NAMES[header]) {
-      box = BOX_NAMES[header];
+    // An all-caps line is a section header. One that isn't a diagram box
+    // (e.g. SPONSORS AND CREDITS) closes the box, so its lines are skipped.
+    if (/[A-Z]/.test(t) && t === t.toUpperCase()) {
+      box = BOX_NAMES[header] ?? null;
       finished = false;
       continue;
     }

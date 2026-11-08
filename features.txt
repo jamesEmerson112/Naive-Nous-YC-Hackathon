@@ -87,6 +87,23 @@ HUB AND DOCS
 Stack hub: put it all together          <--- James
 Hermes harness gap notes                <--- James
 
+SPONSORS AND CREDITS
+Credits each hacker gets (docs/hackathons.md). Add "<--- Name" once redeemed.
+Naive: $250 credits (ask team for more)
+OpenAI: $100 API credits
+Stripe: $500 credits + inc. fee waived
+Apify: $50 credits
+Tavily: 8K credits
+Mobilerun: Developer plan per team
+Monid: $1 free credit
+Prize tracks:
+Main: YC interview + $50K+ credits
+Mobilerun: up to 3 virtual iPhones
+AgentMail: $500 gift card + 6 months free
+Monid: $1.5K credits + $1.5K Visa
+Hermes plugin: $20K cash, $10K first
+Other sponsors: HubSpot, Vercel, OpenRouter, Luxor, Neon
+
 FINISHED
 Hub: team status sync in CLAUDE.md      <--- James
 Hub: SO-101 research notes              <--- James
