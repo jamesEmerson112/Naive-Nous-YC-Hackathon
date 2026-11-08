@@ -75,8 +75,13 @@ def enabled(settings: Settings) -> bool:
 
 
 def publisher(settings: Settings) -> SkillPublisher:
-    """The process's Naïve client for NAIVE_MODE: HttpNaive when live, else the in-memory
-    FakeNaive (both implement SkillPublisher)."""
+    """With LEARNING_MODE=live, the review lane's live HttpNaive (as `review.naive_for` builds
+    it), so a live run needs no NAIVE_MODE=live and turns on no other Naïve writes. Otherwise
+    the process's client for NAIVE_MODE (HttpNaive when live, else the in-memory FakeNaive)."""
+    if getattr(settings, "learning_mode", "off") == "live":
+        from romulus_cloud.services import review  # noqa: PLC0415 - review imports this module's peers
+
+        return cast(SkillPublisher, review.naive_for("live", "publish", settings))
     return cast(SkillPublisher, workorders.naive_client(settings))
 
 
