@@ -667,10 +667,11 @@ def test_the_attempt_is_on_disk_before_the_overlay_is_applied(cloud, tmp_path, m
         "proposal_id",
         "overlay_id",
         "started_wall",
-        "started_monotonic",
         "replaced_overlay_id",
         "snapshot",
         "reported",
+        "verify_failed",
+        "failed",
         "good",
     }
     assert inflight["proposal_id"] == PID and inflight["reported"] is False
@@ -743,6 +744,134 @@ def test_a_crash_while_marking_good_finishes_the_mark_after_restart(cloud, tmp_p
     again.tick(at(90))
     assert arm.device.overlay is applied and not arm.device.consult_parked  # kept, not reverted
     assert cloud.overlays == [] and again.applier.inflight is None
+
+
+def test_recover_rechecks_health_before_finishing_a_mark_good(cloud, tmp_path, monkeypatch):
+    arm = parked(cloud, tmp_path)
+    cloud.offer("sim-1")
+    arm.tick(at(10))
+    applied = arm.device.overlay.overlay_id
+
+    def crash(overlay_id):
+        raise PowerCut
+
+    monkeypatch.setattr(arm.device, "mark_good", crash)
+    with pytest.raises(PowerCut):
+        watch(arm, 20, 80)
+    monkeypatch.undo()
+    arm.device.fault_recurs = True  # unhealthy by the time the device is back
+
+    again = restarted(cloud, tmp_path, arm)
+    again.tick(at(90))
+    assert arm.device.overlay is None and arm.device.consult_parked  # reverted, not marked
+    assert statuses(cloud) == [(applied, "reverted")]
+    assert again.applier.inflight is None
+
+
+def test_a_failed_timer_stays_failed():
+    clock = FakeClock()
+    timer = MarkGoodTimer("ov-1", PID, hold_s=60, clock=clock)
+    clock.t = timer.started + 10
+    assert timer.check(healthy=False) == "failed"
+    for s in (25, 45, 65, 90):  # healthy samples spread across the window afterwards
+        clock.t = timer.started + s
+        assert timer.check(healthy=True) == "failed"
+
+
+def test_a_failed_watch_is_never_marked_good_even_if_the_restore_raises(
+    cloud, tmp_path, monkeypatch
+):
+    arm = parked(cloud, tmp_path)
+    old = Overlay(overlay_id="ov-old", diff={})
+    arm.device.apply_overlay(old)
+    cloud.offer("sim-1", on_top_of("ov-old"))
+    arm.tick(at(10))
+    applied = result_of(cloud)["overlay_id"]
+    real_restore, restores, marks = arm.device.restore, [], []
+
+    def restore_fails_once(handle):
+        restores.append(handle)
+        if len(restores) == 1:
+            raise OSError("snapshot volume busy")
+        real_restore(handle)
+
+    monkeypatch.setattr(arm.device, "restore", restore_fails_once)
+    monkeypatch.setattr(arm.device, "mark_good", marks.append)
+    arm.device.fault_recurs = True
+    arm.tick(at(30))  # unhealthy: the watch fails, and the restore raises
+    assert arm.device.overlay.overlay_id == applied  # still on, for now
+    assert arm.applier.timer is None and arm.applier.inflight["failed"] is True
+    arm.device.fault_recurs = False
+    watch(arm, 40, 200)  # healthy from here on, well past the window
+    assert marks == []  # never marked good
+    assert len(restores) == 2 and arm.device.overlay is old  # the restore was retried
+    assert statuses(cloud) == [(applied, "reverted")]  # reported once
+    assert arm.applier.inflight is None
+
+
+def test_a_crash_while_restoring_after_a_failed_verify_reports_failed_verify(
+    cloud, tmp_path, monkeypatch
+):
+    arm = parked(cloud, tmp_path)
+    arm.device.proposal_verify_ok = False
+    cloud.offer("sim-1")
+
+    def crash(handle):
+        raise PowerCut
+
+    monkeypatch.setattr(arm.device, "restore", crash)
+    with pytest.raises(PowerCut):
+        arm.tick(at(10))  # verify failed, then the power went while restoring
+    assert arm.device.overlay is not None  # left applied
+    monkeypatch.undo()
+
+    again = restarted(cloud, tmp_path, arm)
+    again.tick(at(20))
+    result = result_of(cloud)
+    assert result["result"] == "failed_verify" and "verify failed" in result["reason"]
+    assert len(cloud.proposal_results) == 1 and cloud.overlays == []  # not applied+reverted
+    assert arm.device.overlay is None and again.applier.inflight is None
+
+
+def test_recover_leaves_an_overlay_someone_else_installed_alone(cloud, tmp_path, monkeypatch):
+    arm = parked(cloud, tmp_path)
+    cloud.offer("sim-1")
+
+    def crash(overlay):
+        raise PowerCut
+
+    monkeypatch.setattr(arm.device, "apply_overlay", crash)
+    with pytest.raises(PowerCut):
+        arm.tick(at(10))  # crash mid-apply
+    monkeypatch.undo()
+    healer = Overlay(overlay_id="ov-healer", diff={})
+    arm.device.apply_overlay(healer)  # after the crash, the healer fixed it its own way
+    restores = []
+    monkeypatch.setattr(arm.device, "restore", restores.append)
+
+    again = restarted(cloud, tmp_path, arm)
+    again.tick(at(20))
+    assert arm.device.overlay is healer and restores == []  # untouched
+    result = result_of(cloud)
+    assert result["result"] == "stale" and "ov-healer" in result["reason"]
+    assert again.applier.inflight is None
+
+
+def test_recover_after_the_applied_report_leaves_a_newer_overlay_alone(
+    cloud, tmp_path, monkeypatch
+):
+    arm = parked(cloud, tmp_path)
+    cloud.offer("sim-1")
+    arm.tick(at(10))  # applied and reported; then the process dies mid-watch
+    healer = Overlay(overlay_id="ov-healer", diff={})
+    arm.device.apply_overlay(healer)  # and the healer replaces our overlay meanwhile
+    restores = []
+    monkeypatch.setattr(arm.device, "restore", restores.append)
+
+    again = restarted(cloud, tmp_path, arm)
+    again.tick(at(20))
+    assert arm.device.overlay is healer and restores == [] and cloud.overlays == []
+    assert again.applier.inflight is None
 
 
 # --- the outbox kind ---------------------------------------------------------------------

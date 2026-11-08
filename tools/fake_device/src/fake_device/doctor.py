@@ -54,12 +54,14 @@ The two halves are independent.
         applier.handle(resp.proposal, now, frozen=resp.frozen)
     outbox.drain(client, now)
 
-**Run the applier outside the process it restarts** (the visor is the right home: applying
-an overlay restarts the robot app, not the visor). If it has to live in the app, then
-`recover(now)` at boot is what keeps it safe. Before touching anything the applier writes
-the attempt to `state_path` (write-then-rename), and `recover` finishes it after a crash:
-an overlay that was applied but never marked good is reverted to its snapshot (and
-reported `applied`, then `reverted`, so the cloud learns it existed). Never skip it.
+**Run the applier in a separate supervisor process** (the visor is the right home), never
+inside the robot app. `apply_overlay` restarts the app: an applier living there dies
+mid-watch, and `recover` at boot reverts the unconfirmed overlay, so *every* proposal would
+end up reverted. Still call `recover(now)` when the supervisor starts. Before touching
+anything the applier writes the attempt to `state_path` (write-then-rename), and `recover`
+finishes it after a crash: an overlay that was applied but never marked good is reverted
+to its snapshot (and reported `applied`, then `reverted`, so the cloud learns it existed),
+and an overlay someone else installed meanwhile is never touched. Never skip it.
 
 `host` is the healer's overlay machinery (D5a) behind the small `ProposalHost` protocol
 below; `sim.SimDevice` is the fake one. What each method means on the Pi:
@@ -512,9 +514,10 @@ class MarkGoodTimer:
 
     The overlay is good once at least `hold_s` has passed since it was applied *and* a
     healthy sample falls in each third of that time (the check right after applying is the
-    first). One unhealthy sample and it has failed. Time comes from `clock`, a monotonic
-    clock in seconds (`time.monotonic`; tests and the sim pass their own), so a wall-clock
-    step can't shorten the watch. Sparse sampling only makes the watch longer.
+    first). One unhealthy sample and it has failed, for good: later healthy samples never
+    turn it good. Time comes from `clock`, a monotonic clock in seconds (`time.monotonic`;
+    tests and the sim pass their own), so a wall-clock step can't shorten the watch.
+    Sparse sampling only makes the watch longer.
 
     This is not the "held" report, which comes 20 minutes after with no recurrence and
     starts lock-in.
@@ -529,6 +532,8 @@ class MarkGoodTimer:
     started: float = field(init=False)
     samples: list[float] = field(init=False)
     """Seconds after `started` of each healthy sample."""
+    failed: bool = field(default=False, init=False)
+    """Set by the first unhealthy sample; never cleared."""
 
     def __post_init__(self) -> None:
         self.started = self.clock()
@@ -536,7 +541,8 @@ class MarkGoodTimer:
 
     def check(self, healthy: bool) -> str:
         """Record one health sample: `"failed"`, `"good"` or `"watching"`."""
-        if not healthy:
+        if self.failed or not healthy:
+            self.failed = True
             return "failed"
         elapsed = self.clock() - self.started
         self.samples.append(elapsed)
@@ -569,11 +575,21 @@ class ProposalApplier:
     failure reverts it and reports overlay status `reverted`. Every result goes through
     the outbox.
 
-    **Crash safety.** The attempt (`inflight` in the state file: proposal and overlay ids,
-    start times, the overlay it replaces, the snapshot handle, whether `applied` was queued
-    and whether it was marked good) is written atomically *before* `apply_overlay`.
-    `recover(now)`, at boot, finishes an attempt a crash interrupted; `handle` and `tick`
-    call it too if nobody did. See `recover` for the cases.
+    **Crash safety.** The attempt (`inflight` in the state file) is written atomically
+    *before* `apply_overlay`: the proposal and overlay ids, `started_wall` (for logs; the
+    watch never resumes after a restart), the overlay it replaces, the snapshot handle,
+    and flags for how far it got, each set *before* the step it guards:
+
+    - `reported`: `applied` is queued;
+    - `verify_failed`: verify or health failed; restoring, then reporting `failed_verify`;
+    - `failed`: the watch failed and `reverted` is queued; restoring;
+    - `good`: marking good.
+
+    `recover(now)`, at boot, finishes an attempt a crash interrupted, and retries a restore
+    that raised; `handle` and `tick` call it too while an attempt is left with no watch
+    running. It only ever restores while the active overlay is this attempt's own or the
+    one it replaced, never one someone else installed meanwhile. See `recover` for the
+    cases.
     """
 
     def __init__(
@@ -651,8 +667,8 @@ class ProposalApplier:
             return None  # 1. idempotent: the same proposal twice is a no-op
         if frozen:
             return None  # kill switch: take nothing (the cloud stops offering anyway)
-        if self.timer is not None:
-            return None  # one proposal at a time: wait until this watch ends
+        if self.timer is not None or self.inflight is not None:
+            return None  # one at a time: wait for this watch (or a retried restore) to end
 
         # 2. pull and check the hash before trusting a byte of it
         try:
@@ -707,10 +723,11 @@ class ProposalApplier:
             proposal_id=pid,
             overlay_id=overlay.overlay_id,
             started_wall=now.isoformat(),
-            started_monotonic=self.clock(),
             replaced_overlay_id=replaced,
             snapshot=self.host.snapshot(),
             reported=False,
+            verify_failed=False,
+            failed=False,
             good=False,
         )
         try:
@@ -722,9 +739,12 @@ class ProposalApplier:
             log.exception("doctor: applying proposal %s failed", pid)
             passed, detail = False, f"apply or verify raised {type(exc).__name__}: {exc}"
         if not passed:
-            # Restore, report, then forget the attempt: a crash in between makes `recover`
-            # restore and report again (an identical result is harmless), never lose it.
-            self.host.restore(self.inflight["snapshot"])
+            # Flag it first, then restore, report and forget the attempt. A crash (or a
+            # restore that raises) anywhere in between leaves the flag, so `recover`
+            # finishes it as `failed_verify`, never as `applied` + `reverted`.
+            self._set_inflight(verify_failed=True, verify_detail=detail)
+            if not self._try_restore():
+                return None  # `recover` retries the restore, then reports
             result = self._report(pid, "failed_verify", f"{detail}; rolled back", now)
             self._end_inflight()
             return result
@@ -774,12 +794,7 @@ class ProposalApplier:
             # just as the "held" step skips an overlay that's gone.
             self._end_inflight()
             return None
-        try:
-            healthy = self.host.healthy()
-        except Exception:
-            log.exception("doctor: health check raised")
-            healthy = False
-        state = timer.check(healthy)
+        state = timer.check(self._healthy())
         if state == "watching":
             return None
         if state == "good":
@@ -789,8 +804,26 @@ class ProposalApplier:
             f"health failed within {timer.hold_s:.0f} s of applying Fleet Doctor proposal "
             f"{timer.proposal_id} (mark-good)"
         )
-        self._revert(reason, now)
-        return timer.overlay_id, "reverted"
+        return (timer.overlay_id, "reverted") if self._revert(reason, now) else None
+
+    def _healthy(self) -> bool:
+        try:
+            return self.host.healthy()
+        except Exception:
+            log.exception("doctor: health check raised")
+            return False
+
+    def _try_restore(self) -> bool:
+        """Restore the attempt's snapshot. False (logged) if it raised: `recover` retries."""
+        rec = self.inflight
+        try:
+            self.host.restore(rec["snapshot"])
+        except Exception:
+            log.exception(
+                "doctor: restoring the snapshot for %s failed; will retry", rec["overlay_id"]
+            )
+            return False
+        return True
 
     def _mark_good(self, overlay_id: str, pid: str, replaced: str | None, now: datetime) -> None:
         self._set_inflight(good=True)  # a crash from here on finishes the mark, not a revert
@@ -801,14 +834,20 @@ class ProposalApplier:
         log.info("doctor: overlay %s marked good", overlay_id)
         self._end_inflight()
 
-    def _revert(self, reason: str, now: datetime) -> None:
-        # Report first, then restore: a crash in between leaves the overlay active, so
-        # `recover` restores it (and reports again; an identical status is harmless).
+    def _revert(self, reason: str, now: datetime) -> bool:
+        """Report `reverted`, then restore. A failure sticks: the timer is dropped and the
+        attempt flagged `failed` *before* the restore, so a restore that raises (or a crash)
+        can never be followed by healthy ticks marking the overlay good; `recover` retries
+        the restore on the next tick or at boot. True once the snapshot is back."""
         rec = self.inflight
         self._overlay_status(rec["overlay_id"], "reverted", reason, now)
-        self.host.restore(rec["snapshot"])
+        self.timer = None
+        self._set_inflight(failed=True)
+        if not self._try_restore():
+            return False
         log.info("doctor: overlay %s reverted: %s", rec["overlay_id"], reason)
         self._end_inflight()
+        return True
 
     # -- after a crash ----------------------------------------------------------------
 
@@ -825,44 +864,82 @@ class ProposalApplier:
         """Finish an attempt a crash or restart interrupted. Call it at boot.
 
         The watch can't resume (a restart breaks the evidence), so an overlay that was
-        applied but never marked good is reverted, like an unconfirmed RAUC slot:
+        applied but never marked good is reverted, like an unconfirmed RAUC slot. The
+        snapshot is only ever restored while the active overlay is **ours** (this attempt's)
+        or the one it **replaced**; an overlay someone else installed after the crash is
+        left alone. By how far the attempt got:
 
-        - **Marked good** before the crash: finish the mark (if the overlay is still the
-          active one). Returns `"good"`.
-        - **The overlay is active** (applied, not marked good): if `applied` was never
-          queued, queue it first, so the cloud learns the overlay existed (it is never
-          reported `stale`). Then queue overlay status `reverted` and restore the snapshot.
-          Returns `"reverted"`.
-        - **Not active, `applied` never queued** (the crash hit mid-apply): restore the
-          snapshot in case the patch was half-applied, and report `failed_verify`, so a
-          patch that crashes the device isn't retried forever. Returns `"failed_verify"`.
-        - **Not active, `applied` queued**: its revert or a newer version already
-          replaced it. Nothing to do. Returns None.
+        - **Marking good**, and ours: finish the mark if health still passes, else revert.
+        - **Watch failed** (`reverted` already queued): retry the restore.
+        - **Verify failed**: restore, then report `failed_verify` (never `applied`).
+        - **`applied` queued**, and ours: queue `reverted`, then restore.
+        - **Nothing queued** (the crash came during apply or verify):
+          - ours: the overlay is applied, so queue `applied` first (the cloud learns it
+            existed; it is never reported `stale`), then `reverted`, then restore;
+          - the replaced overlay (or none) still in force: restore in case the patch was
+            half-applied, and report `failed_verify`, so a patch that crashes the device
+            isn't retried forever;
+          - someone else's overlay: leave it, and report `stale`.
+        - Otherwise (ours is gone: reverted already, or replaced by a newer version):
+          nothing left to do.
+
+        Returns `"good"`, `"reverted"`, `"failed_verify"`, `"stale"` or None. A restore that
+        raises leaves the attempt on disk and returns None; the next call retries it.
         """
         rec = self.inflight
         if rec is None:
             return None
         pid, overlay_id = rec["proposal_id"], rec["overlay_id"]
-        active = self.host.active_overlay_id() == overlay_id
-        log.info("doctor: recovering proposal %s (overlay %s) after a restart", pid, overlay_id)
-        if rec.get("good"):
-            if active:
+        active = self.host.active_overlay_id()
+        ours = active == overlay_id
+        restorable = ours or active == rec.get("replaced_overlay_id")
+        log.info("doctor: recovering proposal %s (overlay %s); active %s", pid, overlay_id, active)
+
+        if rec.get("good") and not rec.get("failed"):
+            if not ours:
+                self._end_inflight()  # marked good, then replaced by something newer
+                return None
+            if self._healthy():
                 self._mark_good(overlay_id, pid, rec.get("replaced_overlay_id"), now)
-            else:
-                self._end_inflight()  # good, then replaced by something newer: done
-            return "good"
-        if active:
-            if not rec.get("reported"):
-                reason = "applied; the device restarted before reporting it"
-                self._report(pid, "applied", reason, now, overlay_id=overlay_id)
-                self._set_inflight(reported=True)
-            self._revert("the device restarted before mark-good; reverted to the snapshot", now)
+                return "good"
+            reason = "unhealthy after a restart while marking good; reverted to the snapshot"
+            return "reverted" if self._revert(reason, now) else None
+
+        if rec.get("failed"):
+            if restorable and not self._try_restore():
+                return None
+            self._end_inflight()
             return "reverted"
-        if not rec.get("reported"):
-            self.host.restore(rec["snapshot"])
+
+        if rec.get("verify_failed"):
+            if restorable and not self._try_restore():
+                return None
+            reason = f"{rec.get('verify_detail') or 'verify failed'}; rolled back"
+            self._report(pid, "failed_verify", reason, now)
+            self._end_inflight()
+            return "failed_verify"
+
+        if rec.get("reported"):
+            if not ours:
+                self._end_inflight()
+                return None
+            reason = "the device restarted before mark-good; reverted to the snapshot"
+            return "reverted" if self._revert(reason, now) else None
+
+        if ours:
+            reason = "applied; the device restarted before reporting it"
+            self._report(pid, "applied", reason, now, overlay_id=overlay_id)
+            self._set_inflight(reported=True)
+            reason = "the device restarted before mark-good; reverted to the snapshot"
+            return "reverted" if self._revert(reason, now) else None
+        if restorable:
+            if not self._try_restore():
+                return None
             reason = "the device restarted while applying it; rolled back to the snapshot"
             self._report(pid, "failed_verify", reason, now)
             self._end_inflight()
             return "failed_verify"
+        reason = f"the device restarted while applying it; overlay {active} is active now"
+        self._report(pid, "stale", reason, now)
         self._end_inflight()
-        return None
+        return "stale"
