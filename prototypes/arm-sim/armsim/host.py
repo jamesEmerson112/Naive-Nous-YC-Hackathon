@@ -396,6 +396,130 @@ class Watchdog:
                 "resolved": [i["id"] for i in resolved], "open": [i["id"] for i in self.open()]}
 
 
+def state_path():
+    """Where the host writes its state snapshot: $ARMSIM_STATE, else next to the socket
+    (<temp dir>/armsim.sock -> <temp dir>/armsim-state.json), so parallel hosts don't collide.
+    armsim/mission.py computes the same rule without importing this module: keep them in step."""
+    if os.environ.get("ARMSIM_STATE"):
+        return Path(os.environ["ARMSIM_STATE"])
+    return SOCK.with_name(SOCK.stem + "-state.json")
+
+
+class StateWriter:
+    """The arm's state as one JSON file, for Mission Control (armsim/mission.py), which must not poll
+    the socket: a skill holds it for seconds. An arm hook (once per control tick) and the idle chores
+    call it; it writes at most every 0.1 s of wall time, atomically (tmp file + os.replace).
+
+    Positions come from MuJoCo (the sim, or the real arm's mirror once its kinematics are measured);
+    the real arm without them gets positions: null. It never raises: it runs inside every skill."""
+
+    CHAIN = ("base", "shoulder", "upper_arm", "lower_arm", "wrist", "gripper")
+    EVERY_S = 0.1
+
+    def __init__(self, arm, dog, state, *, source=None, vpod=None, podheal=None, reporter=None, path=None):
+        self.arm, self.dog, self.state = arm, dog, state
+        self.source, self.vpod, self.podheal, self.reporter = source, vpod, podheal, reporter
+        self.path = Path(path or state_path())
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+        self.last, self.busy, self.failed = 0.0, False, False
+        self.wall = dog.clock is time.time               # incident times are wall clock (pod mode) or sim t
+        self.ids = None
+
+    def __call__(self, arm=None):
+        self.write()
+
+    def _mj(self):
+        """(model, data) to read positions from, or None."""
+        arm = self.arm
+        if getattr(arm, "m", None) is not None and getattr(arm, "d", None) is not None:
+            return arm.m, arm.d
+        mirror = getattr(arm, "mirror", None)
+        if mirror is not None and getattr(arm, "kinematics_ok", False):
+            return mirror.m, mirror.d
+        return None
+
+    def _positions(self):
+        mj = self._mj()
+        if mj is None:
+            return None, None
+        m, d = mj
+        if self.ids is None:
+            self.ids = {"chain": [m.body(n).id for n in self.CHAIN], "box": m.body("box").id,
+                        "tip": m.site("gripperframe").id, "us": m.site("ultrasonic").id,
+                        "jaw": m.body("moving_jaw_so101_v1").id,
+                        "fixed_tip": m.geom("fixed_jaw_sph_tip1").id, "moving_tip": m.geom("moving_jaw_sph_tip1").id}
+        i = self.ids
+        r = lambda v: [round(float(x), 4) for x in v]
+        pos = {"chain": [r(d.xpos[b]) for b in i["chain"]], "names": list(self.CHAIN), "tip": r(d.site_xpos[i["tip"]]),
+               "jaw": {"fixed": [r(d.xpos[i["chain"][-1]]), r(d.geom_xpos[i["fixed_tip"]])],
+                       "moving": [r(d.xpos[i["jaw"]]), r(d.geom_xpos[i["moving_tip"]])]},
+               "block": {"pos": r(d.xpos[i["box"]]), "quat": r(d.xquat[i["box"]]),
+                         "half": r(m.geom_size[m.body_geomadr[i["box"]]])}}
+        sensor = {"pos": r(d.site_xpos[i["us"]]), "axis": r(d.site_xmat[i["us"]].reshape(3, 3)[:, 2])}
+        return pos, sensor
+
+    def _incident(self, inc, keys):
+        out = {k: inc.get(k) for k in keys}
+        for k in ("opened_at", "resolved_at", "handed_off", "pod_healed"):
+            if isinstance(out.get(k), (int, float)) and not isinstance(out.get(k), bool):
+                out[k] = round(out[k] if self.wall else self.now - (self.arm.t - out[k]), 2)
+        return out
+
+    def snapshot(self):
+        arm, dog, now = self.arm, self.dog, time.time()
+        self.now = now
+        if getattr(arm, "d", None) is not None:
+            joints = arm.read()
+        else:                                            # the real arm: the last tick's reading, no bus read
+            q = getattr(arm, "_q", None)
+            joints = None if q is None else {f"{j}.pos": float(v) for j, v in zip(JOINTS, q)}
+        pos, sensor = self._positions()
+        row = arm.d_rows[-1] if arm.d_rows else None
+        sensor = {**(sensor or {}), **({k: row.get(k) for k in ("mm", "st", "pred_mm", "ts")} if row else {})}
+        grasp = arm.grasp_check() if (getattr(arm, "d", None) is not None or getattr(arm, "_q", None) is not None) else {}
+        open_ = dog.open()
+        snap = {"v": 1, "ts": round(now, 3), "t": round(arm.t, 2), "arm": getattr(arm, "kind", "sim"), "pid": os.getpid(),
+                "clock": "wall" if self.wall else "sim",
+                "joints": None if joints is None else {k.removesuffix(".pos"): round(v, 1) for k, v in joints.items()},
+                "positions": pos, "sensor": sensor or None,
+                "holding": grasp.get("holding"), "gripper": grasp.get("gripper"),
+                "parked": self.state.get("parked"), "halt_reason": arm.halt_reason,
+                "skill": self.state.get("skill"), "activity": self.state.get("activity"),
+                "incidents": [self._incident(i, ("id", "kind", "severity", "summary", "opened_at", "handed_off",
+                                                 "handoff_reason", "pod_healed")) for i in open_],
+                "history": [self._incident(i, ("id", "kind", "severity", "summary", "state", "opened_at",
+                                               "resolved_at", "handed_off", "fix")) for i in dog.incidents[-30:]]}
+        if self.source:
+            snap["pod"] = {"podd_up": self.source.up, "image": self.vpod.image if self.vpod else None,
+                           "build": self.vpod.build if self.vpod else None,
+                           "incidents": [{k: i.get(k) for k in ("id", "kind", "severity", "summary")} for i in self.source.open],
+                           "healer_busy": bool(self.podheal and self.podheal.busy),
+                           "healer_last": (self.podheal.log[-1] if self.podheal and self.podheal.log else None)}
+        if self.reporter:
+            last = self.reporter.last
+            snap["romulus"] = {"device": self.reporter.device_id, "url": self.reporter.url,
+                               "last_checkin": last.get("checkin"), "error": last.get("error"),
+                               "frozen": last.get("frozen"), "queued": len(self.reporter.outbox),
+                               "reported": last["reported"][-3:]}
+        return snap
+
+    def write(self, force=False):
+        now = time.time()
+        if self.busy or (not force and now - self.last < self.EVERY_S):
+            return
+        self.busy, self.last = True, now
+        try:
+            self.tmp.write_text(json.dumps(self.snapshot(), default=str))
+            os.replace(self.tmp, self.path)
+        except Exception as exc:                         # never break a skill over the dashboard
+            if not self.failed:
+                print(f"STATE snapshot failed ({type(exc).__name__}: {exc}); will keep trying", flush=True)
+            self.failed = True
+        finally:
+            self.busy = False
+
+
 POD_FAULTS = {"us_frozen": "frozen", "us_no_echo": "no_echo"}     # in pod-sim mode these live in the pod
 POD_VAR = Path(os.environ.get("ARMSIM_POD_VAR") or Path(os.environ.get("TMPDIR", "/tmp")) / "armsim-pod")
 
@@ -429,7 +553,7 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
     else:
         arm = SimArm(recorder=rec, start=prims.REST)
         skills = Skills(arm)
-    vpod = podd = source = None
+    vpod = podd = source = podheal = None
     if pod:
         from .arm import SCENE_OBJECTS
         from .podsource import PodSource, healer_client
@@ -452,7 +576,7 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
         dog = Watchdog(arm, rec, clock=time.time, pod=source)
         source.on_incidents.append(dog.on_pod_incidents)
         if vpod:
-            PodHealSim(vpod, source, var).start()
+            podheal = PodHealSim(vpod, source, var).start()
     else:
         dog = Watchdog(arm, rec)
     dog.home = skills.p["home"]
@@ -490,7 +614,9 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
     srv.bind(str(SOCK))
     srv.listen(4)
     srv.settimeout(0.5)
-    state = {"parked": True}
+    state = {"parked": True, "skill": None, "activity": None}
+    snap = StateWriter(arm, dog, state, source=source, vpod=vpod, podheal=podheal, reporter=reporter)
+    arm.hooks.append(snap)                            # Mission Control's view, at most every 0.1 s
     print(f"arm host listening on {SOCK} (run record {rec.path.name}"
           f"{', pod ' + pod + ' via podd at ' + str(var) if pod else ''})", flush=True)
 
@@ -510,12 +636,22 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
                 return {"ok": False, "error": "incident open; the arm stays parked until a repair is verified",
                         "incidents": dog.open()}
             state["parked"] = False
-            result = getattr(skills, name)()
+            state["skill"] = {"name": name, "started": round(time.time(), 2), "running": True}
+            try:
+                result = getattr(skills, name)()
+            finally:
+                state["skill"].update(running=False, ended=round(time.time(), 2))
+            state["skill"].update({k: result.get(k) for k in ("arrived", "halted", "aborted") if result.get(k) is not None})
             reply = {"ok": True, "skill": name, "result": result, "t": round(arm.t, 2)}
             if not result.get("halted") and name != "park":
                 dog.arrival(result)
             if result.get("halted") or dog.open():
-                reply.update(parked=park(), incident=dog.open()[0] if dog.open() else None)
+                state["activity"] = {"what": "parking", "since": round(time.time(), 2)}
+                try:
+                    reply.update(parked=park(), incident=dog.open()[0] if dog.open() else None)
+                finally:
+                    state["activity"] = None
+                state["skill"]["incident"] = (reply.get("incident") or {}).get("kind")
             elif name == "park":
                 state["parked"] = True
             return reply
@@ -539,7 +675,11 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
         if op == "incidents":
             return {"ok": True, "incidents": dog.incidents}
         if op == "repair":
-            return dog.repair(req.get("action"))
+            state["activity"] = {"what": f"repair: {req.get('action')}", "since": round(time.time(), 2)}
+            try:
+                return dog.repair(req.get("action"))
+            finally:
+                state["activity"] = None
         if op == "inject":
             fault = req["fault"]
             if vpod and fault in POD_FAULTS:
@@ -564,9 +704,14 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
         Run when idle and after every connection, so clients polling `status` faster than the
         accept timeout (the dispatcher, the soak, Mission Control) can't starve them."""
         if dog.verify_pending:
-            print("VERIFY", dog.verify_pending, json.dumps(dog.verify(dog.verify_pending))[:300], flush=True)
+            state["activity"] = {"what": f"verify: {dog.verify_pending}", "since": round(time.time(), 2)}
+            try:
+                print("VERIFY", dog.verify_pending, json.dumps(dog.verify(dog.verify_pending))[:300], flush=True)
+            finally:
+                state["activity"] = None
         elif dog.open() and not state["parked"]:
             park()                                    # a pod incident while idle: park anyway
+        snap.write(force=True)
 
     try:
         while True:
