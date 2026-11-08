@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "framework": "mini-swe-agent",
+  "knowledge_dir": "skills/"
+}

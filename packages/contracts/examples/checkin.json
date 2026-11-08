@@ -1,0 +1,16 @@
+{
+  "running": {
+    "firmware": 1,
+    "harness": 1,
+    "code_rev": "c0de001",
+    "mcu_build": "stm32-f042-0007"
+  },
+  "overlay_id": null,
+  "health": "ok",
+  "metrics": {
+    "task_success_rate": 0.92,
+    "servo_temp_c_max": 41.5,
+    "bus_voltage_v": 12.1
+  },
+  "contract_version": "0.1"
+}

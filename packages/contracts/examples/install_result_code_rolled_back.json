@@ -1,0 +1,7 @@
+{
+  "type": "code",
+  "version": "c0de002",
+  "result": "rolled_back",
+  "detail": "tier 1: robot-app exited 1 within 10 s (ImportError); restored c0de001",
+  "occurred_at": "2026-11-08T01:05:40Z"
+}
