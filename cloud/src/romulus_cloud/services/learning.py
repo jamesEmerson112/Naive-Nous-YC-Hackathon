@@ -181,6 +181,15 @@ SKILL_STAGES = (
     "a sim arm tried it first",
     "lesson → every arm",
 )
+# A skill that is staged, proposed or rejected never reached the gate, so it never shows
+# the gate's stages ("lesson → every arm"): staged means waiting on its owner (D25).
+HELD_SKILL_STAGES = (
+    "one robot knew",
+    "Naïve agent found the gap",
+    "checked in code",
+    "waiting on its engineer",
+)
+GATE_STATES = ("accepted", "canary", "promoted", "rolled_back", "stopped")
 GAP_LABELS = {"missed_detection": "missed detection", "failed_heal": "failed heal"}
 # What the probe's windows are, by a word in its kind or id; else "cases".
 NOUNS = (("frozen", "freezes"), ("freeze", "freezes"), ("stall", "stalls"))
@@ -191,6 +200,16 @@ NOUNS = (("frozen", "freezes"), ("freeze", "freezes"), ("stall", "stalls"))
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _list(value: Any) -> list[Any]:
+    """A list field from events, a fixture or a probe: anything else (a number, a string,
+    a dict, None) reads as empty, so odd data never 500s the page."""
+    return value if isinstance(value, list) else []
+
+
+def _str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _num(value: Any) -> int | None:
@@ -282,12 +301,13 @@ def _review_from_events(session: Session, fleet_id: str) -> dict[str, Any] | Non
         "session_id": session_id,
         "duration_s": data.get("duration_s"),
         "cost_usd": data.get("cost_usd"),
-        "probe_id": data.get("probe_id"),
+        "probe_id": _str(data.get("probe_id"))
+        or _str(_dict(_dict(data.get("proposal")).get("proposal")).get("probe")),
         "case_id": data.get("case_id"),
         "case_file": _dict(data.get("case_file")),
         "recorded": bool(data.get("recorded")),
         "captured_at": data.get("captured_at"),
-        "candidate_id": (event.refs or {}).get("candidate"),
+        "candidate_id": _str(_dict(event.refs).get("candidate")),
         "studio_url": data.get("studio_url"),
     }
 
@@ -318,7 +338,7 @@ def _review_from_fixture(settings: Settings) -> dict[str, Any] | None:
         "session_id": raw.get("session_id"),
         "duration_s": raw.get("duration_s"),
         "cost_usd": raw.get("cost_usd"),
-        "probe_id": raw.get("probe_id") or rule.get("probe"),
+        "probe_id": _str(raw.get("probe_id")) or _str(rule.get("probe")),
         "case_id": raw.get("case_id") or case_file.get("case"),
         "case_file": case_file,
         "recorded": True,
@@ -326,8 +346,8 @@ def _review_from_fixture(settings: Settings) -> dict[str, Any] | None:
         "candidate_id": None,
         "studio_url": raw.get("studio_url"),
         # The spike's own checks in code (G1) and the schema check's errors, if any.
-        "checks": [c for c in _dict(raw.get("g1")).get("checks") or [] if isinstance(c, dict)],
-        "validation_errors": [str(e) for e in raw.get("validation_errors") or []],
+        "checks": [c for c in _list(_dict(raw.get("g1")).get("checks")) if isinstance(c, dict)],
+        "validation_errors": [str(e) for e in _list(raw.get("validation_errors"))],
     }
 
 
@@ -359,12 +379,12 @@ def _route_fallback(review: dict[str, Any], probe: dict[str, Any] | None) -> dic
         targets: list[str] = []
         safety = _names_safety([str(inner.get("markdown") or "")])
     else:
-        targets = [str(t) for t in port.get("to") or []]
+        targets = [str(t) for t in _list(port.get("to"))]
         safety = _names_safety(targets)
     owner = review["case_file"].get("owner") or FALLBACK_OWNER
-    errors = list(review.get("validation_errors") or [])
+    errors = [str(e) for e in _list(review.get("validation_errors"))]
     patch = None
-    if port.get("from") and targets:
+    if port.get("from") and targets:  # targets come from the probe, never the model
         patch = f"Port {port['from']} into {' and '.join(targets)}."
     return {
         "outcome": "rejected" if errors else ("staged" if safety else "proposed"),
@@ -373,7 +393,7 @@ def _route_fallback(review: dict[str, Any], probe: dict[str, Any] | None) -> dic
         "targets": targets,
         "owner": owner if safety else None,
         "staged_patch": patch if safety else None,
-        "checks": _checks_line(review.get("checks") or []),
+        "checks": _checks_line([c for c in _list(review.get("checks")) if isinstance(c, dict)]),
     }
 
 
@@ -382,9 +402,10 @@ def _route_fallback(review: dict[str, Any], probe: dict[str, Any] | None) -> dic
 
 def _probe(settings: Settings, probe_id: str | None) -> dict[str, Any] | None:
     """The probe scorecard in PROBE_DIR whose `probe` is `probe_id` (any file name, so lane
-    A's committed copy and the host's output both match); no id → the newest one."""
+    A's committed copy and the host's output both match). No id → no probe: a review that
+    cites none never borrows another review's numbers."""
     folder = Path(settings.probe_dir)
-    if not folder.is_dir():
+    if not probe_id or not folder.is_dir():
         return None
     found: list[dict[str, Any]] = []
     for path in sorted(folder.glob("*.json")):
@@ -396,7 +417,7 @@ def _probe(settings: Settings, probe_id: str | None) -> dict[str, Any] | None:
             continue
         if not isinstance(doc, dict) or not isinstance(doc.get("before"), dict):
             continue
-        if probe_id is None or doc.get("probe") == probe_id:
+        if doc.get("probe") == probe_id:
             found.append(doc)
     if not found:
         return None
@@ -475,7 +496,7 @@ def _probe_view(probe: dict[str, Any] | None, tz: ZoneInfo, now: datetime) -> di
         "seconds": probe.get("seconds"),
         "stale": age is not None and age > PROBE_MAX_AGE_S,
         "port_from": port.get("from"),
-        "port_to": [str(t) for t in port.get("to") or []],
+        "port_to": [str(t) for t in _list(port.get("to"))],
     }
 
 
@@ -508,7 +529,7 @@ def _labelled_counts(session: Session, fleet_id: str, now: datetime) -> dict[str
     counts: Counter[str] = Counter()
     covered: set[str] = set()
     for row in session.scalars(select(AgentRun).where(AgentRun.fleet_id == fleet_id)):
-        covered.update(str(i) for i in row.incident_ids or [])
+        covered.update(str(i) for i in _list(row.incident_ids))
         counts[_run_verdict(row)] += 1
     overlays = {
         (o.device_id, o.id): o.status
@@ -673,7 +694,11 @@ def _state(review: dict[str, Any] | None, result: dict[str, Any], cand: Candidat
 
 
 def _stages(state: State, lane: str | None, measured: bool) -> list[Stage]:
-    labels = SKILL_STAGES if lane == "skill" else RULE_STAGES
+    """`measured`: a rule's probe improved, or a held skill passed its checks."""
+    if lane == "skill":
+        labels = SKILL_STAGES if state in GATE_STATES else HELD_SKILL_STAGES
+    else:
+        labels = RULE_STAGES
     states: tuple[StageState, ...] = {
         "empty": ("pending", "pending", "pending", "pending"),
         "reviewing": ("done", "active", "pending", "pending"),
@@ -750,11 +775,11 @@ def _duration(
 def _evidence(session: Session, review: dict[str, Any]) -> list[dict[str, Any]]:
     """The proposal's evidence ids, linked to their pages when this cloud has them."""
     verdicts = {}
-    for run in review["case_file"].get("runs") or []:
+    for run in _list(review["case_file"].get("runs")):
         if isinstance(run, dict) and run.get("id"):
             verdicts[str(run["id"])] = run.get("verdict")
     out = []
-    for raw in review["proposal"].get("evidence") or []:
+    for raw in _list(review["proposal"].get("evidence")):
         rid = str(raw)
         url = None
         if rid.startswith("run:") and "/" in rid:
@@ -787,11 +812,11 @@ def _gate(
         rows.append(("candidate", NO_CANDIDATE))
     if result.get("checks"):
         rows.append(("checks", str(result["checks"])))
-    rows += [("failed check", str(f)) for f in result.get("failures") or []]
+    rows += [("failed check", str(f)) for f in _list(result.get("failures"))]
     if cand is not None:
         status = cand.status.replace("_", " ")
         rows.append(("candidate", f"{cand.id} · {cand.type} v{cand.version} · {status}"))
-        stub = "replay" in (cand.stub_stages or []) or bool(_dict(cand.replay).get("stub"))
+        stub = "replay" in _list(cand.stub_stages) or bool(_dict(cand.replay).get("stub"))
         if lane == "skill" or stub:
             rows.append(("replay", STUB_REPLAY))
         elif cand.replay:
@@ -810,7 +835,7 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
     review = _review(session, settings)
     proposal = review["proposal"] if review else {}
     inner = _dict(proposal.get("proposal"))
-    probe = _probe(settings, review.get("probe_id") if review else None) if review else None
+    probe = _probe(settings, review["probe_id"]) if review else None
     if review and review["origin"] == "fixture":
         review["result"] = _route_fallback(review, probe)
     result = review["result"] if review else {}
@@ -824,6 +849,8 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
     if lane is None and cand is not None and cand.type == "harness":
         lane = "skill"
     numbers = _numbers(probe) if lane != "skill" else None
+    failures = [str(f) for f in _list(result.get("failures"))]
+    measured = (not failures) if lane == "skill" else bool(numbers and numbers["improved"])
 
     pattern = str(proposal.get("pattern") or "").strip() or None
     title = str(proposal.get("title") or "").strip() or None
@@ -840,14 +867,15 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
     badge = None
     if recorded:
         when = _clock(_parse_time(review.get("captured_at")) or review.get("at"), tz)
-        badge = " · ".join(x for x in ("recorded Naïve session", session_id, when) if x)
+        badge = " · ".join(str(x) for x in ("recorded Naïve session", session_id, when) if x)
 
-    limits = [t for t in (_limit_text(x) for x in (probe or {}).get("limits") or []) if t]
-    staged_patch = result.get("staged_patch")
+    limits = [t for t in (_limit_text(x) for x in _list((probe or {}).get("limits"))) if t]
+    staged_patch = _str(result.get("staged_patch"))
     if not staged_patch and state == "staged" and probe:
         port = _dict(probe.get("port"))
-        if port.get("from") and port.get("to"):
-            staged_patch = f"Port {port['from']} into {' and '.join(map(str, port['to']))}."
+        to = [str(t) for t in _list(port.get("to"))]
+        if port.get("from") and to:
+            staged_patch = f"Port {port['from']} into {' and '.join(to)}."
 
     return {
         "state": state,
@@ -867,7 +895,7 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
             "session_id": session_id,
             "studio_url": (review.get("studio_url") if review else None) or STUDIO_URL,
         },
-        "stages": _stages(state, lane, bool(numbers and numbers["improved"])),
+        "stages": _stages(state, lane, measured),
         "verdict": verdict,
         "subtitle": subtitle,
         "gap_label": GAP_LABELS.get(str(proposal.get("gap"))),
@@ -877,7 +905,7 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
         "limits": limits,
         "limit_headline": limits[0].split(": ", 1)[0] if limits else None,
         "routing": _routing(state, lane, result),
-        "failures": [str(f) for f in result.get("failures") or []],
+        "failures": failures,
         "data": _data_strip(session, settings.fleet_id, now),
         "repeat_rate": None,
         "evidence": _evidence(session, review) if review else [],

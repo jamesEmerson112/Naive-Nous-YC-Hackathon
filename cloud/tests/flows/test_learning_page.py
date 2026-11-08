@@ -294,3 +294,71 @@ def test_labelled_counts_come_from_agent_runs(client, seeded, learning_settings)
     page = _text(client.get("/learning"))
     assert 'labelled by a verifier</span><span class="lr-split">0 pass · 1 fail</span>' in page
     assert "Not labelled: 1 unverified" in page and "1 excluded" in page
+
+
+def _review_event(db_session, kind, data, now, refs=None):
+    events.record(
+        db_session,
+        "agent:fleet-doctor",
+        "agent",
+        kind,
+        refs or {},
+        f"Cluster review: {kind}.",
+        data=data,
+        ts=now,
+    )
+    db_session.commit()
+
+
+def test_odd_list_fields_never_500(client, seeded, db_session, learning_settings, now):
+    """A number where a list belongs (failures, evidence, port.to, limits) reads as empty."""
+    learning_settings(probe=_probe(port={"from": "x.py", "to": 7}, limits=3))
+    proposal = {"title": "T", "pattern": "P", "evidence": 3, "proposal": {"kind": "rule"}}
+    data = {
+        "proposal": proposal,
+        "result": {"outcome": "staged", "failures": 5, "touches_safety": True, "targets": 1},
+        "session_id": 12345,
+        "probe_id": "us-frozen-port",
+        "recorded": True,
+        "case_file": {"runs": 9},
+    }
+    _review_event(db_session, "review.staged", data, now, refs={"candidate": 42})
+    page = _text(client.get("/learning"))
+    assert "staged for its owner" in page and "0 → 120 of 120 freezes caught" in page
+    assert "recorded Naïve session · 12345" in page
+
+
+def test_a_staged_skill_waits_on_its_owner(client, seeded, db_session, learning_settings, now):
+    learning_settings()
+    proposal = {
+        "gap": "failed_heal",
+        "title": "Reseat the visor cable before a reflash",
+        "pattern": "A visor that drops twice needs its cable reseated.",
+        "evidence": ["inc:x"],
+        "proposal": {"kind": "skill", "slug": "visor-reseat", "markdown": "visor/ first."},
+    }
+    result = {"outcome": "staged", "failures": [], "touches_safety": True, "owner": "Olir"}
+    data = {"proposal": proposal, "result": result, "session_id": "ses_s", "duration_s": 20}
+    _review_event(db_session, "review.staged", data, now)
+    page = _text(client.get("/learning"))
+    assert "lesson → every arm" not in page and "a sim arm tried it first" not in page
+    assert "waiting on its engineer" in page and "checked in code" in page
+    assert "staged for Olir" in page and "safety code → staged for Olir (D25)" in page
+
+
+def test_an_event_review_without_a_probe_id_shows_no_numbers(
+    client, seeded, db_session, learning_settings, now
+):
+    """Another review's probe in PROBE_DIR is never borrowed."""
+    learning_settings(probe=_probe())
+    proposal = {"gap": "missed_detection", "title": "A rule", "proposal": {"kind": "rule"}}
+    data = {"proposal": proposal, "result": {"outcome": "staged", "touches_safety": True}}
+    _review_event(db_session, "review.staged", data, now)
+    page = _text(client.get("/learning"))
+    assert "A rule" in page and "freezes caught" not in page and "lesson_probe.py" not in page
+
+    # It does use the probe its proposal cites.
+    cited = {**proposal, "proposal": {"kind": "rule", "probe": "us-frozen-port"}}
+    later = now + timedelta(seconds=5)
+    _review_event(db_session, "review.staged", {**data, "proposal": cited}, later)
+    assert "0 → 120 of 120 freezes caught" in _text(client.get("/learning"))

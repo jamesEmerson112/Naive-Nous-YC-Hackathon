@@ -7,26 +7,26 @@
    partials/learning.html, re-fetched every 3 s. #}
 {{ tc_css }}
 <style>
-  /* Fleet learning additions (.lr-*), on the redesign's tokens with today's variables as
-     fallbacks. The lesson is the largest text (≥ 36 px), the probe's number second. */
+  /* Fleet learning additions (.lr-*), on the Sunlit Workshop tokens (romulus.css). The
+     lesson is the largest text (≥ 36 px), the probe's number second. */
   .lr-number { margin: 0.75rem 0 0; font-weight: 820; letter-spacing: -0.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
-  .lr-n-main { font-size: clamp(1.6rem, 1rem + 1.5vw, 2.2rem); color: var(--leaf, var(--good)); }
-  .lr-n-alarms { font-size: clamp(1.1rem, 0.8rem + 0.8vw, 1.45rem); color: var(--ink-2, var(--text-2)); font-weight: 700; white-space: nowrap; }
-  .lr-route { margin-top: 0.55rem; font-size: 0.9rem; color: var(--ink-2, var(--text-2)); }
-  .lr-route b { color: var(--ink, var(--text)); font-weight: 750; }
-  .lr-fails { margin: 0.6rem 0 0; padding: 0; list-style: none; color: var(--clay-ink, var(--bad)); font-weight: 650; }
+  .lr-n-main { font-size: clamp(1.6rem, 1rem + 1.5vw, 2.2rem); color: var(--leaf-ink); }
+  .lr-n-alarms { font-size: clamp(1.1rem, 0.8rem + 0.8vw, 1.45rem); color: var(--ink-2); font-weight: 700; white-space: nowrap; }
+  .lr-route { margin-top: 0.55rem; font-size: 0.9rem; color: var(--ink-2); }
+  .lr-route b { color: var(--ink); font-weight: 750; }
+  .lr-fails { margin: 0.6rem 0 0; padding: 0; list-style: none; color: var(--clay-ink); font-weight: 650; }
   .lr-end { font-weight: 800; }
-  .lr-end-staged { background: var(--sun-wash, var(--safety-bg)); color: var(--sun-ink, var(--safety)); padding: 0.05rem 0.6rem; border-radius: 999px; }
+  .lr-end-staged { background: var(--sun); color: var(--on-sun); padding: 0.05rem 0.6rem; border-radius: 999px; }
   .lr-end-promoted { font-size: 1.55rem; font-weight: 850; }
-  .lr-sim { font-size: 0.78rem; font-weight: 800; padding: 0.08rem 0.5rem; border-radius: 999px; background: var(--sky-wash, var(--info-bg)); color: var(--sky-ink, var(--info)); border: 1px solid var(--sky, var(--info-line)); }
+  .lr-sim { font-size: 0.78rem; font-weight: 800; padding: 0.08rem 0.5rem; border-radius: 999px; background: var(--sky-wash); color: var(--sky-ink); border: 1px solid var(--sky); }
 
   .lr-rollout { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 1rem; }
   .lr-roll-h { font-weight: 700; color: var(--muted); }
   .lr-roll { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.45rem; }
   .lr-chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.75rem; border-radius: 999px; border: 1px dashed var(--line-strong); color: var(--muted); font-size: 1rem; }
-  .lr-chip.is-installed { border: 1px solid var(--leaf, var(--good-line)); background: var(--leaf-wash, var(--good-bg)); color: var(--leaf-ink, var(--good)); }
-  .lr-chip.is-queued { border-style: solid; border-color: var(--sun, var(--wait-line)); background: var(--sun-wash, var(--wait-bg)); color: var(--sun-ink, var(--wait)); }
-  .lr-chip b { color: var(--ink, var(--text)); }
+  .lr-chip.is-installed { border: 1px solid var(--leaf); background: var(--leaf-wash); color: var(--leaf-ink); }
+  .lr-chip.is-queued { border-style: solid; border-color: var(--sun); background: var(--sun-wash); color: var(--sun-ink); }
+  .lr-chip b { color: var(--ink); }
   .lr-mark { font-weight: 850; }
   .lr-tag { font-size: 0.75rem; font-weight: 800; }
 
@@ -34,25 +34,25 @@
   .lr-data-h { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.6rem; font-size: 1.05rem; font-weight: 750; }
   .lr-data-h .muted { font-size: 0.88rem; font-weight: 500; margin-left: auto; }
   .lr-flow { list-style: none; margin: 0; padding: 0; display: flex; align-items: stretch; gap: 0.5rem; }
-  .lr-flow .kpi { flex: 1 1 0; min-width: 0; box-shadow: none; background: var(--well, var(--surface-2)); }
+  .lr-flow .kpi { flex: 1 1 0; min-width: 0; box-shadow: none; background: var(--well); }
   .lr-flow .kpi-n { font-size: 2rem; }
-  .lr-split { color: var(--ink-2, var(--text-2)); font-size: 0.85rem; font-weight: 650; }
+  .lr-split { color: var(--ink-2); font-size: 0.85rem; font-weight: 650; }
   .lr-arrow { align-self: center; font-size: 1.5rem; font-weight: 700; color: var(--muted); }
   .lr-unlabelled { color: var(--muted); font-size: 0.86rem; margin-top: 0.5rem; }
   .lr-export { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem; margin-top: 0.7rem; }
-  .lr-dl { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 750; font-size: 1.05rem; padding: 0.4rem 0.95rem; border-radius: 10px; border: 1px solid var(--leaf, var(--good-line)); background: var(--leaf-wash, var(--good-bg)); color: var(--leaf-ink, var(--good)); text-decoration: none; }
+  .lr-dl { display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 750; font-size: 1.05rem; padding: 0.4rem 0.95rem; border-radius: 10px; border: 1px solid var(--leaf); background: var(--leaf-wash); color: var(--leaf-ink); text-decoration: none; }
   .lr-dl:hover { text-decoration: underline; }
   .lr-dl.is-off { background: transparent; color: var(--muted); border: 1px dashed var(--line-strong); text-decoration: none; }
-  .lr-exp-meta { color: var(--ink-2, var(--text-2)); font-size: 0.92rem; }
+  .lr-exp-meta { color: var(--ink-2); font-size: 0.92rem; }
   .lr-next-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; margin-top: 0.75rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
-  .lr-repeat { margin: 0; color: var(--ink-2, var(--text-2)); }
+  .lr-repeat { margin: 0; color: var(--ink-2); }
   .lr-next { margin: 0; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: 999px; padding: 0.2rem 0.85rem 0.2rem 0.3rem; }
   .lr-next-tag { font-size: 0.75rem; font-weight: 800; border: 1px solid currentColor; border-radius: 999px; padding: 0.05rem 0.45rem; margin-right: 0.35rem; }
 
   .lr-small { font-size: 0.86rem; }
   .lr-limits-h { margin-top: 0.9rem; }
-  .lr-limits { margin: 0; padding-left: 1.2rem; color: var(--ink-2, var(--text-2)); display: flex; flex-direction: column; gap: 0.3rem; }
-  .lr-pre { font-family: var(--mono); font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; background: var(--well, var(--surface-2)); border-radius: var(--radius-sm); padding: 0.75rem 0.9rem; margin: 0.4rem 0 0; }
+  .lr-limits { margin: 0; padding-left: 1.2rem; color: var(--ink-2); display: flex; flex-direction: column; gap: 0.3rem; }
+  .lr-pre { font-family: var(--mono); font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 26rem; overflow: auto; background: var(--well); border-radius: var(--radius-sm); padding: 0.75rem 0.9rem; margin: 0.4rem 0 0; }
 
   /* The page re-renders every 3 s: loops last 1 s or 3 s so a swap lands on a cycle boundary */
   .lr .tc-stages .st-active, .lr .tc-shimmer { animation-duration: 3s; }
