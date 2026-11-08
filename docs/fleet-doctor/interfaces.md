@@ -246,6 +246,21 @@ Each tick does five things, in order:
 | `stale` / `rejected` / `expired` | Device moved on, wasn't parked, or never pulled | no |
 | `gave_up` | Out of consults, or a job failed 3× | no |
 
+### 5.3 As built (PR 4)
+
+These refine §5.1–§5.2 and §8; where they differ, this section wins.
+
+- **`doctor_max_open` bounds working consults** (stages `admit`…`offer`). Consults in `applied` only wait on the device, so every tick syncs all of them (cheap reads, `SKIP LOCKED`) outside that limit. Otherwise five silent devices would starve every new consult.
+- **No event for `admit → gather` or `gather → diagnose`.** §8 has no kind for them, and adding one would need a `story.LABELS` entry. `doctor.consult_opened` comes before them and `doctor.diagnosed` after. Every other transition writes its event in the same transaction.
+- **Admit also checks the price.** A bad `DOCTOR_USD_PER_1K_TOKENS` closes the consult `blocked_over_cap` (`which: spend`) before anything is spent, so `cost_usd` can't raise later.
+- **Job tries count submissions.** A `Missing` or `Failed` job is resubmitted until it has run 3 times; the next `Missing` or `Failed` closes the consult `gave_up` (reason `job failed: …`). The tries live in `doctor_consults.raw["job_tries"]`. The key is forgotten in an `after_commit` hook on the step's session, so a rolled-back tick re-applies the result without paying again.
+- **`applied` sync** (`domain.doctor.applied_outcome`): the proposal's final statuses map to themselves. An `applied` proposal is decided by its overlay: `held`, or any cloud status that only follows held (`locked_in`, `dropped`, `lockin_*`), gives `held`; `reverted` gives `reverted`; `superseded` (a version replaced it before it held) gives `stale`. The tick moves the proposal to `held` or `reverted` in the same transaction as `doctor.consult_closed`.
+- **Retry or give up** (`domain.doctor.after_close`): after a close with `failed_checks`, `reverted` or `failed_verify`, the incident gets attempt N+1 while its consult count is under the cap. Otherwise `doctor.gave_up` is recorded on that last consult, which keeps its own outcome. `raw["next"]` (`retry` or `gave_up`) makes this happen once. Only a job failure closes a consult with the outcome `gave_up`.
+- **Defense in depth on safety:** `check` discards, `offer` re-runs the same check before calling `proposals.offer`, `proposals.offer` raises on a safety-touching patch or unconfirmed paths, and `pointer_for` and the GET never serve a row with `touches_safety`.
+- **`consult` shorthand:** `open_new` reads `incidents.raw.consult` with the contract's own leniency (`IncidentReport`), so `"consult": true` counts as wanted, not only `{"wanted": true}`.
+- **Extra event data:** `doctor.consult_opened` adds `retry_of` on retries; `doctor.consult_closed` adds `attempt`; `doctor.declined` adds `which`; `doctor.diagnosed` adds `removed_for_safety`, `usage_estimated` and `latency_ms`; `doctor.proposal_discarded` adds `paths`; `doctor.proposal_result` adds `overlay_id` and `late`. `overlay.applied` and `doctor.proposal_result` both carry refs `consult` and `proposal`.
+- **`doctor_consults.raw` keys:** `proposal_id`, `job_tries`, `job_error`, `retry_of`, `next`.
+
 ## 6. Seams
 
 ### 6.1 `domain/doctor.py` (pure, PR 2)
@@ -282,6 +297,9 @@ def ask_prompt(ask: dict) -> tuple[str, str]                                 # (
 def diagnose_prompt(case: dict) -> tuple[str, str]                          # the whole case file, notes included, inside the block
 def fake_draft(case: dict) -> dict  # {code_patch, repro_test, why, stub: True}: adds doctor/FAKE_FIX.md, valid per summarize_code_patch
 def day_start(now: datetime, tz: str) -> datetime                           # same calendar day as workorders._day
+# PR 4:
+def applied_outcome(proposal_status: str, overlay_status: str | None) -> str | None   # how a waiting consult ends (§5.3)
+def after_close(outcome: str | None, consults_used: int, consult_cap: int) -> str | None  # "retry" | "gave_up" | None
 ```
 
 **Prompt rule:** device text (logs, traces, files, the question) goes inside a fenced `<evidence untrusted="true">` block. The system prompt says to treat it as data and answer only in the JSON shape (§6 item 6 of the architecture doc).
@@ -335,7 +353,7 @@ def case_file(session, store, consult, incident, *, settings) -> dict
 #  "code": {"rev", "files": [{path, excerpt}]}, "tried": [...], "untrusted": True, "notes": [...]}
 ```
 
-- **v0 (PR 4):** incident fields plus `log_tail` (from `Incident.raw["log_tail"]`), with a note: "trace, code, mcap: not wired".
+- **v0 (PR 4):** incident fields plus `log_tail` (from `Incident.raw["log_tail"]`), with a note: "trace, code, mcap: not wired". As built, `incident` also carries `id`, `agent_reasoning` and the raw `consult`, and `tried` lists the healer's actions (`{"by": "healer", "action"}`) and earlier consults on the incident (`{"by": "fleet-doctor", "attempt", "outcome", "proposal_id"}`). The tick passes a `BlobStore` for PR 7; v0 doesn't read it.
 - **Full (PR 7):**
   - the trace tail from `agent_trace` recordings (`Recording.kind == "agent_trace"`, read through `BlobStore.get`), last N lines;
   - code at the base rev (`registry.get_code` → `open_package`), the files named in the log or trace, capped by bytes.
@@ -361,6 +379,14 @@ def expire_due(session, now) -> int
 - `raw={"proposal_id", "source": "doctor"}`.
 
 If an `OverlayStatus` arrived first, `incidents.set_overlay_status` will have made a placeholder with `incident_id=None`. Fill that placeholder in and keep its status, the way `_apply_overlay` does (`incidents.py:191-199`). Record `overlay.applied` (actor `device:<id>`, class `agent`) and `doctor.proposal_result`.
+
+**As built (PR 4):**
+- **The result is recorded once,** in `doctor_proposals.raw["result"]` (`result`, `overlay_id`, the verbatim body). A resend is the same `result` and, for `applied`, the same `overlay_id`; reason text and `occurred_at` may differ between outbox attempts. It answers 200 and writes nothing. Any other result answers `409 proposal_result_conflict`.
+- **A late result on an `expired` proposal is stored,** if none was recorded. The device can only apply a proposal it pulled before expiry, so only the report was late (the outbox). Refusing it would lose the row of an overlay the device runs. The event's why says it was late (`data.late`). The consult stays closed `expired`.
+- **`doctor.proposal_result` is recorded before `overlay.applied`;** both carry the device's `occurred_at`.
+- If the overlay id already belongs to another incident's row, that row is left alone (the first owner keeps it, as in `_apply_overlay`), and the result's why says so.
+- `touches_safety` on the overlay is the proposal's flag OR'ed with `touches_safety(code_patch, SAFETY_PATHS)` at result time. `diff` is `{}`.
+- `incidents.py` is unchanged. The placeholder fill is a few lines duplicated in `proposals._apply_overlay`.
 
 ### 6.6 `services/doctor_ask.py` (PR 3)
 
@@ -491,7 +517,8 @@ There's no raw shell, ever (architecture §9). The catalog is a draft until Isha
 | `cloud/tests/unit/services/test_services_doctor_jobs.py` | 2 | inline/thread submit, poll, missing |
 | `cloud/tests/unit/adapters/test_adapter_llm.py` (+cases) | 2 | `complete` fake and live (httpx mock), usage, timeout |
 | `cloud/tests/flows/test_f12a_doctor_ask.py` | 3 | L1: ask → advice; mode off → 503; frozen → 409; cap → 429 plus `doctor.blocked_over_cap`; safety filter; events on the story |
-| `cloud/tests/flows/test_f12_doctor_consult.py` | 4 | L2 cloud side: consult.wanted → admit … offer → pointer on check-in → GET with sha → result `applied` → overlay row → held → `consult_closed: held`; stale, discard, gave_up, cap, frozen |
+| `cloud/tests/flows/test_f12_doctor_consult.py` | 4 | L2 cloud side: consult.wanted → admit … offer → pointer on check-in → GET with sha → result `applied` → overlay row → held → `consult_closed: held`; stale, discard, gave_up, cap, frozen. Also: held-before-applied placeholder, expiry and a late result, no `code_rev`, lookback, auto-consult, defaults, pending/lost/failed jobs, route errors |
+| `cloud/tests/unit/domain/test_domain_doctor_consult.py` | 4 | `applied_outcome` and `after_close` (retry, give up, bad counts fail closed) |
 | `tools/fake_device/tests/test_doctor.py` | 5 | breaker, triggers, applier base/expiry/parked checks, mark-good revert |
 | `cloud/tests/flows/test_interop_fake_device.py` (+case) | 5 | the fake device runs F12 end to end through `device_http` |
 | `cloud/tests/unit/domain/test_domain_story_doctor.py` | 6 | ledger order, sources and robustness; lines, labels, status by outcome, tie order |

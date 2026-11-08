@@ -1,6 +1,6 @@
 # Cloud platform: core flows and happy paths
 
-Eleven flows define "working" for the cloud platform. Each one is:
+Twelve flows define "working" for the cloud platform. Each one is:
 - a user-visible path, written as numbered steps;
 - a list of **checks** that must hold;
 - one flow test in `cloud/tests/flows/` with the same ID.
@@ -28,6 +28,7 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 | **F9** Offline backfill | P1 | M7 | (inside `test_f10_overnight.py`) | 🟨 | ⬜ | No separate `test_f9_offline.py`. The F10 test unplugs arms' links and checks every outbox drains with no dead letters (#16); stopping the `api` container isn't tested *(inferred)* |
 | **F10** Overnight unattended run | P0 | M7 | `test_f10_overnight.py` + `make digest` | 🟩 | ⬜ | #16: 2 h simulated night in ~4 s; runbook `cloud/OVERNIGHT.md`. The real run (launch and `demo-overnight` tag) is Kent's call and hasn't started |
 | **F11** Code patch → coding agent → candidate | P1 (first) | M8 | `test_f11_coding_agent.py` (comes with M8b) | 🟨 | ⬜ | In progress: M8a (sandbox + `LocalAgent`) merged in #19 (`3aba2da`); M8b (wire the coder into batch and gate) in progress. #12 already passes code patches through to `awaiting_canary`. Blockers: build plan §3, M8 |
+| **F12** Fleet Doctor consult → proposal → overlay | P2 | Fleet Doctor PR 4 | `test_f12_doctor_consult.py` | 🟩 | ⬜ | Cloud side of L2 ([interfaces](../fleet-doctor/interfaces.md) §5). Stubs: fake draft, stub check (offered only with `DOCTOR_OFFER_STUB_CHECKED`). Not yet: the fake device's applier (PR 5), the coder draft and sandbox check (PR 7, M8b), lock-in without a second coder pass (PR 9). Off by default (`DOCTOR_MODE=off`) |
 
 **Last run:** Sat Nov 7, ~7:35 PM PST, `main` at `52f4e40`: `uv run pytest cloud/tests/flows -v` → **82 passed** (14 files, including `test_interop_fake_device.py`). 🟩 means passing with fake devices and fake adapters; no row is ⭐ yet, because the real arm and live Naïve haven't run a flow.
 
@@ -202,6 +203,28 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 - If no real-code canary exists, the candidate stops at `awaiting_canary`, and the timeline says why.
 - The coding agent's diff, test output and summary can be read from the incident's story.
 - The coding agent never edits the manifest; the merge does (PRD principle 7).
+
+## F12. Fleet Doctor consult → proposal → overlay (P2, D23–D26)
+
+**Starting point:** shared setup, with `DOCTOR_MODE=fake`, `DOCTOR_OFFER_STUB_CHECKED=true` and `SAFETY_PATHS_CONFIRMED=true` (the defaults do nothing or never offer). The design is in [`fleet-doctor/architecture.md`](../fleet-doctor/architecture.md) §5 and the build contract in [`fleet-doctor/interfaces.md`](../fleet-doctor/interfaces.md) §5–6 ([strategy](../fleet-doctor/strategy.md) §2).
+
+1. The device reports `resolved: false` with `consult: {"wanted": true}` and `running.code_rev`.
+2. The worker's `doctor.tick` runs the consult one stage per tick: admit → gather → diagnose → draft → check → offer. Diagnose runs off the tick as a job.
+3. The next check-in carries `proposal: {proposal_id, incident_id, expires_at, sha256}`.
+4. The device pulls the proposal, checks that its bytes hash to `X-Sha256` and to the pointer's `sha256`, applies it as an overlay, and reports `applied` with its `overlay_id`, then `held`.
+5. The cloud creates the overlay row (with `incident_id` and `raw.proposal_id`) and closes the consult `held`. Lock-in then builds a candidate from the patch and sends it through the gate (D6), to the fleet or to `awaiting_canary` until B7 (PR 9).
+6. The story shows the consult, the hypotheses, the checks and the outcome.
+
+**Checks:**
+- A base that no longer matches gives `stale`, which is closed and not retried.
+- A patch touching safety, or any patch while the safety paths are unconfirmed, gives `discarded`: never offered.
+- A reverted fix gets one more consult; when that one fails too, the Doctor records `gave_up`.
+- The daily dollar cap gives `blocked_over_cap` at admit, before any money is spent.
+- `frozen` holds every consult, hides the pointer and refuses the pull (`409`).
+- An unpulled proposal expires; an incident with no `code_rev` is declined (an event, never a `422`); incidents older than `DOCTOR_LOOKBACK_S` are never consulted.
+- Every stub says so: "check: stub, passed by default".
+
+**Demo beat:** hero step 3 (the Fleet Doctor writes a root cause), if it ships ([strategy](../fleet-doctor/strategy.md) §3).
 
 ---
 

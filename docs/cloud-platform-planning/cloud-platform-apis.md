@@ -224,6 +224,7 @@ When a consult's fix passes the cloud's checks, the cloud offers it as a proposa
 - **The one strict rule:** `applied` must carry a non-blank `overlay_id`, or the request gets a `422`. This result is how a proposal overlay reaches the cloud: the cloud creates the overlay row from it (incidents are write-once and never carry it), so a lost `applied` means no overlay row and no lock-in. Afterwards, an incident reported while that overlay is active carries `overlay.proposal_id` as provenance (§2.5).
 - Everything else is lenient, so the result is never dead-lettered: a numeric `overlay_id` reads as a string, a non-string `reason` is stringified (`null` reads as `""`), and a malformed `occurred_at` reads as `null`.
 - It is queued in the outbox like an overlay status. The proposal ID is in the URL.
+- The cloud records one result per proposal. A resend of it (the same `result` and, for `applied`, the same `overlay_id`) answers `200`; any other result answers `409 proposal_result_conflict`. A result for a proposal that expired before any result arrived is still recorded, because the device pulled it in time and only the report was late. Refusing it would lose the row for an overlay the device runs.
 
 ### 2.14 The sensor pod, through the edge bridge (D29)
 
