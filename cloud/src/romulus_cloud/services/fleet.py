@@ -2,26 +2,37 @@
 
 - `freeze` stops the gate and pins every device to its last good versions, except that a
   canary running an in-flight candidate goes back to what it had before that candidate
-  (`last_good` can be the unproven candidate itself).
-- `unfreeze` puts every device back on its class's promoted release, so a freeze right
-  after a promotion can't split the fleet for good, and lets the gate move again (frozen
-  candidates restart from replay with a fresh window, F5).
+  (`last_good` can be the unproven candidate itself). With no previous version on record,
+  that canary is pinned to its class's promoted release instead (else to what the class's
+  normal devices run), and the why says so. The `fleet.frozen` event keeps a snapshot:
+  per device and type, what to `restore` on unfreeze (what it was assigned before the
+  freeze; for such a canary, the same pin) and what freeze `pinned`.
+- `unfreeze` puts every device back on its snapshot's `restore` version, so a freeze right
+  after a promotion can't split the fleet for good, and a release a person backed out
+  before the freeze stays backed out. **A device a person reassigned during the freeze
+  keeps that choice:** when its assignment no longer equals what freeze pinned, unfreeze
+  leaves it alone and the why names it (while frozen only people move assignments). A
+  device with no snapshot (registered during the freeze, or frozen before snapshots
+  existed) goes to its class's promoted release. Then the gate moves again: frozen
+  candidates restart from replay with a fresh window (F5).
 
 Each press is a `human` event, `fleet.frozen` / `fleet.unfrozen`, which is all the
 dashboard reads. Both lock the `fleet_state` row (`SELECT … FOR UPDATE`), as the gate tick
 does, so a freeze never lands in the middle of a tick. Nothing here commits.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
-from romulus_cloud.models import Candidate, Device, FleetState
-from romulus_cloud.services import devices
+from romulus_cloud.models import Candidate, Device, Event, FleetState
+from romulus_cloud.services import devices, registry
 
 LIVE = ("replaying", "awaiting_canary", "canary", "frozen")
 KINDS = ("firmware", "harness")
@@ -64,9 +75,27 @@ def install_type(c: Candidate) -> str:
     return "harness" if c.type == "harness" else "firmware"
 
 
-def _canary_pins(session: Session, fleet_id: str) -> dict[tuple[str, str], int]:
-    """{(device, type): version} for canaries running an in-flight candidate."""
-    pins: dict[tuple[str, str], int] = {}
+def _fallback(session: Session, c: Candidate, fleet_id: str) -> tuple[int | None, str]:
+    """A version for a canary whose candidate has no `canary_prev_version`: the class's
+    promoted release, else what its normal devices run. Never the candidate itself."""
+    kind = install_type(c)
+    version = releases(session, fleet_id).get((c.device_class, kind))
+    if version is not None and version != c.version:
+        return version, f"the {c.device_class} class's promoted release"
+    firmware, harness = registry.default_assignment(session, c.device_class, fleet_id)
+    version = harness if kind == "harness" else firmware
+    if version is not None and version != c.version:
+        return version, f"what the {c.device_class} class's devices run (nothing promoted yet)"
+    return None, ""
+
+
+def _canary_pins(
+    session: Session, fleet_id: str
+) -> tuple[dict[tuple[str, str], int | None], list[str]]:
+    """{(device, type): version} for canaries running an in-flight candidate, and a note
+    for each canary pinned to a fallback because it had no previous version on record."""
+    pins: dict[tuple[str, str], int | None] = {}
+    notes: list[str] = []
     live = session.scalars(
         select(Candidate).where(
             Candidate.fleet_id == fleet_id,
@@ -77,10 +106,21 @@ def _canary_pins(session: Session, fleet_id: str) -> dict[tuple[str, str], int]:
     for c in live:
         device = session.get(Device, c.canary_device)
         kind = install_type(c)
-        assigned = getattr(device, f"assigned_{kind}") if device else None
-        if assigned == c.version and c.canary_prev_version is not None:
-            pins[(c.canary_device, kind)] = c.canary_prev_version
-    return pins
+        if device is None or getattr(device, f"assigned_{kind}") != c.version:
+            continue
+        if c.canary_prev_version is not None:
+            pins[(device.id, kind)] = c.canary_prev_version
+            continue
+        version, source = _fallback(session, c, fleet_id)
+        pins[(device.id, kind)] = version  # None: nothing else exists; left as is
+        what = f"{c.type} v{c.version}"
+        notes.append(
+            f"{device.id} had no {kind} version on record from before {what}, so it is "
+            f"pinned to {kind} {version}, {source}"
+            if version is not None
+            else f"{device.id} has no {kind} version other than {what} to go back to; left as is"
+        )
+    return pins, notes
 
 
 def releases(session: Session, fleet_id: str = "default") -> dict[tuple[str, str], int]:
@@ -97,7 +137,9 @@ def releases(session: Session, fleet_id: str = "default") -> dict[tuple[str, str
     return out
 
 
-def _reassign(session: Session, fleet_id: str, target) -> list[dict]:
+def _reassign(
+    session: Session, fleet_id: str, target: Callable[[Device, str], int | None]
+) -> list[dict]:
     """Set each device's assignment to `target(device, kind)`; return what moved."""
     moved = []
     for d in devices.list_devices(session, fleet_id):
@@ -116,6 +158,33 @@ def _moved(moved: list[dict]) -> str:
     )
 
 
+def _snapshot(session: Session, fleet_id: str, canary: dict) -> dict[str, dict[str, Any]]:
+    """{device: {type: {"restore": v, "pinned": v}}} before freeze moves anything."""
+    snap: dict[str, dict[str, Any]] = {}
+    for d in devices.list_devices(session, fleet_id):
+        snap[d.id] = {}
+        for k in KINDS:
+            was = getattr(d, f"assigned_{k}")
+            if (d.id, k) in canary:  # never restore an in-flight candidate
+                pinned = canary[(d.id, k)] or was
+                snap[d.id][k] = {"restore": pinned, "pinned": pinned}
+            else:
+                snap[d.id][k] = {"restore": was, "pinned": getattr(d, f"last_good_{k}") or was}
+    return snap
+
+
+def _last_snapshot(session: Session, fleet_id: str) -> dict[str, dict[str, Any]] | None:
+    """The snapshot kept by the latest `fleet.frozen` event (None if it has none)."""
+    ev = session.scalars(
+        events.find_query({"fleet": fleet_id}, kinds=["fleet.frozen"])
+        .where(Event.fleet_id == fleet_id)
+        .order_by(None)
+        .order_by(Event.ts.desc(), Event.recorded_at.desc())
+        .limit(1)
+    ).first()
+    return (ev.data or {}).get("snapshot") if ev else None
+
+
 def freeze(
     session: Session, by: str | None, why: str, now: datetime, fleet_id: str = "default"
 ) -> SwitchResult:
@@ -126,12 +195,9 @@ def freeze(
         return SwitchResult(
             False, f"The fleet was already frozen by {row.frozen_by}: {row.frozen_reason}"
         )
-    canary = _canary_pins(session, fleet_id)
-    pinned = _reassign(
-        session,
-        fleet_id,
-        lambda d, k: canary.get((d.id, k)) or getattr(d, f"last_good_{k}"),
-    )
+    canary, notes = _canary_pins(session, fleet_id)
+    snap = _snapshot(session, fleet_id, canary)
+    pinned = _reassign(session, fleet_id, lambda d, k: snap[d.id][k]["pinned"])
     reason = why.strip() or "no reason given"
     row.frozen, row.frozen_by, row.frozen_at, row.frozen_reason = True, actor, now, reason
     row.updated_at = now
@@ -140,6 +206,8 @@ def freeze(
         f"last good versions, a canary to what it ran before its candidate "
         f"({'pinned ' + _moved(pinned) if pinned else 'all were already there'})."
     )
+    if notes:
+        text += " " + "; ".join(notes) + "."  # device ids stay lowercase
     events.record(
         session,
         actor,
@@ -147,7 +215,7 @@ def freeze(
         "fleet.frozen",
         {"fleet": fleet_id},
         text,
-        data={"reason": reason, "pinned": pinned},
+        data={"reason": reason, "pinned": pinned, "snapshot": snap},
         ts=now,
         fleet_id=fleet_id,
     )
@@ -158,7 +226,8 @@ def freeze(
 def unfreeze(
     session: Session, by: str | None, why: str, now: datetime, fleet_id: str = "default"
 ) -> SwitchResult:
-    """Unfreeze: devices go back to the promoted release; frozen candidates restart."""
+    """Unfreeze: devices go back to their pre-freeze assignments, except ones a person
+    reassigned while frozen; frozen candidates restart (module docstring)."""
     actor = human_actor(by)
     row = state(session, fleet_id, lock=True)
     if not row.frozen:
@@ -166,11 +235,30 @@ def unfreeze(
     reason = why.strip() or "no reason given"
     row.frozen, row.frozen_by, row.frozen_at, row.frozen_reason = False, None, None, None
     row.updated_at = now
+    snap = _last_snapshot(session, fleet_id) or {}
     release = releases(session, fleet_id)
-    moved = _reassign(session, fleet_id, lambda d, k: release.get((d.device_class, k)))
+    kept: list[str] = []
+
+    def target(d: Device, k: str) -> int | None:
+        entry = (snap.get(d.id) or {}).get(k)
+        if entry is None:
+            return release.get((d.device_class, k))
+        current = getattr(d, f"assigned_{k}")
+        if current != entry["pinned"]:
+            kept.append(f"{d.id} on {k} {current}")
+            return current
+        return entry["restore"]
+
+    moved = _reassign(session, fleet_id, target)
+    where = "their pre-freeze assignments" if snap else "the promoted release"
     text = (
         f"{actor} unfroze the fleet: {reason}. "
-        + (f"Back on the promoted release: {_moved(moved)}. " if moved else "")
+        + (f"Back on {where}: {_moved(moved)}. " if moved else "")
+        + (
+            f"A person reassigned these while frozen, so they stay: {', '.join(kept)}. "
+            if kept
+            else ""
+        )
         + "Frozen candidates restart from replay with a fresh canary window."
     )
     events.record(
@@ -180,7 +268,7 @@ def unfreeze(
         "fleet.unfrozen",
         {"fleet": fleet_id},
         text,
-        data={"reason": reason, "reassigned": moved},
+        data={"reason": reason, "reassigned": moved, "kept": kept},
         ts=now,
         fleet_id=fleet_id,
     )

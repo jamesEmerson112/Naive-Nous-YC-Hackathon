@@ -251,6 +251,12 @@ def _last_status(row: Overlay) -> dict[str, Any]:
     return {"last_status": row.raw["last_status"]} if row.raw and "last_status" in row.raw else {}
 
 
+def _requeued(session: Session, overlay: Overlay) -> bool:
+    """The gate sent this overlay back to `held` (an `overlay.requeued` event exists)."""
+    refs = {"device": overlay.device_id, "overlay": overlay.id}
+    return session.scalars(events.find_query(refs, kinds=["overlay.requeued"])).first() is not None
+
+
 def set_overlay_status(
     session: Session,
     device_id: str,
@@ -268,6 +274,10 @@ def set_overlay_status(
     - A cloud status (`locked_in`, `dropped`) is sticky: a later `superseded` or `reverted`
       is recorded as an event but leaves the status alone (in F3 the origin device sends
       `superseded` when it installs the promoted version); a late `held` is ignored.
+    - A `superseded` for a `held` overlay the gate re-queued (its candidate went stale, so
+      it waits to re-batch on the new base) is recorded but leaves it `held`: the device
+      dropped it for a version that wasn't built from it (D7), and the cloud keeps its
+      diff, so the next batch still folds it. Otherwise the fix would be lost on both sides.
     - A status for an overlay the cloud hasn't seen yet makes a placeholder row; the
       incident fills it in when it arrives.
     """
@@ -292,7 +302,8 @@ def set_overlay_status(
 
     before = overlay.status
     sticky = before in CLOUD_STATUSES
-    if not sticky:
+    requeued = status == SUPERSEDED and before == "held" and _requeued(session, overlay)
+    if not sticky and not requeued:
         overlay.status = status
         overlay.status_reason = body.reason
     overlay.updated_at = now
@@ -305,7 +316,14 @@ def set_overlay_status(
     if overlay.touches_safety:
         refs["touches_safety"] = True
     reason = body.reason or "no reason given"
-    if status == SUPERSEDED:
+    if requeued:
+        why = (
+            f"Overlay {overlay_id} on {device_id} was superseded by a new version: {reason}. "
+            "Not a failed fix. It stays held for the next batch: the cloud re-queued it, "
+            "keeps its diff, and the version that replaced it on the device was not built "
+            "from it."
+        )
+    elif status == SUPERSEDED:
         why = (
             f"Overlay {overlay_id} on {device_id} was superseded by a new version: {reason}. "
             "Not a failed fix; nothing to lock in."
@@ -317,7 +335,7 @@ def set_overlay_status(
         why += " The cloud has not seen this overlay's incident yet."
     elif sticky:
         why += f" The overlay stays {before}: the cloud already decided its fate."
-    elif before not in (None, "active"):
+    elif before not in (None, "active") and not requeued:
         why += f" It was {before} before."
     events.record(
         session,
@@ -326,7 +344,12 @@ def set_overlay_status(
         f"overlay.{status}",
         refs,
         why,
-        data={"status": status, "reason": body.reason, "before": before},
+        data={
+            "status": status,
+            "reason": body.reason,
+            "before": before,
+            "after": overlay.status,
+        },
         ts=body.occurred_at or now,
         fleet_id=device.fleet_id,
     )

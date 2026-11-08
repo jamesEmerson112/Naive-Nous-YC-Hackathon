@@ -9,19 +9,27 @@ reason and the rest go on.
   undo that version's fix. It is withdrawn as `stale` (not a failure) and its overlays go
   back to `held`, so the next batch folds them onto the new base.
 - **replay** (once per run of `replaying`): firmware candidates replay their rules against
-  every folded incident's signals (P0); harness and code candidates get a labeled stub.
+  every folded incident's signals (P0), then against the class's regression corpus
+  (`datasets.regression_cases`, P1). The corpus fails a candidate only on a regression: a
+  case the class's current release passes and the candidate fails, each one named in the
+  why. An empty corpus, or a case the release already fails, is not a regression. The
+  release's results are computed once per tick per (class, version). Harness and code
+  candidates get a labeled stub.
 - **canary** (`start_canary`): assign the class's `role = canary` device, remember what it
   had (`canary_prev_version`), set `canary_started_at = now`. Evidence is that device's
   check-ins (`canary_checkins`), install reports and incidents received since then, on the
   server clock. An overlay counts only if it is new since the run started. A
-  `touches_safety` candidate never uses a canary whose kind is `real` (K17).
+  `touches_safety` candidate only uses a canary whose kind is `sim` or `test` (K17); any
+  other kind, including an auto-registered `unknown`, counts as real (fail closed).
 - **promote:** assign the candidate to every device of its class.
 - **roll back** (a real replay or canary failure): give the canary back its previous
   assignment (not `last_good`, which can already be the bad candidate in F4's late path),
   withdraw live candidates sharing its overlays, and mark the failed candidate's overlays
   `lockin_rolled_back`: sticky, never re-batched, and the device keeps its local fix.
 - **freeze:** while the kill switch is on nothing moves; frozen candidates restart from
-  replay on unfreeze, with a fresh canary window (F5).
+  replay on unfreeze, with a fresh canary window (F5). A candidate whose canary repeated
+  one of its incidents' kinds on its version since the run started (including while
+  frozen, outside any window) is rolled back on unfreeze instead.
 
 No LLM is called here.
 """
@@ -45,7 +53,7 @@ from romulus_cloud.models import (
     InstallReport,
     Overlay,
 )
-from romulus_cloud.services import fleet, registry
+from romulus_cloud.services import datasets, fleet, registry
 from romulus_cloud.services.fleet import install_type
 from romulus_cloud.settings import Settings, get_settings
 
@@ -55,6 +63,7 @@ ACTOR = "gate"
 LIVE = fleet.LIVE
 LOCKIN_ROLLED_BACK = "lockin_rolled_back"
 LOCKIN_ERROR = "lockin_error"
+CORPUS_CACHE = "gate.release_corpus"  # session.info key, set for one tick
 TRANSITION_KINDS = {
     "canary": "candidate.canary_started",
     "awaiting_canary": "candidate.awaiting_canary",
@@ -64,7 +73,8 @@ TRANSITION_KINDS = {
     "replaying": "candidate.restarted",
 }
 K17_WAIT = (
-    "it touches the safety layer or visor and the only canary is a real arm; safety patches "
+    "it touches the safety layer or visor and the only canary is a real arm (or not known "
+    "to be simulated); safety patches "
     "go to a simulated canary first (K17)"
 )
 
@@ -158,6 +168,15 @@ def _canary(session: Session, c: Candidate) -> Device | None:
     return session.scalars(stmt.order_by(Device.id)).first()
 
 
+SIMULATED_KINDS = ("sim", "test")
+
+
+def _maybe_real(device: Device) -> bool:
+    """Could this device be a real arm? Anything not known to be simulated (`real`, an
+    auto-registered `unknown`, a typo) counts as real, so K17 fails closed."""
+    return device.kind not in SIMULATED_KINDS
+
+
 def _canary_busy(session: Session, c: Candidate, device: Device) -> bool:
     """Another candidate of the same install type is already on this canary."""
     others = session.scalars(
@@ -188,7 +207,60 @@ def _replay(session: Session, c: Candidate) -> g.ReplayResult:
         g.ReplayCase(i.id, i.signals or {}, i.resolving_action, i.kind)
         for i in _incidents(session, c)
     ]
-    return g.replay(fw.manifest, cases)
+    own = g.replay(fw.manifest, cases)
+    if not own.passed:
+        return own
+    corpus = _corpus(session, c, fw.manifest)
+    return g.ReplayResult(corpus.passed, f"{own.why}; {corpus.why}", own.cases + corpus.cases)
+
+
+def _release_corpus(
+    session: Session, c: Candidate
+) -> tuple[list[g.ReplayCase], set[str] | None, int | None]:
+    """The class's regression corpus, the ids of the cases its current firmware release
+    passes (None: that release can't be replayed, so every case counts; fail closed), and
+    that release. Cached for the tick in `session.info` when `tick` runs."""
+    release, _ = registry.default_assignment(session, c.device_class, c.fleet_id)
+    cache = session.info.get(CORPUS_CACHE)
+    key = (c.fleet_id, c.device_class, release)
+    if cache is not None and key in cache:
+        return cache[key]
+    cases = datasets.regression_cases(session, c.fleet_id, c.device_class)
+    fw = session.get(FirmwareVersion, (c.fleet_id, release)) if release is not None else None
+    passing: set[str] | None = None
+    if fw is not None and cases:
+        try:
+            base = g.replay(fw.manifest, cases)
+        except Exception:  # a broken release manifest: count every case
+            base = None
+        if base is not None and base.cases:
+            passing = {r.case_id for r in base.cases if r.passed}
+    found = (cases, passing, release)
+    if cache is not None:
+        cache[key] = found
+    return found
+
+
+def _corpus(session: Session, c: Candidate, manifest: dict[str, Any]) -> g.ReplayResult:
+    """Replay the regression corpus (minus the candidate's own incidents, replayed above);
+    fail only on a regression against the current release."""
+    corpus, passing, release = _release_corpus(session, c)
+    own = set(_incident_ids(session, c))
+    cases = [k for k in corpus if k.case_id not in own]
+    if not cases:
+        return g.ReplayResult(True, "regression corpus: no cases yet, so nothing can regress")
+    if passing is None:
+        counted, note = cases, f"; firmware {release} could not be replayed, so every case counts"
+    else:
+        counted = [k for k in cases if k.case_id in passing]
+        old = len(cases) - len(counted)
+        note = f"; {old} already fail on firmware {release}, so they can't regress" if old else ""
+    if not counted:
+        return g.ReplayResult(
+            True, f"regression corpus: all {len(cases)} cases already fail on firmware {release}"
+        )
+    result = datasets.replay_corpus(manifest, counted)
+    return g.ReplayResult(result.passed, result.why + note, result.cases)
 
 
 def _version(c: Candidate, firmware: int | None, harness: int | None) -> int | None:
@@ -278,7 +350,7 @@ def _inputs(
     """The domain's inputs, and whether K17 is what keeps the candidate off the canary."""
     canary = _canary(session, c)
     available = canary is not None
-    k17 = bool(canary and c.touches_safety and canary.kind == "real" and c.status != "canary")
+    k17 = bool(canary and c.touches_safety and _maybe_real(canary) and c.status != "canary")
     if k17 or (canary is not None and c.status != "canary" and _canary_busy(session, c, canary)):
         available = False
     started = c.canary_started_at
@@ -288,12 +360,14 @@ def _inputs(
         replay=replay,
         canary_available=available,
         passthrough=True,  # FakeCoder only: the coding agent (M8) will set False
+        # Unlocks code promotion, so only a canary known to be real counts (fail closed).
         real_code_canary=bool(canary and canary.kind == "real"),
         allow_passthrough_code_promotion=settings.allow_passthrough_code_promotion,
         candidate_version=c.version,
         install_type=install_type(c),
         canary_observations=tuple(_observations(session, c, started)) if started else (),
-        canary_started_at=started if c.status == "canary" else None,
+        # In `frozen` too: on unfreeze a repeat since the run started fails it (F5).
+        canary_started_at=started if c.status in ("canary", "frozen") else None,
         canary_window_s=settings.canary_window_s,
         repeat_kinds=frozenset(i.kind for i in _incidents(session, c)),
         touches_safety=c.touches_safety,
@@ -591,16 +665,20 @@ def tick(session: Session, now: datetime, *, settings: Settings | None = None) -
         Candidate.fleet_id == settings.fleet_id, Candidate.status.in_(LIVE)
     )
     changed = []
-    for cid in session.scalars(stmt.order_by(Candidate.created_at, Candidate.type)).all():
-        c = session.get(Candidate, cid)
-        if c is None or c.status not in LIVE:  # closed with a sibling earlier in this tick
-            continue
-        try:
-            with session.begin_nested():
-                if _step(session, c, settings, frozen, now):
-                    changed.append(cid)
-        except Exception as exc:  # one bad candidate must not stall the others
-            _error(session, cid, exc, now)
-            changed.append(cid)
+    session.info[CORPUS_CACHE] = {}
+    try:
+        for cid in session.scalars(stmt.order_by(Candidate.created_at, Candidate.type)).all():
+            c = session.get(Candidate, cid)
+            if c is None or c.status not in LIVE:  # closed with a sibling earlier in this tick
+                continue
+            try:
+                with session.begin_nested():
+                    if _step(session, c, settings, frozen, now):
+                        changed.append(cid)
+            except Exception as exc:  # one bad candidate must not stall the others
+                _error(session, cid, exc, now)
+                changed.append(cid)
+    finally:
+        session.info.pop(CORPUS_CACHE, None)
     session.flush()
     return changed
