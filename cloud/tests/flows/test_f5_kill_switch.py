@@ -117,7 +117,7 @@ def test_freeze_right_after_a_promotion_does_not_split_the_fleet(
     assert _assigned(client)["sim-3"] == {"firmware": 1, "harness": 1}  # its last good
     assert {p["device"] for p in frozen["pinned"]} >= {"sim-3"}
     resp = client.post("/v1/fleet/unfreeze", json={"by": "kent", "why": "x"}).json()
-    assert "Back on the promoted release" in resp["why"]
+    assert "Back on their pre-freeze assignments" in resp["why"]
     assert all(a == {"firmware": 2, "harness": 2} for a in _assigned(client).values())
     for t in range(200, 260, 10):
         tick_arms(now + t * S)

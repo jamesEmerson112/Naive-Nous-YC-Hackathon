@@ -9,6 +9,8 @@ the clock: `now` is always passed in.
 - `replay_stub(reason)` / `replay_code_stub()`: a stub replay that passes and says so.
 - `canary_verdict(observations, started_at, window_s, now, version=, install_type=)`:
   pending, pass or fail, counting only reports for the candidate's version.
+- `repeat_since(observations, started_at, version=, repeat_kinds=)`: a repeat incident on
+  the candidate's version since a run started (checked on unfreeze).
 - `next_state(state, inputs, now) -> Transition(state, why, start_canary)`: one step of the
   candidate state machine. Defaults fail closed. On `start_canary` the service sets
   `canary_started_at = now`, so every canary run starts fresh.
@@ -370,6 +372,42 @@ def canary_verdict(
     return Verdict("pass", why)
 
 
+def repeat_since(
+    observations: Iterable[CanaryObs],
+    started_at: datetime,
+    *,
+    version: Version,
+    repeat_kinds: Iterable[str],
+) -> tuple[str, bool] | None:
+    """`(why, proven)` if the canary repeated one of `repeat_kinds` at or after
+    `started_at` on this `version` or an unknown one; None otherwise. The gate asks on
+    unfreeze, so a repeat the canary reported while the fleet was frozen (outside any open
+    window) still counts against the candidate it hit.
+
+    `proven` is True when a repeat is known to come from this version: a real failure.
+    A repeat of unknown version only (the canary was pinned back to its previous version
+    while frozen, so it may not be the candidate's) is unproven: the gate still rolls the
+    candidate back, but retries its overlays once instead of marking them sticky."""
+    repeat = set(repeat_kinds)
+    hits = sorted(
+        (
+            o
+            for o in observations
+            if isinstance(o, IncidentObs)
+            and o.at >= started_at
+            and o.kind in repeat
+            and (o.version is None or o.version == version)
+        ),
+        key=lambda o: o.at,
+    )
+    proven = [o for o in hits if o.version is not None]
+    first = (proven or hits or [None])[0]
+    if first is None:
+        return None
+    why = f"canary repeated {first.kind} {_ts(first.at, started_at)}"
+    return (why, True) if proven else (f"{why} on an unknown version", False)
+
+
 # --------------------------------------------------------------------------- state machine
 
 State = Literal["replaying", "awaiting_canary", "canary", "promoted", "rolled_back", "frozen"]
@@ -402,6 +440,8 @@ class GateInputs:
     - `candidate_version`, `install_type`: what the canary must install and run
       (`install_type` defaults to `kind`). Required in state `canary`.
     - `canary_started_at`: this canary run's start (set when `start_canary` was True).
+      Pass it in state `frozen` too: on unfreeze, a repeat incident on the candidate's
+      version since then fails the candidate instead of restarting it (`repeat_since`).
     - `canary_observations`, `canary_window_s`, `repeat_kinds`, `min_checkins`: inputs to
       `canary_verdict`.
     - `touches_safety`: visibility only (K17); it changes the `why`, never the path.
@@ -434,6 +474,7 @@ class Transition(NamedTuple):
     state: str
     why: str
     start_canary: bool = False
+    unproven: bool = False  # rolled back on evidence that may not be the candidate's
 
 
 def _canary_blocker(inputs: GateInputs) -> str | None:
@@ -471,6 +512,20 @@ def _step(state: str, inputs: GateInputs, now: datetime) -> Transition:
             return Transition(state, "fleet still frozen; candidate waits")
         return Transition("frozen", f"fleet frozen by the kill switch while {state}")
     if state == "frozen":
+        if inputs.canary_started_at is not None and inputs.candidate_version is not None:
+            hit = repeat_since(
+                inputs.canary_observations,
+                inputs.canary_started_at,
+                version=inputs.candidate_version,
+                repeat_kinds=inputs.repeat_kinds,
+            )
+            if hit:
+                why, proven = hit
+                return Transition(
+                    "rolled_back",
+                    f"{why} (seen on unfreeze); not restarting",
+                    unproven=not proven,
+                )
         return Transition("replaying", "fleet unfrozen; restarting from replay")
 
     if state == "replaying":
@@ -521,8 +576,9 @@ def next_state(state: str, inputs: GateInputs, now: datetime) -> Transition:
 
     replaying -> canary | awaiting_canary | rolled_back; awaiting_canary -> canary;
     canary -> promoted | rolled_back | awaiting_canary; any live state -> frozen while the
-    kill switch is on; frozen -> replaying on unfreeze (F5). promoted and rolled_back are
-    final. Every move into canary has `start_canary=True`.
+    kill switch is on; frozen -> replaying on unfreeze (F5), or rolled_back if the canary
+    repeated a folded incident's kind on this version since its run started. promoted and
+    rolled_back are final. Every move into canary has `start_canary=True`.
     """
     if state == "canary":
         check_window(inputs.canary_window_s)

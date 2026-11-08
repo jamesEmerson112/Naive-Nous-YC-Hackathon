@@ -251,6 +251,28 @@ def _last_status(row: Overlay) -> dict[str, Any]:
     return {"last_status": row.raw["last_status"]} if row.raw and "last_status" in row.raw else {}
 
 
+def requeue_marks(session: Session, overlay: Overlay) -> dict[str, Any]:
+    """The marks on every `overlay.requeued` event the gate wrote for this overlay, merged:
+    `solo` (bisected out of a failed fold: batch it alone), `retried` (it already had
+    its one retry after an unproven failure) and `stale` (how many times its candidates
+    went stale; capped by the gate). Empty if it was never re-queued."""
+    refs = {"device": overlay.device_id, "overlay": overlay.id}
+    marks: dict[str, Any] = {}
+    for ev in session.scalars(events.find_query(refs, kinds=["overlay.requeued"])):
+        marks.update((ev.data or {}).get("marks") or {})
+    return marks
+
+
+def _after_superseded(overlay: Overlay, last_sent: str | None) -> bool:
+    """The overlay was kept `held` when its device reported `superseded`."""
+    return overlay.status == "held" and last_sent == SUPERSEDED
+
+
+def _ignored(overlay: Overlay) -> str | None:
+    """The status of the last device report ignored after `superseded` (for retries)."""
+    return ((overlay.raw or {}).get("ignored_status") or {}).get("status")
+
+
 def set_overlay_status(
     session: Session,
     device_id: str,
@@ -264,10 +286,19 @@ def set_overlay_status(
 
     - The same status the device last sent is a no-op (a retry).
     - `superseded` (a new healthy version replaced the overlay, D7) has its own event kind,
-      so nothing counts it as a failed fix or locks it in. It is terminal.
+      so nothing counts it as a failed fix or locks it in. After it, a later `held` or
+      `reverted` is recorded as an event but never moves the overlay: the device no
+      longer runs it.
     - A cloud status (`locked_in`, `dropped`) is sticky: a later `superseded` or `reverted`
       is recorded as an event but leaves the status alone (in F3 the origin device sends
       `superseded` when it installs the promoted version); a late `held` is ignored.
+    - **A `held` overlay survives `superseded`:** it is recorded but stays `held`. The
+      only version that contains an overlay is one built from it, and then the overlay is
+      `locked_in`, not `held`; so the device dropped this fix for a version without it, and
+      the cloud, which keeps the diff, re-batches it on the new base (where
+      `base_compatible` decides). Otherwise the fix would be lost on both sides.
+    - `superseded` for an overlay still `active` (the device hadn't kept it yet) is
+      terminal: an unproven fix, not a lost one.
     - A status for an overlay the cloud hasn't seen yet makes a placeholder row; the
       incident fills it in when it arrives.
     """
@@ -275,6 +306,7 @@ def set_overlay_status(
     status = body.status
     overlay = session.get(Overlay, (device_id, overlay_id))
     unknown = overlay is None
+    last_sent = None
     if overlay is None:
         overlay = Overlay(
             device_id=device_id, id=overlay_id, fleet_id=device.fleet_id, received_at=now
@@ -286,17 +318,23 @@ def set_overlay_status(
         if (
             status in (overlay.status, last_sent)
             or overlay.status == SUPERSEDED
+            or (_after_superseded(overlay, last_sent) and status == _ignored(overlay))
             or (sticky and status == "held")
         ):
             return False
 
     before = overlay.status
     sticky = before in CLOUD_STATUSES
-    if not sticky:
+    keep_held = status == SUPERSEDED and before == "held"
+    # Kept held after `superseded`: a later device status is recorded but moves nothing,
+    # and `last_status` stays `superseded` (the body is kept as `ignored_status`).
+    ignored = not unknown and _after_superseded(overlay, last_sent)
+    if not sticky and not keep_held and not ignored:
         overlay.status = status
         overlay.status_reason = body.reason
     overlay.updated_at = now
-    overlay.raw = {**(overlay.raw or {}), "last_status": raw}
+    key = "ignored_status" if ignored else "last_status"
+    overlay.raw = {**(overlay.raw or {}), key: raw}
     session.flush()
 
     refs: dict[str, Any] = {"device": device_id, "overlay": overlay_id}
@@ -305,7 +343,20 @@ def set_overlay_status(
     if overlay.touches_safety:
         refs["touches_safety"] = True
     reason = body.reason or "no reason given"
-    if status == SUPERSEDED:
+    if ignored:
+        why = (
+            f"{device_id} sent {status} for overlay {overlay_id} ({reason}) after reporting "
+            "it superseded. Ignored: the device no longer runs it, and the overlay stays "
+            "held for the next batch."
+        )
+    elif keep_held:
+        why = (
+            f"Overlay {overlay_id} on {device_id} was superseded by a new version: {reason}. "
+            "Not a failed fix. It stays held for the next batch: it was never locked in, so "
+            "the version that replaced it on the device was not built from it, and the "
+            "cloud keeps its diff to re-batch on the new base."
+        )
+    elif status == SUPERSEDED:
         why = (
             f"Overlay {overlay_id} on {device_id} was superseded by a new version: {reason}. "
             "Not a failed fix; nothing to lock in."
@@ -317,7 +368,7 @@ def set_overlay_status(
         why += " The cloud has not seen this overlay's incident yet."
     elif sticky:
         why += f" The overlay stays {before}: the cloud already decided its fate."
-    elif before not in (None, "active"):
+    elif before not in (None, "active") and not keep_held and not ignored:
         why += f" It was {before} before."
     events.record(
         session,
@@ -326,7 +377,12 @@ def set_overlay_status(
         f"overlay.{status}",
         refs,
         why,
-        data={"status": status, "reason": body.reason, "before": before},
+        data={
+            "status": status,
+            "reason": body.reason,
+            "before": before,
+            "after": overlay.status,
+        },
         ts=body.occurred_at or now,
         fleet_id=device.fleet_id,
     )

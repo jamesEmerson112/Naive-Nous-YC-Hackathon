@@ -13,13 +13,20 @@ import tarfile
 from typing import Any, BinaryIO
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import BlobNotFound, BlobStore
 from romulus_cloud.errors import ApiError
-from romulus_cloud.models import Blob, CodeVersion, Device, FirmwareVersion, HarnessVersion
+from romulus_cloud.models import (
+    Blob,
+    Candidate,
+    CodeVersion,
+    Device,
+    FirmwareVersion,
+    HarnessVersion,
+)
 from romulus_contracts import HarnessMeta, firmware_response
 
 TARBALL_MEDIA_TYPE = "application/gzip"
@@ -305,13 +312,28 @@ def _most_common(session: Session, column, device_class: str, fleet_id: str) -> 
     return session.scalar(stmt)
 
 
+def _released(model, kinds: tuple[str, ...], fleet_id: str):
+    """A version that is a release, not an unproven batch candidate: made by the seed or by
+    hand (`source != "batch"`), or promoted by the gate."""
+    promoted = select(Candidate.version).where(
+        Candidate.fleet_id == fleet_id,
+        Candidate.status == "promoted",
+        Candidate.type.in_(kinds),
+        Candidate.version.is_not(None),
+    )
+    return or_(model.source != "batch", model.version.in_(promoted))
+
+
 def default_assignment(
     session: Session, device_class: str, fleet_id: str = "default"
 ) -> tuple[int | None, int | None]:
-    """What a new device should run: what the rest of its class runs, else the newest version.
+    """What a new device should run: what the rest of its class runs, else the newest
+    release.
 
     Never a candidate: candidates are only ever assigned to canaries, so the class's normal
-    devices don't run them until promotion.
+    devices don't run them until promotion; and the fallback (a class with no normal device
+    assigned anything) skips batch versions the gate hasn't promoted, or every candidate
+    would look stale against itself and be rebuilt forever (PR #18 review, finding 1).
     """
     firmware = _most_common(session, Device.assigned_firmware, device_class, fleet_id)
     if firmware is None:
@@ -320,13 +342,16 @@ def default_assignment(
                 FirmwareVersion.fleet_id == fleet_id,
                 FirmwareVersion.device_class == device_class,
                 FirmwareVersion.retired.is_(False),
+                _released(FirmwareVersion, ("firmware", "code"), fleet_id),
             )
         )
     harness = _most_common(session, Device.assigned_harness, device_class, fleet_id)
     if harness is None:
         harness = session.scalar(
             select(func.max(HarnessVersion.version)).where(
-                HarnessVersion.fleet_id == fleet_id, HarnessVersion.retired.is_(False)
+                HarnessVersion.fleet_id == fleet_id,
+                HarnessVersion.retired.is_(False),
+                _released(HarnessVersion, ("harness",), fleet_id),
             )
         )
     return firmware, harness
