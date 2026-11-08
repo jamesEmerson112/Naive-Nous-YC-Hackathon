@@ -1,0 +1,17 @@
+[project]
+name = "fake-device"
+version = "0.1.0"
+description = "Acts like N arms against the Romulus API. Depends only on romulus-contracts + HTTP, so it doubles as the reference visor/outbox client."
+requires-python = ">=3.12"
+dependencies = [
+    "romulus-contracts",
+    "httpx>=0.27",
+    "mcap>=1.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fake_device"]
