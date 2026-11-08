@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from romulus_cloud.domain import datasets as dd
+from romulus_cloud.domain import gate
 
 AT = datetime(2026, 11, 7, 22, 0, tzinfo=UTC)
 
@@ -70,17 +71,33 @@ def test_matches_incident_only_without_recording_only_fields():
 # --- snapshots -------------------------------------------------------------------------------
 
 
+def _rec(rid: str, sha: str) -> dict:
+    return {"id": rid, "sha256": sha, "kind": "agent_trace"}
+
+
 def test_snapshot_manifest_is_order_independent():
+    ctx = {"i1": {"overlay_outcome": "held"}}
     a, sha_a = dd.snapshot_manifest(
-        "ds_1", 1, {"kind": "x"}, [("r2", "b"), ("r1", "a")], ["i2", "i1"]
+        "ds_1", 1, {"kind": "x"}, [_rec("r2", "b"), _rec("r1", "a")], ["i2", "i1"], ctx
     )
     b, sha_b = dd.snapshot_manifest(
-        "ds_1", 1, {"kind": "x"}, [("r1", "a"), ("r2", "b")], ["i1", "i2"]
+        "ds_1", 1, {"kind": "x"}, [_rec("r1", "a"), _rec("r2", "b")], ["i1", "i2"], ctx
     )
     assert a == b and sha_a == sha_b and len(sha_a) == 64
-    assert a["recordings"] == [{"id": "r1", "sha256": "a"}, {"id": "r2", "sha256": "b"}]
-    _, other = dd.snapshot_manifest("ds_1", 1, {"kind": "x"}, [("r1", "CHANGED")], [])
+    assert [r["id"] for r in a["recordings"]] == ["r1", "r2"]
+    assert a["context"] == ctx
+    _, other = dd.snapshot_manifest("ds_1", 1, {"kind": "x"}, [_rec("r1", "CHANGED")], [])
     assert other != sha_a
+    # Frozen context is part of the hash: a later overlay change makes a different snapshot.
+    _, moved = dd.snapshot_manifest(
+        "ds_1",
+        1,
+        {"kind": "x"},
+        [_rec("r1", "a"), _rec("r2", "b")],
+        ["i1", "i2"],
+        {"i1": {"overlay_outcome": "locked_in"}},
+    )
+    assert moved != sha_a
 
 
 # --- regression cases ------------------------------------------------------------------------
@@ -113,11 +130,62 @@ def test_regression_case_from_resolved_incident():
         {"resolving_action": None},
         {"signals": {}},
         {"signals": None},
+        {"signals": [1, 2]},
         {"code_patch": "--- a/x.py\n+++ b/x.py\n"},
+        {"code_patch": True},
+        {"resolving_action": "park"},
+        {"resolving_action": " Park "},
+        {"resolving_action": "replace_part"},
+        {"work_order": "wo_1"},
     ],
 )
 def test_regression_case_skips_what_replay_cannot_check(change):
     assert dd.regression_case(RESOLVED | change) is None
+
+
+# --- corpus replay for the gate ----------------------------------------------------------------
+
+RULES = {
+    "rules": {"camera_occluded": {"signal": "brightness", "below": 0.2, "action": "safe_pose"}}
+}
+CASE = gate.ReplayCase("i1", {"brightness": [0.4, 0.1]}, "safe_pose", "camera_occluded")
+ODD = gate.ReplayCase("i2", {"bus_read_errors": [3, 3]}, "park", "servo_absent")
+
+
+def test_replay_corpus_empty_corpus_passes():
+    result = dd.replay_corpus(RULES, [])
+    assert result.passed and "no cases yet" in result.why and not result.stub
+
+
+def test_replay_corpus_passes_and_fails_like_replay():
+    assert dd.replay_corpus(RULES, [CASE]).passed
+    failed = dd.replay_corpus({"rules": {}}, [CASE])
+    assert not failed.passed and "1 regress" in failed.why and "i1" in failed.why
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {"rules": {"camera_occluded": {"signal": "brightness", "action": "safe_pose"}}},
+        {"rules": {"camera_occluded": "nonsense"}},
+        {"rules": ["not", "a", "map"]},
+        "not a manifest",
+    ],
+)
+def test_replay_corpus_malformed_rules_fail_with_a_sentence(manifest):
+    result = dd.replay_corpus(manifest, [CASE])
+    assert not result.passed and "regression corpus" in result.why
+    assert "malformed" in result.why or "fail" in result.why
+
+
+def test_replay_corpus_regression_only_with_baseline():
+    # The current release already fails ODD, so ODD can't block the candidate...
+    result = dd.replay_corpus(RULES, [CASE, ODD], baseline=RULES)
+    assert result.passed and "1 already fail" in result.why
+    # ...but a case the release passes and the candidate fails still does.
+    assert not dd.replay_corpus({"rules": {}}, [CASE, ODD], baseline=RULES).passed
+    # Without a baseline every case counts.
+    assert not dd.replay_corpus(RULES, [CASE, ODD]).passed
 
 
 # --- traces ----------------------------------------------------------------------------------
@@ -143,20 +211,51 @@ def test_sharegpt_maps_roles_and_keeps_bad_lines():
     ]
 
 
+# --- redaction: one case per pattern -------------------------------------------------------
+
+
 @pytest.mark.parametrize(
     "dirty, clean",
     [
+        # secret-named keys in text: the whole value, spaces included
         ("OPENAI_API_KEY=sk-abcdefghijklmnopqrstuv", "OPENAI_API_KEY=[REDACTED]"),
         ('{"token": "abc123"}', '{"token": "[REDACTED]"}'),
-        ("password: hunter2", "password: [REDACTED]"),
-        ("Authorization: Bearer abcdefghijkl", "Authorization: Bearer [REDACTED]"),
+        ('{"token": "abc def ghi"}', '{"token": "[REDACTED]"}'),
+        ('{"client_secret": "a \\" b"}', '{"client_secret": "[REDACTED]"}'),
+        ("password: hunter2 and more", "password: [REDACTED]"),
+        ('passwd="two words"', 'passwd="[REDACTED]"'),
+        ("Authorization: Token abcdef", "Authorization: [REDACTED]"),
+        ("cookie: sid=abc; theme=dark", "cookie: [REDACTED]"),
+        # bearer headers without a key name
+        ("curl -H 'X: Bearer abcdefghijkl'", "curl -H 'X: Bearer [REDACTED]'"),
+        ("basic dXNlcjpwYXNzd29yZA==", "basic [REDACTED]"),
+        # passwords in URLs
+        (
+            "postgres://romulus:hunter2@db:5432/romulus",
+            "postgres://romulus:[REDACTED]@db:5432/romulus",
+        ),
+        ("https://kent:p%40ss@example.com/x", "https://kent:[REDACTED]@example.com/x"),
+        # Stripe and Naïve keys
+        ("use sk_live_51HxYzAbCdEfGh now", "use [REDACTED] now"),
+        ("use sk_test_51HxYzAbCdEfGh now", "use [REDACTED] now"),
+        ("use rk_live_51HxYzAbCdEfGh now", "use [REDACTED] now"),
+        ("use nk_live_abcdefgh12 now", "use [REDACTED] now"),
+        ("whsec_abcdefghijklmnop1234", "[REDACTED]"),
+        ("mcp_abcdefghijklmn", "[REDACTED]"),
+        # other providers
         ("key sk-abcdefghijklmnopqrstuv end", "key [REDACTED] end"),
         ("hf_abcdefghijklmnopqrstu", "[REDACTED]"),
+        ("ghp_abcdefghijklmnopqrstu", "[REDACTED]"),
         ("AKIAABCDEFGHIJKLMNOP", "[REDACTED]"),
+        ("-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----", "[REDACTED]"),
+        # home paths and emails
         ("open /Users/kent/git2/device/control/hold.py", "open ~/git2/device/control/hold.py"),
         ("/home/pi/robot/app.py", "~/robot/app.py"),
+        ("C:\\Users\\kent\\robot", "~\\robot"),
         ("mail kent@example.com now", "mail [EMAIL] now"),
+        # ordinary robot text is left alone
         ("brightness 0.12 below 0.2", "brightness 0.12 below 0.2"),
+        ("max_tokens: 512", "max_tokens: 512"),
     ],
 )
 def test_redact_text(dirty, clean):
@@ -166,3 +265,31 @@ def test_redact_text(dirty, clean):
 def test_redact_walks_nested_values():
     value = {"a": ["/Users/kent/x", 3, None], "b": {"c": "token=xyz"}}
     assert dd.redact(value) == {"a": ["~/x", 3, None], "b": {"c": "token=[REDACTED]"}}
+
+
+def test_redact_replaces_values_of_secret_named_keys_at_any_depth():
+    value = {
+        "api_key": "abc123secret",
+        "headers": {"Authorization": "Token abcdef", "Accept": "json"},
+        "tool_calls": [
+            {"name": "http", "arguments": {"url": "https://x.io", "access_key": "AB CD", "n": 3}},
+            {"name": "login", "arguments": {"password": 1234, "user": "kent"}},
+        ],
+        "conversations": [{"from": "gpt", "value": "ok", "secret": {"nested": "x"}}],
+        "token": None,
+        "max_tokens": 512,
+    }
+    assert dd.redact(value) == {
+        "api_key": "[REDACTED]",
+        "headers": {"Authorization": "[REDACTED]", "Accept": "json"},
+        "tool_calls": [
+            {
+                "name": "http",
+                "arguments": {"url": "https://x.io", "access_key": "[REDACTED]", "n": 3},
+            },
+            {"name": "login", "arguments": {"password": "[REDACTED]", "user": "kent"}},
+        ],
+        "conversations": [{"from": "gpt", "value": "ok", "secret": "[REDACTED]"}],
+        "token": None,
+        "max_tokens": 512,
+    }

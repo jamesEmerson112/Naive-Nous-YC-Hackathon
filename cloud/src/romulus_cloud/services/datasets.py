@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -272,8 +272,21 @@ def snapshot(session: Session, dataset_id: str, *, actor: str, now: datetime) ->
         select(func.max(DatasetVersion.n)).where(DatasetVersion.dataset_id == ds.id)
     )
     n = (last or 0) + 1
+    frozen_recs = [
+        {
+            "id": r.id,
+            "sha256": r.sha256,
+            "kind": r.kind,
+            "format": r.format,
+            "device_id": r.device_id,
+            "incident_id": r.incident_id,
+        }
+        for r in recs
+    ]
+    # Context for every incident an export may mention, including a trace's own incident.
+    context_ids = incident_ids | {r.incident_id for r in recs if r.incident_id}
     manifest, digest = dd.snapshot_manifest(
-        ds.id, n, ds.filter, [(r.id, r.sha256) for r in recs], incident_ids
+        ds.id, n, ds.filter, frozen_recs, incident_ids, freeze_context(session, context_ids)
     )
     version = DatasetVersion(
         dataset_id=ds.id,
@@ -294,6 +307,7 @@ def snapshot(session: Session, dataset_id: str, *, actor: str, now: datetime) ->
         f"{actor.split(':', 1)[-1]} froze dataset {ds.name!r} as v{n}: "
         f"{len(version.recording_ids)} recordings and {len(version.incident_ids)} incidents "
         "(later label changes don't alter it).",
+        # The full manifest (recordings, incident context) lives here; exports read it back.
         data={"n": n, "manifest_sha256": digest, "manifest": manifest},
         ts=now,
         fleet_id=ds.fleet_id,
@@ -404,135 +418,155 @@ def _redact_option(session: Session, exp: Export) -> bool:
     return bool(asked and (asked[0].data or {}).get("redact"))
 
 
-def _incident_facts(inc: Incident) -> dict[str, Any]:
-    overlay = (inc.raw or {}).get("overlay") or {}
-    return {
-        "incident_id": inc.id,
-        "kind": inc.kind,
-        "resolved": inc.resolved,
-        "resolving_action": inc.resolving_action,
-        "signals": inc.signals,
-        "code_patch": overlay.get("code_patch") if isinstance(overlay, dict) else None,
-    }
+class ExportError(Exception):
+    """An export can't be built exactly as its snapshot says; the message says why."""
 
 
-def _incidents(session: Session, ids: list[str]) -> list[Incident]:
-    if not ids:
-        return []
-    stmt = select(Incident).where(Incident.id.in_(ids))
-    return list(session.scalars(stmt.order_by(Incident.occurred_at, Incident.id)))
+def _code_patch(inc: Incident) -> bool:
+    overlay = (inc.raw or {}).get("overlay")
+    return bool(isinstance(overlay, dict) and overlay.get("code_patch"))
 
 
-def _recordings(session: Session, ids: list[str]) -> list[Recording]:
-    if not ids:
-        return []
-    stmt = select(Recording).where(Recording.id.in_(ids))
-    return list(session.scalars(stmt.order_by(Recording.id)))
-
-
-def _regression_files(session: Session, version: DatasetVersion) -> tuple[dict, dict]:
-    files: dict[str, bytes] = {}
-    rows = []
-    recs_by_incident: dict[str, list[dict[str, Any]]] = {}
-    for rec in _recordings(session, list(version.recording_ids)):
-        if rec.incident_id:
-            recs_by_incident.setdefault(rec.incident_id, []).append(
-                {"id": rec.id, "kind": rec.kind, "format": rec.format, "sha256": rec.sha256}
-            )
-    skipped = 0
-    for inc in _incidents(session, list(version.incident_ids)):
-        case = dd.regression_case(_incident_facts(inc))
-        if case is None:
-            skipped += 1
-            continue
-        case |= {
+def freeze_context(session: Session, incident_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """The per-incident state exports read, as of now: the incident's facts plus its
+    overlay's status and lock-in and its work order, which change after the snapshot."""
+    if not incident_ids:
+        return {}
+    out = {}
+    for inc in session.scalars(select(Incident).where(Incident.id.in_(incident_ids))):
+        overlay = session.get(Overlay, (inc.device_id, inc.overlay_id)) if inc.overlay_id else None
+        work_order = session.scalar(select(WorkOrder.id).where(WorkOrder.incident_id == inc.id))
+        out[inc.id] = {
+            "incident_id": inc.id,
             "device_id": inc.device_id,
             "occurred_at": inc.occurred_at.isoformat(),
-            "firmware": (inc.running or {}).get("firmware"),
+            "kind": inc.kind,
             "summary": inc.summary,
+            "firmware": (inc.running or {}).get("firmware"),
+            "signals": inc.signals,
+            "resolved": inc.resolved,
+            "resolving_action": inc.resolving_action,
             "suspected_cause": inc.suspected_cause,
-            "evidence": recs_by_incident.get(inc.id, []),
-        }
-        rows.append(case)
-        files[f"cases/{inc.id}/case.json"] = dd.canonical(case)
-    files["cases.jsonl"] = dd.jsonl(rows)
-    return files, {"cases": len(rows), "incidents_skipped": skipped}
-
-
-def _traces_files(
-    session: Session, store: BlobStore, version: DatasetVersion, redact: bool
-) -> tuple[dict, dict]:
-    recs = _recordings(session, list(version.recording_ids))
-    traces = [r for r in recs if r.kind == "agent_trace"]
-    incidents = {i.id: i for i in _incidents(session, list(version.incident_ids))}
-    for rec in traces:  # a trace's incident counts even if the filter didn't name it
-        if rec.incident_id and rec.incident_id not in incidents:
-            incidents.update({i.id: i for i in _incidents(session, [rec.incident_id])})
-    lines, missing = [], 0
-    for rec in traces:
-        try:
-            with store.get(rec.sha256) as fh:
-                text = fh.read().decode("utf-8", errors="replace")
-        except BlobNotFound:
-            missing += 1
-            continue
-        inc = incidents.get(rec.incident_id or "")
-        overlay = (
-            session.get(Overlay, (inc.device_id, inc.overlay_id))
-            if inc is not None and inc.overlay_id
-            else None
-        )
-        work_order = (
-            session.scalar(select(WorkOrder.id).where(WorkOrder.incident_id == inc.id))
-            if inc is not None
-            else None
-        )
-        line = {
-            "recording_id": rec.id,
-            "device_id": rec.device_id,
-            "incident_id": rec.incident_id,
-            "conversations": dd.sharegpt(text),
-            "completed": bool(inc and inc.resolved),
-            "incident": None
-            if inc is None
-            else {
-                "kind": inc.kind,
-                "summary": inc.summary,
-                "signals": inc.signals,
-                "resolving_action": inc.resolving_action,
-                "suspected_cause": inc.suspected_cause,
-            },
+            "code_patch": _code_patch(inc),
+            "overlay_id": inc.overlay_id,
             "overlay_diff": overlay.diff if overlay else None,
             "overlay_outcome": overlay.status if overlay else None,
             "locked_into": overlay.candidate_id if overlay else None,
             "work_order": work_order,
         }
+    return out
+
+
+def frozen_manifest(session: Session, version: DatasetVersion) -> dict[str, Any]:
+    """The manifest frozen when `version` was taken, checked against its sha256."""
+    for e in events.find(session, {"dataset": version.dataset_id}, kinds=[SNAPSHOTTED]):
+        data = e.data or {}
+        if data.get("n") == version.n and data.get("manifest") is not None:
+            if dd.sha256(dd.canonical(data["manifest"])) != version.manifest_sha256:
+                raise ExportError(
+                    f"dataset {version.dataset_id} v{version.n}'s frozen manifest no longer "
+                    "matches its sha256"
+                )
+            return data["manifest"]
+    raise ExportError(f"dataset {version.dataset_id} v{version.n} has no frozen manifest")
+
+
+def _read_blob(store: BlobStore, rec: dict[str, Any]) -> bytes:
+    """A snapshot recording's bytes. Fails when they are missing or don't match the sha256
+    frozen in the snapshot, so an export never quietly shrinks or changes."""
+    try:
+        with store.get(rec["sha256"]) as fh:
+            data = fh.read()
+    except BlobNotFound as exc:
+        raise ExportError(
+            f"recording {rec['id']}'s bytes (sha256 {rec['sha256']}) are missing from the "
+            "blob store, so the snapshot can't be exported exactly"
+        ) from exc
+    if dd.sha256(data) != rec["sha256"]:
+        raise ExportError(
+            f"recording {rec['id']}'s stored bytes hash to {dd.sha256(data)}, not the "
+            f"{rec['sha256']} frozen in the snapshot"
+        )
+    return data
+
+
+def _by_time(context: dict[str, dict[str, Any]], ids) -> list[dict[str, Any]]:
+    rows = [context[i] for i in ids if i in context]
+    return sorted(rows, key=lambda c: (c["occurred_at"], c["incident_id"]))
+
+
+def _regression_files(manifest: dict[str, Any]) -> tuple[dict, dict]:
+    """Not redacted: summaries and causes come from our own devices, and the corpus stays
+    in house (telemetry §10)."""
+    files: dict[str, bytes] = {}
+    evidence: dict[str, list[dict[str, Any]]] = {}
+    for rec in manifest["recordings"]:
+        if rec.get("incident_id"):
+            evidence.setdefault(rec["incident_id"], []).append(
+                {k: rec[k] for k in ("id", "kind", "format", "sha256")}
+            )
+    rows, skipped = [], 0
+    for inc in _by_time(manifest["context"], manifest["incident_ids"]):
+        case = dd.regression_case(inc)
+        if case is None:
+            skipped += 1
+            continue
+        for k in ("device_id", "occurred_at", "firmware", "summary", "suspected_cause"):
+            case[k] = inc[k]
+        case["evidence"] = evidence.get(inc["incident_id"], [])
+        rows.append(case)
+        files[f"cases/{inc['incident_id']}/case.json"] = dd.canonical(case)
+    files["cases.jsonl"] = dd.jsonl(rows)
+    return files, {"cases": len(rows), "incidents_skipped": skipped}
+
+
+def _traces_files(manifest: dict[str, Any], store: BlobStore, redact: bool) -> tuple[dict, dict]:
+    context = manifest["context"]
+    lines = []
+    for rec in manifest["recordings"]:
+        if rec.get("kind") != "agent_trace":
+            continue
+        text = _read_blob(store, rec).decode("utf-8", errors="replace")
+        inc = context.get(rec.get("incident_id") or "")
+        facts = ("kind", "summary", "signals", "resolving_action", "suspected_cause")
+        state = ("overlay_diff", "overlay_outcome", "locked_into", "work_order")
+        line = {
+            "recording_id": rec["id"],
+            "device_id": rec.get("device_id"),
+            "incident_id": rec.get("incident_id"),
+            "conversations": dd.sharegpt(text),
+            "completed": bool(inc and inc["resolved"]),
+            "incident": {k: inc[k] for k in facts} if inc else None,
+            **{k: (inc[k] if inc else None) for k in state},
+        }
         lines.append(dd.redact(line) if redact else line)
     evals = [
         {
-            "incident_id": inc.id,
-            "evidence": f"{inc.kind}: {inc.summary}",
-            "expected_diagnosis": inc.suspected_cause,
-            "expected_action": inc.resolving_action,
+            "incident_id": inc["incident_id"],
+            "evidence": f"{inc['kind']}: {inc['summary']}",
+            "expected_diagnosis": inc["suspected_cause"],
+            "expected_action": inc["resolving_action"],
         }
-        for inc in sorted(incidents.values(), key=lambda i: (i.occurred_at, i.id))
+        for inc in _by_time(context, context)
     ]
     files = {
         "traces.jsonl": dd.jsonl(lines),
         "evals.jsonl": dd.jsonl(dd.redact(evals) if redact else evals),
     }
-    return files, {"traces": len(lines), "traces_missing_blob": missing, "evals": len(evals)}
+    return files, {"traces": len(lines), "evals": len(evals)}
 
 
 def build_export(session: Session, exp: Export, store: BlobStore) -> tuple[bytes, dict[str, Any]]:
-    """The export's tar bytes and its manifest. Same snapshot → same bytes (F8)."""
+    """The export's tar bytes and its manifest, built only from the snapshot's frozen
+    manifest and the blobs it names: same snapshot → same bytes, or an ExportError (F8)."""
     version = get_version(session, exp.dataset_id, exp.n)
     ds = get_dataset(session, exp.dataset_id)
+    frozen = frozen_manifest(session, version)
     redact = exp.format == "traces_jsonl" and _redact_option(session, exp)
     if exp.format == "regression_corpus":
-        files, counts = _regression_files(session, version)
+        files, counts = _regression_files(frozen)
     elif exp.format == "traces_jsonl":
-        files, counts = _traces_files(session, store, version, redact)
+        files, counts = _traces_files(frozen, store, redact)
     else:
         raise ValueError(f"unknown export format {exp.format!r}")
     root = f"{exp.format}_{ds.id}_v{exp.n}"
@@ -630,24 +664,55 @@ def run_exports(
 
 
 def sync_regression_cases(session: Session, now: datetime) -> int:
-    """Add a `regression_cases` row for every resolved incident that doesn't have one yet,
-    so the gate gets stricter as the fleet fails (telemetry §1). Returns rows added."""
-    have = select(RegressionCase.incident_id)
+    """Add a `regression_cases` row for every resolved incident that can be replayed and
+    doesn't have one yet, so the gate gets stricter as the fleet fails (telemetry §1).
+
+    The rule of `domain.datasets.regression_case` runs in SQL (an action that isn't a
+    hardware action, object signals, no code patch, no work order) and only the needed
+    columns are read, so incidents that never qualify cost nothing each tick. Insert-once
+    and idempotent, since incidents never change. Returns rows added.
+    """
+    code_patch = Incident.raw["overlay"]["code_patch"].astext
+    action = func.lower(func.trim(func.coalesce(Incident.resolving_action, "")))
     stmt = (
-        select(Incident)
-        .where(Incident.resolved.is_(True), Incident.id.not_in(have))
+        select(
+            Incident.id,
+            Incident.fleet_id,
+            Incident.device_id,
+            Incident.kind,
+            Incident.signals,
+            Incident.resolving_action,
+        )
+        .where(
+            Incident.resolved.is_(True),
+            action != "",
+            action.not_in(dd.HARDWARE_ACTIONS),
+            func.jsonb_typeof(Incident.signals) == "object",
+            Incident.signals != text("'{}'::jsonb"),
+            func.coalesce(code_patch, "") == "",
+            Incident.id.not_in(select(RegressionCase.incident_id)),
+            Incident.id.not_in(select(WorkOrder.incident_id)),
+        )
         .order_by(Incident.occurred_at, Incident.id)
     )
     added = 0
-    for inc in session.scalars(stmt):
-        case = dd.regression_case(_incident_facts(inc))
-        if case is None:
+    for iid, fleet_id, device_id, kind, signals, resolving_action in session.execute(stmt):
+        case = dd.regression_case(
+            {
+                "incident_id": iid,
+                "kind": kind,
+                "resolved": True,
+                "resolving_action": resolving_action,
+                "signals": signals,
+            }
+        )
+        if case is None:  # the pure rule has the last word
             continue
         inserted = session.execute(
             pg_insert(RegressionCase)
             .values(
-                incident_id=inc.id,
-                fleet_id=inc.fleet_id,
+                incident_id=iid,
+                fleet_id=fleet_id,
                 kind=case["kind"],
                 signals=case["signals"],
                 expected_action=case["expected_action"],
@@ -663,18 +728,19 @@ def sync_regression_cases(session: Session, now: datetime) -> int:
             "automation:worker",
             "automation",
             CASE_ADDED,
-            {"incident": inc.id, "device": inc.device_id},
-            f"Resolved incident {inc.kind} on {inc.device_id} joined the regression corpus: "
+            {"incident": iid, "device": device_id},
+            f"Resolved incident {kind} on {device_id} joined the regression corpus: "
             f"every future candidate must fire {case['expected_action']} on its signals.",
             data={"signals": sorted(case["signals"]), "expected_action": case["expected_action"]},
             ts=now,
-            fleet_id=inc.fleet_id,
+            fleet_id=fleet_id,
         )
     return added
 
 
 def regression_cases(session: Session, fleet_id: str, device_class: str) -> list[ReplayCase]:
-    """Every regression case for one device class, oldest first, as `gate.replay` takes them."""
+    """Every regression case for one device class, oldest first, as `gate.replay` takes them.
+    Replay them with `domain.datasets.replay_corpus`, which treats an empty list as a pass."""
     stmt = (
         select(RegressionCase)
         .join(Incident, Incident.id == RegressionCase.incident_id)
@@ -691,3 +757,10 @@ def regression_cases(session: Session, fleet_id: str, device_class: str) -> list
         )
         for row in session.scalars(stmt)
     ]
+
+
+def pinned_blob_shas(session: Session) -> set[str]:
+    """Every blob sha256 any dataset version refers to. The disk budget (M7) must never
+    delete these (telemetry §7), or that snapshot's exports start failing."""
+    ids = select(func.jsonb_array_elements_text(DatasetVersion.recording_ids))
+    return set(session.scalars(select(Recording.sha256).where(Recording.id.in_(ids)).distinct()))

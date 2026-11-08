@@ -2,6 +2,8 @@
 {% block title %}Romulus · data{% endblock %}
 {% block content %}
 <p class="back"><a href="/">← incident timeline</a></p>
+<p><label>Your name, recorded on every change you make here
+  <input id="by-name" autocomplete="name" placeholder="operator"></label></p>
 
 <section aria-labelledby="exp-h">
   <h1 id="exp-h" class="section-h">Exports <span class="muted">newest first</span></h1>
@@ -30,6 +32,7 @@
   <div class="data-card">
     <p><strong>{{ d.name }}</strong> <span class="muted">{{ d.purpose }} · <code>{{ d.id }}</code> · filter <code>{{ d.filter | tojson }}</code></span></p>
     <form method="post" action="/data/datasets/{{ d.id }}/versions">
+      <input type="hidden" name="by" class="by">
       <button type="submit">Take snapshot v{{ d.versions | length + 1 }}</button>
     </form>
     <ul>
@@ -39,6 +42,7 @@
         {% for f in formats %}
         <form method="post" action="/data/datasets/{{ d.id }}/versions/{{ v.n }}/exports" class="inline">
           <input type="hidden" name="format" value="{{ f }}">
+          <input type="hidden" name="by" class="by">
           <button type="submit">Export {{ f }}</button>
         </form>
         {% endfor %}
@@ -68,6 +72,7 @@
           <form method="post" action="/data/recordings/{{ r.id }}/labels" class="inline">
             <input type="hidden" name="label" value="{{ l }}">
             <input type="hidden" name="action" value="remove">
+            <input type="hidden" name="by" class="by">
             <button type="submit" class="status tone-info" title="Remove {{ l }}">{{ l }} ×</button>
           </form>
           {% endfor %}
@@ -75,6 +80,7 @@
         <td>
           <form method="post" action="/data/recordings/{{ r.id }}/labels" class="inline">
             <input type="hidden" name="action" value="add">
+            <input type="hidden" name="by" class="by">
             <input name="label" required placeholder="key:value" aria-label="Label for {{ r.id }}">
             <button type="submit">Add</button>
           </form>
@@ -85,4 +91,11 @@
   </table>
   {% else %}<p class="muted">No recordings yet.</p>{% endif %}
 </section>
+<script>
+// Every form here sends the name typed above as `by` (recorded as human:<name>).
+document.addEventListener("submit", (ev) => {
+  const name = (document.getElementById("by-name").value || "").trim();
+  ev.target.querySelectorAll("input.by").forEach((i) => { i.value = name; });
+});
+</script>
 {% endblock %}

@@ -10,10 +10,11 @@ loads rows into the plain dicts these functions take, and writes what they retur
 - `regression_case(inc)`: the replay case one resolved incident becomes, or None.
 - `sharegpt(lines)`: an agent-trace JSONL file as Hermes-style `conversations`.
 - `redact(value)`: strip obvious secrets, home-directory paths and emails (telemetry §10).
+- `replay_corpus(candidate, cases, baseline=)`: the gate-safe corpus replay.
 - `canonical(obj)` / `jsonl(rows)`: byte-identical output for identical input, so the
   same snapshot always produces the same export file (F8).
 
-Pure: imports only the standard library. Time arrives as values; nothing reads a clock.
+Pure: imports only the standard library and `domain.gate`; nothing reads a clock.
 """
 
 import hashlib
@@ -23,6 +24,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+from romulus_cloud.domain.gate import ReplayCase, ReplayResult, replay
 
 PURPOSES = ("firmware", "harness", "policy")
 FORMATS = ("regression_corpus", "traces_jsonl")
@@ -138,20 +141,25 @@ def snapshot_manifest(
     dataset_id: str,
     n: int,
     filter_: Mapping[str, Any],
-    recordings: Iterable[tuple[str, str]],
+    recordings: Iterable[Mapping[str, Any]],
     incident_ids: Iterable[str],
+    context: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """The frozen contents of a dataset version and their sha256.
 
-    `recordings` is (id, sha256) pairs; both lists are sorted, so the hash doesn't depend on
-    the order rows were read in.
+    `recordings` are dicts with at least `id` and `sha256` (plus whatever an export needs:
+    kind, device, incident). `context` is the per-incident state exports read (overlay
+    status, lock-in, work order), frozen now so a later change can't alter an export.
+    Lists are sorted, so the hash doesn't depend on the order rows were read in.
     """
+    recs = {r["id"]: dict(r) for r in recordings}
     manifest = {
         "dataset_id": dataset_id,
         "n": n,
         "filter": dict(filter_),
-        "recordings": [{"id": rid, "sha256": sha} for rid, sha in sorted(set(recordings))],
+        "recordings": [recs[k] for k in sorted(recs)],
         "incident_ids": sorted(set(incident_ids)),
+        "context": {k: dict(v) for k, v in sorted((context or {}).items())},
     }
     return manifest, sha256(canonical(manifest))
 
@@ -159,17 +167,24 @@ def snapshot_manifest(
 # --------------------------------------------------------------------------- regression corpus
 
 
+# Fixes a person or a part makes; a firmware rule can never fire them.
+HARDWARE_ACTIONS = ("park", "torque_off", "replace_part", "order_part", "work_order")
+
+
 def regression_case(inc: Mapping[str, Any]) -> dict[str, Any] | None:
     """The replay case a past incident becomes (telemetry §6.1), or None.
 
     A case needs a resolved incident, the action that fixed it and some signals to replay.
-    Incidents fixed by a code patch are left out: the rules can't fire `restart_app`, so
-    they would fail every firmware candidate; code candidates replay the device tests (M8)
-    *(inferred)*.
+    Left out, because no firmware rule can fire their fix *(inferred)*:
+    - incidents fixed by a code patch (`restart_app`); code candidates replay device tests (M8);
+    - incidents fixed by a hardware action (`HARDWARE_ACTIONS`) or escalated to a work order.
+    `services.datasets.sync_regression_cases` applies the same rule in SQL; keep them in step.
     """
     action = (inc.get("resolving_action") or "").strip()
     signals = inc.get("signals") or {}
-    if not inc.get("resolved") or not action or not signals or inc.get("code_patch"):
+    if not inc.get("resolved") or not action or not isinstance(signals, Mapping) or not signals:
+        return None
+    if inc.get("code_patch") or inc.get("work_order") or action.lower() in HARDWARE_ACTIONS:
         return None
     return {
         "incident_id": inc["incident_id"],
@@ -177,6 +192,58 @@ def regression_case(inc: Mapping[str, Any]) -> dict[str, Any] | None:
         "signals": dict(signals),
         "expected_action": action,
     }
+
+
+def replay_corpus(
+    candidate: Mapping[str, Any],
+    cases: Iterable[ReplayCase],
+    *,
+    baseline: Mapping[str, Any] | None = None,
+) -> ReplayResult:
+    """Replay the regression corpus against a candidate manifest, for the gate (F8 step 4).
+
+    - **Empty corpus → pass** ("no regression cases yet"). `gate.replay` fails an empty
+      list because a candidate must replay its own incident; the corpus has no such rule.
+    - **Malformed rules → fail** with a sentence naming the problem, never an exception, so
+      one bad candidate can't stop the gate for the others.
+    - **Regression-only with `baseline`** (the current release's manifest): only cases the
+      baseline passes count. A case the release already fails (a fix that never held, an
+      expectation no rule can fire) is reported but can't block the candidate.
+    """
+    cases = list(cases)
+    if not cases:
+        return ReplayResult(True, "regression corpus: no cases yet, so nothing can regress")
+    if not isinstance(candidate, Mapping) or not isinstance(candidate.get("rules") or {}, Mapping):
+        return ReplayResult(False, "regression corpus: candidate rules are malformed (not a map)")
+    try:
+        result = replay(candidate, cases)
+    except Exception as exc:  # e.g. a rule whose fields have the wrong types
+        return ReplayResult(False, f"regression corpus: candidate rules are malformed ({exc})")
+    if not result.cases:  # replay could not run a single case: malformed rules
+        return ReplayResult(False, f"regression corpus: {result.why}")
+    counted = {c.case_id for c in cases}
+    already = ""
+    if baseline is not None:
+        try:
+            base = replay(baseline, cases)
+        except Exception:
+            base = None
+        if base is not None and base.cases:
+            counted = {c.case_id for c in base.cases if c.passed}
+            n_old = len(cases) - len(counted)
+            already = f"; {n_old} already fail on the current release" if n_old else ""
+    failed = [c for c in result.cases if not c.passed and c.case_id in counted]
+    n = len(counted)
+    if not failed:
+        return ReplayResult(
+            True, f"regression corpus: replayed {n} incidents; {n} pass{already}", result.cases
+        )
+    detail = "; ".join(f"{c.case_id}: {c.why}" for c in failed)
+    return ReplayResult(
+        False,
+        f"regression corpus: replayed {n} incidents; {len(failed)} regress{already} ({detail})",
+        result.cases,
+    )
 
 
 # --------------------------------------------------------------------------- traces
@@ -218,23 +285,30 @@ def sharegpt(text: str) -> list[dict[str, Any]]:
     return turns
 
 
+# Dict keys whose whole value is a secret, at any depth (tool-call arguments included).
+SECRET_KEY = re.compile(
+    r"(?i)(api[_-]?key|token(?!s)|secret|passw(or)?d|authorization|cookie|credential|"
+    r"(^|[_-])key$|private[_-]?key)"
+)
+_NAME = (
+    r"[\w-]*(?:api[_-]?key|token(?!s)|secret|passw(?:or)?d|authorization|cookie|credential)[\w-]*"
+)
+R = "[REDACTED]"
 _SECRETS = [
-    # key = value / "key": "value" for names that usually hold secrets
-    (
-        re.compile(
-            r"(?i)\b([\w-]*(?:api[_-]?key|token|secret|password|passwd)[\w-]*)"
-            r"(\"?\s*[:=]\s*\"?)([^\s\"',}]+)"
-        ),
-        r"\1\2[REDACTED]",
-    ),
-    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"), r"\1 [REDACTED]"),
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"), "[REDACTED]"),
-    (re.compile(r"\b(?:hf|gh[pousr]|xox[abp])_[A-Za-z0-9_-]{16,}"), "[REDACTED]"),
-    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED]"),
-    (
-        re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
-        "[REDACTED]",
-    ),
+    # "name": "value"  → the whole quoted value, spaces included
+    (re.compile(rf'(?i)("{_NAME}"\s*:\s*")(?:[^"\\]|\\.)*(")'), rf"\1{R}\2"),
+    # name: value / name=value  → the rest of the line (over-redacting is the safe side)
+    (re.compile(rf"(?i)\b({_NAME})(\s*[:=]\s*\"?)(?!\[REDACTED\])[^\n\"]+"), rf"\1\2{R}"),
+    (re.compile(r"(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}"), rf"\1 {R}"),
+    # user:password@ in URLs (postgres://romulus:hunter2@db)
+    (re.compile(r"(://[^/\s:@]+:)[^/\s@]+@"), rf"\1{R}@"),
+    (re.compile(r"\b(?:sk|rk|pk|nk)_(?:live|test)_[A-Za-z0-9]{8,}"), R),  # Stripe, Naïve
+    (re.compile(r"\bwhsec_[A-Za-z0-9]{16,}"), R),  # Stripe webhook secret
+    (re.compile(r"\bmcp_[A-Za-z0-9_-]{12,}"), R),  # Naïve MCP bearer
+    (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"), R),  # OpenAI-style
+    (re.compile(r"\b(?:hf|gh[pousr]|xox[abp])_[A-Za-z0-9_-]{16,}"), R),
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), R),
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S), R),
     # home directories name a person; keep the rest of the path for debugging
     (re.compile(r"(?:/Users|/home)/[^/\s\"']+"), "~"),
     (re.compile(r"(?i)[A-Z]:\\Users\\[^\\\s\"']+"), "~"),
@@ -249,11 +323,21 @@ def redact_text(text: str) -> str:
 
 
 def redact(value: Any) -> Any:
-    """Every string inside `value` (dicts, lists, nested) with obvious secrets removed."""
+    """`value` with obvious secrets removed (telemetry §10), at any depth.
+
+    A dict value whose key names a secret (`api_key`, `token`, `Authorization`, …) is
+    replaced whole, whatever its type; every other string is scrubbed with the patterns
+    above (keys, bearer tokens, URL passwords, home paths, emails).
+    """
     if isinstance(value, str):
         return redact_text(value)
     if isinstance(value, dict):
-        return {k: redact(v) for k, v in value.items()}
+        return {
+            k: R
+            if isinstance(k, str) and SECRET_KEY.search(k) and v not in (None, "")
+            else redact(v)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [redact(v) for v in value]
     return value
