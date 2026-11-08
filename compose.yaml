@@ -1,0 +1,81 @@
+# Romulus cloud platform, local (architecture §2). `make up` starts db, api and worker.
+# Host ports are overridable (API_PORT) and the db port is not published, so several
+# worktrees can run side by side with different COMPOSE_PROJECT_NAMEs.
+
+x-cloud: &cloud
+  build:
+    context: .
+    dockerfile: cloud/Dockerfile
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    # Inside Compose these always point at the db service and the mounted data dir,
+    # whatever .env says for host-side use.
+    DATABASE_URL: postgresql+psycopg://romulus:romulus@db:5432/romulus
+    BLOB_DIR: /data/blobs
+    EXPORT_DIR: /data/exports
+  volumes:
+    - ./data:/data
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: romulus
+      POSTGRES_PASSWORD: romulus
+      POSTGRES_DB: romulus
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U romulus -d romulus"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *cloud
+    command: >-
+      uvicorn --factory romulus_cloud.main:create_app
+      --host 0.0.0.0 --port 8000 --no-access-log
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  worker:
+    <<: *cloud
+    command: ["python", "-m", "romulus_cloud.worker"]
+
+  fake-devices:
+    profiles: ["sim"]
+    build:
+      context: .
+      dockerfile: tools/fake_device/Dockerfile
+    command: ["--n", "${FAKE_DEVICES_N:-4}"]
+    environment:
+      CLOUD_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Off by default. Only if Naïve agents must call us (open question N3); needs a bearer
+  # token on the exposed routes first (architecture §10).
+  tunnel:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:2024.12.2
+    command: ["tunnel", "--no-autoupdate", "--url", "http://api:8000"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
