@@ -306,6 +306,17 @@ def vendor_label(origin: str, vendors: Sequence[Mapping[str, Any]]) -> str:
     return host(origin)
 
 
+def vendor_title(origin: str, variant_id: str, vendors: Sequence[Mapping[str, Any]]) -> str:
+    """`Feetech STS3215 C018 12V` from the allowlist label `WowRobo · Feetech STS3215 C018 12V`
+    of this exact variant, or "" when the allowlist has no such entry."""
+    for v in vendors:
+        same = str(v.get("origin") or "").rstrip("/") == origin.rstrip("/")
+        if same and str(v.get("variant_id") or "") == variant_id:
+            label = str(v.get("label") or "")
+            return label.split("·", 1)[-1].strip()
+    return ""
+
+
 def part_checks(
     part: Mapping[str, Any],
     product: Mapping[str, Any] | None,
@@ -326,9 +337,10 @@ def part_checks(
         variant = next(
             (v for v in product.get("variants") or [] if str(v.get("id")) == variant_id), None
         )
-    title = str((product or {}).get("title") or part.get("handle") or "part")
-    if variant and variant.get("title") and variant["title"] != "Default Title":
-        title = f"{title} ({variant['title']})"
+    # The allowlist's words, never Shopify's long product + variant title, never the slug.
+    title = vendor_title(origin, variant_id, vendors) or str(
+        (product or {}).get("title") or "spare part"
+    )
     price_cents = variant.get("price_cents") if variant else None
     unit = price_cents / 100 if isinstance(price_cents, int | float) else None
     total = unit * qty if unit is not None else None

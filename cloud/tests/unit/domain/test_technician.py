@@ -287,3 +287,12 @@ def test_feed_lines_name_real_places(event, line):
 def test_feed_lines_are_short():
     long = Ev("tool_call", "web_search", {"query": "q" * 500})
     assert len(t.feed_line(long)) < 80
+
+
+def test_part_titles_come_from_the_allowlist_never_the_slug():
+    assert t.vendor_title(ORIGIN, C018, VENDORS) == "Feetech STS3215 C018 12V"
+    assert t.vendor_title(ORIGIN, "999", VENDORS) == ""
+    got = t.part_checks(REPORT["part"], PRODUCT, vendors=VENDORS, order_max_usd=50)
+    assert got["title"] == "Feetech STS3215 C018 12V"
+    blocked = t.part_checks(REPORT["part"], None, vendors=VENDORS, order_max_usd=50, shop_error="x")
+    assert blocked["title"] == "Feetech STS3215 C018 12V" and HANDLE not in blocked["title"]

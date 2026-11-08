@@ -204,18 +204,19 @@ class Settings(BaseSettings):
     # Vendors the agent may pick a part from: [{origin, handle, variant_id, label}]. The
     # variant id must be exact (the WowRobo product also sells 5- and 10-packs). The case
     # file lists only the entries matching ARM_SERVO_VARIANT (by its prefix, e.g. C018).
+    # `label` is "<vendor> · <part title>": the page and the approval show those words.
     technician_vendors: list[dict[str, str]] = [
         {
             "origin": "https://shop.wowrobo.com",
             "handle": "feetech-sts3215-servo-12v-30kg-high-torque-servo-for-so-arm100",
             "variant_id": "48037575033049",
-            "label": "WowRobo · Feetech STS3215 C018 12V servo (single)",
+            "label": "WowRobo · Feetech STS3215 C018 12V",
         },
         {
             "origin": "https://shop.wowrobo.com",
             "handle": "feetech-sts3215-c001-servo-7-4v-19-5kg-high-torque-servo-for-so-arm100-101",
             "variant_id": "48037674090713",
-            "label": "WowRobo · Feetech STS3215 C001 7.4V servo (single)",
+            "label": "WowRobo · Feetech STS3215 C001 7.4V",
         },
     ]
     arm_servo_variant: str = "C018-12V"  # confirm on the arm

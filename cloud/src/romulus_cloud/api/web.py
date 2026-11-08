@@ -357,6 +357,7 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
                 "why": s.why,
                 "touches_safety": bool(s.refs.get("touches_safety")),
                 "recording": s.refs.get("recording"),
+                "technician_case": s.refs.get("technician_case"),
                 "refs": {k: v for k, v in s.refs.items() if k not in ("touches_safety",)},
                 "quiet": s.bookkeeping,
                 "dom": f"step-{len(steps)}",

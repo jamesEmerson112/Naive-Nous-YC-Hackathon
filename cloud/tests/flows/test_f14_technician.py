@@ -354,6 +354,8 @@ class _FlakyShop:
 def test_a_store_hiccup_is_rechecked_before_the_part_card_gives_up(
     client, seeded, sessions, db_session, live_settings
 ):
+    """The store is re-read every ~20 s for up to 10 min; the email waits for the first check
+    and says when the part isn't staged yet."""
     tech_settings = live_settings
     naive, shop = _naive(), _FlakyShop(fails=1)
     incident_id = _report_incident(client, "arm-1")
@@ -362,15 +364,25 @@ def test_a_store_hiccup_is_rechecked_before_the_part_card_gives_up(
     order = _only_order(client, incident_id)
     part = _case(db_session, order["id"]).actions["part"]
     assert not part["staged"] and part["blocked_reason"].startswith("couldn't check price: ")
-    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=6))  # email + recheck
+    assert part["title"] == "Feetech STS3215 C018 12V"  # the allowlist's words, not Shopify's
+    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=6))  # email; too soon
+    (sent,) = naive.sent
+    assert (
+        "Note from Romulus: the spare part isn't staged yet (couldn't check price" in sent["text"]
+    )
+    assert "once its price is confirmed" in sent["text"] and len(sent["text"]) <= 1200
+    assert "http" not in sent["text"] and shop.calls == 1
+    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=24))  # ≥ 20 s later
     case = _case(db_session, order["id"])
-    assert case.actions["part"]["staged"] and case.actions["email"]["status"] == "sent"
+    assert case.actions["part"]["staged"] and shop.calls == 2
     assert client.get(f"/v1/technician/cases/{case.id}").json()["technician_part"]["cart_url"]
-    dead = _FlakyShop(fails=99)
+    assert case.feed[-1]["text"].startswith("Romulus re-checked shop.wowrobo.com: $15.99")
+
+    dead = _FlakyShop(fails=999)
     incident_2 = _report_incident(client, "arm-1")
-    for i in range(6):
-        _tick(sessions, tech_settings, naive, dead, T0 + timedelta(seconds=3 * i))
-    assert dead.calls == 3  # SHOP_TRIES, then the card says why
+    for i in range(0, 900, 3):  # 15 minutes of 3 s sync ticks
+        _tick(sessions, tech_settings, naive, dead, T0 + timedelta(seconds=i))
+    assert 25 <= dead.calls <= 32  # every ~20 s for 10 min, then it stops
     part = _case(db_session, _only_order(client, incident_2)["id"]).actions["part"]
     assert not part["staged"] and "429" in part["blocked_reason"]
 
@@ -411,6 +423,9 @@ def test_replay_needs_no_setup_and_shows_the_recorded_session(
     assert case.status == "waiting" and case.naive_session_id == session_id
     v = technician.view(db_session, case, settings=tech_settings)
     assert v["badge"].startswith(f"Recorded Naïve session {session_id} · ")
+    times = [f["t"] for f in v["feed"]]
+    assert times == sorted(times)  # replayed from the case's start, never jumping back
+    assert v["stages"][2] == {"label": "technician email: not sent (replay)", "state": "todo"}
     assert v["verdict"] == "Elbow blocked or servo failing: needs hands"
     assert any(f["text"].startswith("Searched “") for f in v["feed"])
     assert v["cost_label"] == f"${recording['session']['consumed_micro_usd'] / 1e6:.2f}"
@@ -451,7 +466,9 @@ def test_a_fake_or_replayed_case_never_claims_an_email_went_out(
     assert case.status == "waiting" and naive.sent == []
     v = technician.view(db_session, case, settings=tech_settings)
     assert v["email"]["status"] == "skipped" and v["email"]["via"] == "test fixture: not sent"
-    assert v["badge"] == "fake (test fixture)" and v["stages"][2]["state"] == "skipped"
+    assert v["badge"] == "fake (test fixture)"
+    assert v["stages"][2] == {"label": "technician email: not sent (test)", "state": "todo"}
+    assert v["stages"][3]["state"] == "active"
     kinds = [e["kind"] for e in client.get(f"/v1/incidents/{incident_id}/story").json()["steps"]]
     assert "technician.emailed" not in kinds and "technician.diagnosed" in kinds
     assert client.get(f"/technician/{case.id}").status_code == 200

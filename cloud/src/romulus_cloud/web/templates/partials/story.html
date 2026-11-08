@@ -68,6 +68,7 @@
       {% if s.recording %}
       <p class="evidence">Evidence: <a href="/v1/recordings/{{ s.recording }}">recording {{ s.recording }}</a></p>
       {% endif %}
+      {% if s.technician_case %}<p class="evidence">Naïve technician: <a href="/technician/{{ s.technician_case }}">case {{ s.technician_case }}</a></p>{% endif %}
     </div>
   </li>
   {% endif %}

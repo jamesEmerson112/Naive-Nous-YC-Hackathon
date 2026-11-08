@@ -606,7 +606,7 @@ def _start(
     _feed(case, now, f"Romulus started Naïve session {state.id}", settings)
 
 
-def _pull_events(case: TechnicianCase, naive: Any, settings: Settings) -> None:
+def _pull_events(case: TechnicianCase, naive: Any, settings: Settings, now: datetime) -> None:
     new = naive.session_events(case.naive_session_id, after_seq=case.last_event_seq)
     if not new:
         return
@@ -621,11 +621,19 @@ def _pull_events(case: TechnicianCase, naive: Any, settings: Settings) -> None:
         if e.at is not None:
             last_at = e.at.isoformat()
         line = rules.feed_line(e)
+        shown = e.at
+        if case.mode == "replay" and e.at is not None:
+            # Recorded times are from the capture: replay them from this case's start, in
+            # step with the playback, never later than now (so the feed reads in order).
+            first = _raw(case).get("first_event_at") or e.at.isoformat()
+            _note(case, first_event_at=first)
+            start = case.created_at or now
+            shown = min(start + (e.at - datetime.fromisoformat(first)), now)
         if line.startswith("Report rejected"):
             rejected = True
         elif e.kind == "output" and rejected:
             line, rejected = "Fixed the report and resubmitted it", False
-        _feed(case, e.at, line, settings)
+        _feed(case, shown, line, settings)
     _note(case, events=raw_events, last_event_at=last_at, report_rejected=rejected)
 
 
@@ -643,13 +651,21 @@ def _duration_s(case: TechnicianCase, state: Any) -> float | None:
     return None
 
 
-SHOP_TRIES = 3
+SHOP_RECHECK_S = 20
+SHOP_GIVE_UP_S = 600
 
 
-def _part_retry_due(case: TechnicianCase) -> bool:
-    """The store couldn't be read (e.g. a 429) and we haven't tried SHOP_TRIES times yet."""
+def _part_retry_due(case: TechnicianCase, now: datetime) -> bool:
+    """The store couldn't be read (e.g. a 429): look again every SHOP_RECHECK_S, for up to
+    SHOP_GIVE_UP_S after the first try."""
     part = _actions(case).get("part") or {}
-    return bool(part.get("shop_error")) and int(part.get("tries") or 1) < SHOP_TRIES
+    if not part.get("shop_error") or not part.get("first_checked_at"):
+        return False
+    first = datetime.fromisoformat(part["first_checked_at"])
+    last = datetime.fromisoformat(part.get("checked_at") or part["first_checked_at"])
+    return (now - first).total_seconds() < SHOP_GIVE_UP_S and (
+        now - last
+    ).total_seconds() >= SHOP_RECHECK_S
 
 
 def _stage(session: Session, case: TechnicianCase, part: dict[str, Any], now: datetime) -> None:
@@ -669,7 +685,11 @@ def _recheck_part(
     session: Session, case: TechnicianCase, now: datetime, settings: Settings, shop: Any
 ) -> None:
     before = dict(_actions(case).get("part") or {})
-    part = _check_part(before, settings, shop) | {"tries": int(before.get("tries") or 1) + 1}
+    part = _check_part(before, settings, shop) | {
+        "tries": int(before.get("tries") or 1) + 1,
+        "first_checked_at": before.get("first_checked_at"),
+        "checked_at": now.isoformat(),
+    }
     _set_action(case, "part", part)
     case.updated_at = now
     if part["staged"]:
@@ -694,6 +714,21 @@ def _check_part(part: dict[str, Any], settings: Settings, shop: Any) -> dict[str
     )
 
 
+def _with_part_note(body: str, part: dict[str, Any]) -> str:
+    """The brief plus one Romulus line when the part the agent named isn't staged, so the
+    email never promises a part that isn't waiting for approval."""
+    reason = rules.strip_links(str(part.get("blocked_reason") or "not checked"))
+    if part.get("shop_error"):
+        note = (
+            f"Note from Romulus: the spare part isn't staged yet ({reason}); it will be "
+            "staged for approval once its price is confirmed."
+        )
+    else:
+        note = f"Note from Romulus: the spare part was not staged ({reason})."
+    room = rules.BODY_MAX - len(note) - 2
+    return f"{rules._clip(body, room)}\n\n{note}"
+
+
 def _diagnosed(
     session: Session,
     case: TechnicianCase,
@@ -708,7 +743,24 @@ def _diagnosed(
     case.cost_usd = float(state.cost_usd or 0)
     _note(case, session=state.raw, duration_s=_duration_s(case, state))
     actions = rules.actions_from_report(report, email_to=settings.technician_email)
+    part_action = next((a for a in actions if a["kind"] == "stage_part"), None)
+    part = None
+    if part_action is not None:
+        asked = {k: v for k, v in part_action.items() if k != "kind"}
+        part = _check_part(asked, settings, shop) | {
+            "tries": 1,
+            "first_checked_at": now.isoformat(),
+            "checked_at": now.isoformat(),
+        }
+        _set_action(case, "part", part)
+        ok = "✓" if part["staged"] else "✗"
+        price = f"${part['unit_usd']}" if part["unit_usd"] else "no price yet"
+        _feed(case, now, f"Romulus checked {part['origin_host']}: {price} {ok}", settings)
+        if part["staged"]:
+            _stage(session, case, part, now)
     email = next((a for a in actions if a["kind"] == "email_technician"), None)
+    if email is not None and part is not None and not part["staged"]:
+        email = {**email, "text": _with_part_note(email["text"], part)}
     if email is None:
         brief = report.get("technician_brief") or {}
         subject, _ = rules.clean_brief(str(brief.get("subject") or ""), "")
@@ -743,17 +795,6 @@ def _diagnosed(
                 "attempts": 0,
             },
         )
-    part_action = next((a for a in actions if a["kind"] == "stage_part"), None)
-    part = None
-    if part_action is not None:
-        asked = {k: v for k, v in part_action.items() if k != "kind"}
-        part = _check_part(asked, settings, shop) | {"tries": 1}
-        _set_action(case, "part", part)
-        ok = "✓" if part["staged"] else "✗"
-        price = f"${part['unit_usd']}" if part["unit_usd"] else "no price"
-        _feed(case, now, f"Romulus checked {part['origin_host']}: {price} {ok}", settings)
-        if part["staged"]:
-            _stage(session, case, part, now)
     _set_status(case, "waiting", now, None)
     verdict = str(report.get("verdict") or "")
     staged = bool(part and part["staged"])
@@ -848,7 +889,7 @@ def _advance(
             why = f"no report within {settings.technician_timeout_s:.0f} s (TECHNICIAN_TIMEOUT_S)"
             _fail(session, case, why, now, naive, settings)
             return
-        _pull_events(case, naive, settings)
+        _pull_events(case, naive, settings, now)
         state = naive.get_session(case.naive_session_id)
         case.cost_usd = float(state.cost_usd or 0)
         verdict, why = rules.session_outcome(
@@ -884,7 +925,7 @@ def _advance(
         order = session.get(WorkOrder, case.work_order_id)
         if order is not None and order.status in ("done", "denied", "stopped"):
             _set_status(case, "done" if order.status == "done" else "stopped", now)
-        elif _part_retry_due(case):
+        elif _part_retry_due(case, now):
             _recheck_part(session, case, now, settings, shop)
     if (
         case.status in ("waiting", "done")
@@ -921,7 +962,7 @@ def sync(
         if (
             case.status == "waiting"
             and (_actions(case).get("email") or {}).get("status") != "sending"
-            and not _part_retry_due(case)
+            and not _part_retry_due(case, now)
         ):
             order = session.get(WorkOrder, case.work_order_id)
             if order is None or order.status == "needs_human":
@@ -1045,6 +1086,10 @@ def _stages(case: TechnicianCase, order: WorkOrder | None, email: dict[str, Any]
     emailed = "done" if sent == "sent" else ("active" if sent == "sending" else "todo")
     if sent in ("skipped", "failed"):
         emailed = sent
+    third = {"label": "technician emailed", "state": emailed}
+    if sent == "skipped" and case.mode in NOT_SENT_VIA:
+        tag = "replay" if case.mode == "replay" else "test"
+        third = {"label": f"technician email: not sent ({tag})", "state": "todo"}
     last = {"label": "waiting on you", "state": "todo"}
     if case.status == "waiting" or (case.report and order and order.status == "needs_human"):
         last["state"] = "active"
@@ -1059,7 +1104,7 @@ def _stages(case: TechnicianCase, order: WorkOrder | None, email: dict[str, Any]
     return [
         {"label": "healer gave up", "state": "done"},
         {"label": "Naïve took over", "state": took},
-        {"label": "technician emailed", "state": emailed},
+        third,
         last,
     ]
 
