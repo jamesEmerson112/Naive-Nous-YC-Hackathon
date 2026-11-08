@@ -6,8 +6,9 @@ changing one variable per adapter.
 
 from functools import lru_cache
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,6 +53,18 @@ class Settings(BaseSettings):
     # business (K13). Live mode refuses to post while it is still the placeholder.
     work_order_phone: str = "TEAMMATE_PHONE"
     work_order_deliver_to: str = "Romulus bench (set WORK_ORDER_DELIVER_TO)"
+
+    @field_validator("fleet_timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        """A bad zone fails at startup, not silently on every triage tick."""
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(
+                f"FLEET_TIMEZONE {value!r} is not a known IANA zone (e.g. UTC, America/Los_Angeles)"
+            ) from exc
+        return value
 
     # Batch-job LLM (D22): one OpenAI-compatible client for both live providers
     llm_mode: Literal["fake", "live"] = "fake"

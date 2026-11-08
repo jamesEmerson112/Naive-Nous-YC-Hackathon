@@ -7,13 +7,16 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
+from sqlalchemy import delete, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.adapters.naive import FakeNaive, HttpNaive, NaiveError
 from romulus_cloud.domain.triage import parse_catalog
 from romulus_cloud.errors import ApiError
-from romulus_cloud.models import WorkOrder
+from romulus_cloud.models import Device, Event, FleetState, Incident, WorkOrder
 from romulus_cloud.services import devices, incidents, workorders
 from romulus_contracts import IncidentReport, Outcome
 
@@ -132,38 +135,137 @@ def test_retryable_errors_back_off_then_go_to_a_person(db_session, settings, arm
         _sync(db_session, settings, naive, now)
     assert naive.creates == workorders.MAX_POST_ATTEMPTS
     assert order.status == "needs_human"
-    last = events.find(db_session, {"work_order": order.id})[-1]
-    assert f"failed {workorders.MAX_POST_ATTEMPTS} times in a row" in last.why
+    last_why = workorders.history(db_session, order.id)[-1]["why"]
+    assert f"failed {workorders.MAX_POST_ATTEMPTS} times in a row" in last_why
     retried = events.find(db_session, {"work_order": order.id}, kinds=["workorder.post_retried"])
     assert len(retried) == workorders.MAX_POST_ATTEMPTS - 1
 
 
-def test_a_permanent_error_needs_a_person_and_approve_requeues(db_session, settings, arm):
+def test_a_permanent_error_needs_a_person_and_approve_resends_the_same_card(
+    db_session, settings, arm
+):
     incident_id = _incident(db_session, arm)
     _triage(db_session, settings)
     _sync(db_session, settings, AlwaysFails(400, "invalid_request"))
     order = _order(db_session, incident_id)
     assert order.status == "needs_human" and order.naive_card_id is None
-    workorders.resolve(db_session, order.id, "approve", "kent", "fixed the body", T0)
-    assert order.status == "pending" and order.raw is None
+    frozen = order.raw["request"]
+    workorders.resolve(db_session, order.id, "approve", "kent", "Naïve fixed", T0)
+    assert order.status == "pending" and "post_attempts" not in order.raw
+    assert order.raw["request"] == frozen  # approve keeps the frozen card
     naive = FakeNaive()
-    _sync(db_session, settings, naive, T0 + timedelta(seconds=1))
-    assert order.status == "in_progress" and len(naive.cards) == 1
+    changed = settings.model_copy(update={"work_order_phone": "+1 someone else"})
+    _sync(db_session, changed, naive, T0 + timedelta(seconds=1))
+    (card,) = naive.cards.values()
+    assert card["body"] == frozen["body"] and "+1 someone else" not in card["body"]
+
+
+class TimesOutAfterCreating(FakeNaive):
+    """The first create reaches Naïve, then the client times out (no status)."""
+
+    def __init__(self):
+        super().__init__(polls_to_done=99)
+        self.timeouts = 1
+
+    def create_card(self, title, body, assignee, idempotency_key):
+        card = super().create_card(title, body, assignee, idempotency_key)
+        if self.timeouts:
+            self.timeouts -= 1
+            raise NaiveError("Naïve POST timed out")
+        return card
+
+
+def test_a_retry_after_a_settings_change_links_the_existing_card(db_session, settings, arm):
+    """Review finding 1: the retry must carry the first body, or Naïve answers 409 forever."""
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, settings)
+    naive = TimesOutAfterCreating()
+    _sync(db_session, settings, naive)
+    order = _order(db_session, incident_id)
+    assert order.status == "pending" and len(naive.cards) == 1  # the card exists on Naïve
+
+    edited = settings.model_copy(
+        update={
+            "work_order_phone": "+1 new teammate",
+            "work_order_deliver_to": "somewhere else",
+            "naive_ops_agent": "fleet-ops-2",
+        }
+    )
+    _sync(db_session, edited, naive, datetime.fromisoformat(order.raw["retry_at"]))
+    (card,) = naive.cards.values()
+    assert order.naive_card_id == card["id"] and order.status in ("posted", "in_progress")
+    assert card["assignee"] == "fleet-ops" and "new teammate" not in card["body"]
+
+
+def test_a_changed_board_is_not_resent_blindly(db_session, settings, arm):
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, settings)
+    _sync(db_session, settings, AlwaysFails(503))
+    other = FakeNaive(board_id="agt_other")
+    order = _order(db_session, incident_id)
+    _sync(db_session, settings, other, datetime.fromisoformat(order.raw["retry_at"]))
+    assert order.status == "needs_human" and other.cards == {}
+    last_why = workorders.history(db_session, order.id)[-1]["why"]
+    assert "first sent to board agt_fake" in last_why
 
 
 def test_live_mode_refuses_the_placeholder_phone(db_session, settings, arm):
-    incident_id = _incident(db_session, arm)
-    _triage(db_session, settings)
     live = settings.model_copy(update={"naive_mode": "live"})  # the client is still fake
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, live)
     naive = FakeNaive()
     _sync(db_session, live, naive)
     order = _order(db_session, incident_id)
     assert order.status == "needs_human" and naive.cards == {}
-    workorders.resolve(db_session, order.id, "approve", "kent", "phone set", T0)
+    assert "request" not in order.raw  # nothing was frozen with the placeholder
+    workorders.resolve(db_session, order.id, "approve", "kent", "phone set", T0, naive_mode="live")
     with_phone = live.model_copy(update={"work_order_phone": "+1 teammate"})
     _sync(db_session, with_phone, naive, T0 + timedelta(seconds=1))
     (card,) = naive.cards.values()
     assert "· +1 teammate" in card["body"]
+
+
+def test_live_never_posts_an_order_created_in_fake_mode(db_session, settings, arm):
+    """Decision (c): the fake backlog goes to a person instead of out to Naïve."""
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, settings)  # fake mode
+    live = settings.model_copy(update={"naive_mode": "live", "work_order_phone": "+1 mate"})
+    naive = FakeNaive()
+    _sync(db_session, live, naive)
+    order = _order(db_session, incident_id)
+    assert order.status == "needs_human" and naive.cards == {}
+    last_why = workorders.history(db_session, order.id)[-1]["why"]
+    assert "created in fake mode; not posted live" in last_why
+    with pytest.raises(ApiError) as err:
+        workorders.resolve(db_session, order.id, "approve", "kent", "go", T0, naive_mode="live")
+    assert err.value.error == "wrong_mode"
+    workorders.resolve(db_session, order.id, "deny", "kent", "fake backlog", T0, naive_mode="live")
+    assert order.status == "denied"
+
+
+def test_a_frozen_fleet_holds_new_cards_but_keeps_polling(db_session, settings, arm):
+    """Decision (a): the kill switch stops posting, not reading."""
+    out = _incident(db_session, arm)
+    _triage(db_session, settings)
+    naive = FakeNaive(polls_to_done=3)
+    _sync(db_session, settings, naive)  # one card out before the freeze
+    db_session.add(FleetState(fleet_id="default", frozen=True, frozen_by="kent"))
+    db_session.flush()
+    held = _incident(db_session, arm, kind="gripper_stall", at=T0)
+    _triage(db_session, settings.model_copy(update={"orders_per_robot_day_max": 5}))
+    for i in (1, 2, 3):
+        _sync(db_session, settings, naive, T0 + timedelta(seconds=15 * i))
+    assert len(naive.cards) == 1
+    assert _order(db_session, out).status == "done"  # still polled while frozen
+    order = _order(db_session, held)
+    assert order.status == "pending"
+    held_events = events.find(db_session, {"work_order": order.id}, kinds=["workorder.post_held"])
+    assert len(held_events) == 1 and held_events[0].why.startswith("Held: fleet frozen")
+
+    db_session.get(FleetState, "default").frozen = False
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=60))
+    assert order.status in ("posted", "in_progress") and len(naive.cards) == 2
+    assert "held_frozen" not in order.raw
 
 
 def test_http_naive_gets_the_idempotency_key_and_polls_by_id(db_session, settings, arm):
@@ -189,7 +291,8 @@ def test_http_naive_gets_the_idempotency_key_and_polls_by_id(db_session, setting
     assert post.headers["Idempotency-Key"] == order.id
     assert post.headers["Vetta-Version"] == "2026-09-30"
     assert json.loads(post.content)["assignee"] == "fleet-ops"
-    assert order.status == "in_progress" and order.naive_card_id == "crd_1"
+    # The card hasn't changed since it was posted (same updated_at): nothing to act on.
+    assert order.status == "posted" and order.naive_card_id == "crd_1"
 
     card.update(status="done", note="RESULT: ordered ORDER_REF=PO-9 COST_USD=$21.50\nthanks")
     card["updated_at"] = "t2"
@@ -202,6 +305,21 @@ def test_http_naive_gets_the_idempotency_key_and_polls_by_id(db_session, setting
 # --- polling ---------------------------------------------------------------------------------
 
 
+class CountingNaive(FakeNaive):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.reads = 0
+
+    def get_card(self, card_id):
+        self.reads += 1
+        return super().get_card(card_id)
+
+
+def _edit(card, **changes):
+    """Change a fake card the way Naïve would: with a new `updated_at`."""
+    card.update(changes, updated_at=f"{card['updated_at']}+")
+
+
 def test_a_parked_card_needs_a_person_until_naive_unblocks_it(db_session, settings, arm):
     incident_id = _incident(db_session, arm)
     _triage(db_session, settings)
@@ -209,14 +327,90 @@ def test_a_parked_card_needs_a_person_until_naive_unblocks_it(db_session, settin
     _sync(db_session, settings, naive)
     order = _order(db_session, incident_id)
     card = naive.cards[order.naive_card_id]
-    card["status"] = "blocked"
     naive.comments[card["id"]].append({"body": "Supplier wants a card number"})
+    _edit(card, status="blocked")
     _sync(db_session, settings, naive, T0 + timedelta(seconds=15))
     assert order.status == "needs_human"
     assert order.result == "Parked by Naïve: Supplier wants a card number"
-    card["status"] = "doing"
+    _edit(card, status="doing")
     _sync(db_session, settings, naive, T0 + timedelta(seconds=30))
     assert order.status == "in_progress"
+
+
+def test_polling_acts_on_changes_only_and_stops_when_the_card_is_done(db_session, settings, arm):
+    """Review finding 4: a new comment on a parked card, then a bad `done` note, both
+    refresh the result; after Naïve's `done` the card is no longer read."""
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, settings)
+    naive = CountingNaive(polls_to_done=99)
+    _sync(db_session, settings, naive)
+    order = _order(db_session, incident_id)
+    card = naive.cards[order.naive_card_id]
+    comments = naive.comments[card["id"]]
+    comments.append({"body": "Supplier wants a card number"})
+    _edit(card, status="blocked")
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=15))
+    n_events = len(events.find(db_session, {"work_order": order.id}))
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=30))  # nothing changed
+    assert len(events.find(db_session, {"work_order": order.id})) == n_events
+
+    comments.append({"body": "Supplier will take an invoice"})
+    _edit(card)
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=45))
+    assert order.status == "needs_human"
+    assert order.result == "Parked by Naïve: Supplier will take an invoice"
+    updated = events.find(db_session, {"work_order": order.id}, kinds=["workorder.card_updated"])
+    assert len(updated) == 1
+
+    _edit(card, status="done", note="ordered it, all good")  # no RESULT line
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=60))
+    assert order.status == "needs_human" and "without a valid RESULT" in order.result
+    reads = naive.reads
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=75))
+    assert naive.reads == reads  # Naïve's done is final: polling stopped
+
+
+# --- resolve ---------------------------------------------------------------------------------
+
+
+def test_deny_is_refused_while_a_card_is_live(db_session, settings, arm):
+    """Review finding 2: denying an order whose card is running would orphan the card."""
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, settings)
+    naive = FakeNaive(polls_to_done=99)
+    _sync(db_session, settings, naive)
+    order = _order(db_session, incident_id)
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=15))
+    assert order.status == "in_progress"
+    with pytest.raises(ApiError) as err:
+        workorders.resolve(db_session, order.id, "deny", "kent", "never mind", T0)
+    assert err.value.status == 409 and err.value.error == "card_open"
+    assert "close it on the board first" in err.value.detail
+    assert order.status == "in_progress"
+
+
+def test_approve_accepts_a_card_only_when_naive_says_done(db_session, settings, arm):
+    """Review finding 3: a parked card is still open on Naïve, so it can't be accepted."""
+    incident_id = _incident(db_session, arm)
+    _triage(db_session, settings)
+    naive = FakeNaive(polls_to_done=99)
+    _sync(db_session, settings, naive)
+    order = _order(db_session, incident_id)
+    card = naive.cards[order.naive_card_id]
+    _edit(card, status="blocked")
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=15))
+    assert order.status == "needs_human"
+    with pytest.raises(ApiError) as err:
+        workorders.resolve(db_session, order.id, "approve", "kent", "looks fine", T0)
+    assert err.value.error == "card_open" and order.status == "needs_human"
+    with pytest.raises(ApiError):
+        workorders.resolve(db_session, order.id, "deny", "kent", "nope", T0)
+
+    _edit(card, status="done", note="STOPPED: supplier closed")
+    _sync(db_session, settings, naive, T0 + timedelta(seconds=30))
+    assert order.status == "stopped"
+    workorders.resolve(db_session, order.id, "deny", "kent", "will order by hand", T0)
+    assert order.status == "denied"
 
 
 def test_resolve_rules(db_session, settings, arm):
@@ -229,3 +423,76 @@ def test_resolve_rules(db_session, settings, arm):
     with pytest.raises(ApiError) as err:
         workorders.resolve(db_session, "wo_missing", "deny", "kent", "x", T0)
     assert err.value.status == 404
+
+
+def test_a_bad_fleet_timezone_fails_at_startup(make_settings):
+    with pytest.raises(ValidationError, match="FLEET_TIMEZONE 'Mars/Olympus'"):
+        make_settings(fleet_timezone="Mars/Olympus")
+    assert make_settings(fleet_timezone="America/Los_Angeles").fleet_timezone
+
+
+# --- the deny / post race (real connections, committed rows) ---------------------------------
+
+
+@pytest.fixture
+def committed(engine, settings):
+    """A device, a hardware incident and its pending order, committed for real so two
+    connections can contend for the row; removed afterwards."""
+    device_id = f"race-{uuid.uuid4().hex[:6]}"
+    with Session(engine) as s:
+        devices.register(s, device_id, actor="human:test", actor_class="human")
+        incident_id = _incident(s, device_id)
+        (order,) = _triage(s, settings)
+        s.commit()
+        order_id = order.id
+    yield order_id
+    with Session(engine) as s:
+        s.execute(delete(Event).where(Event.refs.contains({"device": device_id})))
+        s.execute(delete(WorkOrder).where(WorkOrder.device_id == device_id))
+        s.execute(delete(Incident).where(Incident.id == incident_id))
+        s.execute(delete(Device).where(Device.id == device_id))
+        s.commit()
+
+
+def test_sync_skips_an_order_a_person_is_denying(engine, settings, committed):
+    naive = FakeNaive()
+    with Session(engine) as person, Session(engine) as worker:
+        workorders.resolve(person, committed, "deny", "kent", "not needed", T0)  # row locked
+        assert _sync(worker, settings, naive)["pending"] == 0  # SKIP LOCKED
+        worker.commit()
+        person.commit()
+        _sync(worker, settings, naive, T0 + timedelta(seconds=15))
+        worker.commit()
+    assert naive.cards == {}
+    with Session(engine) as s:
+        assert s.get(WorkOrder, committed).status == "denied"
+
+
+def test_a_deny_cannot_land_while_sync_is_posting(engine, settings, committed):
+    """Review finding 2: sync holds the row lock mid-post, so the deny waits (here: times
+    out), and afterwards the order has a live card and deny is refused."""
+    blocked = []
+
+    class DenyMidPost(FakeNaive):
+        def create_card(self, title, body, assignee, idempotency_key):
+            card = super().create_card(title, body, assignee, idempotency_key)
+            with Session(engine) as person:
+                person.execute(text("SET LOCAL lock_timeout = '200ms'"))
+                try:
+                    workorders.resolve(person, committed, "deny", "kent", "stop", T0)
+                except OperationalError:
+                    blocked.append(True)
+                person.rollback()
+            return card
+
+    naive = DenyMidPost(polls_to_done=99)
+    with Session(engine) as worker:
+        _sync(worker, settings, naive)
+        worker.commit()
+    assert blocked == [True] and len(naive.cards) == 1
+    with Session(engine) as person:
+        order = person.get(WorkOrder, committed)
+        assert order.status in ("posted", "in_progress")
+        with pytest.raises(ApiError) as err:
+            workorders.resolve(person, committed, "deny", "kent", "stop", T0)
+        assert err.value.error == "card_open"

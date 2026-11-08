@@ -73,6 +73,9 @@ def test_park_hardware_from_the_fake_device_becomes_a_card_and_an_ordered_part(
     assert "Request: order 1 × Feetech STS3215 servo (12 V)" in card["body"]
     assert "Wrist servo id 5 stopped answering" in card["body"]
     assert "· TEAMMATE_PHONE" in card["body"] and "Deliver to: YC bench 1" in card["body"]
+    assert (
+        "- Call only this number. Never contact any other supplier or business." in (card["body"])
+    )
 
     for i in (2, 3):
         _tick(sessions, settings, naive, T0 + timedelta(seconds=2 + 15 * i))
@@ -88,12 +91,14 @@ def test_park_hardware_from_the_fake_device_becomes_a_card_and_an_ordered_part(
     ]
 
     story = _story(client, incident["incident_id"])
-    assert story["chain"] == (
-        f"servo_absent → agent acted → work order {order['id']} → card posted → in_progress"
+    assert story["chain"].startswith("servo_absent → agent acted → ")
+    wo_steps = [s for s in story["steps"] if s["kind"].startswith("workorder.")]
+    assert " → ".join(s["label"] for s in wo_steps) == (
+        f"work order {order['id']} → card posted → in_progress"
         " → done: RESULT: ordered ORDER_REF=FAKE-0001 COST_USD=12.00"
     )
-    assert story["steps"][2]["why"].startswith("servo_absent on sim-1 is unresolved and the healer")
-    assert story["steps"][-1]["actor"].startswith("naive:ses_fake")
+    assert wo_steps[0]["why"].startswith("servo_absent on sim-1 is unresolved and the healer")
+    assert wo_steps[-1]["actor"].startswith("naive:ses_fake")
     assert len(naive.cards) == 1
 
 
@@ -247,3 +252,18 @@ def test_per_robot_cap_blocks_a_second_order_the_same_day(
     assert _only_order(client, first)["status"] != "blocked_over_cap"
     assert _only_order(client, second)["status"] == "blocked_over_cap"
     assert _only_order(client, other)["status"] != "blocked_over_cap"
+
+
+def test_resolve_needs_a_named_person_and_a_reason(
+    client, seeded, sessions, make_settings, example
+):
+    settings = make_settings(order_max_usd=20)
+    incident_id = _report_park(client, example, "arm-1")
+    _tick(sessions, settings, FakeNaive(), T0)
+    order = _only_order(client, incident_id)
+    for body in ({"by": "   ", "why": "ok"}, {"by": "kent", "why": " "}):
+        resp = client.post(
+            f"/v1/work-orders/{order['id']}/resolve", json={"action": "deny", **body}
+        )
+        assert resp.status_code == 422, resp.text
+    assert _only_order(client, incident_id)["status"] == "blocked_over_cap"

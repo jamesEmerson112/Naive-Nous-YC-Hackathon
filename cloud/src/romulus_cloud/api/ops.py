@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, StringConstraints
 
 from romulus_cloud.api.deps import BlobStoreDep, SessionDep, SettingsDep
 from romulus_cloud.errors import ApiError
@@ -220,10 +220,14 @@ def incident_story(incident_id: str, session: SessionDep) -> dict:
 # --- work orders (M5, D19b) ------------------------------------------------------------------
 
 
+Named = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+"""Non-blank after stripping: D19b wants a named person and a reason."""
+
+
 class Resolve(BaseModel):
     action: Literal["approve", "deny"]
-    by: Annotated[str, Field(min_length=1)]
-    why: Annotated[str, Field(min_length=1)]
+    by: Named
+    why: Named
 
 
 @router.get("/work-orders")
@@ -244,11 +248,14 @@ def get_work_order(order_id: str, session: SessionDep) -> dict:
 
 
 @router.post("/work-orders/{order_id}/resolve")
-def resolve_work_order(order_id: str, body: Resolve, session: SessionDep) -> dict:
-    """A person approves (re-queue, or accept the card's outcome) or denies (close) an
-    order that waits for one (D19b). The event's actor is `human:<by>`."""
-    by = body.by.strip() or "operator"
-    order = workorders.resolve(session, order_id, body.action, by, body.why.strip(), utcnow())
+def resolve_work_order(
+    order_id: str, body: Resolve, session: SessionDep, settings: SettingsDep
+) -> dict:
+    """A person approves (re-queue, or accept a finished card's outcome) or denies (close)
+    an order that waits for one (D19b). The event's actor is `human:<by>`."""
+    order = workorders.resolve(
+        session, order_id, body.action, body.by, body.why, utcnow(), naive_mode=settings.naive_mode
+    )
     session.commit()
     return workorders.view(order)
 
