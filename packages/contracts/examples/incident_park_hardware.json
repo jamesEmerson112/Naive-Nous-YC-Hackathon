@@ -1,0 +1,43 @@
+{
+  "incident_id": "e5f7a9b1-2c4d-4e6f-a8b9-4a5b6c7d8e9f",
+  "occurred_at": "2026-11-08T02:31:47Z",
+  "kind": "servo_absent",
+  "summary": "Wrist servo id 5 stopped answering after a tap; arm parked with torque off",
+  "running": {
+    "firmware": 2,
+    "harness": 1,
+    "code_rev": "c0de001"
+  },
+  "agent": {
+    "reasoning": "Every bus read fails for id 5 ('Missing motor IDs: [5]') after 3 retries and a bus reconnect; the other five servos answer. A servo that stays silent is hardware (cable or servo), so I parked with torque off and left the code alone.",
+    "actions": [
+      "snapshot",
+      "retry_bus_read x3",
+      "reconnect_bus",
+      "park",
+      "torque_off"
+    ]
+  },
+  "overlay": null,
+  "outcome": {
+    "resolved": false,
+    "resolving_action": "park",
+    "suspected_cause": "hardware",
+    "category": "park"
+  },
+  "signals": {
+    "bus_read_errors": [
+      0,
+      1,
+      2,
+      3,
+      3,
+      3
+    ]
+  },
+  "recordings": [
+    "1d3f5b7c-9e0a-4c2b-8d4e-5b6c7d8e9f0a"
+  ],
+  "tier": 1,
+  "contract_version": "0.1"
+}

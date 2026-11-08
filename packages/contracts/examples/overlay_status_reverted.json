@@ -1,0 +1,5 @@
+{
+  "status": "reverted",
+  "reason": "unexpected_release recurred 4 min after the patch; restored the snapshot",
+  "occurred_at": "2026-11-07T23:18:30Z"
+}

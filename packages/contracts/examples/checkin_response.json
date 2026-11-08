@@ -1,0 +1,8 @@
+{
+  "assigned": {
+    "firmware": 2,
+    "harness": 1
+  },
+  "drop_overlay": false,
+  "frozen": false
+}

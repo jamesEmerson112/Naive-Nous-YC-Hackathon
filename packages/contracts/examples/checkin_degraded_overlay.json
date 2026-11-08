@@ -1,0 +1,21 @@
+{
+  "running": {
+    "firmware": 1,
+    "harness": 1,
+    "code_rev": "c0de001",
+    "mcu_build": "stm32-f042-0007"
+  },
+  "overlay_id": "ov-d1-0001",
+  "health": "degraded",
+  "metrics": {
+    "task_success_rate": 0.75,
+    "servo_temp_c_max": 44.0,
+    "bus_voltage_v": 12.0
+  },
+  "health_detail": {
+    "tier": 3,
+    "check": "spec_hold_violation",
+    "since": "2026-11-07T23:14:05Z"
+  },
+  "contract_version": "0.1"
+}

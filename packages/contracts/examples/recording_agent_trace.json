@@ -1,0 +1,22 @@
+{
+  "recording_id": "9b2d0f3a-5c4e-4a9b-9f7c-2d3e4f5a6b7c",
+  "kind": "agent_trace",
+  "format": "jsonl",
+  "sha256": "4e2a8c6b0d1f3e5a7c9b2d4f6a8c0e1b3d5f7a9c2e4b6d8f0a1c3e5b7d9f2a4c",
+  "size_bytes": 284113,
+  "started_at": "2026-11-07T23:14:06Z",
+  "ended_at": "2026-11-07T23:21:52Z",
+  "running": {
+    "firmware": 1,
+    "harness": 1
+  },
+  "overlay_id": "ov-d1-0001",
+  "incident_id": "3f2b8c1e-6a4d-4e7b-9c21-5d8e0f1a2b3c",
+  "episode": null,
+  "streams": [],
+  "schema_version": null,
+  "labels": [
+    "fix-code"
+  ],
+  "harness": "mini-swe-agent"
+}

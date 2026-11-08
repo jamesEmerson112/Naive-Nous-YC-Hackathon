@@ -1,0 +1,43 @@
+{
+  "incident_id": "0b6c6f3e-8d2a-4c1b-b5e3-6f7a8b9c0d1e",
+  "occurred_at": "2026-11-07T22:02:11Z",
+  "kind": "camera_occluded",
+  "summary": "Camera brightness fell below threshold during pick",
+  "running": {
+    "firmware": 1,
+    "harness": 1
+  },
+  "agent": {
+    "reasoning": "Frames dark for 3 s; occlusion, not hardware. Held safe pose, raised threshold.",
+    "actions": [
+      "safe_pose",
+      "patch rules.camera_occluded.below 0.2 -> 0.35"
+    ]
+  },
+  "overlay": {
+    "overlay_id": "ov-12",
+    "diff": {
+      "rules": {
+        "camera_occluded": {
+          "below": 0.35
+        }
+      }
+    },
+    "code_patch": null
+  },
+  "outcome": {
+    "resolved": true,
+    "resolving_action": "safe_pose",
+    "suspected_cause": "software",
+    "category": "fix-config"
+  },
+  "signals": {
+    "brightness": [
+      0.41,
+      0.18,
+      0.12,
+      0.33
+    ]
+  },
+  "recordings": []
+}

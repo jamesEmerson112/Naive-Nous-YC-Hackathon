@@ -1,0 +1,33 @@
+{
+  "recording_id": "5e7a9c1b-3d5f-4a7c-9e1b-6c7d8e9f0a1b",
+  "kind": "episode",
+  "format": "lerobot_v3_tar",
+  "sha256": "b7d9f1a3c5e7092b4d6f8a1c3e5b7d9f0a2c4e6b8d1f3a5c7e9b2d4f6a8c0e1b",
+  "size_bytes": 9120455,
+  "started_at": "2026-11-08T04:10:00Z",
+  "ended_at": "2026-11-08T04:10:42Z",
+  "running": {
+    "firmware": 2,
+    "harness": 1
+  },
+  "overlay_id": null,
+  "incident_id": null,
+  "episode": {
+    "task": "pick_cube",
+    "success": true,
+    "index": 412
+  },
+  "streams": [
+    "observation.state",
+    "action",
+    "observation.images.front",
+    "servo_temp",
+    "servo_load",
+    "servo_voltage",
+    "fault_code",
+    "reflex_active",
+    "intervention"
+  ],
+  "schema_version": "0.1",
+  "labels": []
+}

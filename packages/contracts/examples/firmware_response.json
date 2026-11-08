@@ -1,0 +1,27 @@
+{
+  "manifest": {
+    "version": 1,
+    "device_class": "so101",
+    "code_rev": "c0de001",
+    "rules": {
+      "camera_occluded": {
+        "signal": "brightness",
+        "below": 0.2,
+        "action": "safe_pose"
+      },
+      "gripper_stall": {
+        "signal": "gripper_current_ma",
+        "above": 900,
+        "action": "backoff_retry"
+      }
+    },
+    "params": {
+      "max_speed": 0.6
+    },
+    "policy": {
+      "name": "pick_cube",
+      "rev": "hf:org/act@3f9e"
+    }
+  },
+  "sha256": "33320b1808cf3312f58c8d895358f077c87f53e9157048beb3279252dc2a80e2"
+}
