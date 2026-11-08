@@ -183,7 +183,7 @@ code, .mono { font-family: var(--mono); font-size: 0.88em; }
 .switch.unfreeze:hover { background: color-mix(in oklch, var(--clay-ink) 88%, var(--ink)); }
 .frozen-banner { display: inline-flex; align-items: center; gap: 7px; font-size: 0.833rem; font-weight: 700; color: var(--clay-ink); white-space: nowrap; }
 .frozen-why { font-size: 0.833rem; color: var(--clay-ink); max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.top:has(.killswitch.frozen) { background: var(--clay-wash); border-bottom-color: color-mix(in oklch, var(--clay) 40%, var(--line)); color: var(--clay-ink); }
+.top:has(.killswitch.frozen) { background: var(--clay-wash); border-bottom-color: color-mix(in oklch, var(--clay) 35%, var(--clay-wash)); color: var(--clay-ink); }
 .top:has(.killswitch.frozen) .brand,
 .top:has(.killswitch.frozen) .brand-mark,
 .top:has(.killswitch.frozen) .brand-sub,
