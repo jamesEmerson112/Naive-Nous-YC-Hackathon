@@ -72,23 +72,24 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 7:58 PM PST_
+_Last updated: Sat Nov 7, 8:10 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is building the Fleet Doctor (shipping with `doctor_mode=off`) and `tools/edge_bridge` (podd → cloud); his docs PR #21 is merged. James's plan: build arm prototypes tonight without the real arm (MuJoCo twin, Kent's fake device, Olir's sensor pod), then plug in the red follower arm tomorrow to test and collect data for the final version *(James's session)*. Andre has been calibrating the arm, which is why he has no commits *(James's session)*. Ishaan is still blocked on the Jetson link; the device code (B1) is not pushed.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has five PRs open since 7:58 PM and none merged yet: B8 STM32 toolchain (#24), the edge bridge (#25), Fleet Doctor contracts (#26) and foundation (#27), and the M8b coding agent wired into batch and gate (#28). James paused after publishing Stack Map v7 and plans arm prototypes tonight without the real arm (MuJoCo twin, Kent's fake device, Olir's sensor pod), with the red follower arm plugged in tomorrow *(James's session)*. Andre is calibrating the arm; Ishaan is still blocked on the Jetson link, and the device code (B1) is not pushed.
 
 **Recently done:**
-- Kent merged #21 (`39dd2e5`, 7:54 PM): `cloud/README.md` (run it with fake arms, tests, going live), a flows tracker built from the merged flow tests (82 pass), build-plan ticks with the M8 blocker table, and the Naïve spike results (integration doc §5.1). The proxy works with the team key and `openai/gpt-oss-120b` (~1.8 s) is the pick; there is no `fleet-ops` agent yet; card create waits on Kent's go-ahead
-- Kent merged #23 (`78fe531`, 7:48 PM): decisions D23–D28 logged; optional contract additions don't bump `CONTRACT_VERSION` (D28, stays `0.1`)
-- Kent merged #22 (`7bcd632`, 7:46 PM): Fleet Doctor implementation plan and interfaces (`docs/fleet-doctor/`); Kent claimed the four build lines in `features.txt` (`071f91e`)
-- Kent merged #19, M8a (`3aba2da`, 7:38 PM): coder sandbox image, LocalAgent returns the diff and test result, offline code replay, and a toy device with a D1-like fault
+- Kent opened #24 (`cloud/b8-stm32-toolchain`, 7:58 PM): the coder image gets the STM32 toolchain from `firmware/toolkit/setup.sh`, plus an offline firmware build check and its tests. This should close blocker B8 once merged *(inferred)*
+- Kent opened #25 (`edge/bridge`, 8:00 PM): `tools/edge_bridge` reports the pod healer's records (podd logs, heal tools) to the cloud with no device-side changes; it adds an interop test against the real app and decision D29
+- Kent opened #26 (7:59 PM) and #27 (8:03 PM): Fleet Doctor contracts (ask, advice, proposal, proposal result; no version bump per D28), then the foundation (settings, tables, domain rules, jobs seam, `Llm.complete`, stubs)
+- Kent opened #28 (`cloud/m8b-wiring`, 8:04 PM): Romulus M8b wires the coding agent into batch and gate, with an F11 code-patch flow test. James's session published Stack Map v7 with everyone's status as of 8:00 PM
 
 **Open questions:**
-- Kent still waits on: device code in the repo (B1; Ishaan is blocked on the Jetson link: macOS's USB accessory check blocks its data and there is no LAN path), the K17 safety and visor path list, and Kent's go-ahead for the live Naïve card. `firmware/toolkit/` on `main` may close B8 *(inferred)*
+- Kent still waits on: device code in the repo (B1; Ishaan is blocked on the Jetson link: macOS's USB accessory check blocks its data and there is no LAN path), the K17 safety and visor path list, and Kent's go-ahead for the live Naïve card
 - Nobody owns the pod healer's agent loop and blind scenario eval yet; `HARNESS.md` marks both "you build this". Is that Ishaan's device healer, a Hermes plugin, or new work? Fleet Doctor's L3 agent loop location (D27) is deferred too
-- Arm prototypes for tomorrow (control program with a servo error-bit watchdog, approach-then-grasp with the ultrasonic, predicted-vs-measured check, frozen-ultrasonic rule, labelled run logger) have no `features.txt` lines or owners yet, and they need to be ready before Kent's 9–10 AM "real arm + polish" slot *(James's session, inferred)*
+- Arm prototypes for tomorrow (control program with a servo error-bit watchdog, approach-then-grasp with the ultrasonic, predicted-vs-measured check, frozen-ultrasonic rule, labelled run logger) have no `features.txt` lines or owners yet, and they need to be ready before Kent's 9–10 AM "real arm + polish" slot. James's overview fixes `79f938b` and `952cf79` are committed locally but not on `main` *(James's session, inferred)*
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email) *(James's session)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all?
 
 **Recent commits (all authors):**
+- `b11f910` Sat 19:59 · jamesEmerson112 · Update team status in CLAUDE.md
 - `02ffd52` Sat 19:58 · Kent Gang · Update Kent status in CLAUDE.md
 - `39dd2e5` Sat 19:54 · kgang · Romulus docs: build status, flows tracker, spike results (#21)
 - `fbeb4bb` Sat 19:49 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -98,7 +99,6 @@ _Last updated: Sat Nov 7, 7:58 PM PST_
 - `7bcd632` Sat 19:46 · kgang · Fleet Doctor: implementation plan and interfaces (where each route, model, table, setting and seam lives) (#22)
 - `b2391ef` Sat 19:45 · Kent Gang · Claim the bench-to-cloud bridge and the pod's incident outbox in features.txt
 - `2486475` Sat 19:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `b751e6c` Sat 19:39 · jamesEmerson112 · Update team status and features.txt
 
-**Branches on GitHub:** `main`, `cloud/docs-status` (Kent, merged as #21, 1 commit not on `main`), `cloud/m8-coder-wip` (1 commit not on `main`), `firmware` and `demo` (Olir, both fully on `main`)
+**Branches on GitHub:** `main`; Kent's open PR branches `cloud/b8-stm32-toolchain` (#24), `edge/bridge` (#25), `doctor/contracts` (#26), `doctor/foundation` (#27), `cloud/m8b-wiring` (#28); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `cloud/docs-status` is gone after #21 merged
 <!-- team-status:end -->
