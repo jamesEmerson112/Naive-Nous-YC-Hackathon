@@ -261,3 +261,18 @@ def test_the_worker_step_runs_review(fleet, learn, sessions, db_session, now, mo
     (step,) = [s for s in worker.steps_for(learn) if s.name == "learning.tick"]
     assert run_tick([step], sessions, now + 20 * S, {}) == {"learning.tick": "ok"}
     assert _kinds(db_session)[-1][0] == review.OPENED
+
+
+def test_a_session_with_no_proposal_in_time_is_cancelled_and_rejected(
+    fleet, learn, sessions, db_session, now
+):
+    from romulus_cloud.adapters.naive import FixtureNaive
+
+    slow = FixtureNaive(FIXTURES / "us_frozen_live.json", now=lambda: now, play_seconds=10_000)
+    _review(sessions, learn, now + 20 * S, naive=slow)
+    _review(sessions, learn, now + 300 * S, naive=slow)  # still running: waits
+    assert [k for k, _ in _kinds(db_session)] == [review.OPENED]
+    _review(sessions, learn, now + 640 * S, naive=slow)
+    ev = _outcome(db_session, "servo_read_error")
+    assert ev.kind == "review.rejected" and slow.cancelled == [ev.data["session_id"]]
+    assert ev.data["result"]["failures"][0].startswith("The session ended without a proposal")

@@ -550,6 +550,11 @@ def _poll(
     if verdict == "wait":
         return {"case": case_id, "status": "waiting for the session"}
     if verdict == "fail":
+        if state.state in ("running", "awaiting"):  # timed out: stop it spending
+            try:
+                client.cancel_session(session_id)
+            except Exception as exc:  # noqa: BLE001 - already gone; the outcome still lands
+                log_line("review.cancel_failed", case=case_id, error=repr(exc))
         sentence = f"The session ended without a proposal: {problem}."
         result = rv.ReviewResult("rejected", f"Rejected. {sentence}", failures=(sentence,))
         _record_outcome(
