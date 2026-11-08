@@ -111,33 +111,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 5:08 PM PST_
+_Last updated: Sat Nov 7, 5:19 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has three Romulus PRs open in parallel (#5 M1 fake device, #6 M4/M5/M7 triage, labels, digest and `parts.yaml`, #7 M3a gate core); M0's live Naïve card and LLM call are still due 5:15 PM. Ishaan is screening healer harnesses h1–h3 in `edge/` (local, uncommitted). James has the pi vs Hermes comparison running in the Naïve console and is waiting on `NAIVE_API_KEY` in `~/.hermes/.env` to finish it.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged PRs #5 (M1 fake device) and #6 (M4/M5/M7 triage), and still has #7 (M3a gate core) and #8 (`cloud/m1-skeleton`, the device API the Pi will call) open. M0's live Naïve card and LLM call missed the 5:15 PM target. Ishaan is halfway through screening healer harnesses h1–h3 in `edge/` (local). James is cutting the Naïve console down to the agents whose models match on pi and Hermes.
 
 **Recently done:**
-- James pushed `59d6764` (5:07 PM): the Naïve console now runs pi (Naïve) and Hermes side by side on matched models, caps each run at $1, counts cached tokens, and shows the scopes the key lacks. On `gpt-6-sol`, "hello world" took 8.6 s and $0.043 on pi vs 2.0 s on Hermes (James's session)
-- Kent opened PR #6 (`cloud/domain-triage-labels-digest`): pure functions for work-order triage, spend caps (`ok`, `blocked_over_cap`, `needs_human`) and card text, plus `cloud/config/parts.yaml` with placeholder supplier phones (K13)
-- Kent opened PR #7 (`cloud/m3a-domain-gate`): the gate core, with `apply_overlay` (D3), replay, canary verdict and the candidate state machine; code-patch replay is a stub until M8
-- Kent merged PR #3 (contracts v0.1, `84b4a93`) and PR #4 (cloud scaffold, `b76b332`) at 4:52 and 4:54 PM
+- James pushed `4c5f5b2` (5:17 PM): a reasoning-effort picker for Hermes in the Naïve console, plus a fix to the Hermes MCP toolset name. The picker only changes Hermes. Only the OpenAI agents (hello-luna, hello-sol) run the same model on both sides; GLM and Claude agents fall back to `gpt-6-luna` on Hermes (James's session)
+- Kent merged PR #5 (`9245bd1`, 5:13 PM): the fake fleet, whose client is the reference visor and outbox for the Pi (hash-checked installs with rollback, on-disk FIFO outbox, four scenarios)
+- Kent merged PR #6 (`9870a67`, 5:11 PM): pure functions for work-order triage, spend caps and card text, plus `cloud/config/parts.yaml` with placeholder supplier phones (K13)
+- Ishaan's harness screen: granite4.1:3b on h3 scored 1/6; qwen3.5:4b with thinking reported fixes for D1, D2, D3 and S1, and its hidden-check scores aren't in yet (Ishaan's block)
 
 **Open questions:**
-- Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4); the last one probably also holds up M0's live Naïve card and LLM call *(inferred, Kent's block)*
-- Ishaan should review the code-package and `code_patch` formats in PR #3 (B2, B3) and the Pi adoption notes in PR #5; his test bed is in `edge/` but the contracts expect `device/` *(inferred)*
-- The current Naïve key covers agents and sessions only; Hermes needs a key with Board scopes (and `NAIVE_API_KEY` in `~/.hermes/.env`) to use Naïve's tools and pick up and close cards
+- Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4). B4 probably also holds up M0's live Naïve card and LLM call *(inferred, Kent's block)*
+- Ishaan owes Kent a review of the code-package and `code_patch` formats in PR #3 (B2, B3) and a call on `edge/` vs `device/` (B1). PR #8 is the device API his Pi will call (Kent's and Ishaan's blocks)
+- The current Naïve key covers agents and sessions only. A key with `proxy:write` would let Hermes run the same models as pi through Naïve's proxy. A key with Board scopes (and `NAIVE_API_KEY` in `~/.hermes/.env`) would let Hermes pick up and close cards
 - Which small model and harness run on the Pi 5, and what does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `4c5f5b2` Sat 17:17 · jamesEmerson112 · Naive console: Hermes reasoning-effort picker; fix Hermes MCP toolset name
+- `09b3259` Sat 17:16 · Kent Gang · Update Kent status in CLAUDE.md
+- `9245bd1` Sat 17:13 · kgang · Romulus M1: fake device + reference visor/outbox client (#5)
+- `2535308` Sat 17:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `9870a67` Sat 17:11 · kgang · Romulus M4/M5/M7: pure domain triage, labels, digest + parts.yaml (#6)
+- `89f2fbf` Sat 17:09 · jamesEmerson112 · Update team status and features.txt
 - `59d6764` Sat 17:07 · jamesEmerson112 · Naive console: pi vs Hermes side by side, matched models, locked-scope panel
 - `fecf8d3` Sat 17:06 · Kent Gang · Update Kent status in CLAUDE.md
 - `54c8aaf` Sat 16:58 · jamesEmerson112 · Update team status in CLAUDE.md
 - `8c9df7d` Sat 16:56 · Kent Gang · Update Kent status in CLAUDE.md
-- `b76b332` Sat 16:54 · kgang · Romulus M0: cloud scaffold (settings, models, events, app, worker, compose, test DB) (#4)
-- `84b4a93` Sat 16:52 · kgang · Romulus M0: romulus-contracts v0.1 (models, rules.evaluate, examples) (#3)
-- `0f02b21` Sat 16:48 · jamesEmerson112 · Update team status in CLAUDE.md
-- `b8d0f75` Sat 16:46 · Kent Gang · Update Kent status in CLAUDE.md
-- `80979ee` Sat 16:43 · jamesEmerson112 · Add Naive console prototype: local page that runs an agent via the naive CLI
-- `627d250` Sat 16:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 
-**Branches on GitHub:** `main`, `firmware` (Olir), `cloud/fake-device` (Kent, PR #5), `cloud/domain-triage-labels-digest` (Kent, PR #6), `cloud/m3a-domain-gate` (Kent, PR #7)
+**Branches on GitHub:** `main`, `firmware` (Olir), `cloud/fake-device` (Kent, merged as PR #5), `cloud/domain-triage-labels-digest` (Kent, merged as PR #6), `cloud/m3a-domain-gate` (Kent, PR #7), `cloud/m1-skeleton` (Kent, PR #8)
 <!-- team-status:end -->
