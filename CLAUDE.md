@@ -73,11 +73,11 @@ _Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 10:18 AM 
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sun Nov 8, 10:11 AM PST._
+_Ishaan's local Claude session refreshes this block about every hour. Last synced: Sun Nov 8, 11:12 AM PST._
 - **Now:** the judges' video (top 10 get to pitch on stage) on `ishaan/demo-video-animation`: recording the demo takes now from a rough script, per session "Demo video planning and editing" (09:06). Pod healer loop is with Olir for bench runs (`firmware/harness/HANDOFF.md`); the Jetson link is still paused.
 - **Just finished:** demo video storyboard v1 and v2 built on the real arm07 bench heal and Andre's pitch scenes (`9f25882`, `6d04a14`, `3ea9b46`), Remotion animatic setup and re-cut recipe (`af02501`), one-page script with the 12-beat story line and every quote (`190d776`). Earlier: pod healer loop and blind eval #41 (`4ee3517`).
 - **Blocked on:** bench runs wait on Olir (SSH to the pod, API key). Still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), per Kent's block.
-- **Branch and files:** video work on `ishaan/demo-video-animation` (worktree `naive-demo-video-animation`, at `190d776`, pushed, not on `main` *(inferred)*). Main checkout on `main` at `fe476e7`, clean, no uncommitted files.
+- **Branch and files:** video work on `ishaan/demo-video-animation` (worktree `naive-demo-video-animation`, at `190d776`, pushed, not on `main` *(inferred)*). Main checkout on `main` at `4d1a137`, clean, no uncommitted files.
 <!-- ishaan-sync:end -->
 
 **Pod healer agent loop, for Olir's session:** running or benchmarking it on the bench (`firmware/harness/`, merged as #41)? Start with [`firmware/harness/HANDOFF.md`](firmware/harness/HANDOFF.md): bench steps, what's verified, what to report.
