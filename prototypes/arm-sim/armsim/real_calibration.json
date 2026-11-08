@@ -1,0 +1,7 @@
+{
+  "offset_deg": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+  "sign": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+  "measured": false,
+  "estimated": true,
+  "how": "Sun Nov 8, 10:45 AM, by camera on the bench. The MuJoCo model posed from the real arm's LeRobot degrees with no offset matches an iPhone photo of the folded arm, and Andre's wave.json rendered at the camera's timestamps (run 3) matches the real arm's motion phase by phase: rise, reach to the box, extend, fold. So the checked-in LeRobot calibration (arm/calibration/naive_follower.json) already lines up with the model. Estimated, not measured: it draws the 3D twin, while IK and the distance prediction stay off until offsets are measured against known poses."
+}

@@ -67,8 +67,11 @@ class RealArm:
         cal = json.loads(CALIBRATION.read_text()) if CALIBRATION.exists() else {}
         self.offset = np.array(cal.get("offset_deg", [0.0] * 6), dtype=float)
         self.sign = np.array(cal.get("sign", [1.0] * 6), dtype=float)
-        self.kinematics_ok = bool(cal.get("measured"))
-        self.use_ik = self.kinematics_ok
+        # measured: offsets checked on the bench, so IK and the distance prediction (and with it the
+        # watchdog's residual checks) turn on. estimated: good enough to draw the 3D twin only.
+        self.measured = bool(cal.get("measured"))
+        self.kinematics_ok = self.measured or bool(cal.get("estimated"))     # the host draws the twin
+        self.use_ik = self.measured
         self.t0 = time.monotonic()
         self._goal = None
         self._torque_on = False
@@ -272,7 +275,7 @@ class RealArm:
         return self.mirror.tip()
 
     def predicted_mm(self, table_z=0.0, *, objects=()):
-        return self.mirror.predicted_mm(table_z, objects=objects) if self.kinematics_ok else None
+        return self.mirror.predicted_mm(table_z, objects=objects) if self.measured else None
 
     def solve(self, xyz, *, seed=None, iters=200):
         if not self.use_ik:
