@@ -40,17 +40,18 @@ def test_timeline_lists_incidents_newest_first_with_status(client, arm, example)
     assert "unexpected_release" in page and "camera_occluded" in page
     assert "overlay held" in page  # D1's status
     assert "overlay on trial" in page  # the rules incident has no held/reverted yet
-    # The chain shows readable labels, each with its raw event kind in a tooltip.
+    # The chain shows readable labels, each with its raw event kind in a tooltip; on the
+    # timeline it sits beside the mini heal line, so the stage words read "a · b · c".
     assert (
-        '<span class="link" title="incident.agent_acted">agent acted</span> → '
-        '<span class="link" title="overlay.applied">overlay ov-d1-0001</span> → '
+        '<span class="link" title="incident.agent_acted">agent acted</span> · '
+        '<span class="link" title="overlay.applied">overlay ov-d1-0001</span> · '
         '<span class="link" title="overlay.held">held</span>'
     ) in page
     assert "3:14:05 PM" in page and "Sat Nov 7" in page  # 23:14:05Z in Pacific time
     # Fleet strip: seeded devices with their versions and health.
     for device in ("arm-1", "sim-1", "sim-2", "sim-3"):
         assert device in page
-    assert "fw 1 · h 1" in page
+    assert "fw 1 · harness 1" in page
 
     partial = _text(client.get("/partials/incidents"))
     assert "<html" not in partial and f"/incidents/{D1}" in partial

@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
+from sqlalchemy import select
 
 from romulus_cloud import events
 from romulus_cloud.api.deps import SessionDep, SettingsDep
@@ -32,7 +33,7 @@ from romulus_cloud.domain.story import (
 )
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
-from romulus_cloud.models import AgentRun, Event
+from romulus_cloud.models import AgentRun, Event, TechnicianCase
 from romulus_cloud.services import agent_runs, devices, incidents, learning
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -342,6 +343,27 @@ def _fleet(session, fleet_id: str) -> dict[str, Any]:
     }
 
 
+def _turn(session, incident_id: str) -> dict[str, Any]:
+    """Where a row waiting on a person sends them: its newest technician case (one indexed
+    lookup on `technician_cases.incident_id`) and the part it staged, if any."""
+    case = session.scalars(
+        select(TechnicianCase)
+        .where(TechnicianCase.incident_id == incident_id)
+        .order_by(TechnicianCase.created_at.desc())
+        .limit(1)
+    ).first()
+    if case is None:
+        return {"case_url": None, "ask": None, "part_staged": False}
+    part = (case.actions or {}).get("part") or {}
+    staged = bool(part.get("staged") and part.get("title"))
+    ask = None
+    if staged:
+        price = f", ${part['unit_usd']}" if part.get("unit_usd") else ""
+        vendor = f" at {part['vendor_label']}" if part.get("vendor_label") else ""
+        ask = f"Approve a spare part: {part['title']}{price}{vendor}"
+    return {"case_url": f"/technician/{case.id}", "ask": ask, "part_staged": staged}
+
+
 def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
     rows = []
     now = utcnow()
@@ -364,15 +386,36 @@ def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
                 "touches_safety": any(s.refs.get("touches_safety") for s in story.steps),
                 "agent": _run_badge(runs[-1]) if runs else None,
                 "help": sum(len(r["help_requests"]) for r in runs),
+                **(_turn(session, incident.id) if tone == "you" else {}),
             }
         )
     return rows
 
 
-def _overview(rows: list[dict[str, Any]], fleet: dict[str, Any]) -> dict[str, int]:
-    """The numbers across the top of the timeline."""
+def _overview(rows: list[dict[str, Any]], fleet: dict[str, Any]) -> dict[str, Any]:
+    """The numbers across the top of the timeline, plus what the status sentence picks from:
+    frozen, the first row waiting on a person (the your-turn card), the first still-broken
+    and the first working row, and whether every other arm is healthy."""
     agents = [r["agent"] for r in rows if r["agent"]]
+    you = [r for r in rows if r["tone"] == "you"]
+    others = [r for r in rows if r["tone"] != "you"]
+    bad = [r for r in others if r["tone"] == "bad" or (r["agent"] or {}).get("status") == "broken"]
+    working = [
+        r for r in others if r["tone"] == "wait" or (r["agent"] or {}).get("status") == "working"
+    ]
+    devices = fleet.get("devices") or []
+    waiting_on = {r.get("device") for r in you}
+    rest = [d for d in devices if d.get("id") not in waiting_on]
     return {
+        "frozen": bool(fleet.get("frozen")),
+        "frozen_why": fleet.get("frozen_why"),
+        "turn": you[0] if you else None,
+        "first_bad": bad[0] if bad else None,
+        "first_working": working[0] if working else None,
+        "open": sum(1 for r in rows if r["tone"] == "bad"),
+        "busy": len(working),
+        "checked": sum(1 for d in devices if d.get("health")),
+        "rest_healthy": not bad and all(d.get("health") == "ok" for d in rest),
         "devices": len(fleet["devices"]),
         "healthy": sum(1 for d in fleet["devices"] if d.get("health") == "ok"),
         "incidents": len(rows),
