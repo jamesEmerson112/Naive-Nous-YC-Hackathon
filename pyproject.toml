@@ -19,5 +19,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["romulus_cloud", "romulus_contracts", "fake_device"]
+
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q --import-mode=importlib"
+testpaths = ["packages/contracts/tests", "cloud/tests", "tools/fake_device/tests"]

@@ -1,0 +1,108 @@
+from pathlib import Path
+
+from romulus_cloud.settings import Settings
+
+ARCH_ENV_VARS = [
+    "DATABASE_URL",
+    "BLOB_DIR",
+    "BLOB_BUDGET_GB",
+    "NAIVE_MODE",
+    "NAIVE_API_KEY",
+    "NAIVE_BASE_URL",
+    "NAIVE_VERSION",
+    "NAIVE_BOARD_ID",
+    "NAIVE_OPS_AGENT",
+    "ORDER_MAX_USD",
+    "ORDERS_PER_DAY_MAX",
+    "ORDERS_PER_ROBOT_DAY_MAX",
+    "LLM_MODE",
+    "LLM_PROVIDER",
+    "LLM_BASE_URL",
+    "LLM_MODEL",
+    "LLM_API_KEY",
+    "CODER_PROVIDER",
+    "CODER_AGENT",
+    "CODER_IMAGE",
+    "CANARY_WINDOW_S",
+    "BATCH_INTERVAL_S",
+]
+
+
+def _clean_env(monkeypatch):
+    for name in [*ARCH_ENV_VARS, "ALLOW_PASSTHROUGH_CODE_PROMOTION", "OVERNIGHT_STARTED"]:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_defaults_are_fake_and_offline(monkeypatch):
+    _clean_env(monkeypatch)
+    s = Settings(_env_file=None)
+    assert s.naive_mode == "fake"
+    assert s.llm_mode == "fake" and s.llm_provider == "fake"
+    assert s.coder_provider == "fake"
+    assert s.database_url == "postgresql+psycopg://romulus:romulus@db:5432/romulus"
+    assert s.blob_dir == "/data/blobs" and s.blob_budget_gb == 20
+    assert s.naive_base_url == "https://api.vetta.sh/v1"
+    assert s.naive_version == "2026-09-30"
+    assert s.naive_ops_agent == "fleet-ops"
+    assert (s.order_max_usd, s.orders_per_day_max, s.orders_per_robot_day_max) == (50, 3, 1)
+    assert s.canary_window_s == 120 and s.batch_interval_s == 120
+    assert s.allow_passthrough_code_promotion is False
+    assert s.overnight_started is False
+
+
+def test_every_architecture_variable_is_a_setting():
+    fields = {name.upper() for name in Settings.model_fields}
+    assert set(ARCH_ENV_VARS) <= fields
+
+
+def test_secrets_never_show_in_repr(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NAIVE_API_KEY", "sk_live_supersecret")
+    monkeypatch.setenv("LLM_API_KEY", "llm-supersecret")
+    s = Settings(_env_file=None)
+    assert "supersecret" not in repr(s) and "supersecret" not in str(s.model_dump())
+    assert s.naive_api_key.get_secret_value() == "sk_live_supersecret"
+    assert s.llm_api_key.get_secret_value() == "llm-supersecret"
+
+
+def test_env_overrides_one_variable_per_adapter(monkeypatch):
+    _clean_env(monkeypatch)
+    monkeypatch.setenv("NAIVE_MODE", "live")
+    monkeypatch.setenv("CANARY_WINDOW_S", "1200")
+    s = Settings(_env_file=None)
+    assert s.naive_mode == "live" and s.canary_window_s == 1200
+
+
+def test_test_settings_ignore_dotenv_and_stay_fake(make_settings, tmp_path, monkeypatch):
+    """A real `.env` with live modes must not leak into tests."""
+    _clean_env(monkeypatch)
+    (tmp_path / ".env").write_text(
+        "NAIVE_MODE=live\nLLM_MODE=live\nLLM_PROVIDER=naive_proxy\n"
+        "CODER_PROVIDER=local_agent\nNAIVE_API_KEY=sk_live_from_dotenv\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    assert Settings().naive_mode == "live"  # the plain loader does read it ...
+    s = make_settings()  # ... the test loader doesn't
+    assert s.naive_mode == "fake" and s.llm_mode == "fake"
+    assert s.llm_provider == "fake" and s.coder_provider == "fake"
+    assert s.naive_api_key.get_secret_value() == ""
+
+
+def test_test_settings_stay_fake_even_with_live_env(make_settings, monkeypatch):
+    monkeypatch.setenv("NAIVE_MODE", "live")
+    monkeypatch.setenv("LLM_MODE", "live")
+    s = make_settings(naive_mode="live")
+    assert s.naive_mode == "fake" and s.llm_mode == "fake"
+
+
+def test_env_example_lists_every_setting():
+    path = Path(__file__).resolve().parents[3] / ".env.example"
+    keys = set()
+    for line in path.read_text().splitlines():
+        line = line.strip().lstrip("# ").strip()
+        if "=" in line and line.split("=", 1)[0].isupper():
+            keys.add(line.split("=", 1)[0])
+    compose_only = {"COMPOSE_PROJECT_NAME", "API_PORT", "FAKE_DEVICES_N"}
+    fields = {name.upper() for name in Settings.model_fields}
+    assert fields <= keys, f"missing from .env.example: {sorted(fields - keys)}"
+    assert keys - compose_only <= fields, f"unknown in .env.example: {sorted(keys - fields)}"
