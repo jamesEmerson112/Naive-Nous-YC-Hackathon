@@ -19,8 +19,8 @@ Limit: the code under test runs inside the verify process, so a deliberately mal
 could still forge its result from within. This stops test gaming (skips, conftest, config);
 the canary and a person stop malice.
 
-Not wired into the gate yet (M8b). No database, no events: the caller turns a `CodeReplay`
-into a gate decision and an Event.
+No database, no events: `code_lockin.gate_replay` runs it as a job off the gate's tick
+(M8b) and turns the `CodeReplay` into the gate's replay result and an Event.
 """
 
 from __future__ import annotations

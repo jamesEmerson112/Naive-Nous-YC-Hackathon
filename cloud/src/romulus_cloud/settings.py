@@ -81,6 +81,17 @@ class Settings(BaseSettings):
     coder_test_cmd: str = "python -m pytest -q"
     coder_step_limit: int = 30
     coder_time_limit_s: int = 600
+    # The gate's code replay (M8b): the device tests (CODER_TEST_CMD, empty = no replay, the
+    # stub) and the held-out verify scripts, in fresh containers with no network. The
+    # package's own `device/verify/` always runs; CODER_VERIFY_DIR adds a host directory of
+    # more verify scripts kept off the device (each file lands at `verify/<its path>`).
+    coder_verify_dir: str = ""
+    coder_replay_timeout_s: int = 300
+    # Where scratch copies of the device code go ("" = the system temp dir). Docker must be
+    # able to mount it (Docker Desktop shares /Users, /private, /tmp and /var/folders).
+    coder_scratch_dir: str = ""
+    # Threads in the worker for slow jobs (coder drafts, code replays; services/jobs.py).
+    jobs_max_workers: int = 2
 
     # Paths under device/ that count as the safety layer or visor (D5a, K17). A code_patch
     # touching any of them is flagged `touches_safety`. Placeholder until Ishaan's list.

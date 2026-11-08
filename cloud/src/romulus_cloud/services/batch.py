@@ -18,6 +18,11 @@ scale; the gate caps stale re-queues per overlay):
 - **code → one `code` candidate:** `draft_code_v0`, the FakeCoder pass-through: the
   package is the base code plus each device patch as a file (not applied), and a new
   firmware manifest names it. It waits at `awaiting_canary` (B7) unless the setting allows.
+  With a real coder (`CODER_PROVIDER` not `fake`, M8b), each code overlay is first drafted
+  by the coding agent as a job off the tick (`services/code_lockin.py`, `services/jobs.py`)
+  and stays held until the draft is done; then it is batched alone (its draft is a whole
+  change against the base) into a code version with the coder's diff applied. A failing
+  draft or a coder error makes the overlay `lockin_error`, sticky, and builds nothing.
 - **harness → one `harness` candidate:** the LLM writes one skill per overlay (FakeLlm by
   default) into the current harness tarball under `knowledge_dir`, `harness.json` bumped.
 
@@ -34,6 +39,7 @@ import json
 import tarfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from sqlalchemy import func, select, tuple_
@@ -41,7 +47,7 @@ from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import BlobStore, build_blobstore
-from romulus_cloud.adapters.coder import Coder, build_coder
+from romulus_cloud.adapters.coder import CodeDraft, Coder, CoderError, build_coder, redact
 from romulus_cloud.adapters.llm import FakeLlm, Llm, LlmError, build_llm
 from romulus_cloud.domain.merge import (
     MergeError,
@@ -62,8 +68,9 @@ from romulus_cloud.models import (
     Incident,
     Overlay,
 )
-from romulus_cloud.services import fleet, incidents, registry
+from romulus_cloud.services import code_lockin, fleet, incidents, registry
 from romulus_cloud.services.gate import label
+from romulus_cloud.services.jobs import Done, Failed, InlineJobs, Jobs, Missing, default_jobs
 from romulus_cloud.settings import Settings, get_settings
 from romulus_contracts import touches_safety as code_touches_safety
 
@@ -71,16 +78,48 @@ ACTOR = "agent:batch"
 CONFIG_KINDS = frozenset({"rules", "params"})
 PASSTHROUGH_NOTE = "pass-through: coding agent not wired"
 LOCKIN_ERROR = "lockin_error"
+Key = tuple[str, str]  # (device_id, overlay_id)
+
+
+class _Unavailable:
+    """The coder setting can't build a coder (e.g. no LLM_BASE_URL): every draft fails with
+    that reason, so each code overlay gets a sticky why instead of the batch crashing."""
+
+    def __init__(self, why: str) -> None:
+        self.why = why
+
+    def draft(self, patch, incident, code_rev, files=None, task=None) -> CodeDraft:
+        raise CoderError(self.why)
+
+
+def _build_coder(settings: Settings) -> Coder:
+    try:
+        return build_coder(
+            settings.coder_provider,
+            settings.coder_agent,
+            settings.coder_image,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            api_key=settings.llm_api_key.get_secret_value(),
+            test_cmd=settings.coder_test_cmd,
+            step_limit=settings.coder_step_limit,
+            time_limit_s=settings.coder_time_limit_s,
+            scratch_dir=settings.coder_scratch_dir or None,
+        )
+    except (CoderError, NotImplementedError, ValueError) as exc:
+        return _Unavailable(f"CODER_PROVIDER={settings.coder_provider}: {exc}")
 
 
 @dataclass
 class Tools:
-    """What the batch needs from outside: settings and the adapters they choose."""
+    """What the batch needs from outside: settings and the adapters they choose. `jobs`
+    runs the coding agent off the tick (only with a real coder)."""
 
     settings: Settings
     llm: Llm
     coder: Coder
     store: BlobStore
+    jobs: Jobs = field(default_factory=InlineJobs)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "Tools":
@@ -93,9 +132,19 @@ class Tools:
                 settings.llm_model,
                 settings.llm_api_key.get_secret_value(),
             ),
-            coder=build_coder(settings.coder_provider, settings.coder_agent, settings.coder_image),
+            coder=_build_coder(settings),
             store=build_blobstore(settings.blob_dir),
+            jobs=default_jobs(settings.jobs_max_workers),
         )
+
+    @property
+    def coding_agent(self) -> bool:
+        """True when code patches go through the coding agent (not the pass-through)."""
+        return self.settings.coder_provider != "fake"
+
+    @property
+    def secrets(self) -> list[str]:
+        return [self.settings.llm_api_key.get_secret_value()]
 
 
 @dataclass
@@ -125,7 +174,9 @@ def maybe_run(
     """The worker step: run the batch if it is due or was requested; otherwise do nothing."""
     tools = tools or Tools.from_settings(settings or get_settings())
     fleet_id = tools.settings.fleet_id
-    if not is_due(session, now, tools.settings.batch_interval_s, fleet_id):
+    if not is_due(session, now, tools.settings.batch_interval_s, fleet_id) and not (
+        tools.coding_agent and _a_draft_finished(session, tools)
+    ):
         return RunResult(ran=False)
     return run(session, now, tools)
 
@@ -214,9 +265,12 @@ def run(session: Session, now: datetime, tools: Tools) -> RunResult:
     requested = bool(row and row.batch_requested)
     result = RunResult(ran=True)
     overlays = held_overlays(session, fleet_id)
+    ready, drafts = overlays, {}
+    if tools.coding_agent:
+        ready, drafts = _await_drafts(session, overlays, now, tools, result)
 
     items: list[_Item] = []
-    for overlay in overlays:
+    for overlay in ready:
         try:
             items.append(_prepare(session, overlay, tools))
         except Exception as exc:  # a broken row must not stop the others
@@ -225,13 +279,18 @@ def run(session: Session, now: datetime, tools: Tools) -> RunResult:
     classes = sorted({i.device_class for i in items})
     for device_class in classes:
         group = [i for i in items if i.device_class == device_class]
-        solo = [i for i in group if incidents.requeue_marks(session, i.overlay).get("solo")]
+        # A drafted code overlay goes alone too: its draft is a whole change on the base.
+        solo = [
+            i
+            for i in group
+            if i.key in drafts or incidents.requeue_marks(session, i.overlay).get("solo")
+        ]
         rest = [i for i in group if i not in solo]
         for part in ([rest] if rest else []) + [[i] for i in solo]:
             marks = (len(result.dropped), len(result.deferred))
             try:
                 with session.begin_nested():
-                    result.candidates += _fold(session, part, now, tools, result)
+                    result.candidates += _fold(session, part, now, tools, result, drafts)
             except Exception as exc:  # the savepoint rolled the part back; forget its notes
                 del result.dropped[marks[0] :], result.deferred[marks[1] :]
                 _mark_error(
@@ -346,7 +405,12 @@ def _next(session: Session, model, fleet_id: str) -> int:
 
 
 def _fold(
-    session: Session, group: list[_Item], now: datetime, tools: Tools, result: RunResult
+    session: Session,
+    group: list[_Item],
+    now: datetime,
+    tools: Tools,
+    result: RunResult,
+    drafts: dict[Key, tuple[str, CodeDraft]] | None = None,
 ) -> list[Candidate]:
     group = _lock_still_held(session, group)
     if not group:
@@ -362,7 +426,11 @@ def _fold(
             made[i.key].append(config)
     code_items = [i for i in taken if "code" in i.kinds]
     if code_items:
-        code = _draft_code(session, code_items, current_fw, now, tools)
+        drafts = drafts or {}
+        if all(i.key in drafts for i in code_items):
+            code = _lock_in_drafts(session, code_items, current_fw, now, tools, drafts)
+        else:
+            code = _draft_code(session, code_items, current_fw, now, tools)
         for i in code_items:
             made[i.key].append(code)
     if taken:
@@ -709,4 +777,200 @@ def _draft_code(
         touches_safety=safety,
         stub_stages=["draft_code", "replay"],
         data={"parent_version": current.version},
+    )
+
+
+# --- the coding agent (M8b, F11): drafts run as jobs off the tick -------------------------
+
+
+def _has_code(ov: Overlay) -> bool:
+    return "code" in classify_patch({"diff": ov.diff, "code_patch": ov.code_patch})
+
+
+def _base_code(session: Session, ov: Overlay) -> CodeVersion:
+    """The code version the overlay's class runs now: the coder's base tree (B1: until
+    `device/` lands, whatever was registered with `POST /v1/code`)."""
+    device = session.get(Device, ov.device_id)
+    device_class = (device.device_class if device else None) or "so101"
+    firmware, _ = _current(session, device_class, ov.fleet_id)
+    rev = firmware.manifest.get("code_rev")
+    cv = session.get(CodeVersion, (ov.fleet_id, rev)) if rev else None
+    if cv is None:
+        raise CoderError(
+            f"class {device_class} runs firmware v{firmware.version}, whose code {rev!r} is "
+            "not registered (POST /v1/code), so the coding agent has no base tree"
+        )
+    return cv
+
+
+def _a_draft_finished(session: Session, tools: Tools) -> bool:
+    """A held code overlay's draft is done (or failed), so the batch should run now rather
+    than wait for BATCH_INTERVAL_S. Reads only; polls in-memory jobs."""
+    for ov in held_overlays(session, tools.settings.fleet_id):
+        if not _has_code(ov):
+            continue
+        try:
+            key = code_lockin.draft_key(ov, _base_code(session, ov).rev)
+        except Exception:  # the run itself records why
+            return True
+        if isinstance(tools.jobs.poll(key), Done | Failed):
+            return True
+    return False
+
+
+def _coder_incident(session: Session, ov: Overlay) -> dict[str, Any]:
+    incident = session.get(Incident, ov.incident_id)
+    if incident is None:
+        return {"id": ov.incident_id, "device_id": ov.device_id}
+    return {
+        "id": incident.id,
+        "device_id": incident.device_id,
+        "kind": incident.kind,
+        "summary": incident.summary,
+        "explanation": incident.agent_reasoning,
+    }
+
+
+def _await_drafts(
+    session: Session, overlays: list[Overlay], now: datetime, tools: Tools, result: RunResult
+) -> tuple[list[Overlay], dict[Key, tuple[str, CodeDraft]]]:
+    """Send each held code overlay to the coding agent as a job, and keep it held until its
+    draft is done. Returns the overlays ready to fold and each one's (base rev, draft). A
+    failing draft or a coder error marks the overlay `lockin_error` (sticky: never re-drafted,
+    so the agent isn't called again every run)."""
+    ready: list[Overlay] = []
+    drafts: dict[Key, tuple[str, CodeDraft]] = {}
+    for ov in overlays:
+        if not _has_code(ov):
+            ready.append(ov)
+            continue
+        try:
+            cv = _base_code(session, ov)
+            key = code_lockin.draft_key(ov, cv.rev)
+            status = tools.jobs.poll(key)
+            if isinstance(status, Missing):  # new, or the worker restarted: (re)submit
+                files = code_lockin.read_package(tools.store, cv)
+                incident = _coder_incident(session, ov)
+                job = partial(tools.coder.draft, ov.code_patch or "", incident, cv.rev, files)
+                tools.jobs.submit(key, job)
+                status = tools.jobs.poll(key)
+                if not isinstance(status, Done | Failed):
+                    events.record(
+                        session,
+                        ACTOR,
+                        "agent",
+                        "overlay.deferred",
+                        _overlay_refs(ov),
+                        f"Overlay {ov.id} from {ov.device_id} stays held while the coding agent "
+                        f"drafts a clean change on code {cv.rev} (CODER_PROVIDER="
+                        f"{tools.settings.coder_provider}, a job off the gate's tick); the "
+                        "batch locks it in when the draft is done.",
+                        data={"job": key, "base_code_rev": cv.rev},
+                        ts=now,
+                        fleet_id=ov.fleet_id,
+                    )
+        except Exception as exc:
+            why = redact(f"the coding agent could not start: {exc}", tools.secrets)
+            _mark_error(session, [ov], why, now, result)
+            continue
+        if isinstance(status, Failed):
+            why = redact(f"the coding agent could not run ({status.error})", tools.secrets)
+            _mark_error(session, [ov], why, now, result)
+        elif isinstance(status, Done):
+            draft = status.result
+            if draft.passed:
+                drafts[(ov.device_id, ov.id)] = (cv.rev, draft)
+                ready.append(ov)
+            else:
+                summary = code_lockin.draft_summary(draft)
+                why = redact(f"the coding agent's draft did not pass: {summary}", tools.secrets)
+                _mark_error(session, [ov], why, now, result)
+        else:  # still running: stays held, nothing written
+            result.deferred.append((ov.device_id, ov.id))
+    return ready, drafts
+
+
+def _lock_in_drafts(
+    session: Session,
+    items: list[_Item],
+    current: FirmwareVersion,
+    now: datetime,
+    tools: Tools,
+    drafts: dict[Key, tuple[str, CodeDraft]],
+) -> Candidate:
+    """code: the coder's diff applied to the base package → a new code version (`source =
+    coder`), a firmware manifest naming it, and a code candidate the gate replays."""
+    base_rev = current.manifest.get("code_rev")
+    base = session.get(CodeVersion, (current.fleet_id, base_rev)) if base_rev else None
+    if base is None:
+        raise CoderError(f"the base code {base_rev!r} is not registered")
+    files = code_lockin.read_package(tools.store, base)
+    notes, diffs, raw_diffs, flags = [], [], [], []
+    for item in items:
+        rev, draft = drafts[item.key]
+        if rev != base_rev:
+            raise CoderError(
+                f"overlay {item.overlay.id}'s draft is on code {rev}, but the class runs {base_rev}"
+            )
+        files = code_lockin.apply_diff(files, draft.diff)
+        notes.append(redact(code_lockin.draft_summary(draft), tools.secrets))
+        raw_diffs.append(draft.diff)
+        diffs.append(redact(draft.diff, tools.secrets))
+        flags += list(draft.flags)
+    ids = ", ".join(i.overlay.id for i in items)
+    code, _ = registry.create_code(
+        session,
+        tools.store,
+        registry.build_tarball(files),
+        rev=None,
+        actor=ACTOR,
+        actor_class="agent",
+        why=f"Code drafted by the coding agent on {base_rev} for overlay(s) {ids}: the base "
+        "package with the agent's diff applied.",
+        source=code_lockin.SOURCE,
+        parent_rev=base_rev,
+        fleet_id=current.fleet_id,
+    )
+    version = _next(session, FirmwareVersion, current.fleet_id)
+    manifest = {**current.manifest, "version": version, "code_rev": code.rev}
+    registry.create_firmware(
+        session,
+        manifest,
+        actor=ACTOR,
+        actor_class="agent",
+        why=f"Firmware v{version} = v{current.version} with code {code.rev} (drafted by the "
+        "coding agent).",
+        source="batch",
+        parent_version=current.version,
+        fleet_id=current.fleet_id,
+    )
+    safety = any(i.overlay.touches_safety for i in items) or any(
+        code_touches_safety(d, tools.settings.safety_paths) for d in raw_diffs
+    )
+    flagged = f" Flagged for review: {'; '.join(flags)}." if flags else ""
+    if tools.settings.coder_test_cmd.strip():
+        replay = (
+            " The gate replays it in fresh containers (device tests and held-out verify "
+            "scripts) before any device gets it."
+        )
+    else:
+        replay = " CODER_TEST_CMD is empty, so the gate's replay is a stub."
+    return _new_candidate(
+        session,
+        items,
+        now,
+        tools,
+        type_="code",
+        version=version,
+        code_rev=code.rev,
+        why=f"the coding agent's change on code {base_rev}: {' '.join(notes)}{flagged}{replay} "
+        + " ".join(i.explanation for i in items),
+        touches_safety=safety,
+        stub_stages=[],
+        data={
+            "parent_version": current.version,
+            "base_code_rev": base_rev,
+            "diff": "\n".join(diffs),
+            "coder_flags": flags,
+        },
     )

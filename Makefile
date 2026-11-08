@@ -7,7 +7,7 @@ TESTDB      := romulus-testdb
 TESTDB_PORT := 55432
 CLI         := $(COMPOSE) exec -T api python -m romulus_cloud.cli
 
-.PHONY: up dev sim coder-image coder-firmware-check down logs test flows testdb seed reset digest overnight-start \
+.PHONY: up dev sim coder-image coder-firmware-check worker-host down logs test flows testdb seed reset digest overnight-start \
 	overnight-stop overnight-check export lint fmt
 
 up:  ## db, api, worker
@@ -20,10 +20,18 @@ sim:  ## also start the fake devices (profile sim)
 	$(COMPOSE) --profile sim up --build -d
 
 coder-image:  ## build the coding-agent sandbox image, romulus-coder (M8), with the STM32 toolchain (B8)
-	$(COMPOSE) -f compose.yaml -f compose.coder.yaml --profile coder build coder
+	$(COMPOSE) --profile coder build coder
 
 coder-firmware-check: coder-image  ## B8: build a copy of firmware/ in the coder image, offline
 	@bash cloud/scripts/coder_firmware_check.sh
+
+DB_PORT ?= 55433
+worker-host:  ## the worker as a host process (CODER_PROVIDER=local_agent: it runs `docker run`) (M8b)
+	$(COMPOSE) -f compose.yaml -f compose.host-worker.yaml up -d db
+	$(COMPOSE) stop worker
+	DATABASE_URL=postgresql+psycopg://romulus:romulus@127.0.0.1:$(DB_PORT)/romulus \
+		BLOB_DIR=$(CURDIR)/data/blobs EXPORT_DIR=$(CURDIR)/data/exports \
+		uv run python -m romulus_cloud.worker
 
 down:
 	$(COMPOSE) --profile sim --profile tunnel down

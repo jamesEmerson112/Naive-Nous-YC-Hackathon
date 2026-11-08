@@ -5,6 +5,11 @@ crashed worker resumes where it stopped. Later PRs append to `STEPS`, e.g.
 `Step("gate.tick", gate.tick)` or `Step("workorders.sync", workorders.sync, every_s=15)`.
 Each step gets its own session and transaction; the worker commits after it returns,
 and a step that raises is rolled back and logged without stopping the others.
+
+Slow work (the coding agent, code replays) never runs inside a step: steps submit it to
+`services/jobs.py` (a small thread pool in this process, JOBS_MAX_WORKERS) and poll it on
+later ticks. With CODER_PROVIDER=local_agent those jobs run `docker run`, so this process
+then runs on the host (`make worker-host`), not in the Compose worker container.
 """
 
 import time
