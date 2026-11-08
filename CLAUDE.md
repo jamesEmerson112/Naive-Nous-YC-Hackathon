@@ -104,33 +104,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 4:38 PM PST_
+_Last updated: Sat Nov 7, 4:48 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is coding M0, due 5:15 PM; the adapters are merged, and contracts v0.1, `make up` serving `/healthz`, and the live Naïve card and LLM call remain. Ishaan is tuning the device-side healer harness in `edge/` (local, uncommitted). James has claimed the bench Hermes install and its OpenAI key, is signed in to the Romulus org on the Naïve CLI, and is starting a Naïve hello world.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has M0 contracts v0.1 (PR #3) and the cloud scaffold with `/healthz` (PR #4) open for review, due 5:15 PM; the live Naïve card and LLM call remain. Ishaan is screening healer harnesses h1–h3 in `edge/` (local, uncommitted). James built a local Naïve console prototype and is planning a comparison of Naïve's built-in harness against Naïve driven from Hermes over MCP.
 
 **Recently done:**
-- Kent merged PR #2 (`87d4e41`, from `cloud/m0-adapters`): M0 adapters in `cloud/src/romulus_cloud/adapters/`, each with a fake and unit tests. They are a sha256-checked blob store, `OpenAICompatLlm` (one client for the Naïve proxy and RunPod vLLM), `HttpNaive` (idempotent card posts, safe 409 retries) and `FakeCoder` (4:34 PM)
-- Kent merged PR #1 (`8eb532f`): the uv workspace skeleton with `packages/contracts`, `cloud/` and `tools/fake_device/`, pinned to Python 3.12 (4:21 PM)
-- James claimed "Hermes install on the bench" and "OpenAI key for bench Hermes" in `features.txt`, and signed in to the Romulus org on the Naïve CLI; the agent and model lists both return (4:26 PM)
-- Ishaan's Mac test bed works: the oracle healer passes 6/6 tasks and a do-nothing healer 0/6; granite4.1:3b on Ollama ran end to end but failed S1 and D2 (4:12 PM)
+- Kent opened PR #3 (`cloud/m0-contracts`: `romulus-contracts` v0.1 with models, shared `rules.evaluate`, `code_patch` checks, schema printer, example payloads, device README) and PR #4 (`cloud/m0-scaffold`: settings, data model, event log, FastAPI app with `/healthz`, worker, Compose stack, Makefile) (4:37 PM)
+- James added `prototypes/naive-console/` (`80979ee`): a local page plus `server.mjs` that runs a Naïve agent through the `naive` CLI, with a `.claude/launch.json` entry (4:43 PM)
+- James added a SPONSORS AND CREDITS section to `features.txt`, with each hacker's credits and the prize tracks; the hub skips non-box sections (`a014059`, 4:41 PM)
+- Ishaan's h3 harness passed the oracle and do-nothing checks; a granite4.1:3b run (config a) has been going since 4:38 PM (4:42 PM)
 
 **Open questions:**
-- Kent is blocked on: device code and tests in `device/` (B1), the code-package and `code_patch` formats (B2, B3), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4)
+- Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4). PR #3 now proposes the code-package and `code_patch` formats (B2, B3) for Ishaan to review *(inferred)*
 - Ishaan's test bed is in `edge/` but Kent's contracts expect `device/`; the two need to pick one folder *(inferred)*
-- Which small model and harness run on the Pi 5 (granite4.1:3b is only a first pick), and which RunPod model ids does James's lane use?
-- What does the STM32 do in the robot loop?
+- The current Naïve key covers agents and sessions only; Hermes picking up and closing Board cards needs a key with Board scopes (from Kent, or `naive mcp create`)
+- Which small model and harness run on the Pi 5, and what does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `b8d0f75` Sat 16:46 · Kent Gang · Update Kent status in CLAUDE.md
+- `80979ee` Sat 16:43 · jamesEmerson112 · Add Naive console prototype: local page that runs an agent via the naive CLI
+- `627d250` Sat 16:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `a014059` Sat 16:41 · jamesEmerson112 · Add sponsors and credits to features.txt; hub skips non-box sections
+- `86058af` Sat 16:38 · jamesEmerson112 · Update team status in CLAUDE.md
 - `01da07e` Sat 16:36 · Kent Gang · Update Kent status in CLAUDE.md
 - `87d4e41` Sat 16:34 · kgang · Romulus M0: outside-world adapters (blob store, LLM, Naïve, coder) with fakes (#2)
 - `56f841d` Sat 16:29 · jamesEmerson112 · Update team status in CLAUDE.md
 - `a88ef75` Sat 16:27 · Kent Gang · Update Kent status in CLAUDE.md
 - `7576f53` Sat 16:26 · jamesEmerson112 · Claim the bench Hermes key and install lines in features.txt
-- `8eb532f` Sat 16:21 · kgang · Add uv workspace skeleton for the Romulus cloud platform (#1)
-- `f7d3a9e` Sat 16:18 · jamesEmerson112 · Update team status in CLAUDE.md
-- `6869c8d` Sat 16:16 · jamesEmerson112 · Add note on why Naive does not set up like RunPod
-- `33d4cf4` Sat 16:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `1a58412` Sat 16:10 · jamesEmerson112 · Hub: Features inside view read from features.txt; black boxes for not worked on
 
-**Branches on GitHub:** `main`, `firmware` (Olir)
+**Branches on GitHub:** `main`, `firmware` (Olir), `cloud/m0-contracts` and `cloud/m0-scaffold` (Kent, PRs #3 and #4)
 <!-- team-status:end -->
