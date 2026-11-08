@@ -79,7 +79,7 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 7:30 AM PST_
+_Last updated: Sun Nov 8, 7:33 AM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P3 is on: the team is on the real arm 7–10 AM (Pi with Andre: pin serial ports, teach Andre's four poses, `demo/up.sh --real`, per James's [`MORNING.md`](prototypes/arm-sim/MORNING.md)), with the 10 AM code freeze and 11 AM stop ahead (`features.txt`, `hub/src/content/proposal.ts`). Kent pushed a new sprint proposal at 7:18–7:21 AM, the **Naïve Technician** (`docs/naive-technician/`): when Romulus hits a hardware fault with no catalogued part, a Naïve agent writes a typed diagnostic report, Romulus's gate emails a technician and builds a price-checked cart link a person approves. Status per its README: proposal, nothing built yet. James's session on `james/arm-sim-ydcsss` last pushed at 5:15 AM (`ff1c20d`).
 
@@ -90,12 +90,14 @@ _Last updated: Sun Nov 8, 7:30 AM PST_
 - James's session's **worker-model bench on one RunPod GPU** (`workerbench/runpod_wb.py`, `RESULTS.md`, interim): `qwen3.5:4b` got 0.579 gap recall and 4 of 5 real alarms but 25 of 60 healthy false alarms; `lfm3:1.7b` got 0.426 and 0 of 5. Neither passes the gates yet
 
 **Open questions:**
-- Naïve Technician: Kent's four decisions (D30, servo variant C001 7.4 V or C018 12 V, the technician teammate, the live Naïve writes) are open per its README; G1 at 8:30 needs one live session that returns a valid report in ≤ 5 min and ≤ $3. Its trigger rests on a catalogue gap: real devices send `joint_stall` and `us_no_echo` while `cloud/config/parts.yaml` lists `servo_absent` and `ultrasonic_dead` (`docs/naive-technician/README.md`)
+- Naïve Technician: Kent's four decisions (D30, servo variant C001 7.4 V or C018 12 V, the technician teammate, the live Naïve writes) are open per its README, and Kent's 7:30 block now asks Andre which STS3215 variant the arm has and the team who plays the technician (email, plus phone for T1); G1 at 8:30 needs one live session that returns a valid report in ≤ 5 min and ≤ $3. Its trigger rests on a catalogue gap: real devices send `joint_stall` and `us_no_echo` while `cloud/config/parts.yaml` lists `servo_absent` and `ultrasonic_dead` (`docs/naive-technician/README.md`)
 - Fleet Doctor follow-ups (#52): `SAFETY_PATHS_CONFIRMED` stays false until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder. Olir's note points Fleet Doctor evidence at `agent_runs` (`cloud/CLAUDE.md`)
 - Frozen ultrasonic: `firmware/healer/detect.py` still has no frozen or `out_of_range` ultrasonic rule; the doc's cheaper fix is porting `acc_frozen`'s zero-variance test to `us` (`docs/healer-data-levels.md`). Who drives the real arm (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, `RealArm` in `prototypes/arm-sim/`) is still to settle with Olir and Andre *(team status)*
 - Team calls still open: Stripe is optional; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo. #63 (main → `full-test-2`) is still open though `full-test-2` is merged *(inferred: can be closed)*
 
 **Recent commits (all authors):**
+- `5657970` Sun 07:30 · Kent Gang · Update Kent status in CLAUDE.md
+- `c584d28` Sun 07:30 · jamesEmerson112 · Update team status and features.txt
 - `c5a1fa1` Sun 07:21 · Kent Gang · a couple more naive technician planning docs
 - `8f25900` Sun 07:19 · Kent Gang · naive technician design doc
 - `eafc667` Sun 07:18 · Kent Gang · spec for naive technician
@@ -104,8 +106,6 @@ _Last updated: Sun Nov 8, 7:30 AM PST_
 - `8fb8ec4` Sun 05:19 · jamesEmerson112 · Update team status and features.txt
 - `695c901` Sun 05:16 · Oliravan Eswaramoorthy · Merge pull request #64 from jamesEmerson112/full-test-3
 - `8059bef` Sun 05:15 · Oliravan Eswaramoorthy · Merge branch 'main' into full-test-3
-- `84705f9` Sun 05:11 · OlirEswar · doc changes for updated postgres schema
-- `b54c250` Sun 05:09 · jamesEmerson112 · Update team status and features.txt
 
 **Branches on GitHub:** `main`; the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `james/arm-sim-ydcsss` (James's session, 23 commits ahead of main: job board, healer Levels 2 and 3a, soak runner, worker/manager loop, redo loop, workerbench, Mission Control, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
