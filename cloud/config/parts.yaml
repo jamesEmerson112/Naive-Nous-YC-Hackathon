@@ -1,0 +1,54 @@
+# Parts catalogue for the SO-101 bench: fault kind -> the part a work order asks for.
+# Read by romulus_cloud.config.load_parts(); parsed by domain/triage.parse_catalog().
+# Source: naive-integration §3.3 ("fault kind -> part, supplier, phone and typical price").
+#
+# !!! SAFETY (build plan K13, naive-integration §6) !!!
+# Every supplier and phone below is a PLACEHOLDER that points at a teammate, never at a real
+# business. The overnight chaos run fires a hardware fault about every 2 hours, and in live
+# Naïve mode fleet-ops would phone whatever number is here. Never put a real supplier's
+# number in this file unless NAIVE_MODE=fake overnight AND a person has signed off.
+# Replace TEAMMATE_PHONE with the on-call teammate's mobile before a live demo.
+#
+# Fields per part:
+#   id           stable part id, stored on the work order (work_orders.part)
+#   name         what the card asks for ("order 1 x <name>")
+#   fault_kinds  incident kinds (open strings) this part fixes; first match wins
+#   quantity     how many to order (default 1)
+#   typical_usd  usual price, shown on the card as the estimate
+#   max_usd      the card's MAX_USD: the agent stops if the price is higher
+#   supplier, phone  default to the placeholder teammate below
+
+defaults:
+  supplier: "Romulus test desk (teammate placeholder, not a business)"
+  phone: "TEAMMATE_PHONE"
+
+parts:
+  - id: sts3215-servo
+    name: "Feetech STS3215 servo (12 V)"
+    fault_kinds: [gripper_stall, servo_missing, servo_overload, servo_voltage_error]
+    typical_usd: 18
+    max_usd: 40
+
+  - id: usb-camera
+    name: "USB camera module (HBV-W20217 or equivalent, UVC)"
+    fault_kinds: [camera_dark, camera_occluded, camera_lost]
+    typical_usd: 15
+    max_usd: 30
+
+  - id: hc-sr04
+    name: "HC-SR04 ultrasonic distance sensor"
+    fault_kinds: [ultrasonic_dead, ultrasonic_stuck]
+    typical_usd: 4
+    max_usd: 10
+
+  - id: servo-bus-cable
+    name: "3-pin servo daisy-chain cable set (SO-101)"
+    fault_kinds: [bus_timeout, servo_bus_error]
+    typical_usd: 8
+    max_usd: 15
+
+  - id: pi5-psu
+    name: "Raspberry Pi 5 power supply (5 V / 5 A, USB-C)"
+    fault_kinds: [undervoltage]
+    typical_usd: 12
+    max_usd: 25
