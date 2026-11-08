@@ -18,6 +18,8 @@ pod (STM32 + HC-SR04) --"D mm=.. st=.."--> Pi --(podd socket, or the probe's ser
 | `live_replay.py` | same, but watches the sensor for the whole run and holds the arm if anything comes within `--min-mm` (`safe_replay.py --live-check`) |
 | `wave.json` | **default motion.** A wave recorded on this arm by hand (kinesthetic, 2026-11-07): 663 frames at 50 fps (13.2 s), in degrees |
 | `motions/svla_so101_pickplace_ep0.json` | episode 0 of [lerobot/svla_so101_pickplace](https://huggingface.co/datasets/lerobot/svla_so101_pickplace): 303 frames at 30 fps (10 s), pick-and-place from the folded rest pose and back |
+| `heal_test.py` | **self-healing bench test**: a bad pod firmware blocks the arm, the healer agent fixes it, the arm runs (below) |
+| `tests/` | offline tests for that loop: the bad image's C math, the triage rule, the gate, the agent loop (`simpod.py` is the simulated pod) |
 | `extract_motion.py` | regenerates that file (play it with `--motion arm/motions/svla_so101_pickplace_ep0.json`), or pulls another episode/dataset (`--episode 7`, `--repo ...`) |
 
 ## Setup (done once on this Pi)
@@ -63,6 +65,8 @@ cd ~/sage_hardware_healer/Naive-Nous-YC-Hackathon
 ~/lerobot-venv/bin/python arm/safe_replay.py --arm-port /dev/serial/by-id/<adapter>
 ```
 Exit codes: 0 done, 2 refused to start (blocked or sensor untrustworthy), 3 stopped mid-motion.
+`--check-only` runs the start gate and stops (exit 0 or 2, no arm needed); every run prints the last distance
+samples it judged (`mm=.. us=.. st=..`).
 
 Useful flags: `--min-mm` (distance limit), `--live-check` (also watch the sensor while moving), `--speed` (0.5 = half speed), `--ramp-s` (time to move to the
 first frame and back), `--max-step` (LeRobot `max_relative_target`, the largest per-step jump it will send),
@@ -99,3 +103,63 @@ Otherwise it opens the probe's serial port directly. Don't run both that and `ma
 - **Sensor placement.** The HC-SR04 sees a cone of about 15° (datasheet). Point it at the arm's workspace.
   The arm must not be in the cone in its rest pose, or it blocks its own start. Moving into the cone
   mid-motion only matters with `--live-check`.
+
+## Self-healing test: bad pod firmware → agent fixes it → arm runs
+`heal_test.py` plants a firmware fault that makes the ultrasonic report something close at all times, lets
+the pod healer agent (qwen3.5:4b, live on screen) find it with the `heal` tools, and checks on the bench that
+the agent flashed the known-good image and that the arm's job runs again.
+
+**The fault:** pod release v1.7 (`firmware/demo/bad-images/07-us-dist-16bit`). One misplaced `uint16_t` cast
+in the HC-SR04 distance math wraps every distance into 0–32 mm, so the gate always says `object at ~15 mm`.
+The echo time stays correct, so the pod's own telemetry contradicts itself, and podd's `us_mismatch` rule
+(`firmware/healer/healer/detect.py`) flags that without any model. Details: `firmware/docs/DEMO.md` §7.
+
+**What the agent gets** (`firmware/harness/agent.py`, `--tools arm`): the observe tools, `src_log`/`src_diff`/
+`src_read`/`src_search`, `fw_flash`/`fw_rollback` (3 per run), `notify_human`, `note`, and `arm_test`, which runs
+this folder's `safe_replay.py` on the bench (gate only, or the real motion with `--arm-port`; 4 per run). No
+shell, no source editing, and no access to `demo/`, `pod/` or this test. It's woken by the arm's failure log
+and podd's incidents.
+
+### Run it (on the Pi, from the repo root)
+Before you start: the HC-SR04 points at open space (nothing within 200 mm), `server/start.sh` runs on the
+laptop, and podd runs:
+```bash
+pgrep -f healer/bin/podd || (cd firmware && nohup healer/bin/podd > healer/var/logs/podd.out 2>&1 &)   # once
+python3 server/pi_check.py                                  # the model answers through the relay
+python3 arm/heal_test.py                                    # the test: gate only, the arm doesn't move
+```
+With the arm connected and calibrated, so the agent's `arm_test` plays the wave:
+```bash
+python3 arm/heal_test.py --arm-port /dev/serial/by-id/<adapter> --arm-args "--speed 0.5"
+```
+Useful flags: `--runs 3` (repeat), `--view brief` (shorter thinking) or `--view off`, `--keep` (leave the pod
+as the agent left it), `--sim` (real model against the simulated pod in `tests/simpod.py`: a rehearsal when
+the bench is busy; proves nothing about the bench).
+
+The test prints five stages: (1) reset to v1.0, and the gate must pass; (2) deploy v1.7, podd must open
+`us_mismatch` and the gate must refuse; (3) the agent, streaming its thinking, each tool call with the gate's
+decision, and each result; (4) checks made on the bench, not taken from the agent's words: known-good is
+running (over SWD), the agent's own flash verified it, its `arm_test` after the flash passed, a fresh gate
+run passes, triage is clean, and it named the root cause; (5) reset. Exit 0 = every check passed.
+
+**Verify it yourself, independently of the test:**
+```bash
+cd firmware
+demo/scenario start 07                                      # plant the fault
+python3 ../arm/safe_replay.py --check-only                  # REFUSES: object at ~15 mm; samples show us≈5000+ but mm<33
+healer/bin/heal triage                                      # critical us_mismatch
+cd harness && python3 agent.py run --tools arm --ollama-url http://192.168.50.1:11434   # the agent, live
+cd .. && healer/bin/heal chip_status                        # known-good build running
+python3 ../arm/safe_replay.py --check-only                  # passes now
+demo/scenario reset
+```
+Replay any run later: `python3 firmware/harness/view.py` (newest) or `view.py firmware/harness/runs/<dir>`.
+
+### Offline tests (no hardware, no model)
+```bash
+~/lerobot-venv/bin/python -m pytest arm/tests -q
+```
+They compile the v1.0 and v1.7 distance lines with gcc and check every echo value, run podd's rules and the
+real gate code on simulated samples, drive the real agent loop with a scripted model through a good fix, a
+wrong diagnosis and the arm-run cap, render the live view and its replay, and run `heal_test.py`'s full
+sequence on the simulated pod, including the abort when the sensor is really blocked.

@@ -2,7 +2,7 @@
 """Operator tool for the self-healing demo. NOT an LLM tool: don't give the agent access to demo/.
 
   scenario setup            create the source workspace (tag v1.0 = firmware/pod) and register v1.0 as known-good
-  scenario build-images     build every known-bad image into demo/bad-images/<name>/image/
+  scenario build-images [name]  build every known-bad image (or just that one) into demo/bad-images/<name>/image/
   scenario list             list scenarios
   scenario start <name>     put the workspace at that release (v1.0 + the bad commit), flash its prebuilt image
   scenario trigger <name>   perform the scenario's trigger (fault injection), if it has one
@@ -108,8 +108,11 @@ def cmd_setup(_):
     print("workspace: %s (tag v1.0)\nknown-good image: %s  %s" % (config.WORKSPACE, meta["crc"], meta["build_id"]))
 
 
-def cmd_build_images(_):
-    for name, sc in scenarios().items():
+def cmd_build_images(args):
+    todo = scenarios()
+    if args:                 # one image only: rebuilding all would change every crc (build IDs embed the time)
+        todo = {find(args[0])["name"]: find(args[0])}
+    for name, sc in todo.items():
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "pod"
             init_repo(repo)

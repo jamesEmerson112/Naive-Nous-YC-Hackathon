@@ -142,6 +142,12 @@ def check_clear(sensor, min_mm, window_s, min_samples):
     return True, "clear: %d samples, nearest %s" % (len(s), nearest)
 
 
+def describe_samples(samples, n=5):
+    """The last n D samples as the pod sent them, e.g. 'mm=812 us=4734 st=ok; ...'."""
+    rows = [r for _, r in samples[-n:]]
+    return "; ".join("mm=%s us=%s st=%s" % (r.get("mm"), r.get("us"), r.get("st")) for r in rows) or "none"
+
+
 # --------------------------------------------------------------------------- arm
 
 def load_motion(path):
@@ -218,9 +224,11 @@ def main():
                          "(in the motion's units)")
     ap.add_argument("--no-return", action="store_true", help="stay at the last frame instead of going back")
     ap.add_argument("--dry-run", action="store_true", help="no arm: sensor checks and timing only")
+    ap.add_argument("--check-only", action="store_true",
+                    help="run the start gate and stop: exit 0 if it passes, 2 if not (no arm, no motion)")
     args = ap.parse_args()
-    if not args.dry_run and not args.arm_port:
-        ap.error("--arm-port is required (or use --dry-run)")
+    if not (args.dry_run or args.check_only) and not args.arm_port:
+        ap.error("--arm-port is required (or use --dry-run / --check-only)")
 
     joints, fps, frames, source, units = load_motion(args.motion)
     fps *= args.speed
@@ -231,10 +239,15 @@ def main():
     time.sleep(args.precheck_s)
     ok, msg = check_clear(sensor, args.min_mm, args.precheck_s, min_samples=max(3, int(args.precheck_s * 4)))
     print("ultrasonic:", msg)
+    print("ultrasonic: last samples:", describe_samples(sensor.samples(args.precheck_s)))
     if not ok:
         print("NOT MOVING.")
         sensor.close()
         return 2
+    if args.check_only:
+        print("start gate passed (--check-only: no motion).")
+        sensor.close()
+        return 0
     if not args.live_check:
         sensor.close()          # start gate passed; the motion itself ignores the sensor
         sensor = None

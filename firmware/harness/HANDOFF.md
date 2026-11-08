@@ -15,6 +15,23 @@ reference for flags, the gate, blind mode and scoring. This file holds the runbo
 - **Not verified:** anything on the bench (podd, SWD, flashing, the scenarios, scores on real data), the SSH
   `--target` path, Ollama on the Pi (speed unknown) and the `claude` driver against the live API.
 
+- **Verified on the bench (Sat Nov 7, ~10:30–11 PM PST, Olir's session, branch `olir/arm-ultrasonic-heal`):**
+  - Steps 1–3: podd up (link at 115200), `server/pi_check.py` 3 of 3 through the laptop relay at
+    `192.168.50.1:11434`, and a smoke run through the real `heal` tools (10 turns, 10 calls, 0 invalid, 0 tool
+    errors, stop `max_turns`). It put the bench's real `us_no_echo` on v1.0 down to hardware and didn't flash.
+  - Turn speed, qwen3.5:4b on the laptop: median 3.4 s per model turn, p90 10.2 s (166 turns; `RESULTS.md`).
+  - The new arm scenario on the real chip: `demo/scenario start 07` flashes v1.7 (`A12774C3`, runs), and
+    `heal fw_rollback` restores known-good, verified, in 19 s.
+  - `arm/heal_test.py` on the bench: preflight passes, then it stops at stage 1 because the HC-SR04 gets no
+    echo at all (`pod_cmd "us check"`: no pulse, 0 mV at D3, since about 19:20). That's a wiring or 5 V problem
+    on the sensor, not software.
+- **Still not verified:** the full arm scenario on the bench, and steps 4–5. `evaluate.py` refuses to start
+  while `us_no_echo` is open ("bench not clean"), so both wait on the HC-SR04 wiring. Also unverified: the
+  real arm motion (`--arm-port`, no arm on USB), the SSH `--target` path and the `claude` driver.
+- **Changed for the arm scenario (see `README.md`, "The arm task"):** the live view (`console.py`,
+  `view.py`), Ollama streaming, the `arm_test` harness tool, `--tools arm`, the arm rules, the turn-budget
+  notice, the `us_mismatch` triage rule (restart podd after pulling, so it loads), and bad release v1.7.
+
 ## Steps (on the Pi, in `firmware/harness`)
 1. **Bench up.** `git pull` on main, then HARNESS.md §3. Done when `healer/bin/heal triage` (from
    `firmware/`) shows `"findings": []` with podd running.

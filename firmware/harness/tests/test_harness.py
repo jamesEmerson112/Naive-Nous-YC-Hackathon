@@ -258,6 +258,79 @@ def test_ollama_driver_round_trip():
         srv.shutdown()
 
 
+def test_ollama_driver_streams_into_the_live_view():
+    """With on_delta set the request streams: thinking and text reach the callback piece by piece, a
+    malformed tool call mid-stream is resampled, and the assembled Turn matches a non-streamed one."""
+    seen, deltas = [], []
+    chunks = [{"message": {"role": "assistant", "content": "", "thinking": "the echo "}, "done": False},
+              {"message": {"role": "assistant", "content": "", "thinking": "is long"}, "done": False},
+              {"message": {"role": "assistant", "content": "checking"}, "done": False},
+              {"message": {"role": "assistant", "content": "",
+                           "tool_calls": [{"function": {"name": "triage", "arguments": {}}}]}, "done": False},
+              {"message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "stop",
+               "prompt_eval_count": 900, "eval_count": 40, "total_duration": 2_500_000_000, "model": "qwen3.5:4b"}]
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson")
+            self.end_headers()
+            if len(seen) == 1:              # first attempt: a malformed tool call, reported mid-stream
+                lines = [chunks[0], {"error": "error parsing tool call: unexpected end of JSON input"}]
+            else:
+                lines = chunks
+            for c in lines:
+                self.wfile.write((json.dumps(c) + "\n").encode())
+                self.wfile.flush()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        d = agent.OllamaDriver(url="http://127.0.0.1:%d" % srv.server_port)
+        d.on_delta = lambda kind, text: deltas.append((kind, text))
+        d.start("SYS", TOOLS[:3], "go")
+        t = d.step()
+        assert all(r["stream"] is True for r in seen) and len(seen) == 2 and d.malformed == 1
+        assert ("reset", "ollama error: error parsing tool call: unexpected end of JSON input") in deltas
+        assert t.thinking == "the echo is long" and t.text == "checking" and t.calls[0][1:] == ("triage", {})
+        assert t.stop == "tool_use" and t.usage == {"input_tokens": 900, "output_tokens": 40} and t.raw["seconds"] == 2.5
+        assert [k for k, _ in deltas[-3:]] == ["thinking", "thinking", "text"]
+        assert d.messages[-1]["thinking"] == "the echo is long" and d.messages[-1]["tool_calls"]
+    finally:
+        srv.shutdown()
+
+
+def test_budget_notice_is_sent_once_on_the_last_result(tmp_path):
+    b = FakeBench({"system_info": {"text": "BRIEFING"}})
+    d = ScriptedDriver([turn(("triage", {}), ("status", {})) for _ in range(8)])
+    s = agent.run_agent(b, d, tmp_path, kickoff="go", max_turns=8)
+    notes = [(i, r) for i, res in enumerate(d.results) for r in res if "[harness:" in r[2]]
+    assert len(notes) == 1 and notes[0][0] == 4 and notes[0][1][1] == "status"   # after turn 5 of 8: 3 left
+    assert "3 model turns left" in notes[0][1][2] and s["stop"] == "max_turns"
+    rows = [json.loads(l) for l in open(tmp_path / "transcript.jsonl")]
+    assert [r["turn"] for r in rows if r["type"] == "harness_note"] == [4]
+
+
+def test_live_view_renders_a_run(tmp_path):
+    import io
+    import console
+    buf = io.StringIO()
+    b = FakeBench({"system_info": {"text": "BRIEFING"},
+                   "triage": {"findings": [{"kind": "acc_gravity", "severity": "warn", "summary": "reads 538 mg"}]}})
+    d = ScriptedDriver([agent.Turn(text="", thinking="half of 1 g: a scale bug", calls=[("c0", "triage", {}),
+                                                                                       ("c1", "fw_flash", {"image": "/x.elf"})],
+                                   stop="tool_use", usage={}), turn(text="done: FS mismatch")])
+    agent.run_agent(b, d, tmp_path, kickoff="go", ui=console.Console(out=buf, color=False))
+    out = buf.getvalue()
+    for want in ("half of 1 g: a scale bug", "▶ triage", "warn acc_gravity: reads 538 mg",
+                 "REFUSED by the harness: image must be an image crc", "done: FS mismatch", "stop: end_turn"):
+        assert want in out, want
+
+
 def test_ollama_driver_stops_before_overflowing_context():
     d = agent.OllamaDriver(num_ctx=1000)
     d.start("S" * 10_000, TOOLS[:1], "go")
