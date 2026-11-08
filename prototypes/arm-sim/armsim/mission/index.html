@@ -543,6 +543,13 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 .camfit { position: absolute; inset: 0; }
 .camfit img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .eyemark { position: absolute; width: 0; height: 0; pointer-events: none; display: none; }
+/* the labelled grid Astra sees (gentest.gridded): 12 x 9 cells, A-L across, 1-9 down; G toggles */
+.camgrid { position: absolute; pointer-events: none; display: none; overflow: visible; }
+.camgrid line { stroke: rgba(255, 255, 255, 0.7); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.camgrid text { fill: #fff; stroke: rgba(0, 0, 0, 0.85); stroke-width: 0.045; paint-order: stroke; font-size: 0.2px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cam.off .camgrid { visibility: hidden; }
+.cam.stale .camgrid { opacity: 0.45; }
+.gridtog { margin-left: 0.5rem; }
 .eyemark i { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%; border: 2.5px solid rgb(var(--eye-rgb)); box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85), 0 0 calc(12px * var(--glow)) rgba(var(--eye-rgb), 0.9); }
 .eyemark i::before, .eyemark i::after { content: ""; position: absolute; background: rgb(var(--eye-rgb)); }
 .eyemark i::before { left: 50%; top: -7px; bottom: -7px; width: 2px; margin-left: -1px; }
@@ -970,9 +977,9 @@ html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
       </div>
     </article>
     <article class="panel cam off" id="cam">
-      <div class="phead"><h2>Live camera</h2><span class="sub" id="camSub">the bench, as the eye sees it</span><span class="spacer"></span><span class="live dead" id="camLive"><i></i><span>offline</span></span></div>
+      <div class="phead"><h2>Live camera</h2><span class="sub" id="camSub">the bench, as the eye sees it</span><span class="spacer"></span><span class="viewtog gridtog"><button id="gridTog" title="Labelled grid, the one Astra sees (G toggles)">Grid</button></span><span class="live dead" id="camLive"><i></i><span>offline</span></span></div>
       <div class="cambody">
-        <div class="camfit" id="camfit"><img id="camimg" alt="Live camera frame of the arm's bench" draggable="false"><div class="eyemark" id="eyemark"><i></i><b id="eyetag">bag</b></div></div>
+        <div class="camfit" id="camfit"><img id="camimg" alt="Live camera frame of the arm's bench" draggable="false"><div class="eyemark" id="eyemark"><i></i><b id="eyetag">bag</b></div><svg class="camgrid" id="camgrid" viewBox="0 0 12 9" preserveAspectRatio="none" aria-hidden="true"></svg></div>
         <div class="camoff"><div class="empty-state" id="camMsg"><b>Camera offline</b></div></div>
       </div>
       <div class="eyebar" id="eyebar"></div>
@@ -2178,6 +2185,7 @@ document.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === "l") { e.preventDefault(); cycleLook(); return; }
   if (k === "v") { e.preventDefault(); setView(STAGE.dataset.view === "split" ? "twin" : "split"); return; }
+  if (k === "g") { e.preventDefault(); toggleGrid(); return; }
   const b = k === "f" ? $("freezeBtn") : k === "c" ? document.querySelector('[data-act="clear"]') : k === "w" ? document.querySelector('[data-fault="block_shift"]')
     : /^[1-9]$/.test(k) ? document.querySelector(`[data-key="${k}"]`) : null;
   if (b && !b.disabled) { e.preventDefault(); act(b); }
@@ -2780,7 +2788,27 @@ function imgRect() {
   const k = Math.min(w / nw, h / nh);
   return { x: (w - nw * k) / 2, y: (h - nh * k) / 2, k, nw, nh };
 }
+// the labelled grid, the same one gentest draws on every frame Astra reads (12 x 9, A-L, 1-9)
+let GRID_ON = true;
+try { GRID_ON = localStorage.getItem("mc-grid") !== "off"; } catch (e) {}
+(function buildGrid() {
+  let h = "";
+  for (let c = 1; c < 12; c++) h += `<line x1="${c}" y1="0" x2="${c}" y2="9"/>`;
+  for (let r = 1; r < 9; r++) h += `<line x1="0" y1="${r}" x2="12" y2="${r}"/>`;
+  for (let c = 0; c < 12; c++) for (let r = 0; r < 9; r++) h += `<text x="${c + 0.04}" y="${r + 0.24}">${String.fromCharCode(65 + c)}${r + 1}</text>`;
+  $("camgrid").innerHTML = h;
+})();
+function placeGrid() {
+  const g = $("camgrid"), r = imgRect();
+  $("gridTog").classList.toggle("on", GRID_ON);
+  if (!GRID_ON || !r || !CAMS.imgOk) { g.style.display = "none"; return; }
+  Object.assign(g.style, { display: "block", left: `${r.x}px`, top: `${r.y}px`, width: `${r.nw * r.k}px`, height: `${r.nh * r.k}px` });
+}
+function toggleGrid() { GRID_ON = !GRID_ON; try { localStorage.setItem("mc-grid", GRID_ON ? "on" : "off"); } catch (e) {} placeGrid(); }
+$("gridTog").addEventListener("click", (e) => { e.stopPropagation(); toggleGrid(); e.currentTarget.blur(); });
+window.addEventListener("resize", placeGrid);
 function placeMark() {
+  placeGrid();
   const el = $("eyemark"), e = CAMS.eye, r = imgRect();
   if (!el) return;
   if (!r || !e || e.error || !e.bag || CAMS.eyeFail || !CAMS.imgOk) { el.style.display = "none"; return; }
