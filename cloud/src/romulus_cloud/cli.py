@@ -1,4 +1,4 @@
-"""Operator commands: `python -m romulus_cloud.cli {seed,reset,digest,overnight,export}`
+"""Operator commands: `python -m romulus_cloud.cli {seed,code,reset,digest,overnight,export}`
 (architecture §8)."""
 
 import argparse
@@ -15,13 +15,20 @@ from sqlalchemy.orm import Session
 
 from romulus_cloud import db
 from romulus_cloud.adapters.blobstore import build_blobstore
+from romulus_cloud.adapters.coder import DEFAULT_IMAGE, DEFAULT_TEST_CMD, Sandbox
+from romulus_cloud.devicecode import check as device_check
+from romulus_cloud.devicecode import package as device_package
+from romulus_cloud.devicecode.package import PackageError
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
 from romulus_cloud.models import Base
 from romulus_cloud.services import digest as digest_service
 from romulus_cloud.services import overnight as overnight_service
+from romulus_cloud.services import registry
+from romulus_cloud.services import seed as seed_service
 from romulus_cloud.services.seed import seed as seed_fleet
 from romulus_cloud.settings import Settings, get_settings
+from romulus_contracts.codepatch import CODE_ROOT
 
 UNDEFINED_TABLE, UNDEFINED_COLUMN = "42P01", "42703"  # Postgres SQLSTATEs
 
@@ -202,10 +209,127 @@ def seed(settings: Settings) -> int:
     return 0
 
 
+def seed_bench(settings: Settings, code_rev: str | None) -> int:
+    """The real bench: arm-1 (real) and sim-1 (sim canary) on the registered device/ code."""
+    engine = db.make_engine(settings.database_url)
+    try:
+        db.create_all(engine)
+        with Session(engine) as session:
+            result = seed_service.seed_bench(
+                session, build_blobstore(settings.blob_dir), code_rev, settings.fleet_id
+            )
+            session.commit()
+    except ApiError as exc:
+        print(f"seed --bench: refused. {exc.detail}", file=sys.stderr)
+        return 2
+    finally:
+        engine.dispose()
+    print(f"seed --bench: created {', '.join(result.created) or 'nothing'}", end="")
+    if result.updated:
+        print(f"; updated {', '.join(result.updated)}", end="")
+    print(f"; already there: {', '.join(result.existing)}." if result.existing else ".")
+    return 0
+
+
+def _device_package(
+    src: str | None, tar: str | None, rev: str | None
+) -> tuple[str, dict[str, bytes]]:
+    """(rev, files) from a repo folder (git-tracked files) or a `git archive` tar."""
+    if tar is not None:
+        if not rev:
+            raise PackageError("--tar needs --rev (the git short sha it was archived at)")
+        data = sys.stdin.buffer.read() if tar == "-" else Path(tar).read_bytes()
+        return rev, device_package.files_from_tar(data)
+    folder = Path(src or "device").resolve()
+    repo = device_package.repo_root(folder)
+    rel = folder.relative_to(repo).as_posix()
+    if rel != CODE_ROOT:
+        raise PackageError(f"--from must be the repo's {CODE_ROOT}/ folder, got {rel}/")
+    dirty = device_package.uncommitted(repo)
+    if dirty:
+        print(
+            f"code: note: {len(dirty)} uncommitted change(s) under {CODE_ROOT}/ are left out "
+            f"(packaged from git): {', '.join(dirty[:5])}",
+            file=sys.stderr,
+        )
+    return device_package.from_git(repo, rev)
+
+
+def code_register(
+    settings: Settings, src: str | None, tar: str | None, rev: str | None, by: str
+) -> int:
+    """Package device/ and store it as a code version (B1); safe to repeat."""
+    try:
+        rev, files = _device_package(src, tar, rev)
+    except (PackageError, OSError, ValueError) as exc:
+        print(f"code register: {exc}", file=sys.stderr)
+        return 2
+    data = registry.build_tarball(files)
+    engine = db.make_engine(settings.database_url)
+    try:
+        db.create_all(engine)
+        with Session(engine) as session:
+            row, created = registry.create_code(
+                session,
+                build_blobstore(settings.blob_dir),
+                data,
+                rev=rev,
+                actor=f"human:{by}",
+                actor_class="human",
+                why=f"Registered the repo's {CODE_ROOT}/ at git commit {rev} ({len(files)} "
+                "tracked files) as the real device code (B1).",
+                source=seed_service.CODE_SOURCE_REPO,
+                fleet_id=settings.fleet_id,
+            )
+            facts = f"{row.rev} ({len(files)} files, {row.size_bytes} bytes, {row.sha256})"
+            session.commit()
+    except ApiError as exc:
+        print(f"code register: refused. {exc.detail}", file=sys.stderr)
+        return 2
+    finally:
+        engine.dispose()
+    what = "registered" if created else "already registered"
+    print(f"code: {what} {facts}.")
+    return 0
+
+
+def code_check(src: str | None, image: str, test_cmd: str) -> int:
+    """B1's proof: the package's own tests in the coder image with --network none."""
+    try:
+        rev, files = _device_package(src, None, None)
+    except (PackageError, OSError, ValueError) as exc:
+        print(f"code check: {exc}", file=sys.stderr)
+        return 2
+    run = device_check.run_package_tests(files, sandbox=Sandbox(image=image), test_cmd=test_cmd)
+    passed, report = device_check.describe(run)
+    print(f"code check: {CODE_ROOT}/ at {rev}, {len(files)} files, image {image}")
+    print(report, end="")
+    print("code check: PASS" if passed else "code check: FAIL")
+    return 0 if passed else 1
+
+
 def main(argv: list[str] | None = None, settings: Settings | None = None) -> int:
     parser = argparse.ArgumentParser(prog="romulus_cloud.cli")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("seed", help="firmware v1, harness v1, arm-1 + sim-1..3 (M1)")
+    seed_cmd = sub.add_parser("seed", help="firmware v1, harness v1, arm-1 + sim-1..3 (M1)")
+    seed_cmd.add_argument(
+        "--bench",
+        action="store_true",
+        help="the real bench instead: arm-1 + one sim canary on the registered device/ code",
+    )
+    seed_cmd.add_argument("--code-rev", default=None, help="with --bench (default: newest)")
+    code = sub.add_parser("code", help="the repo's device/ code (B1)")
+    code_sub = code.add_subparsers(dest="code_command", required=True)
+    register = code_sub.add_parser("register", help="package device/ and store a code version")
+    where = register.add_mutually_exclusive_group()
+    where.add_argument("--from", dest="src", default=None, help="the repo's device/ folder")
+    where.add_argument("--tar", default=None, help="a `git archive` tar of device/ ('-': stdin)")
+    register.add_argument("--rev", default=None, help="default: last commit touching device/")
+    register.add_argument("--by", default=os.environ.get("USER") or "operator")
+    check = code_sub.add_parser("check", help="run device/'s tests in the coder image, offline")
+    check.add_argument("--from", dest="src", default=None, help="the repo's device/ folder")
+    check.add_argument("--image", default=DEFAULT_IMAGE)
+    check.add_argument("--test-cmd", default=DEFAULT_TEST_CMD)
     sub.add_parser("reset", help="drop and recreate the database; clear data/ (K7 guard)")
     digest_cmd = sub.add_parser("digest", help="counts since a time, from the event log (M7)")
     digest_cmd.add_argument(
@@ -225,8 +349,14 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> int
     if args.command == "reset":
         force = os.environ.get("FORCE", "") == "1"
         return reset(settings or get_settings(), force=force)
+    if args.command == "seed" and args.bench:
+        return seed_bench(settings or get_settings(), args.code_rev)
     if args.command == "seed":
         return seed(settings or get_settings())
+    if args.command == "code" and args.code_command == "register":
+        return code_register(settings or get_settings(), args.src, args.tar, args.rev, args.by)
+    if args.command == "code":
+        return code_check(args.src, args.image, args.test_cmd)
     if args.command == "digest":
         return digest(settings or get_settings(), args.since, args.until, args.json)
     if args.command == "schema-check":

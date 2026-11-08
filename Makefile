@@ -7,8 +7,9 @@ TESTDB      := romulus-testdb
 TESTDB_PORT := 55432
 CLI         := $(COMPOSE) exec -T api python -m romulus_cloud.cli
 
-.PHONY: up dev sim coder-image coder-firmware-check worker-host down logs test flows testdb seed reset digest overnight-start \
-	overnight-stop overnight-check export lint fmt
+.PHONY: up dev sim coder-image coder-firmware-check worker-host device-check device-verify code-register \
+	seed-bench down logs test flows testdb seed reset digest overnight-start overnight-stop overnight-check \
+	export lint fmt
 
 # A host worker (`make worker-host`) must not run beside the Compose worker: refuse unless FORCE=1.
 HOST_PIDFILE := data/worker-host.pid
@@ -45,6 +46,21 @@ worker-host:  ## the worker as a host process for CODER_PROVIDER=local_agent (M8
 	DATABASE_URL=postgresql+psycopg://romulus:romulus@127.0.0.1:$(DB_PORT)/romulus \
 		BLOB_DIR=$(CURDIR)/data/blobs EXPORT_DIR=$(CURDIR)/data/exports FORCE=$(FORCE) \
 		uv run python -m romulus_cloud.worker --host --pidfile $(CURDIR)/$(HOST_PIDFILE)
+
+# The repo's real device code (B1). DEVICE_REV: the last commit that touched device/.
+DEVICE_REV ?= $(shell git log -1 --format=%h --abbrev=7 -- device)
+
+device-check: coder-image  ## B1: device/'s own tests (git-tracked files) in the coder image, --network none
+	uv run python -m romulus_cloud.cli code check --from device
+
+device-verify:  ## B1: held-out verify scripts from bench/tasks.py into data/verify/device (CODER_VERIFY_DIR)
+	uv run python -m romulus_cloud.devicecode.verify_from_bench --out data/verify/device
+
+code-register:  ## B1: store device/ at DEVICE_REV (tracked files) as a code version, via the api container
+	git archive --format=tar $(DEVICE_REV) device | $(CLI) code register --tar - --rev $(DEVICE_REV)
+
+seed-bench:  ## the real bench: arm-1 + sim-1 (the one canary) on the registered device/ code (CODE_REV)
+	$(CLI) seed --bench $(if $(CODE_REV),--code-rev $(CODE_REV))
 
 down:
 	$(COMPOSE) --profile sim --profile tunnel down
