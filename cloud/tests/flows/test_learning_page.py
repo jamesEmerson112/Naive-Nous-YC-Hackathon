@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from romulus_cloud import events
+from romulus_cloud.domain import review as rv
 from romulus_cloud.models import Candidate, Device
 from romulus_cloud.services import learning
 
@@ -51,9 +52,19 @@ def _recorded_session() -> dict:
         "captured_at": "2026-11-08T17:31:00Z",
         "duration_s": 31.4,
         "cost_usd": 0.0712,
-        "case_file": {
-            "kind": "ultrasonic_frozen",
-            "runs": [{"id": "run:pod-1/r1", "verdict": "fail"}],
+        "case_file": {  # what domain.review.check reads (lane A's case-file shape)
+            "case": "review:us_frozen:test",
+            "kind": "us_frozen",
+            "runs": [
+                {
+                    "id": "run:pod-1/r1",
+                    "verdict": "unverified",
+                    "verifier": "device says fixed; nothing checked it",
+                    "device_kind": "sim",
+                }
+            ],
+            "probes": [{"id": "us-frozen-port"}],
+            "device_classes": ["sensor_pod", "so101"],
         },
         "schema": {"type": "object"},
         "output": {
@@ -124,10 +135,9 @@ def test_recorded_session_and_probe_show_the_staged_hero(client, seeded, learnin
     assert 'class="lr-sim"' in page and "1 real arm · 3 simulated" in page  # the seeded fleet
     # Below the fold: probe command and rev, the staged patch (from the probe, not the model).
     assert "uv run python cloud/scripts/lesson_probe.py" in page and "abc1234" in page
-    assert (
-        "Port prototypes/arm-sim/armsim/level1.py:30-44 into "
-        "firmware/healer/healer/detect.py and arm/safe_replay.py."
-    ) in page
+    # The staged patch is domain.review's sentence from the probe's port spec, not the model's.
+    assert rv.port_sentence(_probe()) in page
+    assert "Staged for Olir (D25): the rule touches arm/safe_replay.py" in page  # result.why
     assert '"gap": "missed_detection"' in page  # the typed proposal
     assert "from a recorded session (fixture)" in page
 
@@ -362,3 +372,186 @@ def test_an_event_review_without_a_probe_id_shows_no_numbers(
     later = now + timedelta(seconds=5)
     _review_event(db_session, "review.staged", {**data, "proposal": cited}, later)
     assert "0 → 120 of 120 freezes caught" in _text(client.get("/learning"))
+
+
+# --- R2's review events, keyed by refs.review (services/review.py, PR #82) ---------------------
+
+US = "review:us_frozen:1"
+SERVO = "review:servo_read_error:1"
+
+
+def _r2(db_session, kind, case_id, ts, data, candidate=None):
+    """One event as R2's service writes it: refs.review is the case, data carries `kind`."""
+    refs = {"review": case_id, "naive_session": data["session_id"]}
+    if candidate:
+        refs["candidate"] = candidate
+    events.record(
+        db_session, "agent:fleet-doctor", "agent", kind, refs, f"{kind} {case_id}", data=data, ts=ts
+    )
+
+
+def _two_reviews(db_session, now):
+    """us_frozen staged for Olir at t0; servo_read_error opened at t0+60 s, accepted at
+    +90 s, its harness candidate promoted at +240 s (the canary included)."""
+    us_case = {"runs": [{"id": "run:sim-pod-1/r1", "verdict": "unverified"}]}
+    _r2(
+        db_session,
+        "review.session_opened",
+        US,
+        now,
+        {"session_id": "ses_us", "kind": "us_frozen", "case_file": us_case, "recorded": True},
+    )  # noqa: E501
+    us = {
+        "proposal": {
+            "gap": "missed_detection",
+            "title": "Port frozen-echo check into pod detect.py and arm start gate",
+            "evidence": ["run:sim-pod-1/r1"],
+            "proposal": {"kind": "rule", "probe": "us-frozen-port"},
+        },
+        "result": {"outcome": "staged", "touches_safety": True, "owner": "Olir", "lane": "rule"},
+        "session_id": "ses_us",
+        "duration_s": 12,
+        "cost_usd": 0.03,
+        "probe_id": "us-frozen-port",
+        "case_id": US,
+        "kind": "us_frozen",
+        "recorded": True,
+    }
+    _r2(db_session, "review.staged", US, now + timedelta(seconds=12), us)
+    cand = Candidate(
+        id="cand_servo",
+        fleet_id="default",
+        type="harness",
+        version=2,
+        device_class="so101",
+        status="promoted",
+        canary_device="sim-2",
+        stub_stages=["replay"],
+        why="cluster review: skill servo-read-retry",
+    )
+    db_session.add(cand)
+    t1 = now + timedelta(seconds=60)
+    _r2(
+        db_session,
+        "review.session_opened",
+        SERVO,
+        t1,
+        {"session_id": "ses_servo", "kind": "servo_read_error", "recorded": True},
+    )  # noqa: E501
+    servo = {
+        "proposal": {
+            "gap": "failed_heal",
+            "title": "Retry a flaky servo read before giving up",
+            "pattern": "One flaky servo read is noise; retry it before you stop the loop.",
+            "evidence": ["inc:missing"],
+            "proposal": {"kind": "skill", "slug": "servo-read-retry", "markdown": "Retry."},
+        },
+        "result": {"outcome": "accepted", "touches_safety": False, "lane": "skill"},
+        "session_id": "ses_servo",
+        "duration_s": 30,
+        "cost_usd": 0.07,
+        "probe_id": None,
+        "case_id": SERVO,
+        "kind": "servo_read_error",
+        "recorded": True,
+    }
+    _r2(db_session, "review.accepted", SERVO, t1 + timedelta(seconds=30), servo, cand.id)
+    events.record(
+        db_session, "gate", "automation", "candidate.promoted", {"candidate": cand.id},
+        "The canary held; promoted harness v2 to so101.", ts=t1 + timedelta(seconds=240),
+    )  # fmt: skip
+    db_session.commit()
+    return cand
+
+
+def test_the_switcher_pins_a_review_and_keeps_polling_on_it(
+    client, v2, db_session, learning_settings, now
+):
+    learning_settings(probe=_probe())
+    _two_reviews(db_session, now)
+
+    page = _text(client.get("/learning"))  # the newest: the promoted skill
+    assert "lesson → every arm" in page and "4 min" in page  # session opened → promoted
+    assert 'aria-label="Recent reviews"' in page
+    assert "<b>servo read error</b> · promoted · 4 min · 7¢" in page
+    assert "<b>us frozen</b> · staged · 12 s · 3¢" in page
+    assert 'href="/learning?case=review:us_frozen:1"' in page
+    assert 'hx-get="/partials/learning"' in page
+
+    pinned = _text(client.get("/learning", params={"case": US}))
+    assert "staged for Olir" in pinned and "lesson → every arm" not in pinned
+    assert "0 → 120 of 120 freezes caught" in pinned
+    assert 'hx-get="/partials/learning?case=review:us_frozen:1"' in pinned
+    assert (
+        'class="lr-review is-staged is-current" href="/learning?case=review:us_frozen:1"' in pinned
+    )
+
+    partial = _text(client.get("/partials/learning", params={"case": US}))
+    assert "staged for Olir" in partial and "<html" not in partial
+    # An unknown case falls back to the newest.
+    assert "lesson → every arm" in _text(client.get("/learning", params={"case": "nope"}))
+
+
+def test_a_mirrored_skill_shows_its_naive_skills_version(
+    client, v2, db_session, learning_settings, now
+):
+    learning_settings()
+    cand = _two_reviews(db_session, now)
+    page = _text(client.get("/learning"))
+    assert "mirrored to Naïve Skills" not in page
+    events.record(
+        db_session,
+        "agent:fleet-doctor",
+        "agent",
+        "review.published",
+        {"candidate": cand.id, "harness": 2},
+        "Mirrored the healer playbook to Naïve Skills as romulus-healer-playbook v2.",
+        data={"skill_id": "skl_1", "slug": "romulus-healer-playbook", "version": 2, "url": None},
+        ts=now + timedelta(seconds=300),
+    )
+    db_session.commit()
+    page = _text(client.get("/learning"))
+    assert "✓ mirrored to Naïve Skills · v2" in page
+    assert "romulus-healer-playbook v2 · mirrored after the gate promoted it" in page
+
+
+def test_evidence_shows_labelled_runs_from_runs_load(
+    client, seeded, db_session, learning_settings, now
+):
+    from romulus_cloud.services import runs as runs_service
+
+    learning_settings()
+    body = {"id": "pod-9", "kind": "sim", "device_class": "sensor_pod", "by": "test"}
+    assert client.post("/v1/devices", json=body).status_code == 201
+    started = datetime(2026, 11, 8, 10, 0, tzinfo=UTC)
+    report = {
+        "run_id": "r-1",
+        "state": "finished",
+        "started_at": started.isoformat(),
+        "updated_at": (started + timedelta(seconds=30)).isoformat(),
+        "ended_at": (started + timedelta(minutes=3)).isoformat(),
+        "agent": {"model": "qwen3.5:4b"},
+        "outcome": {"status": "broken", "headline": "broken headline"},
+        "steps": [{"n": 1, "action": "Ran triage", "effect": "No findings.", "ok": True}],
+        "contract_version": "0.1",
+    }
+    assert client.put("/v1/devices/pod-9/agent-runs/r-1", json=report).status_code == 200
+    run = next(r for r in runs_service.load(db_session) if r.id == "run:pod-9/r-1")
+    proposal = {"title": "A rule", "evidence": [run.id], "proposal": {"kind": "rule"}}
+    _r2(
+        db_session,
+        "review.staged",
+        US,
+        now,
+        {
+            "session_id": "s",
+            "proposal": proposal,
+            "result": {"outcome": "staged", "touches_safety": True},
+        },
+    )  # noqa: E501
+    db_session.commit()
+    page = _text(client.get("/learning"))
+    assert f'<a class="mono" href="/agent-runs/pod-9/r-1">{run.id}</a>' in page
+    assert f'<span class="chip">{run.verdict}</span> <span class="lr-sim">SIM</span>' in page
+    assert f'<span class="lr-verifier">{run.verifier}</span>' in page
+    assert "labelled runs (the verdict table)" in page
