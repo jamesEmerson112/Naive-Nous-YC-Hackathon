@@ -574,7 +574,7 @@ def guided(max_trials, probe_first=False, efforts=()):
             print(f"test {i}: {n['recording']} pan {n['pan']:+.1f} speed {n['speed']} | effort {effort or 'profile'}, "
                   f"plan {p['plan_s']} s | why: {n['why']}", flush=True)
             before = snap(f"g{i}-before")
-            if probe_first:
+            if probe_first and (probe_first != "once" or i == 1):
                 pr, image = run_probe(n, f"p{i}")
                 if "error" in pr or image is None:
                     print(f"probe {i} failed: {pr.get('error', 'no pause seen')}", flush=True)
@@ -590,7 +590,7 @@ def guided(max_trials, probe_first=False, efforts=()):
                 if any(pr["alarms"]):
                     print("stopping: a servo reported an alarm", flush=True)
                     break
-                if not go:
+                if not go or probe_first == "once":       # once: the first probe only measures; then full tries
                     after, close = image, None
                     continue
                 before = snap(f"g{i}-before")
@@ -635,6 +635,7 @@ def main():
     r.add_argument("--max-trials", type=int, default=6)
     r.add_argument("--guide", choices=["fixed", "hermes"], default="fixed")
     r.add_argument("--probe", action="store_true", help="probe each test first; run it in full only on Astra's go")
+    r.add_argument("--probe-once", action="store_true", help="the first try of the run is a probe that only measures; every later try runs in full")
     r.add_argument("--lean", action="store_true", help="short context for speed: 12 compact tries, one 640 px frame, compact prompt")
     r.add_argument("--reasoning", default="", help="Astra's reasoning effort; a comma list rotates test by test "
                    "(e.g. none,low,medium); empty = the Hermes profile's")
@@ -651,7 +652,7 @@ def main():
         efforts = tuple(e for e in a.reasoning.split(",") if e)
         if any(e not in EFFORTS for e in efforts):
             raise SystemExit(f"reasoning must be from {EFFORTS}")
-        guided(a.max_trials, probe_first=a.probe, efforts=efforts) if a.guide == "hermes" else run(a.max_trials)
+        guided(a.max_trials, probe_first="once" if a.probe_once else a.probe, efforts=efforts) if a.guide == "hermes" else run(a.max_trials)
 
 
 if __name__ == "__main__":
