@@ -2,8 +2,12 @@
 import re
 
 TYPES = "DAFHER"
+# Fields every line of a type must carry. A line cut short by a reset (e.g. "A t=1001") is
+# syntactically valid, so this is what keeps truncated lines out of the data.
+REQUIRED = {"D": ("t", "mm", "us", "st"), "A": ("t", "x", "y", "z", "st"), "F": ("t", "hex"),
+            "H": ("t", "mode", "acc_hz"), "E": ("t", "ev"), "R": ("id",)}
 _TOKEN = re.compile(r'(\w+)=("([^"]*)"|\S*)')
-_LINE = re.compile(r'(?:\s*\w+=(?:"[^"]*"|\S*))*\s*')
+MAX_LINE = 400   # longest real line is ~260 chars (H, E crash); anything longer is junk
 _INT = re.compile(r"-?\d+")
 _FLOAT = re.compile(r"-?\d+\.\d+")
 
@@ -24,15 +28,23 @@ def parse_line(line):
         return None
     if line[0] == "#":
         return {"type": "#", "text": line[1:].strip()}
-    if len(line) < 3 or line[0] not in TYPES or line[1] != " ":
+    if len(line) < 3 or len(line) > MAX_LINE or line[0] not in TYPES or line[1] != " ":
         return None
     rest = line[2:]
-    if not _LINE.fullmatch(rest):
-        return None
+    # Linear scan: tokens must cover the line with only whitespace between them. (A single
+    # "whole-line" regex with nested quantifiers backtracks catastrophically on long garbage.)
     rec = {"type": line[0]}
+    pos = 0
     for m in _TOKEN.finditer(rest):
+        if rest[pos:m.start()].strip():
+            return None
         rec[m.group(1)] = _value(m.group(2), m.group(3))
-    return rec if len(rec) > 1 else None
+        pos = m.end()
+    if rest[pos:].strip():
+        return None
+    if not all(k in rec for k in REQUIRED[rec["type"]]):
+        return None
+    return rec
 
 
 def hexint(v):

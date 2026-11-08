@@ -159,16 +159,18 @@ class Pod:
         buf = self.partial + data
         lines = buf.split(b"\n")
         self.partial = lines.pop()
-        if len(self.partial) > 512:           # no newline for a long time: garbage
+        if len(self.partial) > 400:           # no newline for a long time: garbage
             lines.append(self.partial)
             self.partial = b""
         valid = invalid = 0
         for raw in lines:
-            text = raw.rstrip(b"\r").decode("ascii", "backslashreplace")
-            if not text:
+            raw = raw.rstrip(b"\r")
+            if not raw:
                 continue
+            text = raw.decode("ascii", "backslashreplace")
             self.serial_log.write("%s %s\n" % (iso(ts), text))
-            rec = parse_line(text) if text.isprintable() else None
+            clean = len(raw) <= 400 and all(32 <= c < 127 for c in raw)   # check bytes, not the escaped text
+            rec = parse_line(text) if clean else None
             with self.data_lock:
                 self.raw.append((ts, text))
             if rec is None:
@@ -390,7 +392,7 @@ class Pod:
 
     def baud_scan(self):
         results = []
-        for b in (115200, 57600, 230400, 38400, 19200, 9600, 460800):
+        for b in (115200, 57600, 230400, 38400, 19200, 9600):    # 460800 is beyond the probe's VCOM
             r = self.raw_capture(1.2, b)
             if not r.get("ok"):
                 return r

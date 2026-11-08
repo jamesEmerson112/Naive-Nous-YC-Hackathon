@@ -2,6 +2,7 @@
 import glob
 import os
 import termios
+import time
 import tty
 
 PROBE_PATTERNS = ("SEGGER", "J-Link", "STMicro", "STLINK", "ST-LINK", "DAPLink", "CMSIS-DAP", "Debug_Probe")
@@ -27,13 +28,28 @@ def resolve_port(port):
     return ports[0] if ports else None
 
 
-def set_baud(fd, baud):
+def _apply(fd, baud):
     speed = getattr(termios, "B%d" % baud, None)
     if speed is None:
         raise ValueError("unsupported baud rate: %d" % baud)
     attrs = termios.tcgetattr(fd)
     attrs[4] = attrs[5] = speed
     termios.tcsetattr(fd, termios.TCSANOW, attrs)
+
+
+def set_baud(fd, baud, kick=True):
+    """Set the baud rate. With kick (default), switch to a different rate first.
+
+    The probe's USB-serial bridge (J-Link OB VCOM) reprograms its own UART when the host sets a baud,
+    but Linux's cdc-acm only sends the request when the setting changes. After a sweep of rates the
+    bridge was seen stuck receiving at the wrong rate while the host already "was" at 115200: most
+    digits were lost to framing errors. Going to another rate and back forces a real reconfiguration.
+    (Measured on this board, Nov 7.)"""
+    if kick:
+        _apply(fd, 9600 if baud != 9600 else 19200)
+        time.sleep(0.15)
+    _apply(fd, baud)
+    time.sleep(0.15 if kick else 0)
     termios.tcflush(fd, termios.TCIFLUSH)
 
 

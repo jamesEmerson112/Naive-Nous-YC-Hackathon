@@ -69,12 +69,16 @@ def check_resets(s):
     # older build are history (they stay visible through the `events` tool).
     cur = str(all_boots[-1].get("crc", "")).upper() if all_boots else None
     boots = [e for e in all_boots if e["ts"] >= s["now"] - 60 and str(e.get("crc", "")).upper() == cur]
+    # A boot is abnormal if the firmware says the previous run ended in a crash or watchdog reset
+    # (streak >= 1) or the supply dropped (por/lpwr). Deliberate reflashes and resets don't count.
+    abnormal = [b for b in boots if (b.get("streak") or 0) >= 1
+                or any(x in str(b.get("rst", "")) for x in ("por", "lpwr", "wwdg"))]
     crashes = [e for e in E if e.get("ev") == "crash" and e["ts"] >= s["now"] - 120
                and str(e.get("build_crc", "")).upper() == cur]
     wdgs = [e for e in E if e.get("ev") == "watchdog_reset" and e["ts"] >= s["now"] - 120
             and any(abs(e["ts"] - b["ts"]) < 1.0 for b in boots)]
-    if len(boots) >= 2:
-        out.append(_f("reboot_loop", "critical", "%d boots in the last 60 s" % len(boots),
+    if len(abnormal) >= 2:
+        out.append(_f("reboot_loop", "critical", "%d abnormal boots in the last 60 s" % len(abnormal),
                       {"boots": [{k: b.get(k) for k in ("rst", "streak", "last_cp", "mode", "crc")} for b in boots[-5:]]},
                       ["firmware crashes (HardFault) shortly after boot", "watchdog resets: firmware stops kicking it",
                        "supply brownouts (rst would include por/lpwr)"],
@@ -184,11 +188,18 @@ def check_rates(s):
                           ["a stream rate was raised past what 115200 baud can carry",
                            "the host stopped reading (unlikely: bytes still arrive)"],
                           ["pod_cmd 'stats'", "pod_cmd 'rate acc 50' (runtime fix)", "src_search 'STREAM_HZ'"]))
-    if len(H) >= 5:
+    H = _window(s["H"], s["now"], 25)     # a slow MCU clock also slows the health rate; use a wide window
+    for i in range(len(H) - 1, 0, -1):    # only the current run: MCU time restarts at every reset/reflash
+        if H[i]["t"] <= H[i - 1]["t"]:
+            H = H[i:]
+            break
+    if len(H) >= 4:
         dt_mcu = H[-1]["t"] - H[0]["t"]
         dt_host = H[-1]["ts"] - H[0]["ts"]
-        if dt_host > 3 and dt_mcu > 0:
-            ratio = (dt_mcu / 1000.0) / dt_host
+        # median of record-to-record ratios: robust to one late/batched host timestamp
+        pairs = [((b["t"] - a["t"]) / 1000.0) / (b["ts"] - a["ts"]) for a, b in zip(H, H[1:]) if b["ts"] - a["ts"] > 0.2]
+        if dt_host > 3 and dt_mcu > 0 and pairs:
+            ratio = statistics.median(pairs)
             if abs(ratio - 1) > 0.05:
                 out.append(_f("clock_skew", "critical",
                               "The MCU's millisecond counter runs at %.2fx real time" % ratio,
