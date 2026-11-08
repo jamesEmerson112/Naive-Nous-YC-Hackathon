@@ -3,14 +3,24 @@
 - **Not wired to any route.** No route, socket, lease or relay uses these models. D27 deferred
   L3 live sessions; only this contract is built now (fleet-doctor architecture §9).
 - **Two tiers.** `read` tools only look. `act` tools change the arm. When L3 is built, every act
-  tool needs an extra grant on top of the lease, and the device's own policy must also pass it;
-  the device can still refuse.
+  tool needs its extra grant (`ToolSpec.grant`, e.g. `act:flash`) on top of the lease, and the
+  device's own policy must also pass it; the device can still refuse.
 - **No raw shell, ever.** Typed tools, not prompts, set the limits. No tool runs an arbitrary
-  program or takes free-form arguments (architecture §9); a test enforces it.
+  program (architecture §9); a test enforces it. Ids, revs and names are pattern-bound and
+  never start with `-`, so none can pass for an option.
 - **Schemas.** `params` is a closed JSON Schema object (`additionalProperties: false`), so a
   call can't carry extra arguments. `returns` is open, like every device-sent payload.
   `validate_args` checks a call's args against `params` by hand (no `jsonschema` dependency):
-  types, required and unknown keys, enums, ranges, lengths, patterns and array items.
+  types, required and unknown keys, enums, ranges, lengths, patterns and array items. Patterns
+  must match the whole string (`re.fullmatch`), so a trailing newline never slips past `$`.
+- **What the schemas can't enforce (device side).**
+  - `read_file.path` passes a strict relative-path pattern, but the device must still resolve
+    it and refuse anything outside `CODE_ROOT`, symlinks included.
+  - Free-text args (`park.reason`, `read_logs.grep`) are data only and must never reach a
+    shell; `grep` is a plain substring match, not a regex or a program argument.
+  - `code_patch` goes through `codepatch` (`summarize_code_patch`, `touches_safety`) before
+    it's applied, like any overlay.
+  - `run_tests_scratch` runs sandboxed: no network, and no writes outside the scratch copy.
 - **Not final.** The catalog is final only after Ishaan's h3 tool list (handoff c); names,
   params and returns may change until then.
 
@@ -19,7 +29,9 @@ These are new, optional models, so `CONTRACT_VERSION` stays "0.1" (D28).
 
 import math
 import re
-from typing import Any, Literal
+from typing import Any, Literal, Self
+
+from pydantic import model_validator
 
 from romulus_contracts.codepatch import CODE_ROOT
 from romulus_contracts.common import CloudModel, DeviceModel, OpenDict
@@ -30,13 +42,26 @@ ToolTier = Literal["read", "act"]
 
 
 class ToolSpec(CloudModel):
-    """One tool in the catalog. `params` and `returns` are JSON Schema objects."""
+    """One tool in the catalog. `params` and `returns` are JSON Schema objects.
+
+    `grant` is the extra permission an act tool needs on top of the lease (`act:<what>`); a read
+    tool has none.
+    """
 
     name: str
     tier: ToolTier
     params: dict[str, Any]
     returns: dict[str, Any]
     summary: str
+    grant: str | None = None
+
+    @model_validator(mode="after")
+    def _act_tools_need_a_grant(self) -> Self:
+        if self.tier == "act" and not (self.grant or "").startswith("act:"):
+            raise ValueError("an act tool needs a grant named 'act:<what>'")
+        if self.tier == "read" and self.grant is not None:
+            raise ValueError("a read tool has no grant")
+        return self
 
 
 class ToolCall(CloudModel):
@@ -86,10 +111,23 @@ _REL_PATH = {
     "type": "string",
     "minLength": 1,
     "maxLength": 512,
-    # Relative, and no `..` segment anywhere.
-    "pattern": r"^(?!/)(?!(.*/)?\.\.(/|$)).+$",
+    # Starts with [A-Za-z0-9_] (so no `/`, `~`, `.` or `-` first) and uses only [A-Za-z0-9_./-]
+    # (so no backslash, `:`, NUL, space or newline). The lookaheads also refuse `//`, a trailing
+    # `/`, a `.` or `..` segment, and a `.git` segment anywhere. The device still resolves the
+    # path and refuses anything outside CODE_ROOT, symlinks included (the schema can't check that).
+    "pattern": (
+        r"^(?!.*//)(?!.*/$)(?!(.*/)?\.\.?(/|$))(?!(.*/)?\.git(/|$))"
+        r"[A-Za-z0-9_][A-Za-z0-9_./-]*$"
+    ),
     "description": f"path relative to {CODE_ROOT}/, e.g. control/hold.py",
 }
+_ID = {
+    "type": "string",
+    "pattern": r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$",
+    "description": "an id or rev: 1-64 of [A-Za-z0-9._-], never starting with '-' or '.'",
+}
+# A short lowercase name (camera, process, board); never starts with '-'.
+_NAME = {"type": "string", "pattern": r"^[a-z0-9_][a-z0-9_-]{0,31}$"}
 _CODE_PATCH = {
     "type": "string",
     "minLength": 1,
@@ -99,7 +137,11 @@ _CODE_PATCH = {
 _TEST_IDS = {
     "type": "array",
     "maxItems": 50,
-    "items": {"type": "string", "pattern": r"^[A-Za-z0-9_./:\[\]-]+$"},
+    # No leading '-' (a pytest option) and no '..' (a path out of the scratch copy).
+    "items": {
+        "type": "string",
+        "pattern": r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_./:\[\]-]{0,255}$",
+    },
     "description": "pytest node ids; all tests when omitted",
 }
 _HEALTH = {"type": "string", "enum": ["ok", "degraded", "failing"]}
@@ -143,7 +185,7 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
         summary="One still frame from an arm camera, as base64 JPEG.",
         params=_params(
             {
-                "camera": {"type": "string", "pattern": r"^[a-z0-9_-]{1,32}$"},
+                "camera": _NAME,
                 "max_width": {"type": "integer", "minimum": 64, "maximum": 1920},
             }
         ),
@@ -162,9 +204,7 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
         name="stack_dump",
         tier="read",
         summary="Stacks of a named device process, or the STM32 pod's saved HardFault capture.",
-        params=_params(
-            {"target": {"type": "string", "pattern": r"^[a-z0-9_-]{1,32}$"}}, ("target",)
-        ),
+        params=_params({"target": _NAME}, ("target",)),
         returns=_returns(
             {
                 "target": _STR,
@@ -221,7 +261,8 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
         tier="read",
         summary=(
             f"Run the device test suite on a throwaway copy of {CODE_ROOT}/, optionally with a "
-            "code_patch applied first; the live code is never touched."
+            "code_patch applied first. Sandboxed: no network, no writes outside the scratch copy, "
+            "and the live code is never touched."
         ),
         params=_params(
             {
@@ -246,12 +287,13 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="apply_overlay",
         tier="act",
+        grant="act:overlay",
         summary=(
             "Apply a code_patch as an overlay. It reverts on its own if verify or health fails, "
             "or if the lease ends before the overlay is confirmed."
         ),
         params=_params(
-            {"code_patch": _CODE_PATCH, "proposal_id": {"type": "string", "minLength": 1}},
+            {"code_patch": _CODE_PATCH, "proposal_id": _ID},
             ("code_patch",),
         ),
         returns=_returns({"overlay_id": _STR, "applied": _BOOL, "reason": _STR}, ("applied",)),
@@ -259,6 +301,7 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="park",
         tier="act",
+        grant="act:park",
         summary="Move the arm to its safe pose and hold there.",
         params=_params(
             {"reason": {"type": "string", "minLength": 1, "maxLength": 500}}, ("reason",)
@@ -268,6 +311,7 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="set_mode",
         tier="act",
+        grant="act:mode",
         summary="Switch the arm between normal and safe mode (safe: slow, reduced workspace).",
         params=_params({"mode": {"type": "string", "enum": ["normal", "safe"]}}, ("mode",)),
         returns=_returns({"mode": _STR, "changed": _BOOL}, ("mode", "changed")),
@@ -275,6 +319,7 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="rollback",
         tier="act",
+        grant="act:rollback",
         summary=(
             "Roll back the active overlay, code, harness or firmware to a given version, or to "
             "the last known-good one."
@@ -282,7 +327,7 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
         params=_params(
             {
                 "target": {"type": "string", "enum": ["overlay", "code", "harness", "firmware"]},
-                "to": {"type": "string", "minLength": 1, "description": "default: last known-good"},
+                "to": _ID | {"description": "a version or code_rev; default: last known-good"},
             },
             ("target",),
         ),
@@ -293,14 +338,15 @@ TOOL_CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         name="build_and_flash",
         tier="act",
+        grant="act:flash",
         summary=(
             "Build the STM32 firmware from a registered code_rev and flash it; the board goes "
             "back to its last verified image if the new one fails to verify."
         ),
         params=_params(
             {
-                "code_rev": {"type": "string", "minLength": 1},
-                "board": {"type": "string", "pattern": r"^[a-z0-9_-]{1,32}$"},
+                "code_rev": _ID,
+                "board": _NAME,
             },
             ("code_rev",),
         ),
@@ -331,7 +377,9 @@ def validate_args(spec: ToolSpec, args: Any) -> list[str]:
     A hand-written subset of JSON Schema, enough for this catalog: `type` (one or a list),
     `enum`, `minimum`/`maximum`, `minLength`/`maxLength`, `pattern`, `required`, `properties`,
     `additionalProperties: false`, `items` and `maxItems`. Booleans are never numbers, and a
-    whole float (`5.0`) counts as an integer, as in JSON Schema.
+    whole float (`5.0`) counts as an integer, as in JSON Schema. Unlike JSON Schema's search
+    semantics, a `pattern` must match the whole string (`re.fullmatch`), so "x\\n" never passes
+    an anchored `^...$`.
     """
     problems: list[str] = []
     _check(args, spec.params, "args", problems)
@@ -374,7 +422,7 @@ def _check(value: Any, schema: dict[str, Any], where: str, problems: list[str]) 
             problems.append(f"{where}: shorter than {schema['minLength']} characters")
         if "maxLength" in schema and len(value) > schema["maxLength"]:
             problems.append(f"{where}: longer than {schema['maxLength']} characters")
-        if "pattern" in schema and not re.search(schema["pattern"], value):
+        if "pattern" in schema and not re.fullmatch(schema["pattern"], value):
             problems.append(f"{where}: {value!r} does not match {schema['pattern']}")
     elif isinstance(value, int | float) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:

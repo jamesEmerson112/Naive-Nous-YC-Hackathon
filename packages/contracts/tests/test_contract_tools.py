@@ -176,6 +176,102 @@ def test_path_may_contain_dots_that_arent_a_parent_segment():
     assert validate_args(tool("read_file"), {"path": "a/..b/.c", "max_bytes": 1}) == []
 
 
+@pytest.mark.parametrize(
+    "path", ["control/hold.py", "tests/test_hold.py", "_private/x.py", "README.md", "a-b/c_d.e"]
+)
+def test_good_paths(path):
+    assert validate_args(tool("read_file"), {"path": path, "max_bytes": 1}) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "~",
+        "~/x",
+        "..\\x",
+        "C:/x",
+        "\\etc\\passwd",
+        "a\x00b",
+        "a//b",
+        "./x",
+        "a/",
+        ".git/config",
+        "a/.git/HEAD",
+        "a/./b",
+        "..",
+        ".",
+        "-x",
+        "a b",
+        "control/hold.py\n",
+    ],
+)
+def test_bad_paths(path):
+    problems = validate_args(tool("read_file"), {"path": path, "max_bytes": 1})
+    assert any("does not match" in p for p in problems), (path, problems)
+
+
+def test_a_trailing_newline_never_passes_an_anchored_pattern():
+    assert validate_args(tool("grab_frame"), {"camera": "a\n"})
+    assert validate_args(tool("grab_frame"), {"camera": "a"}) == []
+
+
+ID_FIELDS = [
+    ("build_and_flash", "code_rev", {}),
+    ("rollback", "to", {"target": "code"}),
+    ("apply_overlay", "proposal_id", {"code_patch": PATCH}),
+]
+
+
+@pytest.mark.parametrize(("name", "field", "rest"), ID_FIELDS)
+@pytest.mark.parametrize("value", ["c0de002", "v1.2.3", "prop_1", "7", "a" * 64])
+def test_good_ids(name, field, rest, value):
+    assert validate_args(tool(name), rest | {field: value}) == []
+
+
+@pytest.mark.parametrize(("name", "field", "rest"), ID_FIELDS)
+@pytest.mark.parametrize(
+    "value",
+    ["", "-rf", "--upload-pack=x", "..", ".hidden", "a b", "c0de;rm", "a/b", "a" * 65, "rev\n"],
+)
+def test_bad_ids(name, field, rest, value):
+    assert validate_args(tool(name), rest | {field: value}), value
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    [
+        ("build_and_flash", {"code_rev": "c0de002", "board": "-x"}),
+        ("stack_dump", {"target": "-p"}),
+        ("run_tests_scratch", {"timeout_s": 30, "tests": ["-pevil"]}),
+        ("run_tests_scratch", {"timeout_s": 30, "tests": ["tests/../../x.py"]}),
+    ],
+)
+def test_names_and_test_ids_cant_pass_for_options_or_escape(name, args):
+    assert validate_args(tool(name), args)
+
+
+# --- grants -------------------------------------------------------------------------------
+
+
+def test_every_act_tool_has_a_grant_and_read_tools_none():
+    for spec in TOOL_CATALOG:
+        if spec.tier == "act":
+            assert spec.grant and spec.grant.startswith("act:"), spec.name
+        else:
+            assert spec.grant is None, spec.name
+    grants = [s.grant for s in TOOL_CATALOG if s.grant]
+    assert len(grants) == len(set(grants)) == len(ACT_TOOLS)
+
+
+@pytest.mark.parametrize(
+    ("tier", "grant"), [("act", None), ("act", ""), ("act", "flash"), ("read", "act:x")]
+)
+def test_spec_rejects_a_wrong_grant(tier, grant):
+    spec = tool("park").model_dump() | {"tier": tier, "grant": grant}
+    with pytest.raises(ValidationError, match="grant"):
+        ToolSpec.model_validate(spec)
+
+
 # --- ToolCall and ToolResult --------------------------------------------------------------
 
 
