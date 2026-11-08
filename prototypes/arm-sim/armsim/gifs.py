@@ -105,12 +105,20 @@ def successes(tries):
     return ok
 
 
+def sequence(r, last_stage):
+    """The frames of one try in order: BEFORE, every sampled frame (t+N s into the try; the jaws-close frame if no
+    samples were taken), AFTER."""
+    seq = [(f, "t+" + Path(f).stem.rsplit("-t", 1)[-1]) for f in (r.get("sequence") or [])]
+    if not seq and r.get("close_image"):
+        seq = [(r["close_image"], "JAWS CLOSE")]
+    return [(r.get("before"), "BEFORE"), *seq, (r.get("after"), last_stage)]
+
+
 def build(out_dir, width):
     tries = rows()
     made = []
     for r in successes(tries):
-        frames = [frame(p, stage, r, width) for p, stage in ((r.get("before"), "BEFORE"),
-                  (r.get("close_image"), "JAWS CLOSE"), (r.get("after"), "AFTER: IN THE BOX")) if existing(p)]
+        frames = [frame(p, stage, r, width) for p, stage in sequence(r, "AFTER: IN THE BOX") if existing(p)]
         out = out_dir / f"success-{time.strftime('%Y%m%d-%H%M%S', time.localtime(r.get('ts', 0)))}.gif"
         if save(frames, out, 1100):
             made.append((out, out.stat().st_size))

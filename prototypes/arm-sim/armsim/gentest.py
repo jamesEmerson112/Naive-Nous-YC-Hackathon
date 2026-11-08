@@ -363,6 +363,9 @@ def plan(history, before, after, close=None):
         return plan_lean(history, before, after, close)
     before, after = gridded(before), gridded(after)
     close = gridded(close) if close else None
+    last = history[-1] if history else {}
+    seq_sheet, seq_n = last.get("sequence_sheet"), len(last.get("sequence") or [])
+    earlier = [h for h in history[:-1] if h.get("sequence_sheet") and Path(h["sequence_sheet"]).exists()][-2:]
     tries = []
     for h in [x for x in history if not ONLY or x.get("recording") == ONLY][-12:]:
         row = {k: h.get(k) for k in ("try", "probe", "go", "probe_check", "recording", "pan_offset", "speed",
@@ -392,6 +395,13 @@ def plan(history, before, after, close=None):
          "The structured context, all tries oldest first (also saved as context.json):\n" + rows + "\n"
          f"Use your vision tool on the camera images of the last try: BEFORE {before} and AFTER {after}"
          + (f", and CLOSE {close}, taken the moment the jaws closed on the grasp: it shows the jaws and the bag in the same picture, so read the miss from it directly (both jaws on top of the bag, short of its edge, past it, or to its left or right as seen in the image, and roughly how far) and correct the next test by that" if close else "")
+         + (f", and SEQUENCE {seq_sheet}: one image of {seq_n} camera frames through the whole last try, in time "
+            "order left to right then top to bottom, each labelled with its seconds into the try (the grab is "
+            "about a third of the way in, the drop over the box about two thirds): use it to see whether the bag "
+            "came up with the jaws, when and where it slipped out, and where it fell" if seq_sheet else "")
+         + ("; and the same kind of sheet for earlier tries, to compare the whole motion across changes: "
+            + "; ".join(f"{h['try']} ({h.get('recording')}, pan {h.get('pan_offset')}, held {h.get('holding_s')} s) "
+                        f"{h['sequence_sheet']}" for h in earlier) if earlier else "")
          + ". The camera "
          "faces the arm from the front at about table height, so it may not see inside the box. " + GRID_NOTE +
          "Use the cells to aim: compare where the jaws were (jaws_cell) with the edge (edge_cell) on each try, and how "
@@ -499,14 +509,29 @@ def plan_lean(history, before, after, close=None):
     return ask_plan(q)
 
 
-def trial_streamed(args, mark, tag, timeout=240):
+SEQ_EVERY = 4.0        # seconds between camera samples during a full try (the capture writes a frame a second)
+
+
+def trial_streamed(args, mark, tag, timeout=240, sample=False):
     """Run `gentest trial <args>` on the Pi, streaming its output; when it prints `mark` (PAUSED for a probe,
     CLOSING when the jaws close on a full try), snap the camera 1 s later (the capture is 1 fps, so that frame
-    is from after the event). Returns (the trial's JSON, the snapped image or None)."""
+    is from after the event). With sample, also copy the camera frame every SEQ_EVERY seconds for the whole try.
+    Returns (the trial's JSON, the snapped image or None, the sampled frames)."""
+    import threading
     cmd = f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.gentest trial {args}"
     p = subprocess.Popen(["ssh", "-n", "-o", "BatchMode=yes", PI, cmd], stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True)
-    t0, image, last = time.time(), None, ""
+    t0, image, last, seq, done = time.time(), None, "", [], threading.Event()
+
+    def sampler():
+        while not done.wait(SEQ_EVERY):
+            try:
+                seq.append(snap(f"{tag}-seq{len(seq) + 1:02d}-t{time.time() - t0:04.1f}s"))
+            except OSError:
+                pass
+    th = threading.Thread(target=sampler, daemon=True)
+    if sample:
+        th.start()
     for line in p.stdout:
         line = line.strip()
         if line == mark and image is None:
@@ -518,16 +543,42 @@ def trial_streamed(args, mark, tag, timeout=240):
             p.kill()
             break
     p.wait(timeout=30)
+    done.set()
     try:
-        return json.loads(last), image
+        return json.loads(last), image, seq
     except json.JSONDecodeError:
-        return {"error": last[-300:]}, image
+        return {"error": last[-300:]}, image, seq
+
+
+def sheet(frames, out, cols=4, width=320):
+    """One image of the sampled frames in time order (left to right, top to bottom), each labelled with its time
+    into the try: the whole motion for Astra in a single image read."""
+    import cv2
+    import numpy as np
+    tiles = []
+    for f in frames:
+        im = cv2.imread(str(f))
+        if im is None:
+            continue
+        im = cv2.resize(im, (width, round(im.shape[0] * width / im.shape[1])), interpolation=cv2.INTER_AREA)
+        label = "t+" + Path(f).stem.rsplit("-t", 1)[-1]
+        cv2.rectangle(im, (0, 0), (len(label) * 11 + 10, 24), (0, 0, 0), -1)
+        cv2.putText(im, label, (5, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+        tiles.append(im)
+    if not tiles:
+        return None
+    h, w = tiles[0].shape[:2]
+    while len(tiles) % cols:
+        tiles.append(np.zeros((h, w, 3), np.uint8))
+    rows = [np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)]
+    cv2.imwrite(str(out), np.vstack(rows))
+    return Path(out)
 
 
 def run_probe(n, tag):
     """Probe on the Pi; snap the camera while it holds the open jaws at the closing point."""
     return trial_streamed(f"--probe --rec {n['recording']} --pan {n['pan']} --speed {n['speed']}", "PAUSED",
-                          f"{tag}-probe", timeout=180)
+                          f"{tag}-probe", timeout=180)[:2]
 
 
 def probe_check(image, bag):
@@ -632,8 +683,8 @@ def guided(max_trials, probe_first=False, efforts=()):
                     after, close = image, None
                     continue
                 before = snap(f"g{i}-before")
-            res, close_img = trial_streamed(f"--rec {n['recording']} --pan {n['pan']} --speed {n['speed']}",
-                                            "CLOSING", f"g{i}-close")
+            res, close_img, seq = trial_streamed(f"--rec {n['recording']} --pan {n['pan']} --speed {n['speed']}",
+                                                 "CLOSING", f"g{i}-close", sample=True)
             if "error" in res:
                 print(f"test {i} failed to run: {res['error']}", flush=True)
                 break
@@ -641,7 +692,9 @@ def guided(max_trials, probe_first=False, efforts=()):
             after = snap(f"g{i}-after")
             close = close_img
             row = {"try": f"g{i}", **res, "plan": n, "effort": effort, "plan_s": p["plan_s"], "before": str(before), "after": str(after),
-                   "close_image": str(close_img) if close_img else None, "ts": time.time()}
+                   "close_image": str(close_img) if close_img else None, "sequence": [str(f) for f in seq],
+                   "sequence_sheet": str(sheet(seq, OUT / f"{time.strftime('%H%M%S')}-g{i}-sheet.jpg") or "") or None,
+                   "ts": time.time()}
             history.append(row)
             with open(PLAN_LOG, "a") as f:
                 f.write(json.dumps({**row, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"],
