@@ -9,12 +9,13 @@ itself and checks the motion; then the arm loops its job a few more times to pro
   python3 arm/heal_test.py --sim               # real model, SIMULATED pod, arm and hand (no hardware)
 
 The fault is release v1.8 (firmware/demo/bad-images/08-us-near-hold). It adds a near-object hold to the HC-SR04
-driver: a reading under 250 mm is held until nothing has been near for 500 ms, so a hand moving through the beam
-can't fall between two pings. But the hold's keep-alive tests the held distance instead of the new reading, so
-once anything has come near, the hold keeps itself alive on every ping and never lets go. Until then every
-distance is right, and while the hand is there it's right too; after the hand leaves, the distance stays at the
-hand's until the pod is reset or reflashed. The echo time stays right, so the pod's telemetry then contradicts
-itself.
+driver: the nearest reading under 200 mm is meant to be held until nothing has been near for 500 ms, so a hand
+moving through the beam can't fall between two pings. But the hold has no release: it records when something was
+last near (held_ms) and never reads it, and HCSR04_HOLD_MS is defined but never used, so once anything has come
+near the hold never lets go. Until then every distance is right, and while the hand is there it's right too;
+after the hand leaves, the distance stays at the hand's until the pod is reset or reflashed. The echo time stays
+right, so the pod's telemetry then contradicts itself. The fix is one release (drop held_mm once nothing has
+been near for HCSR04_HOLD_MS), or removing the hold.
 
   1. reset the pod to v1.0 (known-good); the arm's start gate must PASS (checked without moving). This proves
      the space in front of the sensor is clear, so what follows can only come from the firmware.
@@ -74,10 +75,12 @@ US_TO_MM = 0.343 / 2                    # HC-SR04: mm per microsecond of echo (h
 ROOT_CAUSE = [r"firmware|release|v1\.8|hcsr04|near_hold|held_mm|software|\bcode\b",
               r"\bhold|\bheld\b|latch|stuck|stale|frozen|never (expire|releas|clear|updat|let)|refresh|keep-?alive|"
               r"mismatch|disagree|inconsistent|does(n.?t| not) match"]
-# found the actual defect (reported, not required): the keep-alive tests the held value, so it refreshes itself
-EXACT = (r"held_mm\s*<|instead of (the )?(new|raw|fresh|current|latest|incoming|measured)|wrong variable|"
-         r"refresh\w*( itself| on every| every)|(re)?sets? (the )?(hold )?(timer|timestamp|held_ms) (on )?every|"
-         r"never (expires|runs out|times out|lets go)|keeps? itself alive|self-?(refresh|sustain)")
+# found the actual defect (reported, not required): the hold has no release (HCSR04_HOLD_MS / held_ms never used)
+EXACT = (r"HOLD_MS\b[^.\n]{0,40}\b(never|not|unused)|unused[^.\n]{0,30}HOLD_MS|"
+         r"held_ms\b[^.\n]{0,40}\bnever (read|checked|used|compared|tested)|"
+         r"never (expires|runs out|times out|lets go|releases|clears|resets|gets cleared|gets released)|"
+         r"nothing (ever )?(releases|clears|resets|lets go)|no (timeout|time-?out|expiry|release)\b|"
+         r"(missing|lacks?|without) (a |the |any )?(timeout|time-?out|expiry|release)")
 OPERATOR_NOTE = ("a hand came close to the ultrasonic sensor during the job and was taken away again after about "
                  "a second. Nothing has been near the sensor since.")
 
