@@ -16,7 +16,7 @@ export const OUR_SCHEDULE: SchedBlock[] = [
   { id: "P1.2", what: "Commander: Hermes so101-arm plugin; typed \"wave, then go home\" moves the sim arm · fd5c235", from: "2026-11-08T06:00:00Z", to: "2026-11-08T06:45:00Z", done: true },
   { id: "P1.3", what: "Level-1 sentence: frozen sensor → spoken \"Distance stuck at 130 mm while the arm moved 29 mm\", park, verified repair · dbb361e", from: "2026-11-08T06:45:00Z", to: "2026-11-08T07:30:00Z", done: true },
   { id: "P1.4", what: "Approach-then-grasp on the wrist sensor · 546e20f; fault factory (1,000 labeled runs) and ChatTS level-2 test · 2692e2a", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:15:00Z", done: true },
-  { id: "P2", what: "Overnight, hands off: Kent's launch, Olir's pod under podd; nothing of ours runs", from: "2026-11-08T08:30:00Z", to: "2026-11-08T15:00:00Z", night: true },
+  { id: "P2", what: "Before bed: firmware API and data doc (docs/firmware-apis.md), Olir reviews. Overnight: Olir's pod logs under podd, the only real data tonight (Kent's run is the fake fleet); nothing of ours runs. 7 AM: commit a slice of those logs to samples/pod/", from: "2026-11-08T08:30:00Z", to: "2026-11-08T15:00:00Z", night: true },
   { id: "P3", what: "Real arm with Andre: swap the sim arm for the real one, wrist HC-SR04 through podd, first labeled real runs; Kent's real-arm slot 9–10", from: "2026-11-08T15:00:00Z", to: "2026-11-08T18:00:00Z" },
   { id: "P4", what: "10 AM code freeze, rehearse ×3, backup video, present at 1 PM", from: "2026-11-08T18:00:00Z", to: "2026-11-08T21:00:00Z" },
   { id: "P5", what: "Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video · due Wed Nov 11, 2 PM PST", from: "2026-11-08T21:00:00Z", to: "2026-11-11T22:00:00Z" },

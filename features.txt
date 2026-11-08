@@ -53,6 +53,7 @@ P3 Real arm + polish (with Kent, Olir): F2 and F3 on the real arm
 JAMES
 P0 Tell Kent the Stripe step is optional (it is still on his P0 line)
 P1 Open a PR for james/arm-sim (the four sim prototypes, fault factory, ChatTS test)
+P2 Firmware API and data doc (docs/firmware-apis.md), Olir reviews; 7 AM: commit a slice of the overnight podd logs (samples/pod/)
 P3 7:30-9 AM with Andre: swap the sim arm for the real one, wrist HC-SR04 through podd, first labeled real runs
 P3 Optional: MuJoCo twin next to the real arm
 P5 Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video under 90 s
