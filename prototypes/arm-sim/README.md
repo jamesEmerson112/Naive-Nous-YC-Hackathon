@@ -8,7 +8,14 @@ Tonight's simulated SO-101 bench (P1 in James's plan note): the arm host, skills
 
 **Run:** `uv run --python 3.12 --with-requirements requirements.txt python -m armsim <command>`
 - `demo` goes home, waves, and goes home again. It writes `runs/<id>.jsonl` (an `arm-run/v1` record) and `runs/<id>.gif`.
-- `view` shows the same moves in MuJoCo's viewer. On macOS, run it with `mjpython` instead of `python`.
+- `view` shows the same moves in MuJoCo's viewer.
+
+**To watch it live on macOS:** the viewer needs `mjpython`, and `mjpython` needs a Python with a shared `libpython`. `uv`'s standalone Python doesn't have one, so make a venv once from your framework or conda Python:
+```
+uv venv --python "$(command -v python3)" .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+```
+Then run `.venv/bin/mjpython -m armsim.host --view`. That opens the arm host with a live window, paced to real time.
 
 **Commander (Hermes):**
 1. Start the arm host:
