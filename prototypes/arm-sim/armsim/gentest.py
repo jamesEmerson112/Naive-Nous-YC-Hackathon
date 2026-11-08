@@ -155,6 +155,8 @@ def trial(rec, pan, speed=1.0):
         event = seen["ev"].step(gc)
         if event:
             if seen[event] is None:
+                if event == "close_at":
+                    print("CLOSING", flush=True)           # the Mac snaps the camera: the jaws on the bag
                 tip = a.tip()[0]
                 seen[event] = {"tip_m": [round(float(v), 3) for v in tip],
                                "joints_deg": [round(float(v), 1) for v in q], "t_s": round(a.t, 2)}
@@ -287,7 +289,7 @@ def last_json(text):
     return best
 
 
-def plan(history, before, after):
+def plan(history, before, after, close=None):
     """Hermes debugs the last try and designs the next test. The code clamps whatever it asks for."""
     tries = []
     for h in history[-12:]:
@@ -315,7 +317,9 @@ def plan(history, before, after):
          "(0-100), peak_grip_load_nm is the gripper's peak load, gripper_closed_at / gripper_opened_at are where the "
          "gripper tip was (and the joint angles) when the jaws closed for the grasp and opened for the drop. "
          "The structured context, all tries oldest first (also saved as context.json):\n" + rows + "\n"
-         f"Use your vision tool on both camera images of the last try: BEFORE {before} and AFTER {after}. The camera "
+         f"Use your vision tool on the camera images of the last try: BEFORE {before} and AFTER {after}"
+         + (f", and CLOSE {close}, taken the moment the jaws closed on the grasp: it shows the jaws and the bag in the same picture, so read the miss from it directly (both jaws on top of the bag, short of its edge, past it, or to its left or right as seen in the image, and roughly how far) and correct the next test by that" if close else "")
+         + ". The camera "
          "faces the arm from the front at about table height, so it may not see inside the box. "
          "The grip: tries with squeeze_pct 99 squeezed the gripper to 99% closed while grasping. Tries without it "
          "squeezed as recorded: wave to 99%, recording_2 only to ~69% and recording_3 to ~80%, so a short hold with "
@@ -373,21 +377,22 @@ def plan(history, before, after):
             "plan_s": round(time.time() - t0, 1)}
 
 
-def run_probe(n, tag):
-    """Probe on the Pi; snap the camera while it holds the open jaws at the closing point."""
-    cmd = (f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.gentest trial --probe "
-           f"--rec {n['recording']} --pan {n['pan']} --speed {n['speed']}")
+def trial_streamed(args, mark, tag, timeout=240):
+    """Run `gentest trial <args>` on the Pi, streaming its output; when it prints `mark` (PAUSED for a probe,
+    CLOSING when the jaws close on a full try), snap the camera 1 s later (the capture is 1 fps, so that frame
+    is from after the event). Returns (the trial's JSON, the snapped image or None)."""
+    cmd = f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.gentest trial {args}"
     p = subprocess.Popen(["ssh", "-n", "-o", "BatchMode=yes", PI, cmd], stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True)
     t0, image, last = time.time(), None, ""
     for line in p.stdout:
         line = line.strip()
-        if line == "PAUSED" and image is None:
-            time.sleep(1.0)                              # let the arm settle and the 1 fps camera catch up
-            image = snap(f"{tag}-probe")
+        if line == mark and image is None:
+            time.sleep(1.0)
+            image = snap(tag)
         elif line:
             last = line
-        if time.time() - t0 > 180:
+        if time.time() - t0 > timeout:
             p.kill()
             break
     p.wait(timeout=30)
@@ -395,6 +400,12 @@ def run_probe(n, tag):
         return json.loads(last), image
     except json.JSONDecodeError:
         return {"error": last[-300:]}, image
+
+
+def run_probe(n, tag):
+    """Probe on the Pi; snap the camera while it holds the open jaws at the closing point."""
+    return trial_streamed(f"--probe --rec {n['recording']} --pan {n['pan']} --speed {n['speed']}", "PAUSED",
+                          f"{tag}-probe", timeout=180)
 
 
 def probe_check(image, bag):
@@ -437,6 +448,7 @@ def guided(max_trials, probe_first=False):
             history[k]["debug"] = history[k + 1]["hermes_debug_before"]
             history[k]["bag_estimate"] = history[k + 1].get("hermes_bag_before")
     before = after = snap("now")
+    close = None
     print(f"Hermes-guided generate and test, goal: {GOAL} into the box; up to {max_trials} tries, "
           f"{len(history)} earlier tries as data; "
           f"log {PLAN_LOG}", flush=True)
@@ -444,7 +456,7 @@ def guided(max_trials, probe_first=False):
     print("arm host:", out.strip() or err.strip(), flush=True)
     try:
         for i in range(1, max_trials + 1):
-            p = plan(history, before, after)
+            p = plan(history, before, after, close)
             if history:
                 history[-1]["eye"] = p["verdict"]
                 history[-1]["debug"] = p["debug"]
@@ -478,19 +490,19 @@ def guided(max_trials, probe_first=False):
                     print("stopping: a servo reported an alarm", flush=True)
                     break
                 if not go:
-                    after = image
+                    after, close = image, None
                     continue
                 before = snap(f"g{i}-before")
-            rc, out, err = ssh(f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.gentest "
-                               f"trial --rec {n['recording']} --pan {n['pan']} --speed {n['speed']}", timeout=240)
-            try:
-                res = json.loads((out.strip().splitlines() or [""])[-1])
-            except json.JSONDecodeError:
-                print(f"test {i} failed to run: {(err or out)[-300:]}", flush=True)
+            res, close_img = trial_streamed(f"--rec {n['recording']} --pan {n['pan']} --speed {n['speed']}",
+                                            "CLOSING", f"g{i}-close")
+            if "error" in res:
+                print(f"test {i} failed to run: {res['error']}", flush=True)
                 break
             time.sleep(2)
             after = snap(f"g{i}-after")
-            row = {"try": f"g{i}", **res, "plan": n, "before": str(before), "after": str(after), "ts": time.time()}
+            close = close_img
+            row = {"try": f"g{i}", **res, "plan": n, "before": str(before), "after": str(after),
+                   "close_image": str(close_img) if close_img else None, "ts": time.time()}
             history.append(row)
             with open(PLAN_LOG, "a") as f:
                 f.write(json.dumps({**row, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"]}) + "\n")
@@ -501,7 +513,7 @@ def guided(max_trials, probe_first=False):
                 print("stopping: a servo reported an alarm", flush=True)
                 break
         else:
-            p = plan(history, before, after)               # judge the last try
+            p = plan(history, before, after, close)        # judge the last try
             print(f"Hermes ({p['plan_s']} s): {p['debug']} | verdict {p['verdict']}", flush=True)
             if p["verdict"] != "INSIDE":
                 print("no success within the cap", flush=True)
