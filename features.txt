@@ -9,7 +9,6 @@ Naive API key for Romulus (by 5:15 PM)
 fleet-ops agent: work orders (by 11:30 PM)
 Mobilerun bearer in Naive vault
 Hire Operator, Insights, Roboticist (on hold, N1)
-Parts catalogue (parts.yaml)            <--- Kent
 Naive company agents setup
 Order intake (inbox or form)
 Stripe payment for jobs
@@ -23,7 +22,6 @@ Bench board token (scoped MCP session)
 
 MODELS
 OpenAI key for bench Hermes             <--- James
-Naive model proxy for batch (D22)       <--- Kent
 RunPod LLM endpoint (D22, optional)
 
 NVIDIA SIM
@@ -45,8 +43,8 @@ pi vs Hermes comparison (Naive console)  <--- James
 Hermes compaction fix (summarizer login)
 
 ROMULUS
-Scaffold, contracts, spikes (M0)        <--- Kent
-Coding agent for code patches (M8)      <--- Kent
+Live Naive card spike + I0 contract review (M0 rest) <--- Kent
+Coding agent for code patches (M8; #19 merged, M8b in progress) <--- Kent
 Fleet Doctor proposal (D23-D28)         <--- Kent
 Fleet Doctor L1 advise (/doctor/ask)    <--- Kent
 Fleet Doctor L2 consult + proposals     <--- Kent
@@ -132,3 +130,6 @@ Romulus: Datasets and exports F8 (M6)   <--- Kent
 Romulus: Batch, gate, kill switch (M3)  <--- Kent
 Romulus: Overnight launch F10 (M7)      <--- Kent
 Romulus: Gate follow-ups, corpus replay (#18) <--- Kent
+Romulus: Scaffold, contracts, adapters (M0, #1-#4) <--- Kent
+Naive: Parts catalogue (parts.yaml, #6) <--- Kent
+Models: Naive model proxy works (gpt-oss-120b, D22) <--- Kent

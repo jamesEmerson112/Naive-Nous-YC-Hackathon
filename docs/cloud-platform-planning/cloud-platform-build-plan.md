@@ -13,7 +13,7 @@ How the cloud platform gets built between now (**Sat 3:30 PM**) and the code fre
 Judges score "how much of the company runs without you" (`~/git2/docs/STRATEGY.md` §1), and the platform's top value is legibility (D9). Attention therefore goes to these, in this order:
 
 1. **The hero loop, live and readable:** F2 → F3 → F4 on the incident timeline. If only one thing works, it's this.
-2. **The overnight run (F10).** "It ran while we slept" is the strongest autonomy evidence (`~/git2/docs/1-hackathon-plan.md` §0). It has to **launch by ~12:30 AM**, so everything it needs comes first.
+2. **The overnight run (F10).** "It ran while we slept" is the strongest autonomy evidence (`~/git2/docs/1-hackathon-plan.md` §0). Everything it needs comes first.
 3. **Naïve integration (F6).** Naïve is mandatory, and the Mobilerun call is the sponsor-track story.
 4. **Telemetry as evidence (F7).** Each incident's story shows its recordings. This is the first slice of the data asset (D16).
 5. **The dataset (F8).** It's built on Sunday morning from the data the overnight run produced. Ordering it last makes the "every failure becomes training data" story true by construction.
@@ -31,7 +31,7 @@ Judges score "how much of the company runs without you" (`~/git2/docs/STRATEGY.m
 | **7:30–9:30** | **M3 · Batch, gate, kill switch** | F3, F4 and F5 pass with fake devices | F3, F4, F5 |
 | **9:30–10:30** | **M4 · Telemetry ingest** | Incident windows, logs and agent traces upload and show as evidence | F7 |
 | **10:30–11:30** | **M5 · Work orders → Naïve** | F6 passes in fake mode; one live card appears on the real board | F6 |
-| **11:30–12:30 AM** | **M7 · Overnight launch** | Chaos schedule running, settings switched to overnight, laptop kept awake, `demo` tag pushed | F10 (F9 if quick) |
+| **11:30 PM →** | **M7 · Overnight launch** | Chaos schedule running, settings switched to overnight, laptop kept awake, `demo` tag pushed | F10 (F9 if quick) |
 | Overnight | Nobody touches it | — | F10 |
 | Sun 7:00–7:30 | Read the digest; fix whatever broke | Digest numbers written down | F10 |
 | **7:30–9:00** | **M6 · Datasets** | Snapshot plus regression-corpus export from the overnight data; gate replays the corpus | F8 |
@@ -47,57 +47,77 @@ M6 deliberately comes after M7 (§1, item 5).
 
 Tick these off in this file as you go. Each milestone ends with its flows' tracker rows updated.
 
+**Status, Sat Nov 7, ~7:35 PM PST** (`main` at `52f4e40`): M0–M7 are built and merged with fake devices and fake adapters, all ahead of the §2 timeline; M6 moved forward from Sunday morning because it was ready *(inferred: #14 merged at 6:08 PM PST)*. What's still open is the live and real-world part: the live Naïve card, the I0 hand-off with the device teammate, the overnight launch itself, and M8b (M8a merged in #19, `3aba2da`; M8b in progress). Flow status is in the [flows tracker](cloud-platform-flows.md).
+
+**What was built**
+
+| Milestone | PRs | What |
+|---|---|---|
+| M0 | #1, #2, #3, #4 | uv workspace; adapters with fakes (blob store, LLM, Naïve, coder); contracts v0.1; cloud scaffold (settings, models, events, app, worker, compose, test DB) |
+| M1 | #5, #8 | Fake device and reference visor/outbox client; device API, registry, story, seed, code-package routes; F1, F2 |
+| M2 | #9 | Incident timeline and story pages |
+| M3 | #7, #12, #18 | Pure merge and gate; batch, gate state machine, kill switch, worker; F3–F5; gate edge cases and regression-corpus replay |
+| M4 | #10 | Telemetry ingest: recordings, blobs, evidence in the story, `metric_samples`; F7 |
+| M5 | #6, #11, #15 | Pure triage, labels, digest, `parts.yaml`; work orders → Naïve cards (outbox, spend caps, resolve route); F6 |
+| M6 | #14 | Labels, snapshots, exports, regression corpus; F8 |
+| M7 | #16 | Chaos schedule, digest, disk budget, overnight flag, preflight, runbook; F10 |
+| M8 | #19 | M8a: coder sandbox image and `LocalAgent`, proven on a toy device repo (merged `3aba2da`). M8b (wiring into batch and gate) in progress |
+| Fixes | #13, #17 | Ruff scoped to our packages; fake arms register as `sim`, unknown devices as `unknown`; readable chain labels |
+
 ### M0 · Scaffold, contracts, spikes
-- [ ] uv workspace: root `pyproject.toml`, `packages/contracts`, `cloud`, `tools/fake_device` (architecture §3)
-- [ ] `compose.yaml` (db, api, worker; `sim` profile), `cloud/Dockerfile`, `Makefile`, `.env.example` with fake modes
-- [ ] `settings.py`, `db.py`, `models.py` (every table, even the empty ones), `events.record()`
-- [ ] Contracts v0.1: the Pydantic models from APIs §2, including the code-package and `code_patch` contract (§2.10, D21), plus `rules.evaluate()` with unit tests
-- [ ] `cloud/CLAUDE.md` (architecture §9)
-- [ ] **Naïve spike (15 min):** with a real API key, create and read one card on the company board ([Naïve integration](cloud-platform-naive-integration.md) §5). Write down the board ID and the ops agent's name
-- [ ] **LLM spike (10 min):** one live call through the Naïve model proxy (`naive proxy message`, then the `llm` adapter with `LLM_PROVIDER=naive_proxy`); pick a model id from `GET /v1/models`. Ask James for the RunPod endpoint and test it too if it's up (D22)
-- [ ] **Hand-off:** send the contracts to the device teammate (APIs doc §2–3 plus the package path), and agree on a time for the first real check-in
+- [x] uv workspace: root `pyproject.toml`, `packages/contracts`, `cloud`, `tools/fake_device` (architecture §3) (#1)
+- [x] `compose.yaml` (db, api, worker; `sim` profile), `cloud/Dockerfile`, `Makefile`, `.env.example` with fake modes (#4)
+- [x] `settings.py`, `db.py`, `models.py` (every table, even the empty ones), `events.record()` (#4)
+- [x] Outside-world adapters with fakes: blob store, LLM, Naïve, coder (#2)
+- [x] Contracts v0.1: the Pydantic models from APIs §2, including the code-package and `code_patch` contract (§2.10, D21), plus `rules.evaluate()` with unit tests (#3)
+- [x] `cloud/CLAUDE.md` (architecture §9) (#4)
+- [ ] **Naïve spike (15 min):** half done. Reading works: org Romulus, board `brd_v2zcnyzc559hv8awzc4hqvgcsm`, cards readable; no `fleet-ops` agent yet. **Creating a card (and the idempotency check) is pending Kent's go-ahead.** Results in [Naïve integration](cloud-platform-naive-integration.md) §5
+- [x] **LLM spike (10 min):** live proxy chat completions work with the team key; `LLM_MODEL=openai/gpt-oss-120b` (~1.8 s). The proxy has no models route (`GET /v1/proxy/openai/v1/models` → 404); `GET /v1/models` works ([Naïve integration](cloud-platform-naive-integration.md) §5). RunPod not tested (D22, optional)
+- [ ] **Hand-off (I0):** not done. Contracts v0.1 (#3) are in the repo, but the device teammate hasn't reviewed them, and no first real check-in time is agreed
 
 ### M1 · Walking skeleton
-- [ ] `make seed`
-- [ ] Device API: check-in, pull firmware and harness, install result, incidents, overlay status (APIs §3)
-- [ ] Services: `registry`, `devices`, `incidents`, each writing Events
-- [ ] `domain/story.py` and `GET /v1/incidents/{id}/story`
-- [ ] Fake device: check-in loop, install, scripted incident with overlay, then held
-- [ ] Flow tests F1 and F2 (API level)
+- [x] `make seed` (#8)
+- [x] Device API: check-in, pull firmware and harness, install result, incidents, overlay status (APIs §3) (#8)
+- [x] Services: `registry`, `devices`, `incidents`, each writing Events (#8)
+- [x] `domain/story.py` and `GET /v1/incidents/{id}/story` (#8)
+- [x] Fake device: check-in loop, install, scripted incident with overlay, then held (#5)
+- [x] Flow tests F1 and F2 (API level) (#8; device kind #17)
 
 ### M2 · Incident timeline page
-- [ ] `/` timeline (htmx polling), `/incidents/{id}` story, Freeze button wired to an empty route
-- [ ] Every step shows its `why`; times are local and readable
+- [x] `/` timeline (htmx polling), `/incidents/{id}` story, Freeze button wired to an empty route (#9; real kill switch since #12)
+- [x] Every step shows its `why`; times are local and readable (#9; readable chain labels #17)
 
 ### M3 · Batch, gate, kill switch
-- [ ] `domain/merge.py`, `domain/gate.py` (replay against one incident, canary verdict), with unit tests
-- [ ] `services/batch.py` (merge plus LLM explanation and skill; fake LLM by default) → candidates
-- [ ] `services/gate.py` state machine, plus `worker.py` loop
-- [ ] `services/fleet.py`: freeze and unfreeze; pin to last good
-- [ ] Fake device bad-candidate mode
-- [ ] Flow tests F3, F4 and F5; the story ends in "→ fleet" or "→ rolled back"
+- [x] `domain/merge.py`, `domain/gate.py` (replay against one incident, canary verdict), with unit tests (#7)
+- [x] `services/batch.py` (merge plus LLM explanation and skill; fake LLM by default) → candidates (#12; code patches pass through to `awaiting_canary` until M8)
+- [x] `services/gate.py` state machine, plus `worker.py` loop (#12; edge cases #18)
+- [x] `services/fleet.py`: freeze and unfreeze; pin to last good (#12; unfreeze restores assignments #18)
+- [x] Fake device bad-candidate mode (#5)
+- [x] Flow tests F3, F4 and F5; the story ends in "→ fleet" or "→ rolled back" (#12; corpus regression #18)
 
 ### M4 · Telemetry ingest
-- [ ] `adapters/blobstore.py` (`FsBlobStore`, content-addressed)
-- [ ] Recording routes: metadata, then blob upload with sha256 check (APIs §3.7)
-- [ ] `domain/labels.py` automatic labels; evidence links in the story
-- [ ] Fake device uploads an incident window, a log window and an agent trace. These are small synthetic files: a real MCAP file (written with the `mcap` library), a JSONL trace, and a *placeholder* tar labeled `lerobot_v3_tar`. Real LeRobot datasets come from the arm, because generating them needs the heavy `lerobot` package ([telemetry](cloud-platform-telemetry.md) §2)
-- [ ] `metric_samples` written on every check-in (P1, one insert)
-- [ ] Flow test F7
+- [x] `adapters/blobstore.py` (`FsBlobStore`, content-addressed) (#2)
+- [x] Recording routes: metadata, then blob upload with sha256 check (APIs §3.7) (#10)
+- [x] `domain/labels.py` automatic labels (#6); evidence links in the story (#10)
+- [x] Fake device uploads an incident window, a log window and an agent trace. These are small synthetic files: a real MCAP file (written with the `mcap` library), a JSONL trace, and a *placeholder* tar labeled `lerobot_v3_tar`. Real LeRobot datasets come from the arm, because generating them needs the heavy `lerobot` package ([telemetry](cloud-platform-telemetry.md) §2) (#10)
+- [x] `metric_samples` written on every check-in (P1, one insert) (#10)
+- [x] Flow test F7 (#10)
 
 ### M5 · Work orders → Naïve
-- [ ] `domain/triage.py` + `cloud/config/parts.yaml`, `services/workorders.py` (outbox, spend caps in code), `adapters/naive.py` (Fake and Http)
-- [ ] Worker: post cards with an `Idempotency-Key` header, poll each open card by id, parse the `RESULT:`/`STOPPED:` note, and show the status in the story ([Naïve integration](cloud-platform-naive-integration.md) §3.1–3.3)
-- [ ] Flow test F6 (fake); one live card created by hand during the M5 check
+- [x] `domain/triage.py` + `cloud/config/parts.yaml` (#6), `services/workorders.py` (outbox, spend caps in code) (#11), `adapters/naive.py` (Fake and Http) (#2)
+- [x] Worker: post cards with an `Idempotency-Key` header, poll each open card by id, parse the `RESULT:`/`STOPPED:` note, and show the status in the story ([Naïve integration](cloud-platform-naive-integration.md) §3.1–3.3) (#11, #15)
+- [x] Flow test F6 (fake) (#11)
+- [ ] One live card created by hand during the M5 check: pending Kent's go-ahead (the go-live checklist is in #11's PR body)
 
 ### M7 · Overnight launch
-- [ ] Chaos schedule in the fake device (flows doc F10)
-- [ ] Overnight `.env` values; `restart: unless-stopped` on api and worker
-- [ ] `domain/digest.py` and `make digest`
-- [ ] `telemetry.enforce_budget()`
-- [ ] Keep the laptop awake (`caffeinate -dims`, power connected, lid open or clamshell with display); Docker Desktop set to start on login
-- [ ] Commit, tag `demo-overnight`, push
-- [ ] (If quick) F9 offline test
+- [x] Chaos schedule in the fake device (flows doc F10) (#16)
+- [x] Overnight `.env` values (`.env.overnight.example`, layered over `.env`); `restart: unless-stopped` on api and worker (#16)
+- [x] `domain/digest.py` (#6) and `make digest` (#16)
+- [x] `telemetry.enforce_budget()` (#16)
+- [x] Preflight `make overnight-check` and runbook `cloud/OVERNIGHT.md` (#16)
+- [ ] Keep the laptop awake (`caffeinate -dims`, power connected, lid open or clamshell with display); Docker Desktop set to start on login. **Kent, at launch:** at #16's check the laptop was on battery and Docker start-on-login was off; `make overnight-check` flags both
+- [ ] Commit, tag `demo-overnight`, push (Kent, at launch; #16 deliberately doesn't tag)
+- [ ] (If quick) F9 offline test: partly covered. `test_f10_overnight.py` unplugs arms' links and checks every outbox drains (#16); there's no separate `test_f9_offline.py` that stops the `api` container
 
 ### M8 · Coding agent for code patches (P1, starts as soon as nothing blocks it; D21, D21a)
 
@@ -109,29 +129,29 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 
 | # | Blocker | Owner | Status | How it clears |
 |---|---|---|---|---|
-| B1 | **Device code is in the repo with a test suite the agent can run** (`device/`, one command such as `uv run pytest`) | Device teammate | 🔴 | The teammate pushes code and tests, and they pass in a clean container |
-| B2 | **Code-package contract agreed:** the device fetches code by version from the platform (`GET /v1/code/{rev}/package` + sha256), and the visor installs it with hash check, health check and rollback (D7) | Kent proposes (M0) · teammate implements in the visor | 🔴 | In contracts v0.1 (APIs §2.10, §3); the teammate confirms |
-| B3 | **`code_patch` format agreed:** a unified diff against `code_rev`, with paths relative to `device/` | Kent proposes (M0) · teammate's agent produces it | 🔴 | In contracts v0.1 (APIs §2.10); one real example from the device agent |
-| B4 | **Coding agent and LLM access** (D22: Naïve proxy or RunPod, local open-source agent) | Kent (+ James for RunPod) | 🟡 | D22 decided. Still needed: a key with `proxy:write` or the RunPod endpoint; the agent chosen (align with the device team's pi or mini-swe-agent); one headless run that edits and tests a toy change |
-| B5 | **Sandbox:** a `coder` container that mounts a scratch copy of `device/`, can reach only the LLM API, and is run by the worker | Kent | 🔴 | Built after M0; one dry run that edits and tests a toy change |
-| B6 | **The gate exists** (M3): candidates, replay, canary and promote are working | Kent | 🔴 | F3 and F4 🟩 |
-| B8 | **STM32 toolchain in the sandbox.** The demo's fixes include STM32 C firmware (device side, `docs/project-overview.md`), so building and checking them needs `arm-none-eabi-gcc` and the firmware's build script in the `coder` image | Kent (image) · teammate (build script) | 🔴 | `make` of `firmware/` succeeds in the `coder` container |
+| B1 | **Device code is in the repo with a test suite the agent can run** (`device/`, one command such as `uv run pytest`) | Device teammate | 🔴 | The teammate pushes code and tests, and they pass in a clean container. **In progress:** Ishaan is moving `edge/` into the repo as `device/` (root `CLAUDE.md`, Ishaan's block). The held-out verify scripts need to live in `device/verify/` (#19) |
+| B2 | **Code-package contract agreed:** the device fetches code by version from the platform (`GET /v1/code/{rev}/package` + sha256), and the visor installs it with hash check, health check and rollback (D7) | Kent proposes (M0) · teammate implements in the visor | 🟡 | In contracts v0.1 (#3; APIs §2.10, §3) and served since #8. Awaiting Ishaan's I0 review |
+| B3 | **`code_patch` format agreed:** a unified diff against `code_rev`, with paths relative to `device/` | Kent proposes (M0) · teammate's agent produces it | 🟡 | In contracts v0.1 (#3; APIs §2.10). Awaiting Ishaan's I0 review and one real example from the device agent. #19 makes the validator stricter (symlinks, submodules, case-insensitive paths) without a version bump |
+| B4 | **Coding agent and LLM access** (D22: Naïve proxy or RunPod, local open-source agent) | Kent (+ James for RunPod) | 🟢 | mini-swe-agent + `openai/gpt-oss-120b` through the Naïve proxy fixed the toy D1 repo in 8 steps, ~18.5k tokens in / ~1.8k out, ~100 s (#19's dry run, the second of two runs; that run predates #19's hold-out of the verify test) |
+| B5 | **Sandbox:** a `coder` container that mounts a scratch copy of `device/`, can reach only the LLM API, and is run by the worker | Kent | 🟡 | The `coder` image and `LocalAgent` exist and did the dry run (#19). Still missing: the worker doesn't launch it (M8b), and the network isn't restricted to the LLM endpoint (needs an egress proxy; test and verify runs already use `--network none`) |
+| B6 | **The gate exists** (M3): candidates, replay, canary and promote are working | Kent | 🟢 | F3 and F4 🟩 (#12, #18) |
+| B8 | **STM32 toolchain in the sandbox.** The demo's fixes include STM32 C firmware (device side, `docs/project-overview.md`), so building and checking them needs `arm-none-eabi-gcc` and the firmware's build script in the `coder` image | Kent (image) · teammate (build script) | 🔴 | `make` of `firmware/` succeeds in the `coder` container. Olir's `firmware/toolkit/` may help *(inferred, root `CLAUDE.md`)* |
 | B7 | **A canary that runs real device code.** The fake devices don't execute device code, so a code candidate needs the teammate's sim twin (MuJoCo SO-101 running the device stack) or a supervised real-arm canary | Device teammate (sim twin) · Kent (gate rule) | 🔴 | A sim-twin device checks in with `kind = sim` and can install a code package |
 
 **Tasks** (each can start as soon as its own blockers clear):
-- [ ] (M0) Code-package and `code_patch` contract in v0.1 (APIs §2.10); `code_versions` table; `POST /v1/code`, `GET /v1/code/{rev}/package` *(B2, B3)*
-- [ ] `coder` container + `adapters/coder.py` (Protocol + Fake) *(B4, B5)*
-- [ ] `services/batch.py` third path: `code_patch → coder → code version → candidate`, with the coder's test output recorded in the candidate's `why` *(B1, B6)*
-- [ ] Gate rule: a code candidate first runs the device tests (in the sandbox), then goes to a canary that can run real code (B7). If no such canary exists, it stops at `awaiting_canary` and says so on the timeline
-- [ ] Fake device: one scripted incident with a `code_patch` for the demo
-- [ ] Flow test F11
+- [x] (M0) Code-package and `code_patch` contract in v0.1 (APIs §2.10); `code_versions` table; `POST /v1/code`, `GET /v1/code/{rev}/package` *(B2, B3)* (#3, #4, #8)
+- [x] `coder` container + `adapters/coder.py` (Protocol + Fake) *(B4, B5)*: Protocol and `FakeCoder` (#2); `coder` image and `LocalAgent` (#19). B5's egress gap stays open in the blocker table
+- [ ] `services/batch.py` third path: `code_patch → coder → code version → candidate`, with the coder's test output recorded in the candidate's `why` *(B1, B6)*: M8b. Today #12 passes the patch through unapplied ("pass-through: coding agent not wired")
+- [ ] Gate rule: a code candidate first runs the device tests (in the sandbox), then goes to a canary that can run real code (B7). If no such canary exists, it stops at `awaiting_canary` and says so on the timeline. M8b; the `awaiting_canary` stop already exists (#12). The gate must trust only the sandbox replay, never the agent's own `passed` (#19)
+- [x] Fake device: one scripted incident with a `code_patch` for the demo (#5, scenario `code`)
+- [ ] Flow test F11 (M8b)
 
 ### M6 · Datasets (Sun morning)
-- [ ] Labels: add or remove on a recording (ops API and a small Data page)
-- [ ] Snapshots: create an immutable dataset version from a filter
-- [ ] Exports: `regression_corpus` (P1), `traces_jsonl` (P1), `lerobot` (P2) ([telemetry doc](cloud-platform-telemetry.md) §6)
-- [ ] The gate replays against the regression corpus
-- [ ] Flow test F8
+- [x] Labels: add or remove on a recording (ops API and a small Data page) (#14)
+- [x] Snapshots: create an immutable dataset version from a filter (#14)
+- [x] Exports: `regression_corpus` (P1), `traces_jsonl` (P1) (#14); `lerobot` (P2) cut: refused with a 422 (#14, K1) ([telemetry doc](cloud-platform-telemetry.md) §6)
+- [x] The gate replays against the regression corpus; a candidate fails only on a regression (#18)
+- [x] Flow test F8 (#14)
 
 ## 4. Checkpoints (every ~90 minutes, ≤10 minutes each)
 
@@ -141,7 +161,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 4. Behind schedule? Cut from the bottom of §6 and write the cut into the tracker's notes.
 5. Write down any decision made in the decision log, and commit.
 
-Fixed checkpoints: **5:15 PM** (M0), **7:30 PM**, **9:30 PM**, **11:30 PM**, **12:30 AM** (overnight launch: go/no-go), **7:30 AM**, **9:00 AM**, **10:00 AM** (freeze).
+Fixed checkpoints: **5:15 PM** (M0), **7:30 PM**, **9:30 PM**, **11:30 PM**, overnight launch, **7:30 AM**, **9:00 AM**, **10:00 AM** (freeze).
 
 ## 5. Risk register
 
@@ -184,7 +204,7 @@ When behind, cut from the right. Never cut a Must to add a Could (`~/git2/docs/1
 |---|---|---|---|
 | Device teammate (TBD, D14) | M8 blockers B1 (device code and tests in the repo), B2/B3 (code-package and `code_patch` contract), B7 (sim-twin canary). Agreement on contracts v0.1, **including the frozen dataset schema** (telemetry §8); first real check-in; one real incident with an overlay and recordings; answers to telemetry §11's open questions (rollout or scripted stack; Hermes or not) | 5:15 PM / 9:30 PM / Sun 9:00 AM | Fake fleet only; the real arm stays off the demo path |
 | Whoever owns Naïve for the team | API key with board scopes; `fleet-ops` declared in `naive/naive.config.json`; Mobilerun bearer in the vault, bound to fleet-ops; a Naïve budget on fleet-ops ([Naïve integration](cloud-platform-naive-integration.md) §3.5–3.6) | 5:15 PM (key) / 11:30 PM (agent) | `NAIVE_MODE=fake`; show the card payload instead |
-| LLM access | API key, or a RunPod endpoint for batch explanations | 5:15 PM | `LLM_MODE=fake` (templated text) |
+| LLM access | API key, or a RunPod endpoint for batch explanations | 5:15 PM · **done:** the team's Naïve key works on the model proxy (`openai/gpt-oss-120b`; [Naïve integration](cloud-platform-naive-integration.md) §5) | `LLM_MODE=fake` (templated text) |
 
 ## 8. How this plan changes
 
