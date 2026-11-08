@@ -44,9 +44,22 @@ _HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 _DEV_NULL = "/dev/null"
 # git mode lines. A symlink or a submodule gitlink is never a valid code_patch: applied on a
 # host, a symlink makes later writes or reads escape the code dir.
-_MODE_LINE = re.compile(r"^(?:new file mode|deleted file mode|new mode|old mode) (\d{6})\s*$")
-_INDEX_MODE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+ (\d{6})\s*$")
-_LINK_MODES = {"120000": "symlink", "160000": "submodule (gitlink)"}
+# Any digit count: `git apply` reads the mode as octal, so `0120000` is a symlink too.
+_MODE_LINE = re.compile(r"^(?:new file mode|deleted file mode|new mode|old mode) (\d+)\s*$")
+_INDEX_MODE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+ (\d+)\s*$")
+_FILE_TYPE = 0o170000
+_LINK_MODES = {0o120000: "symlink", 0o160000: "submodule (gitlink)"}
+
+
+def _mode_problem(raw: str) -> str | None:
+    """Why a git mode can't be in a code_patch: a symlink, a gitlink, or not octal at all."""
+    try:
+        kind = _LINK_MODES.get(int(raw, 8) & _FILE_TYPE)
+    except ValueError:
+        return f"unreadable mode {raw!r}"
+    return f"{kind} (mode {raw})" if kind else None
+
+
 _ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
 
 
@@ -230,10 +243,10 @@ def summarize_code_patch(code_patch: str | None) -> PatchSummary:
         elif line == "GIT binary patch":
             c.problems.append(f"line {n}: binary change; a code_patch must be a text diff")
         elif mode := _MODE_LINE.match(line) or _INDEX_MODE.match(line):
-            if mode.group(1) in _LINK_MODES:
+            problem = _mode_problem(mode.group(1))
+            if problem:
                 c.problems.append(
-                    f"line {n}: {_LINK_MODES[mode.group(1)]} (mode {mode.group(1)}); "
-                    "a code_patch may only change regular files"
+                    f"line {n}: {problem}; a code_patch may only change regular files"
                 )
         else:
             match = _HUNK.match(line)
@@ -285,9 +298,13 @@ def patch_paths(code_patch: str | None) -> list[str]:
     return list(summarize_code_patch(code_patch).paths)
 
 
-def _under(path: str, prefix: str) -> bool:
-    pre = str(PurePosixPath(prefix))
-    return pre == "." or path == pre or path.startswith(pre + "/")
+def is_under(path: str, prefix: str) -> bool:
+    """True if `path` is `prefix` or inside it, compared after normalization and
+    case-insensitively: on a case-insensitive filesystem (macOS, Docker Desktop mounts)
+    `SAFETY/x.py` and `./safety/x.py` are the same file as `safety/x.py`."""
+    pre = str(PurePosixPath(prefix.removeprefix("./"))).casefold()
+    norm = str(PurePosixPath(path.removeprefix("./"))).casefold()
+    return pre == "." or norm == pre or norm.startswith(pre + "/")
 
 
 def touches_safety(code_patch: str | None, safety_paths: Iterable[str]) -> bool:
@@ -302,4 +319,4 @@ def touches_safety(code_patch: str | None, safety_paths: Iterable[str]) -> bool:
     if summary.problems or summary.rejected_paths:
         return True
     prefixes = list(safety_paths)
-    return any(_under(p, pre) for p in summary.paths for pre in prefixes)
+    return any(is_under(p, pre) for p in summary.paths for pre in prefixes)
