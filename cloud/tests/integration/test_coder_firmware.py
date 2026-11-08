@@ -20,7 +20,7 @@ import pytest
 from romulus_cloud.adapters.coder import Sandbox, subprocess_runner
 
 ROOT = Path(__file__).resolve().parents[3]
-IMAGE = "romulus-coder:it"
+IMAGE = os.environ.get("CODER_IT_IMAGE") or "romulus-coder:it"  # tag to build
 LEFT_BEHIND = shutil.ignore_patterns("opt", "downloads", "dist", "build", "backups", "var")
 
 pytestmark = pytest.mark.skipif(

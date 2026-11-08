@@ -30,6 +30,8 @@ known-first-party = ["romulus_cloud", "romulus_contracts", "fake_device", "edge_
 
 [tool.pytest.ini_options]
 addopts = "-q --import-mode=importlib"
+# A test stuck this long dumps every thread's stack, naming what it waits on.
+faulthandler_timeout = 120
 testpaths = [
     "packages/contracts/tests",
     "cloud/tests",

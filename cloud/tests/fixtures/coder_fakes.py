@@ -8,8 +8,7 @@ with this interpreter (the toy device is our own fixture code) and prints the sa
 
 import importlib.util
 import json
-import os
-import subprocess
+import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -103,19 +102,13 @@ class FakeDocker:
         return ProcResult(0, f"banner\n{RESULT_MARKER}{json.dumps(result)}\n", "")
 
     def _run_tests(self, work: Path, cmd: str) -> dict:
-        argv = cmd.split()
-        if argv[:1] == ["python"]:
-            argv[0] = sys.executable
-        env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST")}
-        proc = subprocess.run(
-            [*argv, "-p", "no:cacheprovider"], cwd=work, capture_output=True, text=True, env=env
-        )
-        return {
-            "cmd": cmd,
-            "exit_code": proc.returncode,
-            "output": proc.stdout + proc.stderr + self.extra_output,
-            "timed_out": False,
-        }
+        """The image's own `run_tests` (clean env, `python -P -m`, a JUnit report outside the
+        work dir), with `python` meaning this interpreter."""
+        here = cmd
+        if cmd.split()[:1] == ["python"]:
+            here = shlex.quote(sys.executable) + cmd[len("python") :]
+        result = run_agent.run_tests(here, 120, work=str(work))
+        return {**result, "cmd": cmd, "output": result["output"] + self.extra_output}
 
     @property
     def run_call(self) -> dict:
