@@ -37,6 +37,7 @@ from romulus_cloud.services import (
     datasets,
     doctor,
     gate,
+    runs,
     technician,
     telemetry,
     workorders,
@@ -97,15 +98,35 @@ STEPS += [
 ]
 
 
+def learning_tick(session: Session, now: datetime) -> object:
+    """Fleet learning (docs/recursive-self-improvement/design.md §9): keep the standing
+    `fleet-runs` dataset snapshotted and exported (plain code, no model)."""
+    settings = get_settings()
+    if settings.learning_mode == "off":
+        return None
+    done = runs.ensure_standing_dataset(session, now, settings)
+    # Hook: LEARNING_MODE=fixture|live runs one cluster review here (design §4, lane C:
+    # `services/review.py`), after the dataset, within the Doctor's caps (D25, draft D31).
+    return done
+
+
+# Fleet learning: the standing dataset every 30 s. `steps_for` leaves it out while
+# LEARNING_MODE=off (the default).
+LEARNING_STEP = "learning.tick"
+STEPS.append(Step(LEARNING_STEP, learning_tick, every_s=30))
+
+
 def steps_for(settings: Settings) -> list[Step]:
     """The steps the worker runs: `STEPS` with settings applied. Importing this module never
     reads `.env`, so this happens when the worker starts (changing a setting needs a
     restart). DOCTOR_MODE=off leaves `doctor.tick` out entirely, so an off Doctor writes no
     step log line every few seconds; DOCTOR_TICK_S sets its cadence. TECHNICIAN_MODE=off
-    leaves out both technician steps the same way."""
+    leaves out both technician steps the same way, and LEARNING_MODE=off `learning.tick`."""
     steps = [s for s in STEPS if s.name != "doctor.tick" or settings.doctor_mode != "off"]
     if settings.technician_mode == "off":
         steps = [s for s in steps if s.name not in TECHNICIAN_STEPS]
+    if settings.learning_mode == "off":
+        steps = [s for s in steps if s.name != LEARNING_STEP]
     every = {"doctor.tick": settings.doctor_tick_s}
     return [replace(s, every_s=every[s.name]) if s.name in every else s for s in steps]
 

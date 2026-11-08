@@ -66,7 +66,9 @@ def test_the_doctor_tick_is_a_step_on_its_settings_cadence(make_settings, now):
 
     (step,) = [s for s in worker.STEPS if s.name == "doctor.tick"]
     assert step.fn is doctor.tick and step.every_s == 5
-    on = make_settings(doctor_mode="fake", doctor_tick_s=30, technician_mode="fake")
+    on = make_settings(
+        doctor_mode="fake", doctor_tick_s=30, technician_mode="fake", learning_mode="data"
+    )
     (bound,) = [s for s in worker.steps_for(on) if s.name == step.name]
     assert bound.every_s == 30 and bound.fn is doctor.tick
     assert [s.name for s in worker.steps_for(on)] == [s.name for s in worker.STEPS]
@@ -79,7 +81,7 @@ def test_an_off_doctor_is_not_a_step_at_all(make_settings):
 
     names = [s.name for s in worker.steps_for(make_settings())]  # DOCTOR_MODE=off
     assert "doctor.tick" not in names
-    off = ("doctor.tick", *worker.TECHNICIAN_STEPS)  # TECHNICIAN_MODE=off too
+    off = ("doctor.tick", *worker.TECHNICIAN_STEPS, worker.LEARNING_STEP)  # all off
     assert names == [s.name for s in worker.STEPS if s.name not in off]
     assert worker.steps_for(make_settings())[0] is worker.STEPS[0]  # others untouched
 
@@ -92,3 +94,17 @@ def test_an_off_technician_is_not_a_step_at_all(make_settings):
     on = [s.name for s in worker.steps_for(make_settings(technician_mode="fake"))]
     assert not set(worker.TECHNICIAN_STEPS) & set(off)
     assert set(worker.TECHNICIAN_STEPS) <= set(on)
+
+
+def test_learning_is_a_step_only_when_on(make_settings):
+    """LEARNING_MODE=off (the default) leaves `learning.tick` out; `data` runs it every 30 s."""
+    from romulus_cloud import worker
+
+    off = [s.name for s in worker.steps_for(make_settings())]
+    (on,) = [
+        s
+        for s in worker.steps_for(make_settings(learning_mode="data"))
+        if s.name == worker.LEARNING_STEP
+    ]
+    assert worker.LEARNING_STEP not in off
+    assert on.fn is worker.learning_tick and on.every_s == 30

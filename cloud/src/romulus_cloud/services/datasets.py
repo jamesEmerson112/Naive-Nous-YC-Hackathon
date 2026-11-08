@@ -199,6 +199,7 @@ def create_dataset(
     actor: str,
     fleet_id: str,
     now: datetime,
+    actor_class: str = "human",
 ) -> Dataset:
     if not name.strip():
         raise _bad("A dataset needs a name.")
@@ -213,7 +214,7 @@ def create_dataset(
     events.record(
         session,
         actor,
-        "human",
+        actor_class,
         CREATED,
         {"dataset": ds.id},
         f"{actor.split(':', 1)[-1]} saved dataset {ds.name!r} ({purpose}) with filter "
@@ -249,7 +250,9 @@ def list_versions(session: Session, dataset_id: str) -> list[DatasetVersion]:
     return list(session.scalars(stmt.order_by(DatasetVersion.n)))
 
 
-def snapshot(session: Session, dataset_id: str, *, actor: str, now: datetime) -> DatasetVersion:
+def snapshot(
+    session: Session, dataset_id: str, *, actor: str, now: datetime, actor_class: str = "human"
+) -> DatasetVersion:
     """Freeze the dataset filter's current matches into version n+1.
 
     Recordings match the filter; incidents join through a matching recording, or on their
@@ -294,7 +297,12 @@ def snapshot(session: Session, dataset_id: str, *, actor: str, now: datetime) ->
     # Context for every incident an export may mention, including a trace's own incident.
     context_ids = incident_ids | {r.incident_id for r in recs if r.incident_id}
     manifest, digest = dd.snapshot_manifest(
-        ds.id, n, ds.filter, frozen_recs, incident_ids, freeze_context(session, context_ids)
+        ds.id,
+        n,
+        ds.filter,
+        frozen_recs,
+        incident_ids,
+        freeze_context(session, context_ids, fleet_id=ds.fleet_id),
     )
     version = DatasetVersion(
         dataset_id=ds.id,
@@ -309,7 +317,7 @@ def snapshot(session: Session, dataset_id: str, *, actor: str, now: datetime) ->
     events.record(
         session,
         actor,
-        "human",
+        actor_class,
         SNAPSHOTTED,
         {"dataset": ds.id},
         f"{actor.split(':', 1)[-1]} froze dataset {ds.name!r} as v{n}: "
@@ -356,6 +364,7 @@ def request_export(
     redact: bool,
     actor: str,
     now: datetime,
+    actor_class: str = "human",
 ) -> Export:
     """Queue an export of one dataset version; the worker builds it (`run_exports`).
 
@@ -378,11 +387,12 @@ def request_export(
     )
     session.add(exp)
     session.flush()
-    how = " with secrets and home paths redacted" if redact and fmt == "traces_jsonl" else ""
+    redacts = fmt == dd.TRAJECTORIES or (redact and fmt == "traces_jsonl")
+    how = " with secrets and home paths redacted" if redacts else ""
     events.record(
         session,
         actor,
-        "human",
+        actor_class,
         EXPORT_REQUESTED,
         {"dataset": dataset_id, "export": exp.id},
         f"{actor.split(':', 1)[-1]} asked for a {fmt} export of dataset {dataset_id} "
@@ -435,11 +445,20 @@ def _code_patch(inc: Incident) -> bool:
     return bool(isinstance(overlay, dict) and overlay.get("code_patch"))
 
 
-def freeze_context(session: Session, incident_ids: set[str]) -> dict[str, dict[str, Any]]:
+def freeze_context(
+    session: Session, incident_ids: set[str], *, fleet_id: str = "default"
+) -> dict[str, dict[str, Any]]:
     """The per-incident state exports read, as of now: the incident's facts plus its
-    overlay's status and lock-in and its work order, which change after the snapshot."""
+    overlay's status and lock-in and its work order, which change after the snapshot, and
+    its labelled runs (the agent-run report's steps plus the verdict computed now), so a
+    `trajectories` export reads only the frozen manifest (fleet learning, design §3)."""
     if not incident_ids:
         return {}
+    from romulus_cloud.services import runs  # runs imports this module (the standing dataset)
+
+    labelled: dict[str, list[dict[str, Any]]] = {}
+    for lr in runs.load(session, fleet_id=fleet_id, incident_ids=set(incident_ids)):
+        labelled.setdefault(lr.incident_id or "", []).append(lr.to_dict())
     out = {}
     for inc in session.scalars(select(Incident).where(Incident.id.in_(incident_ids))):
         overlay = session.get(Overlay, (inc.device_id, inc.overlay_id)) if inc.overlay_id else None
@@ -461,6 +480,7 @@ def freeze_context(session: Session, incident_ids: set[str]) -> dict[str, dict[s
             "overlay_outcome": overlay.status if overlay else None,
             "locked_into": overlay.candidate_id if overlay else None,
             "work_order": work_order,
+            "labelled_runs": labelled.get(inc.id, []),
         }
     return out
 
@@ -570,6 +590,21 @@ def _traces_files(manifest: dict[str, Any], store: BlobStore, redact: bool) -> t
     return files, {"traces": len(lines), "evals": len(evals)}
 
 
+def _trajectory_files(
+    manifest: dict[str, Any], name: str, n: int, snapshot_sha256: str
+) -> tuple[dict, dict]:
+    """`trajectories.jsonl` (one Hermes trajectory per pass/fail run, `completed` = the
+    verdict) and `DATASET_CARD.md`, from the labelled runs frozen in the snapshot only."""
+    incidents = _by_time(manifest["context"], manifest["incident_ids"])
+    runs = [r for inc in incidents for r in inc.get("labelled_runs") or []]
+    runs.sort(key=lambda r: (r["started_at"], r["id"]))
+    rows = [dd.redact(dd.trajectory(r)) for r in runs if r["verdict"] in dd.LABELLED_VERDICTS]
+    card = dd.dataset_card(name, n, snapshot_sha256, runs)
+    files = {"trajectories.jsonl": dd.jsonl(rows), "DATASET_CARD.md": card.encode()}
+    by = {v: sum(1 for r in runs if r["verdict"] == v) for v in dd.CARD_VERDICTS}
+    return files, {"trajectories": len(rows), **{f"runs_{k}": v for k, v in by.items()}}
+
+
 def build_export(session: Session, exp: Export, store: BlobStore) -> tuple[bytes, dict[str, Any]]:
     """The export's tar bytes and its manifest, built only from the snapshot's frozen
     manifest and the blobs it names: same snapshot → same bytes, or an ExportError (F8)."""
@@ -581,6 +616,9 @@ def build_export(session: Session, exp: Export, store: BlobStore) -> tuple[bytes
         files, counts = _regression_files(frozen)
     elif exp.format == "traces_jsonl":
         files, counts = _traces_files(frozen, store, redact)
+    elif exp.format == dd.TRAJECTORIES:
+        redact = True  # always: rows carry device text and model thoughts (telemetry §10)
+        files, counts = _trajectory_files(frozen, ds.name, exp.n, version.manifest_sha256)
     else:
         raise ValueError(f"unknown export format {exp.format!r}")
     root = f"{exp.format}_{ds.id}_v{exp.n}"
