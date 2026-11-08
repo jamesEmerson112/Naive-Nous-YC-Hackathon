@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sat Nov 7, 10:09 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 10:19 PM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -99,7 +99,6 @@ Bench board token (scoped MCP session)
 MODELS
 OpenAI key for bench Hermes             <--- James
 RunPod LLM endpoint (D22, optional)
-Laptop serves qwen3.5:4b to the Pi over Ethernet (server/) <--- Olir
 
 NVIDIA SIM
 NVIDIA sim on RunPod
@@ -123,6 +122,7 @@ ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
 Fleet Doctor proposal (D23-D28)         <--- Kent
 Real device/ code in coder path (B1, #38) <--- Kent
+Fleet Doctor PR 7: real evidence (#44)  <--- Kent
 
 PI 5
 Device side owner (D14)                 <--- Ishaan
@@ -216,3 +216,4 @@ Romulus: Fleet Doctor L2 consult + proposals (#35) <--- Kent
 Romulus: Fleet Doctor device reference code <--- Kent
 Romulus: Fleet Doctor lock-in, PR 9 (#39) <--- Kent
 SO-101: Pod healer agent loop + blind eval (HARNESS.md) <--- Ishaan
+Models: Laptop serves qwen3.5:4b to the Pi over Ethernet (server/) <--- Olir
