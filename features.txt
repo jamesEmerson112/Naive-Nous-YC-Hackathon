@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sun Nov 8, 1:30 AM PST from CLAUDE.md, commits and docs/.
+Updated Sun Nov 8, 1:40 AM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -145,7 +145,6 @@ Pod healer tools: podd, triage rules, 38 heal tools <--- Olir
 Pod healer bench runs + baseline (firmware/harness/HANDOFF.md) <--- Olir
 Frozen-ultrasonic triage rule (gap found)
 Teleop recording + motion primitives (arm/teleop-recording) <--- Andre
-MuJoCo arm sim + fault factory (james/arm-sim) <--- James
 
 DEMO AND FAULTS
 Plant demo faults D1-D3                 <--- Ishaan
@@ -223,3 +222,4 @@ SO-101: Pod healer agent loop + blind eval (HARNESS.md) <--- Ishaan
 Models: Laptop serves qwen3.5:4b to the Pi over Ethernet (server/) <--- Olir
 Romulus: Real device/ code in coder path (B1, #38) <--- Kent
 Demo and faults: Ultrasonic bad image 07 + arm heal test (agent rolls back, arm runs) <--- Olir
+SO-101: MuJoCo arm sim + fault factory (james/arm-sim) <--- James
