@@ -43,6 +43,10 @@ def andre_library(library=REPO / "arm" / "prims" / "library"):
     poses.json is {name: {joint: deg}}; wave.json is {name, fps, joints, frames}."""
     poses_file = library / "poses.json"
     poses = json.loads(poses_file.read_text()) if poses_file.exists() else {}
+    if poses:                                  # a skill pose not taught yet is None: goto() refuses it
+        from .host import Skills
+        for name in Skills.NEEDED:
+            poses.setdefault(name, None)
     wave_file = library / "wave.json"
     wave = json.loads(wave_file.read_text()) if wave_file.exists() else None
     return poses, wave
@@ -168,6 +172,9 @@ class RealArm:
             self.tick()
 
     def goto(self, pose, duration=1.5, *, tol_deg=2.0, settle_timeout=2.0):
+        if pose is None:
+            raise RuntimeError("that pose isn't taught on the real arm (arm/prims/library/poses.json): "
+                               "teach it with Andre first (arm/bin/prim-record.sh --pose <name>)")
         start = self._read_vec() if self._goal is None else self._goal.copy()
         goal = self._vec(pose)
         n = max(1, round(duration * self.fps))
