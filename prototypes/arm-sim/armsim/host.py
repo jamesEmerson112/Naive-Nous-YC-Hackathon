@@ -137,7 +137,10 @@ def approach(arm, poses, *, step_m=0.005, max_steps=20):
 def lift(arm, *, up_m=0.03):
     """Lift 30 mm straight up, then check the grasp still holds."""
     tip, _ = arm.tip()
-    pose = arm.solve((tip[0], tip[1], tip[2] + up_m), seed=list(arm.read().values()))  # keeps the gripper squeezing
+    try:
+        pose = arm.solve((tip[0], tip[1], tip[2] + up_m), seed=list(arm.read().values()))  # keeps the gripper squeezing
+    except ValueError as exc:
+        return {"arrived": False, "aborted": str(exc), "grasp": arm.grasp_check()}
     r = arm.goto(pose, duration=0.8)
     arm.hold(0.3)
     return {**r, "grasp": arm.grasp_check()}
@@ -168,20 +171,41 @@ class Watchdog:
     def __call__(self, arm):
         if self.open():
             return
-        crit = [f for f in level1.run({"now": arm.t, "D": list(arm.d_rows)}) if f["severity"] == "critical"]
-        if not crit:
-            return
-        f = crit[0]
+        snap = {"now": arm.t, "D": list(arm.d_rows), "holding": arm.grasp_check()["holding"]}
+        found = [f for f in level1.run(snap) if f["severity"] in ("critical", "warn")]
+        if found:
+            self._open(found[0])
+
+    def arrival(self, result):
+        """After a skill: a move that didn't arrive opens a joint_stall incident."""
+        if self.open():
+            return None
+        load = None
+        if result.get("worst_joint"):
+            from .arm import JOINTS
+            i = JOINTS.index(result["worst_joint"])
+            load = float(abs(self.arm.d.actuator_force[self.arm._act][i]))
+        found = level1.check_arrival(result, load_nm=load)
+        return self._open(found[0]) if found else None
+
+    def _open(self, f):
+        arm = self.arm
         inc = {"id": f"inc-{len(self.incidents) + 1}", "state": "open", "opened_at": round(arm.t, 2), **f}
         inc["spoken"] = speak(f["summary"], out=RUNS / f"{self.rec.run_id}-{inc['id']}.aiff")
         self.incidents.append(inc)
         arm.halt_reason = f["kind"]
         print(f"WATCHDOG {inc['id']} {f['kind']}: {f['summary']}", flush=True)
+        return inc
 
     def repair(self, action):
         """Fix the cause (sim: the planted fault), then verify on fresh rows before closing."""
         if action != "restart_sensor":
             return {"ok": False, "error": f"unknown repair {action!r}; known: ['restart_sensor']"}
+        other = [i for i in self.open() if i["kind"] not in ("us_frozen", "us_stuck")]
+        if other:
+            i = other[0]
+            return {"ok": False, "error": f"restart_sensor doesn't fix {i['kind']} ({i['summary']})",
+                    "next_steps": i.get("next_steps", [])}
         self.arm.clear("us_frozen")
         self.arm.d_rows.clear()
         self.arm.hold(3.5)                             # fresh readings, arm still parked
@@ -237,7 +261,9 @@ def serve(*, gif=False, view=False, realtime=False):
                         "incidents": dog.open()}
             result = getattr(skills, name)()
             reply = {"ok": True, "skill": name, "result": result, "t": round(arm.t, 2)}
-            if result.get("halted"):
+            if not result.get("halted") and name != "park":
+                dog.arrival(result)
+            if result.get("halted") or dog.open():
                 reply.update(parked=skills.park(), incident=dog.open()[0] if dog.open() else None)
             return reply
         if op == "read":

@@ -42,7 +42,10 @@ class RunRecorder:
         self.rows["D"] += 1
         self._write({"kind": "D", "t": round(t, 4), **row})
 
-    def close(self, outcome, findings=()):
-        self._write({"kind": "end", "outcome": outcome, "findings": list(findings), "rows": self.rows})
+    def close(self, outcome, findings=(), label=None):
+        end = {"kind": "end", "outcome": outcome, "findings": list(findings), "rows": self.rows}
+        if label is not None:
+            end["label"] = label            # the final label, e.g. with the fault's onset time
+        self._write(end)
         self._f.close()
         return self.path

@@ -45,7 +45,10 @@ def check_ultrasonic_frozen(s, *, seconds=4.0, min_rows=30):
 
 
 def check_distance_residual(s, *, seconds=2.0, min_rows=12, moved_mm=10.0):
-    """Arm-aware rule. D rows here carry `pred_mm`: the distance the arm's pose predicts."""
+    """Arm-aware rule. D rows here carry `pred_mm`: the distance the arm's pose predicts.
+    Suspended while the gripper holds something (`s["holding"]`): a held block sits in the beam."""
+    if s.get("holding"):
+        return []
     rows = [d for d in _window(s["D"], s["now"], seconds) if d.get("st") == "ok" and d.get("pred_mm") is not None]
     if len(rows) < min_rows:
         return []
@@ -70,6 +73,18 @@ def check_distance_residual(s, *, seconds=2.0, min_rows=12, moved_mm=10.0):
     pred = [float(d["pred_mm"]) for d in rows]
     moved = max(pred) - min(pred)
     if moved < moved_mm:
+        # Holding still: a steady gap to the kinematics still shows a sensor that reads wrong.
+        # At one height an offset and a scale error look the same, so name the gap and its ratio.
+        res = [m - p for m, p in zip(meas, pred)]
+        gap, spread = statistics.median(res), _std(res)
+        ratio = statistics.median(m / p for m, p in zip(meas, pred) if p > 0)
+        if spread < 3 and abs(gap) > 8:
+            return [_f("us_offset", "warn",
+                       "Reads %d mm %s against the arm's kinematics (%.2fx)" % (abs(round(gap)), "long" if gap > 0 else "short", ratio),
+                       {"n": len(rows), "gap_mm": round(gap, 1), "ratio": round(ratio, 3), "spread_mm": round(spread, 2)},
+                       ["a calibration offset or a units/clock bug in the pod firmware", "the sensor mount moved"],
+                       ["move to two more heights: a constant gap means offset, a constant ratio means scale",
+                        "chip_clock", "fw_rollback"])]
         return []
     # Fit measured = a * predicted + b, but only when the reading actually follows the pose
     # (correlation >= 0.95); a flat or erratic reading is not a calibration or scale error.
@@ -94,7 +109,61 @@ def check_distance_residual(s, *, seconds=2.0, min_rows=12, moved_mm=10.0):
     return []
 
 
+def check_ultrasonic_noise(s, *, seconds=2.0, min_rows=12, max_std_us=4.0):
+    """While the arm holds still, a healthy HC-SR04 jitters about 1 us. Much more is abnormal
+    (note's table: "Jitters +-X mm at rest"). Plain code still filters it; this names it."""
+    if s.get("holding"):
+        return []
+    rows = [d for d in _window(s["D"], s["now"], seconds) if d.get("st") == "ok" and d.get("pred_mm") is not None]
+    if len(rows) < min_rows or max(d["pred_mm"] for d in rows) - min(d["pred_mm"] for d in rows) > 2.0:
+        return []
+    sd = _std([d["us"] for d in rows])
+    if sd <= max_std_us:
+        return []
+    return [_f("us_noisy", "warn", "Distance jitters +-%.1f mm at rest (a healthy sensor jitters under 0.2 mm)" % (sd * 343 / 2000),
+               {"n": len(rows), "std_us": round(sd, 1), "std_mm": round(sd * 343 / 2000, 2)},
+               ["a loose ECHO/TRIG wire or marginal connection", "electrical noise from the servo power", "a soft or angled target"],
+               ["pod_cmd 'us check'", "take more readings and use the median ('rate us 16')",
+                "notify_human: reseat the HC-SR04 wires"])]
+
+
+def check_missing_echo(s, *, seconds=2.0, min_rows=12, frac=0.7):
+    """No echo while the arm's pose says a surface is within range: the sensor points somewhere
+    the software doesn't think it does (a reversed joint, a bent mount) or it lost its echo."""
+    if s.get("holding"):
+        return []
+    rows = [d for d in _window(s["D"], s["now"], seconds) if d.get("pred_mm") is not None and 30 <= d["pred_mm"] <= 400]
+    if len(rows) < min_rows:
+        return []
+    bad = [d for d in rows if d.get("st") != "ok"]
+    if len(bad) / len(rows) < frac:
+        return []
+    near = statistics.median(d["pred_mm"] for d in rows)
+    return [_f("us_missing_echo", "warn",
+               "No echo for %d of %d readings where the arm's pose says a surface is %d mm away" % (len(bad), len(rows), round(near)),
+               {"n": len(rows), "no_echo": len(bad), "pred_mm": round(near)},
+               ["the sensor points somewhere the software doesn't expect (a reversed joint, a bent mount)",
+                "the ECHO or TRIG wire is off"],
+               ["compare the joint readings with a camera frame", "pod_cmd 'us check'"])]
+
+
+def check_arrival(result, *, load_nm=None):
+    """A move that didn't arrive (the arrival check the real host still lacks) becomes a sentence:
+    the note's example is "elbow stalled at 12 deg, load 96%"."""
+    if result.get("arrived", True) or result.get("halted") or not result.get("worst_joint"):
+        return []
+    joint, err = result["worst_joint"], float(result.get("max_err_deg", 0))
+    load = f" (load {load_nm:.1f} N*m)" if load_nm is not None else ""
+    return [_f("joint_stall", "critical",
+               "%s stopped %d deg short of its target%s" % (joint.replace("_", " ").capitalize(), round(err), load),
+               {"joint": joint, "short_by_deg": round(err, 1), "load_nm": None if load_nm is None else round(load_nm, 2)},
+               ["the servo is stuck, unpowered or overloaded", "something blocks the arm", "the joint's calibration is off"],
+               ["read the servo Status register (overload, voltage, overheat bits)",
+                "compare calibration with the last good file", "park and call a person if it persists"])]
+
+
 def run(s):
-    findings = check_ultrasonic_frozen(s) + check_distance_residual(s)
+    findings = (check_ultrasonic_frozen(s) + check_distance_residual(s) + check_ultrasonic_noise(s)
+                + check_missing_echo(s))
     order = {"critical": 0, "warn": 1, "info": 2}
     return sorted(findings, key=lambda f: order.get(f["severity"], 3))

@@ -68,19 +68,53 @@ class SimArm:
 
     # ---- units ---------------------------------------------------------------------------
     def to_ctrl(self, pose):
-        """LeRobot units (dict of `<joint>.pos`, or a list in JOINTS order) -> radians."""
+        """LeRobot units (dict of `<joint>.pos`, or a list in JOINTS order) -> servo radians."""
+        q = self._raw(pose)
+        # Planted joint faults (the fault factory): the software believes one angle, the servo
+        # physically goes to another.
+        if "joint_offset" in self.faults:          # bad calibration: a constant offset on one joint
+            f = self.faults["joint_offset"]
+            q[f["joint"]] += np.deg2rad(f["deg"])
+        if "joint_reversed" in self.faults:        # wrong direction: the joint mirrors about its zero
+            q[self.faults["joint_reversed"]["joint"]] *= -1.0
+        return np.clip(q, self._lo, self._hi)
+
+    def _raw(self, pose):
+        """LeRobot units -> radians, with no faults applied (the software's own view)."""
         if isinstance(pose, dict):
-            cur = self._units(self.d.ctrl[self._act])
+            cur = self._units(self._believed(self.d.ctrl[self._act]))
             pose = [pose.get(f"{j}.pos", pose.get(j, c)) for j, c in zip(JOINTS, cur)]
         vals = np.array(pose, dtype=float)
-        q = np.deg2rad(vals[:5])
         g = self._lo[5] + (self._hi[5] - self._lo[5]) * np.clip(vals[5], 0, 100) / 100.0
-        return np.clip(np.append(q, g), self._lo, self._hi)
+        return np.append(np.deg2rad(vals[:5]), g)
+
+    def _belief_data(self):
+        """MjData posed where the software believes the arm is (the physical pose if no joint fault)."""
+        if "joint_offset" not in self.faults and "joint_reversed" not in self.faults:
+            return self.d
+        if not hasattr(self, "_dbelief"):
+            self._dbelief = mujoco.MjData(self.m)
+        d = self._dbelief
+        d.qpos[:] = self.d.qpos
+        d.qpos[self._qadr] = self._believed(self.d.qpos[self._qadr])
+        mujoco.mj_kinematics(self.m, d)
+        return d
 
     def _units(self, q):
         q = np.asarray(q, dtype=float)
         g = (q[5] - self._lo[5]) / (self._hi[5] - self._lo[5]) * 100.0
         return np.append(np.rad2deg(q[:5]), g)
+
+    def _believed(self, q):
+        """What the encoders report. With a planted calibration fault the software believes a
+        different angle than the physical one; the residual check exists to catch exactly that."""
+        q = np.array(q, dtype=float)
+        if "joint_offset" in self.faults:
+            f = self.faults["joint_offset"]
+            q[f["joint"]] -= np.deg2rad(f["deg"])
+        if "joint_reversed" in self.faults:
+            q[self.faults["joint_reversed"]["joint"]] *= -1.0
+        return q
 
     # ---- the real host's methods ------------------------------------------------------------
     @property
@@ -88,7 +122,8 @@ class SimArm:
         return float(self.d.time)
 
     def read(self):
-        return {f"{j}.pos": float(v) for j, v in zip(JOINTS, self._units(self.d.qpos[self._qadr]))}
+        believed = self._believed(self.d.qpos[self._qadr])
+        return {f"{j}.pos": float(v) for j, v in zip(JOINTS, self._units(believed))}
 
     def send(self, action):
         self._torque(True)
@@ -101,7 +136,8 @@ class SimArm:
         force = np.abs(self.d.actuator_force[self._act])
         self._at_limit = np.where(force >= 0.95 * self._flimit, self._at_limit + dt, 0.0)
         if self.recorder:
-            self.recorder.joints(self.t, self._units(self.d.ctrl[self._act]), self._units(self.d.qpos[self._qadr]),
+            self.recorder.joints(self.t, self._units(self._believed(self.d.ctrl[self._act])),
+                                 self._units(self._believed(self.d.qpos[self._qadr])),
                                  self.d.actuator_force[self._act], self.status())
         if self.t + 1e-9 >= self._next_d:
             self._next_d += 1.0 / POD_RATE_HZ
@@ -190,6 +226,10 @@ class SimArm:
         if on:
             self.m.actuator_gainprm[self._act] = self._gain
             self.m.actuator_biasprm[self._act] = self._bias
+            if "joint_stuck" in self.faults:     # a stuck servo stays stuck when torque comes back
+                a = self._act[self.faults["joint_stuck"]["joint"]]
+                self.m.actuator_gainprm[a] = 0.0
+                self.m.actuator_biasprm[a] = 0.0
         else:
             self.m.actuator_gainprm[self._act] = 0.0
             self.m.actuator_biasprm[self._act] = 0.0
@@ -216,15 +256,26 @@ class SimArm:
         if dist_m < 0 or dist_m >= self.m.sensor_cutoff[self.m.sensor("ultrasonic").id] - 1e-6:
             row = {"mm": None, "us": None, "st": "no_echo"}    # nothing within 4 m: no echo comes back
         else:
-            us = int(round(dist_m * 1000.0 * 2000.0 / 343.0 + self.rng.normal(0.0, US_JITTER)))
+            true_mm = dist_m * 1000.0
+            if "us_offset" in self.faults:      # calibration: reads N mm long or short everywhere
+                true_mm += self.faults["us_offset"]["mm"]
+            if "us_scale" in self.faults:       # a clock/units bug, e.g. firmware v1.2's half-speed clock
+                true_mm *= self.faults["us_scale"]["factor"]
+            jitter = self.faults.get("us_noisy", {}).get("us", US_JITTER)
+            us = int(round(max(true_mm, 0.0) * 2000.0 / 343.0 + self.rng.normal(0.0, jitter)))
             mm = (us * 343 + 1000) // 2000
             row = {"mm": mm, "us": us, "st": "ok" if mm >= MIN_MM else "out_of_range"}
         self._last_d = row
         return dict(row)
 
     def inject(self, fault, **params):
-        """Plant a fault. `us_frozen`: the distance stops changing (the gap in Olir's rules)."""
+        """Plant a fault (sim only). Sensor: `us_frozen`, `us_offset` (mm), `us_scale` (factor),
+        `us_noisy` (us). Joints: `joint_stuck`, `joint_offset` (deg), `joint_reversed` (joint index)."""
         self.faults[fault] = {"at": round(self.t, 3), **params}
+        if fault == "joint_stuck":               # the servo stops following: no torque on that joint
+            a = self._act[params["joint"]]
+            self.m.actuator_gainprm[a] = 0.0
+            self.m.actuator_biasprm[a] = 0.0
         return self.faults[fault]
 
     def clear(self, fault=None):
@@ -235,15 +286,17 @@ class SimArm:
 
     # ---- kinematics (MuJoCo's own; replaces Placo for the residual check) --------------------
     def tip(self):
-        """Fingertip position (m) and approach axis (unit vector) in the world frame."""
-        return self.d.site_xpos[self._tip].copy(), self.d.site_xmat[self._tip].reshape(3, 3)[:, 0].copy()
+        """Fingertip position (m) and approach axis (unit vector), as the software believes them."""
+        d = self._belief_data()
+        return d.site_xpos[self._tip].copy(), d.site_xmat[self._tip].reshape(3, 3)[:, 0].copy()
 
     def predicted_mm(self, table_z=0.0, *, objects=()):
         """Distance the sensor *should* read: along the approach axis to the table, or to an
         object top if one is in the way. `objects` are (x, y, top_z, half_size) boxes."""
         sid = self.m.site("ultrasonic").id
-        p = self.d.site_xpos[sid]
-        a = self.d.site_xmat[sid].reshape(3, 3)[:, 2]
+        d = self._belief_data()          # predict from what the encoders believe
+        p = d.site_xpos[sid]
+        a = d.site_xmat[sid].reshape(3, 3)[:, 2]
         if a[2] > -1e-6:
             return None
         best = (table_z - p[2]) / a[2]
@@ -258,8 +311,8 @@ class SimArm:
         """Joint pose (LeRobot units) that puts the fingertips at `xyz` pointing straight down."""
         m, d = self.m, mujoco.MjData(self.m)
         d.qpos[:] = self.d.qpos
-        if seed is not None:
-            d.qpos[self._qadr] = self.to_ctrl(seed)
+        # Solve in the software's own (believed) joint space; the servos apply any planted fault.
+        d.qpos[self._qadr] = self._raw(seed) if seed is not None else self._believed(self.d.qpos[self._qadr])
         cols = self._dadr[:4]                         # pan, lift, elbow, wrist flex
         jacp, jacr = np.zeros((3, m.nv)), np.zeros((3, m.nv))
         down = np.array([0.0, 0.0, -1.0])
@@ -282,5 +335,5 @@ class SimArm:
             raise ValueError(f"can't reach {np.round(xyz, 3).tolist()} pointing down "
                              f"(off by {miss * 1000:.0f} mm, tilted {tilt:.0f} deg)")
         out = self._units(d.qpos[self._qadr])
-        out[5] = self._units(self.d.ctrl[self._act])[5]
+        out[5] = self._units(self._believed(self.d.ctrl[self._act]))[5]
         return out.tolist()
