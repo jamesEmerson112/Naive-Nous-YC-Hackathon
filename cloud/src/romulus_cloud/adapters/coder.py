@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from romulus_contracts.codepatch import CODE_ROOT, summarize_code_patch
+from romulus_contracts.codepatch import CODE_ROOT, is_under, summarize_code_patch
 
 DEFAULT_IMAGE = "romulus-coder"
 DEFAULT_AGENT = "mini-swe-agent"
@@ -215,11 +215,11 @@ def harness_flags(changes: Iterable[tuple[str, str]]) -> tuple[str, ...]:
     """Flag a change to test config, an existing test, or the held-out verify scripts."""
     flags = []
     for status, path in changes:
-        parts = PurePosixPath(path).parts
+        parts = PurePosixPath(path.casefold().removeprefix("./")).parts  # see is_under
         name = parts[-1]
         word = _STATUS.get(status[:1], status)
         is_test = "tests" in parts[:-1] or name.startswith("test_") or name.endswith("_test.py")
-        if parts[0] == HOLDOUT_DIR:
+        if is_under(path, HOLDOUT_DIR):
             flags.append(f"verify_scripts: {path} ({word})")
         elif name in _PYTEST_CONFIG:
             flags.append(f"test_harness: {path} ({word})")
@@ -247,11 +247,11 @@ class ScratchRepo:
         commit it as the base."""
         repo = cls(root)
         repo.work.mkdir(parents=True)
-        skip = set(exclude)
+        skip = list(exclude)
         written = 0
         for name, data in files.items():
             rel = device_relative(name)
-            if rel is None or PurePosixPath(rel).parts[0] in skip:
+            if rel is None or any(is_under(rel, d) for d in skip):  # `Verify/` is held out too
                 continue
             safe_write(repo.work, rel, data)
             written += 1

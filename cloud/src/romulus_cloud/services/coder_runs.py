@@ -41,7 +41,7 @@ from romulus_cloud.adapters.coder import (
     harness_flags,
     safe_write,
 )
-from romulus_contracts.codepatch import summarize_code_patch
+from romulus_contracts.codepatch import is_under, summarize_code_patch
 
 
 @dataclass(frozen=True)
@@ -103,8 +103,15 @@ class CodeReplay:
 
     @property
     def passed(self) -> bool:
-        """What the gate needs: device tests pass and every verify test passes on the patch."""
-        return self.patched is not None and self.patched.passed and self.verify_passed
+        """What the gate needs: device tests pass and every verify test passes on the patch,
+        and nothing touched the verify scripts (belt and braces: such a patch is refused)."""
+        touched_verify = any(f.startswith("verify_scripts:") for f in self.flags)
+        return (
+            self.patched is not None
+            and self.patched.passed
+            and self.verify_passed
+            and not touched_verify
+        )
 
     @property
     def caught_fault(self) -> bool:
@@ -177,7 +184,8 @@ def _refusal(patch: str) -> str | None:
     summary = summarize_code_patch(patch)
     if summary.problems:
         return "; ".join(summary.problems)
-    held = [p for p in summary.paths if PurePosixPath(p).parts[0] == HOLDOUT_DIR]
+    # Case-insensitive: on macOS and Docker Desktop mounts `VERIFY/x` *is* `verify/x`.
+    held = [p for p in summary.paths if is_under(p, HOLDOUT_DIR)]
     if held:
         return f"it touches the held-out {HOLDOUT_DIR}/ scripts: {', '.join(held)}"
     return None
@@ -197,7 +205,7 @@ def replay_code_patch(
     files + patch. `verify_files` paths are relative to `device/` and must be under verify/."""
     extra = dict(verify_files or {})
     for name in extra:
-        if PurePosixPath(name).parts[:1] != (HOLDOUT_DIR,):
+        if PurePosixPath(name).parts[:1] != (HOLDOUT_DIR,) or ".." in PurePosixPath(name).parts:
             raise CoderError(f"verify file {name!r} must be under {HOLDOUT_DIR}/")
     env = {"CODER_TEST_CMD": test_cmd, "CODER_TEST_TIMEOUT_S": str(timeout_s)}
 

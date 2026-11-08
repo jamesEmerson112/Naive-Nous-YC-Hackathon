@@ -135,6 +135,45 @@ def test_a_patch_that_touches_the_verify_scripts_is_refused():
     assert result.patched is None and "held-out verify/" in result.patch_error
 
 
+def _replace_verify(path: str) -> str:
+    """Reviewer's case: swap the verify test for two empty tests (same count), fix nothing."""
+    old = VERIFY.decode().splitlines()
+    new = ["def test_a():", "    pass", "", "", "def test_b():", "    pass"]
+    return (
+        f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        f"@@ -1,{len(old)} +1,{len(new)} @@\n"
+        + "".join(f"-{line}\n" for line in old)
+        + "".join(f"+{line}\n" for line in new)
+    )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "VERIFY/test_verify_d1.py",  # on APFS / Docker Desktop mounts this is verify/
+        "Verify/test_verify_d1.py",
+        "vErIfY/TEST_VERIFY_D1.py",
+        "./verify/test_verify_d1.py",
+        "./VERIFY/test_verify_d1.py",
+    ],
+)
+def test_verify_scripts_are_protected_in_any_case_or_spelling(path):
+    result = replay(patch=_replace_verify(path))
+    assert result.patched is None and not result.passed, result.summary()
+    assert "held-out verify/" in result.patch_error
+
+
+def test_a_verify_scripts_flag_alone_fails_the_replay():
+    from romulus_cloud.services.coder_runs import CodeReplay, TestRun, VerifyRun
+
+    ok = TestRun(0, "")
+    verify = VerifyRun(True, tests=2, passed=2, exit_code=0)
+    clean = CodeReplay(ok, verify, ok, verify)
+    assert clean.passed
+    flagged = CodeReplay(ok, verify, ok, verify, flags=("verify_scripts: VERIFY/x.py (added)",))
+    assert not flagged.passed
+
+
 def test_patch_that_does_not_apply():
     result = replay(patch=BAD_CONTEXT)
     assert result.patched is None and not result.passed

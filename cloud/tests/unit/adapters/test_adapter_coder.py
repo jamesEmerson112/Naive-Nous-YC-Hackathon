@@ -12,6 +12,7 @@ from romulus_cloud.adapters.coder import (
     build_coder,
     build_task_prompt,
     device_relative,
+    harness_flags,
     safe_write,
 )
 from romulus_contracts.codepatch import summarize_code_patch
@@ -219,6 +220,39 @@ def test_a_key_written_into_the_code_is_redacted_from_the_diff_and_fails():
     assert KEY not in draft.diff and "[redacted]" in draft.diff
     assert KEY not in draft.notes + draft.test_output + "".join(draft.flags)
     assert draft.passed is False and "the LLM key appeared" in draft.notes
+
+
+def test_harness_flags_ignore_case_and_dot_slash():
+    flags = harness_flags(
+        [
+            ("M", "VERIFY/test_verify_d1.py"),
+            ("A", "CONFTEST.py"),
+            ("M", "./Pytest.ini"),
+            ("M", "Tests/test_gripper.py"),
+            ("A", "TESTS/test_new.py"),
+        ]
+    )
+    assert flags == (
+        "verify_scripts: VERIFY/test_verify_d1.py (modified)",
+        "test_harness: CONFTEST.py (added)",
+        "test_harness: ./Pytest.ini (modified)",
+        "existing_test: Tests/test_gripper.py (modified)",
+    )
+
+
+def test_verify_dir_in_any_case_is_held_out_of_the_agents_copy():
+    files = fakes.toy_files()
+    files["device/Verify/test_more.py"] = b"def test_x():\n    pass\n"
+    docker = fakes.FakeDocker(agent=fakes.fix_like_a_careful_engineer)
+    seen = {}
+
+    def spy(work: Path) -> None:
+        seen["names"] = {p.name for p in work.iterdir()}
+        fakes.fix_like_a_careful_engineer(work)
+
+    docker.agent = spy
+    make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", files)
+    assert not {n.casefold() for n in seen["names"]} & {"verify"}
 
 
 def test_safe_write_refuses_symlinks_and_escapes(tmp_path):
