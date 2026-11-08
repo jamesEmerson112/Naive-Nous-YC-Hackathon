@@ -67,7 +67,7 @@ from romulus_cloud.domain.triage import (
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import new_id
 from romulus_cloud.log import log_line
-from romulus_cloud.models import Device, FleetState, Incident, WorkOrder
+from romulus_cloud.models import Device, FleetState, Incident, TechnicianCase, WorkOrder
 from romulus_cloud.settings import Settings, get_settings
 from romulus_contracts import IncidentReport, Outcome
 
@@ -646,6 +646,19 @@ def _poll(session: Session, order: WorkOrder, now: datetime, naive: NaiveClient)
 # --- a person resolves an order (D19b) --------------------------------------------------
 
 
+def _technician_settled(session: Session, order: WorkOrder, status: str, now: datetime) -> None:
+    """A Naïve Technician case waiting on this order follows the person's decision (the
+    order's own event says why). A case still diagnosing is stopped by its next sync, which
+    also cancels the session."""
+    case = session.scalars(
+        select(TechnicianCase).where(TechnicianCase.work_order_id == order.id)
+    ).first()
+    if case is not None and case.status == "waiting":
+        case.status = status
+        case.updated_at = now
+        session.flush()
+
+
 def resolve(
     session: Session,
     order_id: str,
@@ -695,6 +708,7 @@ def resolve(
             )
         order.result = f"Denied by {by}: {why}"
         _set_status(session, order, "denied", say, now, actor=actor, actor_class="human")
+        _technician_settled(session, order, "stopped", now)
         return order
     if order.status not in WAITING:
         raise ApiError(
@@ -720,6 +734,28 @@ def resolve(
             actor=actor,
             actor_class="human",
         )
+        return order
+    staged = raw.get("technician_part")
+    if isinstance(staged, dict) and staged.get("cart_url"):
+        # Naïve Technician (D30): the part was checked in code; the person checks out on the
+        # vendor's page, which shows the live price, so there is no second check here.
+        result = (
+            f"Approved by {by}: {staged.get('qty')} × {staged.get('title')} at "
+            f"{staged.get('origin')}, ${staged.get('unit_usd')} each "
+            f"(cart {staged.get('cart_url')})"
+        )
+        order.result = result
+        _set_status(
+            session,
+            order,
+            "done",
+            f"{result}. {why}.",
+            now,
+            actor=actor,
+            actor_class="human",
+            data={"technician_part": staged},
+        )
+        _technician_settled(session, order, "done", now)
         return order
     if order.part == NO_PART:
         raise ApiError(

@@ -959,6 +959,58 @@ CONSULT_OUTCOME_STATUS: dict[str, tuple[str, str] | None] = {
     "gave_up": ("Fleet Doctor gave up", "bad"),
 }
 
+# --- Naïve Technician (docs/naive-technician/design.md §11) --------------------------------
+# A work order with no catalogued part goes to a Naïve agent: it diagnoses, Romulus emails
+# the technician and stages a checked part on the order; a person approves through the
+# work order, whose `workorder.*` events then move the badge on (done / denied).
+
+
+def _tc(e: EventLike) -> str:
+    return f"Naïve technician case {e.refs.get('technician_case') or ''}".rstrip()
+
+
+def _tc_diagnosed_line(e: EventLike) -> str:
+    d = _data(e)
+    part = d.get("part_title")
+    staged = f" Staged {part} for approval." if part and d.get("staged") else ""
+    return f"{_tc(e)}: {d.get('verdict') or 'diagnosed'}.{staged}"
+
+
+LINES.update(
+    {
+        "technician.opened": lambda e: f"{_tc(e)} opened for {_wo(e)}.",
+        "technician.diagnosed": _tc_diagnosed_line,
+        "technician.emailed": lambda e: (
+            f"{_tc(e)} emailed the technician: {_data(e).get('subject') or 'brief'}"
+        ),
+        "technician.failed": lambda e: f"{_tc(e)} failed: {e.why}",
+    }
+)
+LABELS.update(
+    {
+        "technician.opened": lambda e: "Naïve technician on it",
+        "technician.diagnosed": lambda e: "diagnosed by Naïve technician",
+        "technician.emailed": lambda e: "technician emailed",
+        "technician.failed": lambda e: "Naïve technician failed",
+    }
+)
+STATUS.update(
+    {
+        "technician.opened": ("Naïve technician on it", "info"),
+        "technician.diagnosed": ("diagnosed: waiting on you", "bad"),
+        "technician.failed": ("Naïve technician failed", "bad"),
+    }
+)
+# After the work-order stages (60-62): one tick can create the order and open the case.
+STAGE.update(
+    {
+        "technician.opened": 63,
+        "technician.diagnosed": 64,
+        "technician.emailed": 65,
+        "technician.failed": 65,
+    }
+)
+
 # Statuses a person has to act on. Nothing the Fleet Doctor does covers them up; a later
 # non-Doctor step (the work order moving on, an unfreeze) still can.
 NEEDS_PERSON: frozenset[tuple[str, str]] = frozenset(
@@ -967,6 +1019,7 @@ NEEDS_PERSON: frozenset[tuple[str, str]] = frozenset(
         WORK_ORDER_STATUS["needs_human"],
         WORK_ORDER_STATUS["stopped"],
         STATUS["candidate.frozen"],
+        STATUS["technician.diagnosed"],
     }
 )
 

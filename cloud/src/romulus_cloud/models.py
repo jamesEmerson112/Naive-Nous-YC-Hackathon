@@ -554,3 +554,38 @@ class DoctorProposal(Base):
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime | None]
     raw: Mapped[dict[str, Any] | None] = _raw()
+
+
+# --- Naïve Technician (docs/naive-technician/design.md §5) -----------------------------
+
+
+class TechnicianCase(Base):
+    """One Naïve Technician case: a work order with no catalogued part, handed to one Naïve
+    session that writes a typed report. Romulus emails the technician and stages a checked
+    cart on the work order (`raw.technician_part`); a person approves through `resolve`.
+    A new table, so `create_all` adds it."""
+
+    __tablename__ = "technician_cases"
+
+    id: Mapped[str] = mapped_column(primary_key=True)  # tc_…
+    fleet_id: Mapped[str] = _fleet()
+    work_order_id: Mapped[str] = mapped_column(unique=True, index=True)
+    incident_id: Mapped[str] = mapped_column(index=True)
+    device_id: Mapped[str] = mapped_column(index=True)
+    reason: Mapped[str]  # playbook_exhausted | manual
+    mode: Mapped[str]  # fake | replay | live, chosen per case
+    # open | diagnosing | waiting | done | failed | stopped
+    status: Mapped[str] = mapped_column(default="open", index=True)
+    request: Mapped[dict[str, Any] | None] = _raw()  # the exact session POST body, frozen
+    naive_session_id: Mapped[str | None]
+    last_event_seq: Mapped[int] = mapped_column(default=0)
+    report: Mapped[dict[str, Any] | None] = _raw()  # the validated TechnicianReport
+    feed: Mapped[list[Any]] = mapped_column(JSONB, default=list)  # ≤ 60 {t, text}
+    actions: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)  # email, part
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    why: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None]  # when the session was created
+    reported_at: Mapped[datetime | None]  # when the report arrived
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime | None]
+    raw: Mapped[dict[str, Any] | None] = _raw()  # session snapshot + events → fixture export

@@ -14,7 +14,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from romulus_cloud import db, errors
-from romulus_cloud.api import datasets, device, doctor, ops, proposals, web
+from romulus_cloud.api import datasets, device, doctor, ops, proposals, technician, web
 from romulus_cloud.api.deps import SessionDep
 from romulus_cloud.log import log_line
 from romulus_cloud.settings import Settings, get_settings
@@ -68,5 +68,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     app.include_router(datasets.router)
     app.include_router(web.router)
     app.include_router(datasets.pages)
+    app.include_router(technician.router)  # Naïve Technician (D30)
+    app.include_router(technician.pages)
     app.mount("/static", StaticFiles(directory=web.STATIC_DIR), name="static")
     return app
