@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     # more verify scripts kept off the device (each file lands at `verify/<its path>`). The
     # Fleet Doctor's sandbox check runs the same set (`doctor_code.held_out`).
     coder_verify_dir: str = ""
+    # A coder or Doctor code candidate with no held-out verify scripts waits at the gate
+    # (the in-process device tests can forge their own result seal). True lets such a replay
+    # pass on the device tests alone, with a loud "unverified" event each time. Keep false.
+    coder_allow_unverified: bool = False
     coder_replay_timeout_s: int = 300
     # Where scratch copies of the device code go ("" = the system temp dir). Docker must be
     # able to mount it (Docker Desktop shares /Users, /private, /tmp and /var/folders).
