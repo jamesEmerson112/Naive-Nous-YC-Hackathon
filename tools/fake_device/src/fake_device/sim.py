@@ -48,12 +48,18 @@ class SimDevice:
     parked: bool = False
     """Parked with torque off (a `park` incident): health is `failing` until repaired."""
 
-    bad_versions: set[int] = field(default_factory=set)
-    """Firmware versions that fail their health check here (bad-candidate mode, flow F4)."""
-    bad_next: bool = False
-    """Mark the next firmware version installed as bad, whatever its number."""
+    bad_versions: dict[int, str] = field(default_factory=dict)
+    """Firmware versions that are bad here (bad-candidate mode, flow F4), version -> mode:
 
-    _previous: dict[str, tuple[Any, Any]] = field(default_factory=dict)
+    - `"install"`: the post-install health check fails, so the visor rolls back at once.
+    - `"late"`: the post-install check passes, then every check-in reports `failing`
+      until the cloud assigns another version.
+    """
+    bad_next: str | None = None
+    """Mark the next firmware version installed as bad with this mode, whatever its number."""
+
+    _stored: dict[tuple[str, Any], Any] = field(default_factory=dict)
+    """Versions kept "on disk" (kind, version) -> payload, so rollback needs no cloud."""
 
     def __post_init__(self) -> None:
         self.rng = random.Random(f"{self.device_id}:{self.seed}")
@@ -70,8 +76,9 @@ class SimDevice:
             mcu_build=self.mcu_build,
         )
 
-    def health(self) -> str:
-        if self.parked or self.firmware in self.bad_versions:
+    def health(self, during_install: bool = False) -> str:
+        mode = self.bad_versions.get(self.firmware)
+        if self.parked or mode == "install" or (mode == "late" and not during_install):
             return "failing"
         if self.overlay is not None and not self.overlay_held:
             return "degraded"  # an overlay under watch (contracts README, I0 item 1)
@@ -97,32 +104,27 @@ class SimDevice:
         )
 
     def install(self, kind: str, version: Any, payload: Any) -> None:
-        if kind == "firmware":
-            self._previous[kind] = (self.firmware, self.manifest)
-            self.firmware, self.manifest = version, payload
-            if self.bad_next:
-                self.bad_versions.add(version)
-                self.bad_next = False
-        elif kind == "code":
-            self._previous[kind] = (self.code_rev, None)
-            self.code_rev = version
-        elif kind == "harness":
-            self._previous[kind] = (self.harness, None)
-            self.harness = version
-        else:
+        if kind not in ("firmware", "code", "harness"):
             raise ValueError(f"unknown install kind {kind!r}")
+        self._stored[(kind, version)] = payload
+        if kind == "firmware" and self.bad_next:
+            self.bad_versions[version] = self.bad_next
+            self.bad_next = None
+        self._switch(kind, version)
 
-    def rollback(self, kind: str) -> None:
-        version, extra = self._previous.pop(kind, (None, None))
+    def rollback(self, kind: str, version: Any) -> None:
+        self._switch(kind, version)
+
+    def _switch(self, kind: str, version: Any) -> None:
         if kind == "firmware":
-            self.firmware, self.manifest = version, extra
+            self.firmware, self.manifest = version, self._stored.get((kind, version))
         elif kind == "code":
             self.code_rev = version
         else:
             self.harness = version
 
     def health_check(self) -> str:
-        return self.health()
+        return self.health(during_install=True)
 
     def drop_overlay(self) -> None:
         self.overlay = None

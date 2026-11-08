@@ -11,7 +11,10 @@ another with any `now`, and `__main__` runs them on real time.
   example), log lines and an agent trace → `held` later. Feeds F11.
 - `bad_candidate`: arm the device so the next firmware it installs fails its health check
   (it rolls back and reports `rolled_back`), then run `rules_patch` so the batch job has a
-  held overlay to build that candidate from. Run it on the canary. Feeds F4.
+  held overlay to build that candidate from. Run it on the canary. Feeds F4: the gate
+  treats a canary `rolled_back` install report as a canary failure.
+- `bad_candidate_late`: the other F4 path. The next firmware installs fine, then the canary
+  checks in `failing` and repeats the fault until the gate assigns its last good version.
 - `park_hardware`: fault D3-style, wrist servo silent → park with torque off, unresolved,
   `suspected_cause: hardware`, no overlay. Feeds F6.
 """
@@ -238,9 +241,16 @@ def code_patch(arm: FakeArm, hold_after_s: float = HOLD_AFTER_S) -> list[Step]:
 
 def bad_candidate(arm: FakeArm, hold_after_s: float = HOLD_AFTER_S) -> list[Step]:
     def arm_bad_mode(now: datetime) -> None:
-        arm.device.bad_next = True
+        arm.device.bad_next = "install"
 
     return [Step(0, "bad-candidate mode on", arm_bad_mode), *rules_patch(arm, hold_after_s)]
+
+
+def bad_candidate_late(arm: FakeArm, hold_after_s: float = HOLD_AFTER_S) -> list[Step]:
+    def arm_bad_mode(now: datetime) -> None:
+        arm.device.bad_next = "late"
+
+    return [Step(0, "late bad-candidate mode on", arm_bad_mode), *rules_patch(arm, hold_after_s)]
 
 
 def park_hardware(arm: FakeArm, repair_after_s: float | None = None) -> list[Step]:
@@ -301,5 +311,6 @@ SCENARIOS: dict[str, Callable[..., list[Step]]] = {
     "rules": rules_patch,
     "code": code_patch,
     "bad": bad_candidate,
+    "bad-late": bad_candidate_late,
     "park": park_hardware,
 }

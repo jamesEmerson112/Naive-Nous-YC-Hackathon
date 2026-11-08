@@ -1,15 +1,18 @@
 """Run a fake fleet against the cloud: `python -m fake_device --n 4 --url http://api:8000`.
 
 Devices are `sim-1` … `sim-N` (A18); `--canary` (default `sim-2`, matching `make seed`)
-marks the one that runs the bad-candidate scenario. Which device is the canary is the
-cloud's decision; this flag only picks where `bad` runs. Every device checks in every
-`--interval` seconds. This is the only place that sleeps or reads the clock.
+marks the one that runs the bad-candidate scenarios. Which device is the canary is the
+cloud's decision; this flag only picks where `bad` and `bad-late` run. `--url` defaults to
+the `CLOUD_URL` environment variable (Compose sets `http://api:8000`), else localhost.
+Every device checks in every `--interval` seconds. This is the only place that sleeps or
+reads the clock.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,22 +28,26 @@ log = logging.getLogger("fake_device")
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m fake_device", description=__doc__.split("\n")[0])
     p.add_argument("--n", type=int, default=4, help="number of fake arms (default 4)")
-    p.add_argument("--url", default="http://localhost:8000", help="cloud base URL")
+    p.add_argument(
+        "--url",
+        default=os.environ.get("CLOUD_URL", "http://localhost:8000"),
+        help="cloud base URL (default: $CLOUD_URL, else http://localhost:8000)",
+    )
     p.add_argument("--interval", type=float, default=10.0, help="seconds between check-ins")
     p.add_argument(
         "--scenario",
         action="append",
         choices=[*SCENARIOS, "all"],
         default=[],
-        help="scenario to run once (repeatable): rules, code, bad, park or all",
+        help="scenario to run once (repeatable): rules, code, bad, bad-late, park or all",
     )
-    p.add_argument("--canary", default=None, help="device that runs `bad` (default sim-2)")
+    p.add_argument("--canary", default=None, help="device that runs bad scenarios (default sim-2)")
     p.add_argument("--hold-after", type=float, default=HOLD_AFTER_S, help="seconds until held")
     p.add_argument(
-        "--outbox-dir",
+        "--state-dir",
         type=Path,
         default=Path("data/fake_device"),
-        help="outbox root (git-ignored)",
+        help="per-device outbox and visor state (git-ignored)",
     )
     p.add_argument("--seed", type=int, default=0, help="seed for metrics noise")
     p.add_argument("--ticks", type=int, default=None, help="stop after this many check-ins")
@@ -55,7 +62,7 @@ def plan(arms: list[FakeArm], names: list[str], hold_after_s: float) -> list[tup
     others = [a for a in arms if a is not canary] or [canary]
     steps: list[tuple[str, Step]] = []
     for i, name in enumerate(names):
-        arm = canary if name == "bad" else others[i % len(others)]
+        arm = canary if name.startswith("bad") else others[i % len(others)]
         if name == "park":
             new = SCENARIOS[name](arm)
         else:
@@ -73,7 +80,7 @@ def main(argv: list[str] | None = None) -> None:
         FakeArm(
             http,
             f"sim-{i}",
-            args.outbox_dir / f"sim-{i}",
+            args.state_dir / f"sim-{i}",
             canary=f"sim-{i}" == canary_id,
             seed=args.seed,
         )
