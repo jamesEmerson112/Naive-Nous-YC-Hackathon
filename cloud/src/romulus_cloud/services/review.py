@@ -46,6 +46,7 @@ from romulus_cloud.ids import new_id, utcnow
 from romulus_cloud.log import log_line
 from romulus_cloud.models import Candidate, Device, Event, FleetState, HarnessVersion
 from romulus_cloud.services import doctor_spend, fleet, registry
+from romulus_cloud.services import runs as labelled
 from romulus_cloud.services.batch import _read_tarball
 from romulus_cloud.settings import Settings, get_settings
 
@@ -79,17 +80,7 @@ _clients: dict[tuple[Any, ...], Any] = {}
 LoadRuns = Callable[[Session, datetime], list[Any]]
 
 
-def _load_runs(session: Session, now: datetime) -> list[Any]:
-    from romulus_cloud.services import runs  # lane B's loader (design §2)
-
-    return list(runs.load(session, now=now))
-
-
 # --- reading state -----------------------------------------------------------------------------
-
-
-def _mode(settings: Settings) -> str:
-    return str(getattr(settings, "learning_mode", "off"))
 
 
 def _frozen(session: Session, fleet_id: str) -> bool:
@@ -635,7 +626,7 @@ def tick(
     case (tests); by default each case gets `naive_for(mode, kind)`. Returns what it did,
     or None when there was nothing to do."""
     settings = settings or get_settings()
-    mode = mode or _mode(settings)
+    mode = mode or settings.learning_mode
     if mode not in MODES or _frozen(session, settings.fleet_id):
         return None
     evs = review_events(session, settings.fleet_id)
@@ -657,7 +648,10 @@ def tick(
         if spent + settings.review_budget_usd > settings.doctor_daily_usd_cap:
             return {"status": f"daily cap: ${spent:.2f} spent by the Doctor and reviews today"}
 
-    runs = (load_runs or _load_runs)(session, now)
+    if load_runs is not None:
+        runs = load_runs(session, now)
+    else:
+        runs = labelled.load(session, now=now, fleet_id=settings.fleet_id)
     cooling, paused = skip_sets(session, evs, runs, now, settings)
     clusters = rv.qualify(
         runs,

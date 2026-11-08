@@ -37,6 +37,7 @@ from romulus_cloud.services import (
     datasets,
     doctor,
     gate,
+    review,
     runs,
     technician,
     telemetry,
@@ -100,13 +101,15 @@ STEPS += [
 
 def learning_tick(session: Session, now: datetime) -> object:
     """Fleet learning (docs/recursive-self-improvement/design.md §9): keep the standing
-    `fleet-runs` dataset snapshotted and exported (plain code, no model)."""
+    `fleet-runs` dataset snapshotted and exported (plain code, no model); with
+    LEARNING_MODE=fixture|live, then one cluster-review step (design §4, `services/review.py`:
+    open, poll or settle one Naïve session, within its caps; D25, draft D31)."""
     settings = get_settings()
     if settings.learning_mode == "off":
         return None
     done = runs.ensure_standing_dataset(session, now, settings)
-    # Hook: LEARNING_MODE=fixture|live runs one cluster review here (design §4, lane C:
-    # `services/review.py`), after the dataset, within the Doctor's caps (D25, draft D31).
+    if settings.learning_mode in review.MODES:
+        return {"dataset": done, "review": review.tick(session, now, settings=settings)}
     return done
 
 
