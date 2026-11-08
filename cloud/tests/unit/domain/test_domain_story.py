@@ -84,11 +84,11 @@ def test_lines_labels_and_chain_for_the_f2_path():
 
 def test_unknown_kinds_get_a_default_line_and_label():
     """Later milestones extend the story just by recording events."""
-    ev = Ev("candidate.canary_started", actor="gate", refs={"incident": INC, "candidate": "c1"})
+    ev = Ev("workorder.something_new", actor="worker", refs={"incident": INC, "work_order": "w1"})
     (step,) = build_story([ev], INC).steps
-    assert step.line == "gate: candidate canary started."
-    assert step.label == "candidate.canary_started"
-    assert step.refs == {"incident": INC, "candidate": "c1"}
+    assert step.line == "worker: workorder something new."
+    assert step.label == "workorder.something_new"
+    assert step.refs == {"incident": INC, "work_order": "w1"}
 
 
 def test_extending_lines_and_labels_changes_the_story(monkeypatch):

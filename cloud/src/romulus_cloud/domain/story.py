@@ -56,8 +56,15 @@ class Story:
     @property
     def chain(self) -> str:
         """One line for the timeline: `camera_occluded → agent acted → overlay ov-12 → held`.
-        Steps with an empty label (follow-ups such as "bytes stored") are left out."""
-        return " → ".join(s.label for s in self.steps if s.label)
+
+        Steps with an empty label (follow-ups and acknowledgments, not news) are left out,
+        and a label that repeats the one before it is shown once (two candidates promoted
+        together read "→ fleet", not "→ fleet → fleet")."""
+        labels: list[str] = []
+        for s in self.steps:
+            if s.label and (not labels or labels[-1] != s.label):
+                labels.append(s.label)
+        return " → ".join(labels)
 
     @property
     def evidence(self) -> tuple[dict[str, Any], ...]:
@@ -77,7 +84,7 @@ class Story:
         for s in reversed(self.steps):
             if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
                 return WORK_ORDER_STATUS[s.refs["status"]]
-            if s.kind in STATUS:
+            if s.kind in STATUS and s.label:
                 return STATUS[s.kind]
         return ("no events", "info") if not self.steps else ("open", "bad")
 
@@ -244,7 +251,7 @@ LABELS: dict[str, Callable[[EventLike], str]] = {
     "overlay.reverted": lambda e: "reverted",
     "overlay.locked_in": lambda e: "locked in",
     "overlay.dropped": lambda e: "dropped",
-    "overlay.superseded": lambda e: "superseded",
+    "overlay.superseded": lambda e: "" if _acknowledged(e) else "superseded",
     "recording.received": lambda e: f"evidence {(_evidence(e) or {}).get('kind', 'recording')}",
     "recording.blob_stored": lambda e: "",  # a follow-up; kept out of the chain
     # A recording the incident listed but that didn't name it: its `received` step isn't in
@@ -264,6 +271,57 @@ LABELS: dict[str, Callable[[EventLike], str]] = {
     "workorder.card_updated": lambda e: "card updated",
 }
 
+# --- M3: batch, gate and kill switch -----------------------------------------------------
+
+
+def _acknowledged(e: EventLike) -> bool:
+    """`superseded` after the cloud locked the overlay in (or dropped it) is the device
+    acknowledging the fleet version, not news: no chain label, no status change."""
+    return _data(e).get("before") in ("locked_in", "dropped")
+
+
+def _cand(e: EventLike) -> str:
+    d = _data(e)
+    if d.get("type") == "code":
+        return f"code {d.get('code_rev')} (firmware v{d.get('version')})"
+    return f"{d.get('type', 'candidate')} v{d.get('version')}"
+
+
+def _replay_label(e: EventLike) -> str:
+    """A stub replay checked nothing, so it stays out of the chain (its step still says so)."""
+    replay = _data(e).get("replay") or {}
+    if replay.get("stub"):
+        return ""
+    return "replay ✓" if replay.get("passed") else "replay ✗"
+
+
+LINES.update(
+    {
+        "candidate.created": lambda e: f"The batch locked the fix in as candidate {_cand(e)}.",
+        "candidate.replayed": lambda e: f"The gate replayed {_cand(e)}.",
+        "candidate.canary_started": lambda e: (
+            f"The gate put {_cand(e)} on canary {e.refs.get('device')}."
+        ),
+        "candidate.awaiting_canary": lambda e: f"{_cand(e).capitalize()} waits for a canary.",
+        "candidate.frozen": lambda e: f"{_cand(e).capitalize()} froze with the fleet.",
+        "candidate.restarted": lambda e: f"{_cand(e).capitalize()} restarts from replay.",
+        "candidate.promoted": lambda e: f"{_cand(e).capitalize()} went to the fleet.",
+        "candidate.rolled_back": lambda e: f"{_cand(e).capitalize()} was rolled back.",
+    }
+)
+LABELS.update(
+    {
+        "candidate.created": _cand,
+        "candidate.replayed": _replay_label,
+        "candidate.canary_started": lambda e: f"canary {e.refs.get('device')}",
+        "candidate.awaiting_canary": lambda e: "awaiting canary",
+        "candidate.frozen": lambda e: "frozen",
+        "candidate.restarted": lambda e: "unfrozen",
+        "candidate.promoted": lambda e: "fleet",
+        "candidate.rolled_back": lambda e: "rolled back",
+    }
+)
+
 # Where an incident stands after a step of this kind: (words for a badge, tone), with tone
 # one of good / bad / wait / info. Kinds not listed don't change the status.
 STATUS: dict[str, tuple[str, str]] = {
@@ -282,6 +340,9 @@ STATUS: dict[str, tuple[str, str]] = {
     "workorder.created": ("work order", "wait"),
     "workorder.card_posted": ("work order posted", "wait"),
     "workorder.status_changed": ("work order updated", "wait"),
+    "candidate.created": ("candidate", "wait"),
+    "candidate.canary_started": ("on canary", "wait"),
+    "candidate.restarted": ("restarting from replay", "wait"),
 }
 # A work-order event's `refs.status` says more than its kind, so it picks the badge (M5).
 WORK_ORDER_STATUS: dict[str, tuple[str, str]] = {
@@ -312,6 +373,16 @@ STAGE: dict[str, int] = {
     "workorder.card_posted": 61,
     "workorder.status_changed": 62,
     "workorder.card_updated": 62,
+    # One batch run or gate tick writes these with one `ts`; keep them in loop order.
+    "overlay.locked_in": 70,
+    "candidate.created": 71,
+    "candidate.replayed": 72,
+    "candidate.awaiting_canary": 73,
+    "candidate.canary_started": 73,
+    "candidate.frozen": 74,
+    "candidate.restarted": 74,
+    "candidate.rolled_back": 75,
+    "candidate.promoted": 75,
 }
 _DEFAULT_STAGE = 50
 
