@@ -72,15 +72,14 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 8:18 PM PST_
+_Last updated: Sat Nov 7, 8:19 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged B8 (#24) at 8:12 PM and still has four PRs open: the edge bridge (#25), Fleet Doctor contracts (#26) and foundation (#27), and M8b, the coding agent wired into batch and gate (#28). James's session is folding #24 and Ishaan's 8:12 PM status into the Stack Map for v10 *(James's session)*. Andre is calibrating the arm; Ishaan is still blocked on the Jetson link, and the device code (B1) is not pushed.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged B8 (#24) at 8:12 PM and the Fleet Doctor contracts (#26) at 8:18 PM; three PRs are still open: the edge bridge (#25), the Fleet Doctor foundation (#27, behind `doctor_mode=off`) and M8b, the coding agent wired into batch and gate (#28). James's session is folding #24 and Ishaan's 8:12 PM status into the Stack Map for v10 *(James's session)*. Andre is calibrating the arm; Ishaan is still blocked on the Jetson link, and the device code (B1) is not pushed.
 
 **Recently done:**
 - Kent merged #24 (`34c52c7`, 8:12 PM): the coder sandbox image now carries the STM32 toolchain, with an offline firmware build check (`cloud/coder/firmware_check.py`), a `coder_firmware_check.sh` script and unit plus integration tests. This closes blocker B8 *(inferred from Kent's block: "B8 closes with #24")*
 - Ishaan's 8:12 PM update: the Jetson is in the right USB-C port and the Mac saw the replug, but no USB device comes up; either Linux USB device mode isn't running on the Jetson or the cable carries no data, and there is still no LAN path
-- Kent opened #25 (edge bridge, D29), #26 and #27 (Fleet Doctor contracts and foundation, behind `doctor_mode=off`) and #28 (M8b, F11 code-patch flow test) between 7:59 and 8:04 PM; none merged yet
-- James's session published Stack Map v7 with everyone's status as of 8:00 PM
+- Kent merged #26 (`3239ad1`, 8:18 PM): Fleet Doctor contracts for ask, advice, proposal and proposal result, with no contract version bump per D28. #25 (edge bridge, D29), #27 (foundation) and #28 (M8b, F11 code-patch flow test) are still open
 
 **Open questions:**
 - Kent still waits on: device code in the repo (B1; Ishaan's Jetson shows no USB data and has no LAN path), the K17 safety and visor path list (it also gates the Fleet Doctor, D25), and Kent's go-ahead for the live Naïve card
@@ -89,16 +88,16 @@ _Last updated: Sat Nov 7, 8:18 PM PST_
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email) *(James's session)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all?
 
 **Recent commits (all authors):**
+- `cc95fa9` Sat 20:18 · jamesEmerson112 · Update team status and features.txt
+- `a1fdfd9` Sat 20:18 · Kent Gang · Update Kent status in CLAUDE.md
+- `95f1497` Sat 20:18 · Kent Gang · Update Kent status in CLAUDE.md
+- `3239ad1` Sat 20:18 · kgang · Fleet Doctor contracts: ask, advice, proposal, proposal result (PR 1, no version bump per D28) (#26)
 - `34c52c7` Sat 20:12 · kgang · Romulus B8: STM32 toolchain in the coder sandbox (#24)
 - `f3669cc` Sat 20:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `e7b5a54` Sat 20:09 · jamesEmerson112 · Update team status and features.txt
 - `aec1f68` Sat 20:08 · Kent Gang · Update Kent status in CLAUDE.md
 - `b11f910` Sat 19:59 · jamesEmerson112 · Update team status in CLAUDE.md
 - `02ffd52` Sat 19:58 · Kent Gang · Update Kent status in CLAUDE.md
-- `39dd2e5` Sat 19:54 · kgang · Romulus docs: build status, flows tracker, spike results (#21)
-- `fbeb4bb` Sat 19:49 · jamesEmerson112 · Update team status in CLAUDE.md
-- `563c34d` Sat 19:48 · Kent Gang · Update Kent status in CLAUDE.md
-- `071f91e` Sat 19:48 · Kent Gang · Claim Fleet Doctor build lines in features.txt
 
-**Branches on GitHub:** `main`; Kent's open PR branches `edge/bridge` (#25), `doctor/contracts` (#26), `doctor/foundation` (#27), `cloud/m8b-wiring` (#28); `cloud/b8-stm32-toolchain` (#24, merged, branch still up); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`)
+**Branches on GitHub:** `main`; Kent's open PR branches `edge/bridge` (#25), `doctor/foundation` (#27), `cloud/m8b-wiring` (#28); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `cloud/b8-stm32-toolchain` and `doctor/contracts` are gone after #24 and #26 merged
 <!-- team-status:end -->
