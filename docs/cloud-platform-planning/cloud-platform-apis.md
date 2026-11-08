@@ -2,7 +2,7 @@
 
 - **Status:** contract **v0.1, draft.** It stays a draft until the device teammate agrees to it (build plan M0).
 - **Single source of truth:** this file defines every payload and route. The Pydantic models in `packages/contracts` must match it ([architecture](cloud-platform-architecture.md) §3).
-- **Changes:** any change bumps `CONTRACT_VERSION` and goes to the device teammate.
+- **Changes:** v0.1 is a draft until the I0 handshake; draft changes are additive and don't bump `CONTRACT_VERSION`; after I0, every change bumps it. Every change goes to the device teammate.
 
 ---
 
@@ -108,7 +108,7 @@ Response:
 {"status": "held", "reason": "no recurrence for 20 min"}
 ```
 
-`status` is `held` or `reverted`.
+`status` is `held`, `reverted` or `superseded` (a newer firmware or code version installed and replaced the overlay, D7; not a failure).
 
 ### 2.7 Rules evaluation (shared pure function)
 

@@ -421,13 +421,13 @@ def test_naive_time_is_read_as_utc():
 # --- overlay status --------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("status", ["held", "reverted"])
+@pytest.mark.parametrize("status", ["held", "reverted", "superseded"])
 def test_overlay_status_values(status):
     s = OverlayStatus.model_validate({"status": status, "reason": "no recurrence for 20 min"})
     assert s.status == status and s.occurred_at is None
 
 
-@pytest.mark.parametrize("status", ["locked_in", "HELD", None])
+@pytest.mark.parametrize("status", ["locked_in", "HELD", "SUPERSEDED", None])
 def test_overlay_status_rejects_other_values(status):
     with pytest.raises(ValidationError):
         OverlayStatus.model_validate({"status": status})

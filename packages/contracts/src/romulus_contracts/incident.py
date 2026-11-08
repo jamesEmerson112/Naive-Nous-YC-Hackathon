@@ -107,7 +107,10 @@ class IncidentAccepted(CloudModel):
     incident_id: UUID
 
 
-OverlayState = Literal["held", "reverted"]
+OverlayState = Literal["held", "reverted", "superseded"]
+"""`held`: the patch worked. `reverted`: it rolled itself back (a failure).
+`superseded`: a newer firmware or code version installed and replaced it (D7); not a
+failure."""
 
 
 class OverlayStatus(DeviceModel):
