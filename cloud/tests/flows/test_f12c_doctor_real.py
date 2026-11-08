@@ -16,6 +16,7 @@ the coder or the sandbox.
 
 import io
 import json
+import os
 import sys
 import tarfile
 import uuid
@@ -41,6 +42,7 @@ import coder_fakes as fakes  # noqa: E402
 
 T0 = datetime(2026, 11, 7, 22, 0, tzinfo=UTC)
 CODE_REV = "toyd1"
+NO_VERIFY_REV = "toynv"
 SECRET = "llm-SECRET-key-0123456789abcdef"
 ON = {
     "doctor_mode": "fake",
@@ -71,8 +73,9 @@ PASSES_ON_BASE = (
 )
 REPRO_PATH = "tests/test_doctor_repro.py"
 REPRO_CMD = f"python -I -m pytest -q -rA {REPRO_PATH}"
-# The reviewer's probe: a "fix" that only adds a flag, and repro tests that only reach it.
+# The reviewer's probes: a "fix" that only adds a flag, and repro tests that only reach it.
 FLAGGED = GRIPPER + "\nDOCTOR_FIXED = True\n"
+FLAGGED_AND_FIXED = FIXED + "\nDOCTOR_FIXED = True\n"  # a real code change, so it is screened in
 IMPORT_ONLY = (
     "from control.gripper import DOCTOR_FIXED\n\n\ndef test_fixed():\n    assert DOCTOR_FIXED\n"
 )
@@ -82,14 +85,46 @@ IMPORT_IN_BODY = (
 ATTRIBUTE_ONLY = (
     "import control.gripper as gripper\n\n\ndef test_fixed():\n    assert gripper.DOCTOR_FIXED\n"
 )
+# Prints a believable behavioural FAILED line, then fails only on the missing flag.
+FAKE_SUMMARY = (
+    "def test_fixed():\n"
+    "    print(\"FAILED tests/test_doctor_repro.py::test_fixed - assert ('RELEASE', 'open') "
+    "== ('HOLDING', 'close')\")\n"
+    "    from control.gripper import DOCTOR_FIXED\n\n"
+    "    assert DOCTOR_FIXED\n"
+)
+RELEASE = '        if release_requested:\n            return "RELEASE", "open"\n'
+BREAKS_RELEASE = FIXED.replace(RELEASE, "")  # fixes D1 but drops release_requested
+# Masks the release regression for the whole session by patching `step` at import.
+MASKING_REPRO = (
+    "import control.gripper as gripper\n\n"
+    "_real = gripper.step\n\n\n"
+    "def _masked(state, dist_mm, **kw):\n"
+    '    if state == "HOLDING" and kw.get("release_requested"):\n'
+    '        return "RELEASE", "open"\n'
+    "    return _real(state, dist_mm, **kw)\n\n\n"
+    "gripper.step = _masked\n\n\n"
+    "def test_a_hand_near_keeps_holding():\n"
+    '    assert gripper.step("HOLDING", 10.0) == ("HOLDING", "close")\n'
+)
+# Fixes the 10 mm reading the repro checks, but still drops the arm at 30 mm (verify's case).
+PARTIAL = GRIPPER.replace("dist_mm < PROXIMITY_MM:", "15 <= dist_mm < PROXIMITY_MM:")
 
 
-def _patch(**changes: str) -> str:
-    """A code_patch against the toy device: `control__gripper_py=...` → control/gripper.py."""
-    base = fakes.toy_files()
+def _patch(**changes: str | None) -> str:
+    """A code_patch against the toy device: `control__gripper_py=...` → control/gripper.py;
+    None deletes the file."""
+    return _patch_paths({k.replace("__", "/").replace("_py", ".py"): v for k, v in changes.items()})
+
+
+def _patch_paths(changes: dict[str, str | None], base: dict | None = None) -> str:
+    base = base if base is not None else fakes.toy_files()
     new = dict(base)
-    for key, text in changes.items():
-        new[f"device/{key.replace('__', '/').replace('_py', '.py')}"] = text.encode()
+    for path, text in changes.items():
+        if text is None:
+            new.pop(f"device/{path}")
+        else:
+            new[f"device/{path}"] = text.encode()
     return code_lockin.package_diff(base, new)
 
 
@@ -137,16 +172,37 @@ AT_CAPACITY = CodeDraft(
 
 
 class WatchingDocker(fakes.FakeDocker):
-    """FakeDocker that remembers whether any run's work dir ever held `verify/`."""
+    """FakeDocker that records, per run, its mode, whether its work dir held `verify/`, and
+    its PYTHONSAFEPATH; test runs get that variable too, as the image's would."""
 
     def __init__(self) -> None:
         super().__init__()
         self.ever_saw_verify = False
+        self.runs: list[dict] = []
+        self._safe: str | None = None
 
-    def __call__(self, argv, **kw):
-        result = super().__call__(argv, **kw)
-        self.ever_saw_verify |= self.saw_verify_in_work
+    def __call__(self, argv, *, stdin=None, env=None, timeout=None):
+        self._safe = (env or {}).get("PYTHONSAFEPATH") if argv[1] == "run" else None
+        result = super().__call__(argv, stdin=stdin, env=env, timeout=timeout)
+        if argv[1] == "run":
+            self.ever_saw_verify |= self.saw_verify_in_work
+            self.runs.append(
+                {"mode": argv[-1], "verify": self.saw_verify_in_work, "safe": self._safe}
+            )
         return result
+
+    def _run_tests(self, work, cmd):
+        if self._safe is None:
+            return super()._run_tests(work, cmd)
+        saved = os.environ.get("PYTHONSAFEPATH")
+        os.environ["PYTHONSAFEPATH"] = self._safe
+        try:
+            return super()._run_tests(work, cmd)
+        finally:
+            if saved is None:
+                os.environ.pop("PYTHONSAFEPATH", None)
+            else:
+                os.environ["PYTHONSAFEPATH"] = saved
 
 
 class Doctor:
@@ -182,12 +238,14 @@ def settings(make_settings):
 
 @pytest.fixture
 def toy(seeded, settings):
-    """The toy device, verify scripts included, registered as code `toyd1`."""
+    """The toy device, verify scripts included, registered as code `toyd1`; and the same
+    without its verify scripts as `NO_VERIFY_REV`."""
     store = build_blobstore(settings.blob_dir)
     kw = {"actor": "human:test", "actor_class": "human"}
-    registry.create_code(
-        seeded, store, registry.build_tarball(fakes.toy_files()), rev=CODE_REV, **kw
-    )
+    files = fakes.toy_files()
+    registry.create_code(seeded, store, registry.build_tarball(files), rev=CODE_REV, **kw)
+    bare = {n: d for n, d in files.items() if not n.startswith("device/verify/")}
+    registry.create_code(seeded, store, registry.build_tarball(bare), rev=NO_VERIFY_REV, **kw)
     seeded.commit()
     return seeded
 
@@ -282,13 +340,24 @@ def test_a_real_draft_and_check_offer_the_fix(client, example, make_doctor, db_s
     assert [f["path"] for f in consult.case_file["code"]["files"]] == ["control/gripper.py"]
     assert "verify" not in json.dumps(consult.case_file["code"]).lower()
 
-    # The sandbox: no network, never saw verify/; the repro step's own fixed command, and
-    # CODER_TEST_CMD exactly as configured (never appended to).
-    assert doc.docker.calls and not doc.docker.ever_saw_verify
+    # The sandbox: no network, PYTHONSAFEPATH on every run; the repro step's own fixed
+    # command, and CODER_TEST_CMD exactly as configured (never appended to).
     assert all("--network" in c["argv"] and "none" in c["argv"] for c in doc.docker.calls)
+    assert {r["safe"] for r in doc.docker.runs} == {"1"}
     cmds = _test_cmds(doc.docker)
     assert cmds[:4] == [REPRO_CMD] * 4  # base + repro only, then base + full patch
-    assert cmds[4:] == ["python -m pytest -q"] * 2  # base, then the full patch
+    assert cmds[4:] == ["python -m pytest -q"] * 2  # base, then the code change only
+    # verify/ appears only in the last replay (base + patched), the held-out pass/fail run.
+    assert [r["verify"] for r in doc.docker.runs] == [False] * 12 + [True, True]
+    assert [r["mode"] for r in doc.docker.runs[-2:]] == ["verify", "verify"]
+    assert checks["verify"] == "passed" and checked.data["verify"] == "passed"
+    assert checked.data["verify_counts"] == {
+        "tests": 2,
+        "passed_count": 2,
+        "skipped": 0,
+        "timed_out": False,
+    }
+    assert "release_still_works" not in json.dumps(checked.data)  # no verify output kept
 
     # Spend: the coder's own token counts; the draft counted against the shared budget.
     (drafted,) = _events(db_session, incident_id, "doctor.drafted")
@@ -324,23 +393,49 @@ def test_a_real_draft_and_check_offer_the_fix(client, example, make_doctor, db_s
             _patch(control__gripper_py=NOT_A_FIX, tests__test_doctor_repro_py=REPRO),
             "the repro test doesn't pass with the fix (exit 1",
         ),
-        # The reviewer's probe: the "fix" adds `DOCTOR_FIXED = True`, the repro only imports
-        # it. On the base that's a collection error (exit 2), which proves nothing.
+        # The reviewer's probe: the patch adds `DOCTOR_FIXED = True` (plus a real change, so
+        # the flag-only screen lets it through) and the repro only imports it. On the base
+        # that's a collection error (exit 2), which proves nothing.
         (
-            _patch(control__gripper_py=FLAGGED, tests__test_doctor_repro_py=IMPORT_ONLY),
+            _patch(control__gripper_py=FLAGGED_AND_FIXED, tests__test_doctor_repro_py=IMPORT_ONLY),
             "pytest exited 2, not 1",
         ),
         # The same, with the import moved into the test body (a FAILED test, exit 1).
         (
-            _patch(control__gripper_py=FLAGGED, tests__test_doctor_repro_py=IMPORT_IN_BODY),
+            _patch(
+                control__gripper_py=FLAGGED_AND_FIXED, tests__test_doctor_repro_py=IMPORT_IN_BODY
+            ),
             "fail only because a name is missing (ImportError",
         ),
+        # Item 5's probe: it prints a fake behavioural FAILED line first; only the summary
+        # after the last header counts, and there it fails on the missing name.
         (
-            _patch(control__gripper_py=FLAGGED, tests__test_doctor_repro_py=ATTRIBUTE_ONLY),
+            _patch(control__gripper_py=FLAGGED_AND_FIXED, tests__test_doctor_repro_py=FAKE_SUMMARY),
+            "fail only because a name is missing (ImportError",
+        ),
+        # Item 3's probe: the fix drops `release_requested` too, and the repro monkeypatches
+        # `step` at import so the whole suite would pass with it collected. The device suite
+        # runs on the code change alone, so the real regression shows.
+        (
+            _patch(control__gripper_py=BREAKS_RELEASE, tests__test_doctor_repro_py=MASKING_REPRO),
+            "the device tests don't pass with the fix (exit 1",
+        ),
+        (
+            _patch(
+                control__gripper_py=FLAGGED_AND_FIXED, tests__test_doctor_repro_py=ATTRIBUTE_ONLY
+            ),
             "fail only because a name is missing (AttributeError: module",
         ),
     ],
-    ids=["repro-passes-on-base", "fix-fails", "flag-probe", "flag-in-body", "flag-attribute"],
+    ids=[
+        "repro-passes-on-base",
+        "fix-fails",
+        "flag-probe",
+        "flag-in-body",
+        "fake-summary",
+        "masking-repro",
+        "flag-attribute",
+    ],
 )
 def test_a_check_that_doesnt_hold_closes_failed_checks(
     diff, reason, client, example, make_doctor, db_session, clock
@@ -390,37 +485,145 @@ def test_a_compound_test_command_is_run_as_configured_never_appended_to(
     assert cmds == [REPRO_CMD] * 4 + [compound] * 2
 
 
+TEST_GRIPPER = (fakes.TOY / "tests" / "test_gripper.py").read_text()
+# Item 1's probe: weaken a check in an existing test, add a failing test there, break
+# release_requested. No new file at all.
+WEAKENED = (
+    TEST_GRIPPER.replace(
+        'assert step("HOLDING", 400, release_requested=True) == ("RELEASE", "open")',
+        'assert step("HOLDING", 400, release_requested=True)',
+    )
+    + "\n\ndef test_a_hand_near_keeps_holding():\n"
+    + '    assert step("HOLDING", 10.0)[0] == "HOLDING"\n'
+)
+PLANTED_RUNNER = 'print("4 passed in 0.01s")\nraise SystemExit(0)\n'
+CODE_AND_REPRO = {"control/gripper.py": FIXED, REPRO_PATH: REPRO}
+# Item 6: the patch carries a .gitignore naming conftest.py *and* the conftest itself.
+# `git apply` writes both, but `git add -A` (the replay's harness flags) skips the conftest.
+HIDDEN_CONFTEST = _patch_paths({**CODE_AND_REPRO, ".gitignore": "conftest.py\n"}) + (
+    "diff --git a/conftest.py b/conftest.py\nnew file mode 100644\n--- /dev/null\n"
+    "+++ b/conftest.py\n@@ -0,0 +1 @@\n+collect_ignore = ['tests']\n"
+)
+
+
 @pytest.mark.parametrize(
-    ("extra", "reason"),
+    ("changes", "reason"),
     [
         (
-            {"tests__test_gripper_py": "def test_nothing():\n    pass\n"},
+            {**CODE_AND_REPRO, "tests/test_gripper.py": "def test_nothing():\n    pass\n"},
             "edits the existing test file tests/test_gripper.py",
         ),
-        ({"tests__test_gripper_py": None}, "removes the existing test file tests/test_gripper.py"),
+        (
+            {**CODE_AND_REPRO, "tests/test_gripper.py": None},
+            "removes the existing test file tests/test_gripper.py",
+        ),
+        (
+            {"control/gripper.py": BREAKS_RELEASE, "tests/test_gripper.py": WEAKENED},
+            "edits the existing test file tests/test_gripper.py",
+        ),
+        # Item 2: a planted test runner, at the top, under tests/, deeper, or as a package.
+        (
+            {**CODE_AND_REPRO, "pytest.py": PLANTED_RUNNER},
+            "it plants pytest.py, which can shadow the test runner",
+        ),
+        ({**CODE_AND_REPRO, "tests/pytest.py": PLANTED_RUNNER}, "it plants tests/pytest.py"),
+        ({**CODE_AND_REPRO, "control/sitecustomize.py": "x = 1\n"}, "sitecustomize.py"),
+        ({**CODE_AND_REPRO, "evil.pth": "import os\n"}, "it plants evil.pth"),
+        ({**CODE_AND_REPRO, "_pytest/__init__.py": "x = 1\n"}, "it plants _pytest/__init__.py"),
+        # Item 6: a conftest.py that a .gitignore would hide from `git add -A`.
+        (HIDDEN_CONFTEST, "test_harness: conftest.py (added)"),
+        # Item 7: the code change only adds a module-level flag.
+        (
+            {"control/gripper.py": FLAGGED, REPRO_PATH: IMPORT_IN_BODY},
+            "flag_only_fix: its code change only adds module-level assignments or constants",
+        ),
+        (
+            {"control/flags.py": "DOCTOR_FIXED = True\n", REPRO_PATH: IMPORT_IN_BODY},
+            "flag_only_fix",
+        ),
     ],
-    ids=["edits-a-test", "deletes-a-test"],
+    ids=[
+        "edits-a-test",
+        "deletes-a-test",
+        "weakens-a-test-and-breaks-release",
+        "planted-pytest",
+        "planted-pytest-in-tests",
+        "planted-sitecustomize",
+        "planted-pth",
+        "planted-_pytest",
+        "gitignored-conftest",
+        "flag-only",
+        "flag-only-new-file",
+    ],
 )
-def test_a_patch_that_tampers_with_existing_tests_fails_without_the_sandbox(
-    extra, reason, client, example, make_doctor, db_session, clock
+def test_a_gaming_patch_is_refused_before_any_sandbox_run(
+    changes, reason, client, example, make_doctor, db_session, clock
 ):
-    base = fakes.toy_files()
-    new = {**base, "device/control/gripper.py": FIXED.encode()}
-    new["device/tests/test_doctor_repro.py"] = REPRO.encode()
-    for key, text in extra.items():
-        name = f"device/{key.replace('__', '/').replace('_py', '.py')}"
-        if text is None:
-            new.pop(name)
-        else:
-            new[name] = text.encode()
-    doc = make_doctor(ScriptedCoder(code_lockin.package_diff(base, new)))
+    patch = changes if isinstance(changes, str) else _patch_paths(changes)
+    doc = make_doctor(ScriptedCoder(patch))
+    clock.at(T0)
+    incident_id = _report(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "failed_checks"
+    (closed,) = [
+        e
+        for e in _events(db_session, incident_id, "doctor.consult_closed")
+        if e.refs["consult"] == first.id
+    ]
+    assert "refused before any run" in closed.data["why"] and reason in closed.data["why"]
+    assert doc.docker.calls == []  # decided from the patch alone
+    assert _events(db_session, incident_id, "doctor.checked") == []
+
+
+def test_a_fix_that_fails_the_held_out_verify_closes_with_that_reason_only(
+    client, example, make_doctor, db_session, clock
+):
+    """Item 4: the fix handles the repro's 10 mm reading and passes the device tests, but
+    still drops the arm at 30 mm, which only the held-out verify scripts check. Pass/fail
+    and counts are kept; the scripts' output reaches no event, prompt or trace."""
+    doc = make_doctor(
+        ScriptedCoder(_patch_paths({"control/gripper.py": PARTIAL, **{REPRO_PATH: REPRO}}))
+    )
     clock.at(T0)
     incident_id = _report(client, example)
     first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
     assert first.outcome == "failed_checks"
     (checked,) = _events(db_session, incident_id, "doctor.checked")
-    assert checked.data["passed"] is False and reason in checked.data["reason"]
-    assert doc.docker.calls == []  # decided from the patch alone
+    assert checked.data["reason"] == "held-out verify failed"
+    assert (checked.data["fails_before"], checked.data["passes_after"]) == (True, True)
+    assert checked.data["device_tests"] is True and checked.data["verify"] == "failed"
+    assert checked.data["verify_counts"]["tests"] == 2
+    assert checked.data["verify_counts"]["passed_count"] < 2
+    assert first.checks["verify"] == "failed"
+    (closed,) = [
+        e
+        for e in _events(db_session, incident_id, "doctor.consult_closed")
+        if e.refs["consult"] == first.id
+    ]
+    assert closed.data["why"].endswith("The fix failed its checks: held-out verify failed.")
+    # Nothing from the verify scripts anywhere: events, the next attempt's prompt, the trace.
+    trace = db_session.get(Recording, closed.refs["recording"])
+    with build_blobstore(doc.settings.blob_dir).get(trace.sha256) as fh:
+        stored = fh.read().decode()
+    for text in (json.dumps(checked.data), closed.data["why"], stored):
+        assert "hand_came_near" not in text and "HAND_AT_30_MM" not in text
+
+
+def test_with_no_verify_scripts_the_check_says_none_available(
+    client, example, make_doctor, db_session, clock
+):
+    doc = make_doctor(ScriptedCoder(GOOD))
+    clock.at(T0)
+    body = example("incident_consult_wanted") | {
+        "incident_id": str(uuid.uuid4()),
+        "occurred_at": (T0 - timedelta(minutes=1)).isoformat(),
+        "running": {"firmware": 1, "harness": 1, "code_rev": NO_VERIFY_REV},
+    }
+    assert client.post("/v1/devices/arm-1/incidents", json=body).status_code == 201
+    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER)
+    (consult,) = _consults(db_session, body["incident_id"])
+    assert consult.stage == "applied" and consult.checks["verify"] == "none available"
+    assert not doc.docker.ever_saw_verify and len(doc.docker.runs) == 12  # no verify replay
 
 
 @pytest.mark.parametrize(

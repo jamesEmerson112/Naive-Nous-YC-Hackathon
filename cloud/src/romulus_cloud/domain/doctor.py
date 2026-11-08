@@ -626,6 +626,8 @@ GAMING_FLAGS = ("test_harness:", "verify_scripts:")
 # only the start of the reason is matched.
 _MISSING_NAME = re.compile(r"^(?:ImportError|ModuleNotFoundError)\b|^AttributeError: module\b")
 _RESULT_LINE = re.compile(r"^(PASSED|FAILED|ERROR) (\S+)(?: - (.*))?$")
+_SUMMARY_HEADER = re.compile(r"^=+ short test summary info =+\s*$")
+_SUMMARY_LINE = re.compile(r"^(?:PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|DESELECTED) ")
 _PATH_TOKEN = re.compile(r"[A-Za-z0-9_./\\-]+")
 _CODER_TOKENS = re.compile(r"tokens (\d+) in / (\d+) out")
 # A held-out verify path in log or trace text (`verify/x.py`, `device/verify/`, `/work/verify/`).
@@ -656,15 +658,33 @@ def package_rel(files: Mapping[str, bytes]) -> dict[str, bytes]:
     `patch_path`, so anything the contract refuses (`./device/x`, `..`, absolute) is dropped,
     and so is anything under `verify/`.
     """
+    return {rel: data for rel, data in _package_items(files) if not is_under(rel, HOLDOUT_DIR)}
+
+
+def held_out_files(files: Mapping[str, bytes]) -> dict[str, bytes]:
+    """Only the package's `verify/` scripts, as `replay_code_patch(verify_files=...)` takes
+    them (`verify/<path>`, whatever the case of `verify` in the package). For the one
+    pass/fail held-out run at the end of a check; never shown to the Doctor."""
+    out: dict[str, bytes] = {}
+    for rel, data in _package_items(files):
+        head, _, rest = rel.partition("/")
+        if rest and head.casefold() == HOLDOUT_DIR:
+            out[f"{HOLDOUT_DIR}/{rest}"] = data
+    return out
+
+
+def _package_items(files: Mapping[str, bytes]) -> list[tuple[str, bytes]]:
+    """(path relative to CODE_ROOT, bytes) for every package name the contract accepts; with
+    any `device/` name, only `device/` names count."""
     names = {str(n): d for n, d in files.items()}
     rooted = any(n.split("/", 1)[0] == CODE_ROOT for n in names)
-    out: dict[str, bytes] = {}
+    out: list[tuple[str, bytes]] = []
     for name, data in names.items():
         if rooted and name.split("/", 1)[0] != CODE_ROOT:
             continue
         rel = patch_path(name)
-        if rel is not None and not is_under(rel, HOLDOUT_DIR):
-            out[rel] = data
+        if rel is not None:
+            out.append((rel, data))
     return out
 
 
@@ -949,28 +969,24 @@ def _is_testish(rel: str) -> bool:
 
 
 def find_repro_test(patch: str) -> str | None:
-    """The reproduction test inside a draft's patch: a test file under `tests/` that
-    **exists after the patch**, preferring one the patch adds, else one it modifies; never a
-    deleted or renamed-away path. None if there is none, or if the contract refuses the
-    patch."""
-    added: list[str] = []
-    changed: list[str] = []
+    """The reproduction test inside a draft's patch: the first test file under `tests/` the
+    patch **adds** (a new file, no pre-image). A modified, renamed or deleted file never
+    counts. None if there is none, or if the contract refuses the patch."""
     for section in _readable_sections(patch):
         pre, post = section.sides
-        if post is None or not is_test_path(post):
-            continue
-        (added if pre is None else changed).append(post)
-    found = added or changed
-    return found[0] if found else None
+        if pre is None and post is not None and is_test_path(post):
+            return post
+    return None
 
 
-def tampered_tests(patch: str, repro_test: str | None) -> list[str]:
-    """What the patch does to the device's existing tests, besides its repro file: deleting
-    or renaming away any test file, or editing any test file other than the repro file. Each
-    entry is one sentence; [] means none. An unreadable patch is tampering (fail closed)."""
+def tampered_tests(patch: str, repro_test: str | None = None) -> list[str]:
+    """What the patch does to the device's existing tests: **any** change to a test file
+    that exists before the patch (edited, deleted, renamed away; a copy leaves it alone).
+    The repro test must be a new file, so it is no exception. Each entry is one sentence;
+    [] means none. An unreadable patch is tampering (fail closed)."""
+    del repro_test  # kept for callers; an existing file can't be the repro any more
     if summarize_code_patch(patch).problems:
         return ["the patch can't be read, so its test changes can't be checked"]
-    repro = patch_path(repro_test) if repro_test else None
     found: list[str] = []
     for section in _sections(patch):
         pre, post = section.sides
@@ -978,9 +994,121 @@ def tampered_tests(patch: str, repro_test: str | None) -> list[str]:
             continue
         if post != pre and not section.copied:
             found.append(f"removes the existing test file {pre}")
-        elif post == pre and pre != repro:
+        elif post == pre:
             found.append(f"edits the existing test file {pre}")
     return found
+
+
+# Test-runner configuration (as `adapters.coder.harness_flags` names it): a fix may not
+# change how its tests are collected or judged.
+HARNESS_FILES = frozenset(
+    {"conftest.py", "pytest.ini", ".pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini"}
+)
+# Files Python or pytest load on their own: a planted one can shadow the test runner.
+SHADOW_FILES = frozenset({"pytest.py", "sitecustomize.py", "usercustomize.py"})
+SHADOW_DIRS = frozenset({"pytest", "_pytest"})
+_STATUS_WORD = {"A": "added", "M": "modified", "D": "deleted"}
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*(?::[^=]+)?(?:[-+*/|&]?=)(?!=)")
+_LITERAL = re.compile(r"""^(?:[rRbBuUfF]{0,2}["']|-?\d|True\b|False\b|None\b)""")
+
+
+def patch_changes(patch: str) -> list[tuple[str, str]]:
+    """(status letter A/M/D, path) for every file the patch touches, read from the patch
+    itself by the contract's parser, never from a git status a `.gitignore` can hide."""
+    out: list[tuple[str, str]] = []
+    for section in _readable_sections(patch):
+        pre, post = section.sides
+        if pre is None and post is not None:
+            out.append(("A", post))
+        elif post is None and pre is not None:
+            out.append(("D", pre))
+        elif pre is not None and post is not None:
+            if post != pre and not section.copied:
+                out.append(("D", pre))
+                out.append(("A", post))
+            else:
+                out.append(("M" if post == pre else "A", post))
+    return out
+
+
+def _test_section(section: _Section) -> bool:
+    pre, post = section.sides
+    return any(p is not None and _is_testish(p) for p in (pre, post))
+
+
+def code_only(patch: str) -> str:
+    """The patch without any test-file section (the repro test included): what the device
+    suite and the held-out verify run against, so a test file can't mask a regression (a
+    repro that monkeypatches the code under test at import, say). "" if nothing is left, or
+    if the contract refuses the patch."""
+    return "".join(s.text for s in _readable_sections(patch) if not _test_section(s))
+
+
+def _flag_line(line: str) -> bool:
+    """A blank line, a comment, or a module-level assignment or constant."""
+    body = line.rstrip("\r")
+    if not body.strip() or body.lstrip().startswith("#"):
+        return True
+    if body[:1].isspace():
+        return False  # indented: inside a function, class or continuation
+    return bool(_ASSIGNMENT.match(body) or _LITERAL.match(body))
+
+
+def flag_only_fix(patch: str) -> bool:
+    """Do the patch's non-test hunks **only add** lines, every one a module-level assignment
+    or constant (`DOCTOR_FIXED = True`)? That changes no behaviour a test could have caught
+    on the base, so it isn't a fix. False when there is no non-test change at all."""
+    added = 0
+    for section in _readable_sections(code_only(patch)):
+        in_hunk = False
+        for line in section.lines:
+            bare = line.rstrip("\r")
+            if _HUNK_HEADER.match(bare):
+                in_hunk = True
+                continue
+            if not in_hunk or bare.startswith("\\"):
+                continue
+            if bare.startswith("-"):
+                return False
+            if bare.startswith("+"):
+                if not _flag_line(bare[1:]):
+                    return False
+                added += 1
+    return added > 0
+
+
+def screen_fix(patch: str) -> list[str]:
+    """Why a drafted fix may not be checked or offered, decided from the patch alone (before
+    any sandbox run); [] when it may. Each entry is one sentence:
+
+    - it tampers with existing tests (`tampered_tests`);
+    - it adds or changes a file that can shadow the test runner (`pytest.py`, a `pytest/` or
+      `_pytest/` directory, `sitecustomize.py`, `usercustomize.py`, any `*.pth`), at any
+      depth, any case;
+    - it adds, changes or deletes test-runner configuration (`HARNESS_FILES`; the patch's
+      own paths, not git's view of them);
+    - it changes no device code (only tests);
+    - `flag_only_fix`: its code change only adds module-level assignments or constants.
+    """
+    if summarize_code_patch(patch).problems:
+        return ["the patch can't be read, so it can't be screened"]
+    reasons = tampered_tests(patch)
+    for status, path in patch_changes(patch):
+        parts = path.casefold().split("/")
+        name = parts[-1]
+        if status != "D" and (
+            name in SHADOW_FILES or name.endswith(".pth") or SHADOW_DIRS & set(parts[:-1])
+        ):
+            reasons.append(f"it plants {path}, which can shadow the test runner")
+        elif name in HARNESS_FILES:
+            reasons.append(f"test_harness: {path} ({_STATUS_WORD[status]})")
+    if not code_only(patch).strip():
+        reasons.append("it changes no device code, only tests")
+    elif flag_only_fix(patch):
+        reasons.append(
+            "flag_only_fix: its code change only adds module-level assignments or constants"
+        )
+    return reasons
 
 
 # --- the coder's task ---------------------------------------------------------------------
@@ -1038,12 +1166,25 @@ def draft_task(
 
 def pytest_results(output: str) -> dict[str, Any]:
     """The short test summary of a `pytest -rA` run: `{"passed": [id], "failed": {id:
-    reason}, "errors": [id]}`. Lines that aren't summary lines are ignored."""
+    reason}, "errors": [id]}`.
+
+    Read only from the block after the **last** `short test summary info` header, up to its
+    first line that isn't a summary line (the counts line). `FAILED x` / `PASSED x` lines a
+    test prints earlier, or after the counts (an `atexit` print), are not results. No header,
+    no results."""
+    lines = (output or "").splitlines()
+    starts = [i for i, line in enumerate(lines) if _SUMMARY_HEADER.search(line)]
+    block: list[str] = []
+    for line in lines[starts[-1] + 1 :] if starts else []:
+        bare = line.rstrip("\r")
+        if not _SUMMARY_LINE.match(bare):
+            break
+        block.append(bare)
     passed: list[str] = []
     failed: dict[str, str] = {}
     errors: list[str] = []
-    for line in (output or "").splitlines():
-        match = _RESULT_LINE.match(line.rstrip("\r"))
+    for line in block:
+        match = _RESULT_LINE.match(line)
         if not match:
             continue
         kind, test_id, reason = match.group(1), match.group(2), match.group(3) or ""
@@ -1135,39 +1276,43 @@ def check_verdict(
     after_repro: Mapping[str, Any] | None,
     after: Mapping[str, Any] | None,
     repro_test: str,
-    tampering: Iterable[str] = (),
+    screened: Iterable[str] = (),
+    verify: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The sandbox check's answer (`services.doctor_code.check_job`). Fails closed. In order:
 
-    1. the patch leaves the existing tests alone (`tampered_tests`: no test file removed,
-       none edited but the repro file);
+    1. the patch passes `screen_fix` (`screened` is its reasons: tampering with existing
+       tests, a planted test runner, test config, no code change, a flag-only fix);
     2. **fails before:** the repro test alone on the base fails on behaviour
        (`repro_failures`);
     3. **passes after:** those same test ids pass with the full patch (`repro_passes`);
-    4. the device tests (CODER_TEST_CMD) pass with the full patch, without changing how they
-       are judged (`GAMING_FLAGS`) or touching another existing test (`existing_test:`).
+    4. the device tests (CODER_TEST_CMD) pass on the base plus the patch's **non-test**
+       hunks (`code_only`), with no harness flag (`GAMING_FLAGS`, `existing_test:`);
+    5. the held-out verify scripts, when the base has any, pass on the same code: reason
+       exactly "held-out verify failed", nothing more (`verify` is `{"available", "passed"}`;
+       their output is never kept).
 
-    → `{passed, fails_before, passes_after, device_tests, reason (None when passed),
-    summary, flags, repro_ids}`.
+    → `{passed, fails_before, passes_after, device_tests, verify ("passed" | "failed" |
+    "none available" | "not run"), reason (None when passed), summary, flags, repro_ids}`.
     """
-    tampering = list(tampering)
+    screened = list(screened)
     after = after if isinstance(after, Mapping) else None
-    ids, why_not_failing = repro_failures(before, repro_test) if not tampering else ([], "")
+    ids, why_not_failing = repro_failures(before, repro_test) if not screened else ([], "")
     fails_before = bool(ids)
     why_not_passing = repro_passes(after_repro, ids) if fails_before else "not run"
     passes_after = fails_before and not why_not_passing
     applied = after is not None and not after.get("patch_error")
     device_tests = bool(applied and after and after.get("tests_passed")) if after else None
     flags = [str(f) for f in (after or {}).get("flags") or []]
-    repro = patch_path(repro_test)
-    gaming = [f for f in flags if f.startswith(GAMING_FLAGS)]
-    gaming += [
-        f
-        for f in flags
-        if f.startswith("existing_test:") and not f.startswith(f"existing_test: {repro} (")
-    ]
-    if tampering:
-        reason = f"the patch tampers with the existing tests: {'; '.join(tampering)}"
+    gaming = [f for f in flags if f.startswith((*GAMING_FLAGS, "existing_test:"))]
+    if not isinstance(verify, Mapping):
+        verify_state = "not run"
+    elif not verify.get("available"):
+        verify_state = "none available"
+    else:
+        verify_state = "passed" if verify.get("passed") is True else "failed"
+    if screened:
+        reason = f"the fix is refused before any run: {'; '.join(screened)}"
     elif not fails_before:
         reason = (
             f"the repro test {repro_test} doesn't prove the fault on the base code: "
@@ -1183,18 +1328,24 @@ def check_verdict(
         reason = f"the fix changes how its tests are judged: {'; '.join(gaming)}"
     elif not after.get("passed"):
         reason = f"the device tests don't pass with the fix ({_describe(after)})"
+    elif verify_state == "failed":
+        reason = "held-out verify failed"
+    elif verify_state == "not run":
+        reason = "the held-out verify step never ran"
     else:
         reason = None
     summary = (
         f"repro {repro_test}: {'fails' if fails_before else 'does not fail'} on the base "
         f"({_describe(before)}); {'passes' if passes_after else 'does not pass'} with the fix "
-        f"({_describe(after_repro)}); device tests with the fix: {_describe(after)}"
+        f"({_describe(after_repro)}); device tests on the code change: {_describe(after)}; "
+        f"held-out verify: {verify_state}"
     )
     return {
         "passed": reason is None,
         "fails_before": fails_before,
         "passes_after": passes_after,
         "device_tests": device_tests,
+        "verify": verify_state,
         "reason": reason,
         "summary": summary,
         "flags": flags,

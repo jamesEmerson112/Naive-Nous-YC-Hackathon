@@ -1202,10 +1202,13 @@ def _apply_draft(
     consult.cost_usd = (consult.cost_usd or 0.0) + cost
     consult.job_key = None
     refused = patch_refusal(diff) if has_diff else None
+    screened = rules.screen_fix(diff) if has_diff and not refused else []
     if not has_diff:
         failure = "the coding agent changed nothing"
     elif refused:
         failure = f"the coding agent's diff is refused: {refused}"
+    elif screened:
+        failure = f"the fix is refused before any run: {'; '.join(screened)}"
     elif not result.passed:
         failure = f"the coding agent's own test run did not pass ({tests})"
     elif repro is None:
@@ -1333,9 +1336,11 @@ def _apply_verdict(
         "device_tests": verdict["device_tests"],
         "repro_test": repro,
         "repro_ids": verdict["repro_ids"],
+        "verify": verdict["verify"],
         "summary": verdict["summary"],
     }
     consult.job_key = None
+    held = result.get("verify") if isinstance(result.get("verify"), dict) else None
     _record(
         t.session,
         t.settings,
@@ -1358,6 +1363,13 @@ def _apply_verdict(
             "before": _run_view(result.get("before")),
             "after_repro": _run_view(result.get("after_repro")),
             "after": _run_view(result.get("after")),
+            # The held-out run: its state and counts only, never its output.
+            "verify": verdict["verify"],
+            "verify_counts": (
+                {k: held.get(k) for k in ("tests", "passed_count", "skipped", "timed_out")}
+                if held and held.get("available")
+                else None
+            ),
         },
         now=t.now,
     )
@@ -1398,9 +1410,9 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
             "tests; nothing is offered, and the hypotheses stand as advice.",
         )
         return
-    tampering = rules.tampered_tests(patch, repro)
-    if tampering:  # decided from the patch alone: no sandbox run needed
-        verdict = rules.check_verdict(None, None, None, repro, tampering)
+    screened = rules.screen_fix(patch)
+    if screened:  # decided from the patch alone (again: a draft is screened too)
+        verdict = rules.check_verdict(None, None, None, repro, screened)
         _apply_verdict(t, consult, repro, verdict, {})
         return
     blocked = t.sandbox_blocked()
@@ -1411,19 +1423,18 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
     base = (incident.running or {}).get("code_rev")
 
     def make() -> Callable[[], Any]:
-        files = doctor_code.coder_files(
-            doctor_code.package(t.session, t.get_store(), base, s.fleet_id)
-        )
+        code, held_out = doctor_code.package_parts(t.session, t.get_store(), base, s.fleet_id)
         return partial(
             doctor_code.check_job,
             t.get_sandbox(),
-            files,
+            doctor_code.coder_files(code),
             patch,
             repro,
             test_cmd=s.coder_test_cmd,
             timeout_s=s.coder_replay_timeout_s,
             scratch_dir=s.coder_scratch_dir or None,
             secrets=doctor_trace.secrets(s),
+            verify_files=held_out,
         )
 
     try:
@@ -1443,7 +1454,11 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
         return
     result = done.result if isinstance(done.result, dict) else {}
     verdict = rules.check_verdict(
-        result.get("before"), result.get("after_repro"), result.get("after"), repro
+        result.get("before"),
+        result.get("after_repro"),
+        result.get("after"),
+        repro,
+        verify=result.get("verify"),
     )
     _apply_verdict(t, consult, repro, verdict, result)
     _forget_after_commit(t, key)

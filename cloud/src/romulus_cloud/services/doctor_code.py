@@ -8,15 +8,18 @@ and the coder budget it shares with the batch.
   puts the `device/` prefix back for the coder and the replay.
 - **Draft job** (`draft_job`): `coder.draft(patch="", ..., task=...)`, plain data in, a
   `CodeDraft` out.
-- **Check job** (`check_job`): up to three `coder_runs.replay_code_patch` runs in fresh
-  containers with no network, each stopping the check as soon as it fails:
+- **Check job** (`check_job`): up to four `coder_runs.replay_code_patch` runs in fresh
+  containers with no network and `PYTHONSAFEPATH=1`, each stopping the check as soon as it
+  fails:
   1. the repro test's part of the patch alone (`domain.doctor.split_patch`) with the fixed
      `REPRO_CMD` on the repro file: its tests must FAIL on behaviour (`repro_failures`);
   2. the full patch with the same `REPRO_CMD`: those same test ids must PASS;
-  3. the full patch with CODER_TEST_CMD, unchanged (never appended to, so a compound
-     command like `pytest -q; ruff check .` stays what it says): the device tests pass.
-  The package's verify scripts are not in `files`, so no run sees them; the one pass/fail
-  verify run at the end that architecture §6 item 7 allows is skipped in v0.
+  3. CODER_TEST_CMD, unchanged (never appended to, so a compound command like
+     `pytest -q; ruff check .` stays what it says), on the patch's non-test hunks only
+     (`domain.doctor.code_only`): the device tests pass without any test file's help;
+  4. when the base package has `verify/` scripts: once more on the same code, with them
+     (architecture §6 item 7), pass/fail and counts only.
+  The verify scripts are in no other run's `files`.
 - **Coder budget:** CODER_MAX_DRAFTS_PER_HOUR counts `coder.started` events fleet-wide in
   the last hour, minus job attempts the provider turned away having spent exactly 0 tokens
   (the refund rule of `batch._drafts_this_hour`, #38). `coder_budget` runs the same query
@@ -63,28 +66,43 @@ OUTPUT_TAIL = 2000  # characters of each replay's test output kept in the event
 # The repro step's fixed command: isolated Python (a planted `pytest.py` can't shadow
 # pytest), `-rA` so passing ids are listed too. The device's conftest still applies.
 REPRO_CMD = "python -I -m pytest -q -rA"
+# Every check run, CODER_TEST_CMD included (left as configured): Python never puts the work
+# dir (or a script's dir) first on sys.path, so a planted `pytest.py` can't shadow pytest.
+SAFE_ENV = {"PYTHONSAFEPATH": "1"}
 
 
 class NoPackage(Exception):
     """The consult's base code can't be read, so there is nothing to draft or check against."""
 
 
-def package(session: Session, store: BlobStore, rev: str | None, fleet_id: str) -> dict[str, bytes]:
-    """Code version `rev`'s files keyed relative to CODE_ROOT, without `verify/`."""
+def _read(session: Session, store: BlobStore, rev: str | None, fleet_id: str) -> dict[str, bytes]:
     if not rev:
         raise NoPackage("the incident has no running.code_rev")
     cv = session.get(CodeVersion, (fleet_id, rev))
     if cv is None:
         raise NoPackage(f"code {rev} is not registered (POST /v1/code)")
     try:
-        files = read_package(store, cv)
+        return read_package(store, cv)
     except (ApiError, tarfile.TarError, OSError, EOFError) as exc:
         detail = exc.detail if isinstance(exc, ApiError) else str(exc)
         raise NoPackage(f"code {rev}'s package can't be read: {detail}") from exc
+
+
+def package(session: Session, store: BlobStore, rev: str | None, fleet_id: str) -> dict[str, bytes]:
+    """Code version `rev`'s files keyed relative to CODE_ROOT, without `verify/`."""
+    return package_parts(session, store, rev, fleet_id)[0]
+
+
+def package_parts(
+    session: Session, store: BlobStore, rev: str | None, fleet_id: str
+) -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """(the package without `verify/`, keyed relative to CODE_ROOT; its held-out `verify/`
+    scripts as `verify/<path>`). Only the check's final pass/fail run gets the second."""
+    files = _read(session, store, rev, fleet_id)
     rel = rules.package_rel(files)
     if not rel:
         raise NoPackage(f"code {rev}'s package has no files outside {rules.HOLDOUT_DIR}/")
-    return rel
+    return rel, rules.held_out_files(files)
 
 
 def coder_files(rel: Mapping[str, bytes]) -> dict[str, bytes]:
@@ -226,22 +244,51 @@ def check_job(
     timeout_s: int,
     scratch_dir: str | None,
     secrets: Iterable[str] = (),
+    verify_files: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
-    """Off the tick: the repro tests alone on the base (must fail on behaviour), the same
-    tests with the full patch (must pass), then the device tests with the full patch.
-    → `{"before": run, "after_repro": run | None, "after": run | None}`; a later run is None
-    when an earlier one already failed the check."""
+    """Off the tick, every run with `SAFE_ENV`; each stops the check when it fails:
+
+    1. the repro tests alone on the base (must fail on behaviour);
+    2. the same tests with the full patch (must pass);
+    3. the device tests (`test_cmd`) on the base plus the patch's non-test hunks only
+       (`domain.doctor.code_only`), so no test file can mask a regression;
+    4. when `verify_files` (the base's held-out `verify/` scripts) exist: once, on the same
+       code, pass/fail only. Only counts come back; their output is dropped here.
+
+    → `{"before", "after_repro", "after", "verify"}`; a later step is None when an earlier
+    one already failed the check, and `verify` is `{"available": False}` with no scripts."""
     secrets = list(secrets)
-    kw = {"sandbox": sandbox, "timeout_s": timeout_s, "scratch_dir": scratch_dir}
+    kw = {
+        "sandbox": sandbox,
+        "timeout_s": timeout_s,
+        "scratch_dir": scratch_dir,
+        "extra_env": SAFE_ENV,
+    }
     repro_cmd = repro_command(repro_test)
     repro_only = rules.split_patch(patch, repro_test)
     before = _run(replay_code_patch(files, repro_only, test_cmd=repro_cmd, **kw), secrets)
-    result: dict[str, Any] = {"before": before, "after_repro": None, "after": None}
+    result: dict[str, Any] = {"before": before, "after_repro": None, "after": None, "verify": None}
     ids, _ = rules.repro_failures(before, repro_test)
     if not ids:
         return result
     result["after_repro"] = _run(replay_code_patch(files, patch, test_cmd=repro_cmd, **kw), secrets)
     if rules.repro_passes(result["after_repro"], ids):
         return result
-    result["after"] = _run(replay_code_patch(files, patch, test_cmd=test_cmd, **kw), secrets)
+    code = rules.code_only(patch)
+    result["after"] = _run(replay_code_patch(files, code, test_cmd=test_cmd, **kw), secrets)
+    if not result["after"]["passed"]:
+        return result
+    if not verify_files:
+        result["verify"] = {"available": False}
+        return result
+    held = replay_code_patch(files, code, test_cmd="", verify_files=verify_files, **kw)
+    run = held.patched_verify
+    result["verify"] = {  # pass/fail and counts only: the scripts' output stays hidden
+        "available": True,
+        "passed": held.verify_passed and held.patch_error is None,
+        "tests": held.expected_verify,
+        "passed_count": run.passed if run else 0,
+        "skipped": run.skipped if run else 0,
+        "timed_out": bool(run and run.timed_out),
+    }
     return result

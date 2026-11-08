@@ -158,8 +158,8 @@ def test_find_repro_test_prefers_an_added_test_file():
     assert rules.find_repro_test(FIX + EXISTING_TEST + REPRO) == "tests/test_regression_d1.py"
 
 
-def test_find_repro_test_falls_back_to_a_modified_test_file():
-    assert rules.find_repro_test(FIX + EXISTING_TEST) == "tests/test_gripper.py"
+def test_a_modified_test_file_is_never_the_repro():
+    assert rules.find_repro_test(FIX + EXISTING_TEST) is None
 
 
 def test_find_repro_test_ignores_deleted_and_non_test_files():
@@ -173,25 +173,25 @@ def test_find_repro_test_ignores_deleted_and_non_test_files():
     assert rules.find_repro_test("") is None
 
 
-def test_find_repro_test_takes_the_path_that_exists_after_a_rename():
-    rename = (
-        "diff --git a/tests/test_old.py b/tests/test_new.py\n"
-        "similarity index 90%\nrename from tests/test_old.py\nrename to tests/test_new.py\n"
-        "--- a/tests/test_old.py\n+++ b/tests/test_new.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
-    )
-    pure = (
-        "diff --git a/tests/test_a.py b/tests/test_b.py\n"
-        "similarity index 100%\nrename from tests/test_a.py\nrename to tests/test_b.py\n"
-    )
-    assert rules.find_repro_test(FIX + rename) == "tests/test_new.py"
-    assert rules.find_repro_test(FIX + pure) == "tests/test_b.py"
-    # renamed away from tests/: nothing under tests/ exists after it
-    away = pure.replace("b/tests/test_b.py", "b/control/test_b.py").replace(
-        "rename to tests/test_b.py", "rename to control/test_b.py"
-    )
-    assert rules.find_repro_test(FIX + away) is None
-    # a new file under tests/ still wins over a renamed one
-    assert rules.find_repro_test(FIX + rename + REPRO) == "tests/test_regression_d1.py"
+RENAME_EDIT = (
+    "diff --git a/tests/test_old.py b/tests/test_new.py\n"
+    "similarity index 90%\nrename from tests/test_old.py\nrename to tests/test_new.py\n"
+    "--- a/tests/test_old.py\n+++ b/tests/test_new.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+)
+PURE_RENAME = (
+    "diff --git a/tests/test_a.py b/tests/test_b.py\n"
+    "similarity index 100%\nrename from tests/test_a.py\nrename to tests/test_b.py\n"
+)
+
+
+def test_a_renamed_test_file_is_never_the_repro_only_a_new_one():
+    """A rename has a pre-image, so it isn't new: only an added file can be the repro."""
+    assert rules.find_repro_test(FIX + RENAME_EDIT) is None
+    assert rules.find_repro_test(FIX + PURE_RENAME) is None
+    assert rules.find_repro_test(FIX + RENAME_EDIT + REPRO) == "tests/test_regression_d1.py"
+    # a copy's target is new, but it has a pre-image too: still not a repro
+    copy = PURE_RENAME.replace("rename from", "copy from").replace("rename to", "copy to")
+    assert rules.find_repro_test(FIX + copy) is None
 
 
 @pytest.mark.parametrize(
@@ -297,13 +297,33 @@ def _run(exit_code=1, **changes):
     return run | changes
 
 
+VERIFY_OK = {"available": True, "passed": True, "tests": 2, "passed_count": 2}
+
+
 def test_a_repro_that_fails_on_behaviour_then_passes_with_a_clean_fix_passes():
-    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH)
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=VERIFY_OK)
     assert v["passed"] is True and v["reason"] is None
     assert (v["fails_before"], v["passes_after"], v["device_tests"]) == (True, True, True)
-    assert v["repro_ids"] == [REPRO_ID]
+    assert v["repro_ids"] == [REPRO_ID] and v["verify"] == "passed"
     assert "fails on the base (exit 1, 1 failed in 0.1s)" in v["summary"]
-    assert "device tests with the fix: exit 0, 5 passed" in v["summary"]
+    assert "device tests on the code change: exit 0, 5 passed" in v["summary"]
+    assert "held-out verify: passed" in v["summary"]
+
+
+@pytest.mark.parametrize(
+    ("verify", "state", "reason"),
+    [
+        ({"available": False}, "none available", None),
+        (VERIFY_OK, "passed", None),
+        ({"available": True, "passed": False, "tests": 2}, "failed", "held-out verify failed"),
+        ({"available": True, "passed": "yes"}, "failed", "held-out verify failed"),  # strict
+        (None, "not run", "the held-out verify step never ran"),
+    ],
+)
+def test_the_held_out_verify_is_pass_fail_only(verify, state, reason):
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=verify)
+    assert v["verify"] == state and v["reason"] == reason
+    assert v["passed"] is (reason is None)
 
 
 def test_a_collection_error_on_the_base_proves_nothing():
@@ -399,18 +419,16 @@ def test_a_fix_that_doesnt_pass_the_device_tests_cleanly_fails_the_check(after, 
     assert why in v["reason"]
 
 
-def test_editing_the_repro_file_itself_is_allowed():
+def test_any_existing_test_flag_fails_the_check_even_on_the_repro_path():
     flag = f"existing_test: {REPRO_PATH} (modified)"
-    v = rules.check_verdict(_run(1), _run(0), _run(0, flags=[flag]), REPRO_PATH)
-    assert v["passed"] is True and v["flags"] == [flag]
+    v = rules.check_verdict(_run(1), _run(0), _run(0, flags=[flag]), REPRO_PATH, verify=VERIFY_OK)
+    assert v["passed"] is False and "existing_test" in v["reason"]
 
 
-def test_tampering_fails_the_check_before_anything_else():
+def test_a_screened_patch_fails_the_check_before_anything_else():
     v = rules.check_verdict(None, None, None, REPRO_PATH, ["removes the existing test file x"])
     assert v["passed"] is False and v["fails_before"] is False
-    assert (
-        v["reason"] == "the patch tampers with the existing tests: removes the existing test file x"
-    )
+    assert v["reason"] == "the fix is refused before any run: removes the existing test file x"
 
 
 # --- tampered_tests and pytest_results ---------------------------------------------------
@@ -434,16 +452,99 @@ CONFTEST = (
     [
         (FIX + REPRO, []),
         (FIX + REPRO + EXISTING_TEST, ["edits the existing test file tests/test_gripper.py"]),
-        (FIX + EXISTING_TEST, []),  # the repro file is the existing test itself
+        # an existing file is never the repro, so editing it is tampering too
+        (FIX + EXISTING_TEST, ["edits the existing test file tests/test_gripper.py"]),
         (FIX + REPRO + DELETE_TEST, ["removes the existing test file tests/test_gripper.py"]),
         (FIX + REPRO + RENAME_TEST, ["removes the existing test file tests/test_gripper.py"]),
         (FIX + REPRO + CONFTEST, ["edits the existing test file tests/conftest.py"]),
     ],
-    ids=["clean", "edits", "repro-is-existing", "deletes", "renames", "conftest"],
+    ids=["clean", "edits", "edits-without-a-new-file", "deletes", "renames", "conftest"],
 )
 def test_tampered_tests(patch, found):
-    repro = rules.find_repro_test(patch)
-    assert rules.tampered_tests(patch, repro) == found
+    assert rules.tampered_tests(patch) == found
+
+
+def _new_file(path: str, body: str) -> str:
+    lines = body.splitlines()
+    return (
+        f"diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n"
+        f"@@ -0,0 +1,{len(lines)} @@\n" + "".join(f"+{line}\n" for line in lines)
+    )
+
+
+FLAG_HUNK = (
+    "--- a/control/gripper.py\n+++ b/control/gripper.py\n@@ -1,1 +1,3 @@\n"
+    " PROXIMITY_MM = 50\n+\n+DOCTOR_FIXED = True  # the fix\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("patch", "reason"),
+    [
+        (FIX + REPRO, None),
+        (FIX + REPRO + _new_file("pytest.py", "print('4 passed')"), "it plants pytest.py"),
+        (FIX + REPRO + _new_file("tests/pytest.py", "x = 1"), "it plants tests/pytest.py"),
+        (FIX + REPRO + _new_file("a/b/PyTest.py", "x = 1"), "it plants a/b/PyTest.py"),
+        (FIX + REPRO + _new_file("pytest/__init__.py", "x = 1"), "pytest/__init__.py"),
+        (FIX + REPRO + _new_file("lib/_pytest/x.py", "x = 1"), "lib/_pytest/x.py"),
+        (FIX + REPRO + _new_file("sitecustomize.py", "x = 1"), "sitecustomize.py"),
+        (FIX + REPRO + _new_file("usercustomize.py", "x = 1"), "usercustomize.py"),
+        (FIX + REPRO + _new_file("deep/evil.pth", "import os"), "deep/evil.pth"),
+        (FIX + REPRO + _new_file("conftest.py", "x = 1"), "test_harness: conftest.py (added)"),
+        (FIX + REPRO + _new_file("setup.cfg", "[x]"), "test_harness: setup.cfg (added)"),
+        (FIX + REPRO + _new_file("tox.ini", "[x]"), "test_harness: tox.ini (added)"),
+        (FIX + REPRO + EXISTING_TEST, "edits the existing test file tests/test_gripper.py"),
+        (REPRO, "it changes no device code, only tests"),
+        (FLAG_HUNK + REPRO, "flag_only_fix"),
+        (_new_file("control/flags.py", 'FIXED = True\nNOTE = "fixed"\n\n# done') + REPRO, "flag"),
+    ],
+)
+def test_screen_fix(patch, reason):
+    reasons = rules.screen_fix(patch)
+    if reason is None:
+        assert reasons == []
+    else:
+        assert any(reason in r for r in reasons), reasons
+
+
+def test_flag_only_fix_needs_every_code_line_to_be_a_module_level_constant():
+    assert rules.flag_only_fix(FLAG_HUNK + REPRO)
+    assert not rules.flag_only_fix(FIX + REPRO)  # it removes lines
+    indented = FLAG_HUNK.replace("+DOCTOR_FIXED = True  # the fix", "+    return 1")
+    assert not rules.flag_only_fix(indented)  # inside a function
+    call = FLAG_HUNK.replace("+DOCTOR_FIXED = True  # the fix", "+configure()")
+    assert not rules.flag_only_fix(call)
+    compare = FLAG_HUNK.replace("+DOCTOR_FIXED = True  # the fix", "+X == 1")
+    assert not rules.flag_only_fix(compare)
+    assert not rules.flag_only_fix(REPRO)  # no code change at all
+
+
+def test_code_only_strips_every_test_file_section():
+    full = FIX + REPRO + EXISTING_TEST + CONFTEST
+    assert rules.code_only(full) == FIX
+    assert rules.code_only(REPRO) == ""
+    assert rules.code_only(FIX + REPRO.replace("b/tests/", "b/device/tests/")) == ""  # mixed
+
+
+def test_patch_changes_reads_status_from_the_patch_itself():
+    assert rules.patch_changes(FIX + REPRO + DELETE_TEST + RENAME_TEST) == [
+        ("M", "control/gripper.py"),
+        ("A", "tests/test_regression_d1.py"),
+        ("D", "tests/test_gripper.py"),
+        ("D", "tests/test_gripper.py"),
+        ("A", "tests/test_moved.py"),
+    ]
+
+
+def test_held_out_files_are_only_the_verify_scripts():
+    files = {
+        "device/control/x.py": b"a",
+        "device/verify/test_v.py": b"v",
+        "device/Verify/sub/test_w.py": b"w",
+        "device/verify": b"not a dir",
+    }
+    assert rules.held_out_files(files) == {"verify/test_v.py": b"v", "verify/sub/test_w.py": b"w"}
+    assert rules.held_out_files({"control/x.py": b"a"}) == {}
 
 
 def test_an_unreadable_patch_counts_as_tampering():
@@ -474,6 +575,45 @@ def test_pytest_results_reads_the_short_summary():
         "errors": ["tests/test_z.py::test_w"],
     }
     assert rules.pytest_results("") == {"passed": [], "failed": {}, "errors": []}
+
+
+def test_pytest_results_reads_only_the_block_after_the_last_header():
+    header = "=========================== short test summary info ============================"
+    output = "\n".join(
+        [
+            "F",
+            "----------------------------- Captured stdout call -----------------------------",
+            f"FAILED {REPRO_ID} - assert ('RELEASE', 'open') == ('HOLDING', 'close')",  # printed
+            f"PASSED {OTHER_ID}",  # printed too
+            header,
+            f"FAILED {REPRO_ID} - ImportError: cannot import na...",
+            "1 failed in 0.01s",
+            f"PASSED {REPRO_ID}",  # an atexit print after the counts
+        ]
+    )
+    assert rules.pytest_results(output) == {
+        "passed": [],
+        "failed": {REPRO_ID: "ImportError: cannot import na..."},
+        "errors": [],
+    }
+    # A fake header printed *before* the real one changes nothing; no header, no results.
+    assert rules.pytest_results(f"{header}\nFAILED fake::x\n{output}")["failed"] == {
+        REPRO_ID: "ImportError: cannot import na..."
+    }
+    assert rules.pytest_results(f"FAILED {REPRO_ID} - assert 1\n1 failed")["failed"] == {}
+
+
+def test_skipped_and_xfail_lines_stay_inside_the_block():
+    output = (
+        "=== short test summary info ===\n"
+        "SKIPPED [1] tests/test_x.py:3: no hardware\n"
+        f"FAILED {REPRO_ID} - assert 1 == 2\n"
+        "XFAIL tests/test_x.py::test_y - known\n"
+        f"PASSED {OTHER_ID}\n"
+        "1 failed, 1 passed, 1 skipped, 1 xfailed in 0.1s\n"
+    )
+    results = rules.pytest_results(output)
+    assert results["failed"] == {REPRO_ID: "assert 1 == 2"} and results["passed"] == [OTHER_ID]
 
 
 # --- evidence helpers --------------------------------------------------------------------
