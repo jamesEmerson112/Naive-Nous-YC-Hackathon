@@ -112,7 +112,7 @@ body {
 :where(a, summary, code):focus-visible { border-radius: 8px; }
 a { color: var(--leaf-ink); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 main { max-width: 72rem; margin: 0 auto; padding: 0 24px 64px; }
-p { margin: 0.25rem 0; }
+p { margin: 0.25rem 0; text-wrap: pretty; }
 h1, h2, h3 { text-wrap: balance; }
 code, .mono { font-family: var(--mono); font-size: 0.88em; }
 .muted { color: var(--muted); font-weight: 400; }
