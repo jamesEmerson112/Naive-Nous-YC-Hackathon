@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sat Nov 7, 8:38 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 8:48 PM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -120,7 +120,6 @@ Hermes compaction fix (summarizer login)
 
 ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
-Coding agent for code patches (M8; #19 merged, M8b in progress) <--- Kent
 Fleet Doctor proposal (D23-D28)         <--- Kent
 Fleet Doctor L1 advise (/doctor/ask)    <--- Kent
 Fleet Doctor L2 consult + proposals     <--- Kent
@@ -210,3 +209,4 @@ SO-101: STM32 toolchain in healer sandbox (B8, #24) <--- Kent
 Pi 5: Bench to cloud API bridge (tools/edge_bridge: podd → cloud, D29, #25) <--- Kent
 Pi 5: Incident + recording outbox for the pod (tools/edge_bridge, #25) <--- Kent
 Romulus: Fleet Doctor L3 tool contract (#30, draft) <--- Kent
+Romulus: Coding agent for code patches (M8; #19 merged, M8b in progress) <--- Kent
