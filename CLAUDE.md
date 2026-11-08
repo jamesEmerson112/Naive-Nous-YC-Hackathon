@@ -45,7 +45,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 4:48 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 4:58 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
 
 **The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
 - **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
@@ -84,11 +84,15 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
   - `OpenAICompatLlm`, one client for both the Naïve proxy and RunPod vLLM (D22).
   - `HttpNaive`, which posts cards with an `Idempotency-Key` and retries 409s that are safe to retry. Its fake walks cards to RESULT or STOPPED.
   - `FakeCoder`, the stand-in for the M8 coding agent.
-- **Open for review:**
-  - **PR #3, `cloud/m0-contracts`:** `romulus-contracts` v0.1, with models, the shared `rules.evaluate`, `code_patch` checks, a version-skew helper, a schema printer, example payloads and a README for the device side. This is what Ishaan builds against (B2, B3).
-  - **PR #4, `cloud/m0-scaffold`:** settings, the data model, the event log, the FastAPI app with `/healthz`, the worker loop and CLI, the Compose stack, the Dockerfiles, a Makefile, `.env.example` and coding rules in `cloud/CLAUDE.md`.
-  - Once both merge, M0 still needs the live Naïve card and LLM call *(inferred from the build plan)*.
-- **Earlier — PR #1 (`8eb532f`):** the uv workspace skeleton: `packages/contracts`, `cloud/` and `tools/fake_device/`, on Python 3.12.
+- **Just merged:**
+  - **PR #3 (`84b4a93`, 4:52 PM):** `romulus-contracts` v0.1, with models, the shared `rules.evaluate`, `code_patch` checks, example payloads and a README for the device side. Ishaan should review it: it proposes the code-package and `code_patch` formats (B2, B3).
+  - **PR #4 (`b76b332`, 4:54 PM):** the cloud scaffold: settings, the data model, the event log, the FastAPI app with `/healthz`, the worker, the Compose stack, a Makefile and `cloud/CLAUDE.md`.
+  - **Earlier:** the workspace skeleton (PR #1) and the adapters (PR #2). M0's live Naïve card and LLM call are still to come *(inferred from the build plan)*.
+- **Open — PR #5, `cloud/fake-device` (M1):**
+  - A fake fleet that runs against the device API. Its client is also the **reference visor and outbox for the Pi**: hash-checked installs with roll back to last good (D7), and an on-disk FIFO outbox that survives restarts.
+  - Four scenarios: `rules`, `code` (D1), `bad` (canary rollback) and `park` (D3).
+  - Its README tells Ishaan how to adopt it on the Pi (PR #5 description).
+- **Ask from James:** the current Naïve key covers only agents and sessions. Hermes needs a key with Board scopes to pick up and close cards, either from Kent or via `naive mcp create` (team status).
 - **Decisions locked (D0–D22):** Docker Compose, Postgres 17, FastAPI, Jinja + htmx (D17, D18). Naïve is outbound only, with caps in our code and over-cap orders blocked (D19, D19b). LLM access goes through the Naïve proxy or RunPod, with a swappable `Coder` for code patches (D21, D22). D5a is accepted, with its risk logged as K17 ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
 - **Blocked on Ishaan and James:** the device code and tests need to be in `device/` (B1), the code-package and `code_patch` formats need agreement (B2, B3), the STM32 toolchain has to go in the sandbox (B8), and Ishaan has to supply the list of safety and visor paths (K17). Either a Naïve key with `proxy:write` or James's RunPod endpoint is needed (B4) (build plan §3, M8). Ishaan's test bed lives in `edge/`, while the contracts expect `device/`, so the two need to agree on one folder *(inferred)*.
 <!-- romulus-sync:end -->
