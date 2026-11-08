@@ -53,14 +53,14 @@ PI 5
 Device side owner (D14)                 <--- Ishaan
 LeRobot 0.7 on Python 3.12
 One serial-port owner (arm host)
-Bench to cloud API bridge
+Bench to cloud API bridge (tools/edge_bridge: podd → cloud) <--- Kent
 Pi app: hold object                     <--- Ishaan
 Healer agent on the Pi                  <--- Ishaan
 Health checks, tiers 1-3                <--- Ishaan
 Snapshot and park on fault
 Overlay patches with self-revert
 Visor: check in, pull, install
-Incident + recording outbox
+Incident + recording outbox (pod, via tools/edge_bridge) <--- Kent
 Local model on the Pi
 
 SO-101
