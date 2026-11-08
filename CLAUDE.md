@@ -100,10 +100,10 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 4:42 PM PST._
-- **Now:** screening healer harness versions h1, h2 and h3 in `edge/healer/harnesses/` (uncommitted), each with its own prompt, skills and tools. h3 passed the oracle and do-nothing checks; granite4.1:3b (config a) has been running since 4:38 PM, and a model download for config d is waiting on Ishaan's OK (session "Current idea summary"). Earlier granite run failed S1 and D2; no model comparison result yet.
+_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 5:12 PM PST._
+- **Now:** screening healer harness versions h1, h2 and h3 in `edge/healer/harnesses/` (uncommitted), about halfway through. granite4.1:3b on h3 scored 1/6: all five software tasks hit the 30-step limit now that parking can't be used to escape. qwen3.5:4b with thinking reported health-checked fixes for D1, D2, D3 and S1 and is on S2; hidden-check scores come when its run ends, then thinking-off and qwen3:4b-instruct-2507 (config d, now downloaded) (sessions "btw: what types of tests..." and "Current idea summary").
 - **Just finished:** claimed the device lines in `features.txt` (`cd54c16`, `e59093f`); the project overview and fault catalog (`16c6b9c`, `38771aa`, `325a4bb`); device-side answers in Kent's decision log (`5cea9c2`). Kent accepted the D5a change (logged as K17).
-- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17) and a call on `edge/` vs `device/` (B1), per Kent's block.
+- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), a call on `edge/` vs `device/` (B1), and a review of the code-package and `code_patch` formats in PR #3 (B2, B3), per Kent's block.
 - **Branch and files:** `main`. `edge/` (robot app, sim, supervisor, healer harnesses h1–h3, `bench/run_bench.py`, `bench/analyze.py`) stays local until its own checks pass.
 <!-- ishaan-sync:end -->
 
