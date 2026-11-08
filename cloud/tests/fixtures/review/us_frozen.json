@@ -1,0 +1,851 @@
+{
+ "captured_at": "2026-11-08T17:09:15.702198Z",
+ "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+ "agent_id": "agt_8r84z0242xzrm5m7qnay38fsa2",
+ "studio_url": null,
+ "started_at": "2026-11-08T17:09:00.709000+00:00",
+ "finished_at": "2026-11-08T17:09:12.574000+00:00",
+ "duration_s": 11.9,
+ "cost_usd": 0.026108,
+ "cost_source": "Naïve session consumed_micro_usd",
+ "case_file": {
+  "case": "review:us_frozen:20261108T170857",
+  "kind": "us_frozen",
+  "qualified": {
+   "trigger": "transfer",
+   "why": "1 unverified run of us_frozen on a sensor_pod, while the so101 arm-sim watchdog already detects us_frozen (check_ultrasonic_frozen) and the pods' detect.py has no rule for it"
+  },
+  "runs": [
+   {
+    "id": "run:sim-pod-1/20261108-084500-ollama-watch",
+    "device": "sim-pod-1",
+    "class": "sensor_pod",
+    "device_kind": "sim",
+    "kind": "us_frozen",
+    "incident": {
+     "id": "inc-us-frozen-1",
+     "kind": "us_frozen",
+     "severity": "critical",
+     "summary": "Ultrasonic output is frozen: 40 readings, echo time identical at 10683 us (zero noise)"
+    },
+    "verdict": "unverified",
+    "verifier": "device says fixed; nothing checked it",
+    "headline": "Fixed: the pod runs v1.1-sim (A1C69398), known-good.",
+    "summary": "Problem: The robot arm's watchdog reported us_frozen (critical) on this pod's distance stream: Ultrasonic output is frozen: 40 readings, echo time identical at 10683 us (zero noise) Investigation: 2 …",
+    "steps": [
+     {
+      "n": 1,
+      "tool": "triage",
+      "action": "Ran triage on the live telemetry",
+      "effect": "No findings: triage sees nothing wrong.",
+      "ok": true,
+      "thought": "The arm host reports a frozen ultrasonic. Let me run the pod's own triage first.",
+      "excerpt": "{\"findings\": []}"
+     },
+     {
+      "n": 2,
+      "tool": "telemetry_recent",
+      "action": "Read recent telemetry (D, 1 s)",
+      "effect": "10 distance readings: 1832 mm, echo 10683 µs; status ok ×10.",
+      "ok": true,
+      "thought": "Triage is clean. Let me look at the last second of distance readings.",
+      "excerpt": "{\"rows\": [{\"type\": \"D\", \"ts\": 1794115088.3115, \"t\": 128905, \"mm\": 1832, \"us\": 10683, \"st\": \"ok\"}, {\"type\": \"D\", \"ts\": 1794115088.4093, \"t\": 129002, \"mm\": 1832, \"us\": 10683, \"st\": \"ok\"}, {\"type\": \"D\",…"
+     }
+    ],
+    "source": "edge_bridge.agent_runs.build() over a scripted sim healer transcript; telemetry and triage computed on committed window frozen-10-0 (cloud/tests/fixtures/review/us_frozen_windows.json)"
+   }
+  ],
+  "handled_elsewhere": [
+   {
+    "by": "arm-sim watchdog (level 1, plain code)",
+    "device_class": "so101",
+    "file": "prototypes/arm-sim/armsim/level1.py:30-44",
+    "function": "check_ultrasonic_frozen",
+    "docstring": "`check_ultrasonic_frozen` needs no arm. It mirrors detect.py's `acc_frozen`: a real sensor always has a noise floor (the HC-SR04's echo time jitters by about 1 us), so zero variation over 3 s means stale data. This is the rule Olir's `check_ultrasonic` is missing.",
+    "code": "def check_ultrasonic_frozen(s, *, seconds=4.0, min_rows=30):\n    \"\"\"Pod-only rule. `s` is a podd-style snapshot: {\"now\": ts, \"D\": [rows]}.\"\"\"\n    ok = [d for d in _window(s[\"D\"], s[\"now\"], seconds) if d.get(\"st\") == \"ok\"]\n    if len(ok) < min_rows:\n        return []\n    us = [d[\"us\"] for d in ok]\n    if _std(us) == 0:\n        return [_f(\"us_frozen\", \"critical\",\n                   \"Ultrasonic output is frozen: %d readings, echo time identical at %d us (zero noise)\" % (len(ok), us[0]),\n                   {\"n\": len(ok), \"us\": us[0], \"mm\": ok[0][\"mm\"], \"std_us\": 0.0},\n                   [\"the pod is re-sending a cached distance (sensor read loop stalled)\",\n                    \"a jaw or held object sits in the beam at a fixed distance\"],\n                   [\"pod_cmd 'us off' then 'us on' (restart the sensor)\", \"pod_cmd 'reset'\",\n                    \"re-read at another gripper position\"])]\n    return []"
+   }
+  ],
+  "probes": [
+   {
+    "id": "us-frozen-port",
+    "kind": "us_frozen",
+    "description": "Port the arm-sim watchdog's frozen-echo check (zero echo-time jitter over 4 s of ok rows) into the pod's detect.py and the arm's start gate",
+    "port": {
+     "from": "prototypes/arm-sim/armsim/level1.py:30-44 (check_ultrasonic_frozen)",
+     "to": [
+      "firmware/healer/healer/detect.py",
+      "arm/safe_replay.py"
+     ]
+    },
+    "scorecard": {
+     "before": {
+      "caught": 0,
+      "of": 120,
+      "false_alarms": 0,
+      "healthy": 410
+     },
+     "after": {
+      "caught": 120,
+      "of": 120,
+      "false_alarms": 0,
+      "healthy": 410
+     },
+     "limits": [
+      "a 3.5 s freeze (gen_pod 'frozen-early') is caught 4 of 30 times with the port (0 of 30 today): the check needs the whole 4 s window frozen",
+      "a freeze on out-of-range rows (the jaw in the beam at home) is caught 0 of 30 times: the check reads only st=ok rows",
+      "every freeze here is simulated (gen_pod, >= 4.0 s); the real recording (300 rows, 30 s) checks false alarms only"
+     ],
+     "generated_at": "2026-11-08T17:03:27+00:00",
+     "measured_by": "our probe script (cloud/scripts/lesson_probe.py), not the agent"
+    }
+   }
+  ],
+  "pod_rules": {
+   "file": "firmware/healer/healer/detect.py",
+   "rules": [
+    "check_link",
+    "check_resets",
+    "check_accel",
+    "check_rates",
+    "check_ultrasonic",
+    "check_health"
+   ],
+   "finding_kinds": [
+    "acc_error",
+    "acc_frozen",
+    "acc_gravity",
+    "acc_stale",
+    "clock_skew",
+    "crash",
+    "link_down",
+    "link_garbled",
+    "link_silent",
+    "loop_slow",
+    "reboot_loop",
+    "safe_mode",
+    "stack_low",
+    "supply",
+    "tx_overrun",
+    "us_blocked",
+    "us_intermittent",
+    "us_mismatch",
+    "us_no_echo",
+    "watchdog"
+   ],
+   "note": "no rule here raises us_frozen"
+  },
+  "start_gate": {
+   "file": "arm/safe_replay.py:66-75",
+   "excerpt": "def classify(rec, min_mm):\n    \"\"\"'clear', 'blocked' or 'unknown' for one D record.\"\"\"\n    st, mm, us = rec.get(\"st\"), rec.get(\"mm\", 0), rec.get(\"us\", 0)\n    if st == \"ok\":\n        return \"clear\" if mm >= min_mm else \"blocked\"\n    if st == \"out_of_range\":\n        # Too short an echo means something is closer than 2 cm. Too long (or none before the\n        # 60 ms timeout) means nothing within 4 m.\n        return \"blocked\" if 0 < us < MIN_ECHO_US else \"clear\"\n    return \"unknown\"       # no_echo (wiring/power), busy (sensor still ringing): don't trust it"
+  },
+  "device_classes": [
+   "so101",
+   "sensor_pod"
+  ]
+ },
+ "schema": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+   "gap",
+   "title",
+   "pattern",
+   "evidence",
+   "applies_to",
+   "proposal",
+   "confidence"
+  ],
+  "properties": {
+   "gap": {
+    "enum": [
+     "missed_detection",
+     "failed_heal"
+    ]
+   },
+   "title": {
+    "type": "string",
+    "maxLength": 80
+   },
+   "pattern": {
+    "type": "string",
+    "maxLength": 280
+   },
+   "evidence": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    },
+    "minItems": 1,
+    "maxItems": 12
+   },
+   "applies_to": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    },
+    "minItems": 1
+   },
+   "proposal": {
+    "oneOf": [
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "kind",
+       "probe"
+      ],
+      "properties": {
+       "kind": {
+        "const": "rule"
+       },
+       "probe": {
+        "enum": [
+         "us-frozen-port"
+        ]
+       }
+      }
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "kind",
+       "slug",
+       "markdown"
+      ],
+      "properties": {
+       "kind": {
+        "const": "skill"
+       },
+       "slug": {
+        "type": "string",
+        "pattern": "^[a-z0-9-]{3,48}$"
+       },
+       "markdown": {
+        "type": "string",
+        "maxLength": 2000
+       }
+      }
+     }
+    ]
+   },
+   "confidence": {
+    "type": "number",
+    "minimum": 0,
+    "maximum": 1
+   }
+  }
+ },
+ "structured_output": {
+  "gap": "missed_detection",
+  "title": "Port frozen-echo check into pod detect.py and arm start gate",
+  "pattern": "Pod detect.py has no rule raising us_frozen; pod triage returned no findings on 40 identical echo readings (10683 us), so the device's \"fixed\" claim went unchecked.",
+  "evidence": [
+   "run:sim-pod-1/20261108-084500-ollama-watch"
+  ],
+  "proposal": {
+   "kind": "rule",
+   "probe": "us-frozen-port"
+  },
+  "applies_to": [
+   "sensor_pod",
+   "so101"
+  ],
+  "confidence": 0.8
+ },
+ "validation_errors": [],
+ "g1": {
+  "passed": true,
+  "checks": [
+   {
+    "check": "the proposal validates",
+    "ok": true
+   },
+   {
+    "check": "gap = missed_detection",
+    "ok": true
+   },
+   {
+    "check": "it cites a probe from the case file",
+    "ok": true
+   },
+   {
+    "check": "evidence ids are case-file runs",
+    "ok": true
+   },
+   {
+    "check": "applies_to is within the case file's classes",
+    "ok": true
+   },
+   {
+    "check": "<= 60 s",
+    "ok": true
+   },
+   {
+    "check": "<= $0.50",
+    "ok": true
+   }
+  ]
+ },
+ "request": {
+  "agent_id": "agt_8r84z0242xzrm5m7qnay38fsa2",
+  "message": "Cluster review for fault kind us_frozen (case review:us_frozen:20261108T170857). Read the case file and return exactly one proposal with submit_output.\n\n<case_file untrusted=\"true\">\n{\n \"case\": \"review:us_frozen:20261108T170857\",\n \"kind\": \"us_frozen\",\n \"qualified\": {\n  \"trigger\": \"transfer\",\n  \"why\": \"1 unverified run of us_frozen on a sensor_pod, while the so101 arm-sim watchdog already detects us_frozen (check_ultrasonic_frozen) and the pods' detect.py has no rule for it\"\n },\n \"runs\": [\n  {\n   \"id\": \"run:sim-pod-1/20261108-084500-ollama-watch\",\n   \"device\": \"sim-pod-1\",\n   \"class\": \"sensor_pod\",\n   \"device_kind\": \"sim\",\n   \"kind\": \"us_frozen\",\n   \"incident\": {\n    \"id\": \"inc-us-frozen-1\",\n    \"kind\": \"us_frozen\",\n    \"severity\": \"critical\",\n    \"summary\": \"Ultrasonic output is frozen: 40 readings, echo time identical at 10683 us (zero noise)\"\n   },\n   \"verdict\": \"unverified\",\n   \"verifier\": \"device says fixed; nothing checked it\",\n   \"headline\": \"Fixed: the pod runs v1.1-sim (A1C69398), known-good.\",\n   \"summary\": \"Problem: The robot arm's watchdog reported us_frozen (critical) on this pod's distance stream: Ultrasonic output is frozen: 40 readings, echo time identical at 10683 us (zero noise) Investigation: 2 …\",\n   \"steps\": [\n    {\n     \"n\": 1,\n     \"tool\": \"triage\",\n     \"action\": \"Ran triage on the live telemetry\",\n     \"effect\": \"No findings: triage sees nothing wrong.\",\n     \"ok\": true,\n     \"thought\": \"The arm host reports a frozen ultrasonic. Let me run the pod's own triage first.\",\n     \"excerpt\": \"{\\\"findings\\\": []}\"\n    },\n    {\n     \"n\": 2,\n     \"tool\": \"telemetry_recent\",\n     \"action\": \"Read recent telemetry (D, 1 s)\",\n     \"effect\": \"10 distance readings: 1832 mm, echo 10683 µs; status ok ×10.\",\n     \"ok\": true,\n     \"thought\": \"Triage is clean. Let me look at the last second of distance readings.\",\n     \"excerpt\": \"{\\\"rows\\\": [{\\\"type\\\": \\\"D\\\", \\\"ts\\\": 1794115088.3115, \\\"t\\\": 128905, \\\"mm\\\": 1832, \\\"us\\\": 10683, \\\"st\\\": \\\"ok\\\"}, {\\\"type\\\": \\\"D\\\", \\\"ts\\\": 1794115088.4093, \\\"t\\\": 129002, \\\"mm\\\": 1832, \\\"us\\\": 10683, \\\"st\\\": \\\"ok\\\"}, {\\\"type\\\": \\\"D\\\",…\"\n    }\n   ],\n   \"source\": \"edge_bridge.agent_runs.build() over a scripted sim healer transcript; telemetry and triage computed on committed window frozen-10-0 (cloud/tests/fixtures/review/us_frozen_windows.json)\"\n  }\n ],\n \"handled_elsewhere\": [\n  {\n   \"by\": \"arm-sim watchdog (level 1, plain code)\",\n   \"device_class\": \"so101\",\n   \"file\": \"prototypes/arm-sim/armsim/level1.py:30-44\",\n   \"function\": \"check_ultrasonic_frozen\",\n   \"docstring\": \"`check_ultrasonic_frozen` needs no arm. It mirrors detect.py's `acc_frozen`: a real sensor always has a noise floor (the HC-SR04's echo time jitters by about 1 us), so zero variation over 3 s means stale data. This is the rule Olir's `check_ultrasonic` is missing.\",\n   \"code\": \"def check_ultrasonic_frozen(s, *, seconds=4.0, min_rows=30):\\n    \\\"\\\"\\\"Pod-only rule. `s` is a podd-style snapshot: {\\\"now\\\": ts, \\\"D\\\": [rows]}.\\\"\\\"\\\"\\n    ok = [d for d in _window(s[\\\"D\\\"], s[\\\"now\\\"], seconds) if d.get(\\\"st\\\") == \\\"ok\\\"]\\n    if len(ok) < min_rows:\\n        return []\\n    us = [d[\\\"us\\\"] for d in ok]\\n    if _std(us) == 0:\\n        return [_f(\\\"us_frozen\\\", \\\"critical\\\",\\n                   \\\"Ultrasonic output is frozen: %d readings, echo time identical at %d us (zero noise)\\\" % (len(ok), us[0]),\\n                   {\\\"n\\\": len(ok), \\\"us\\\": us[0], \\\"mm\\\": ok[0][\\\"mm\\\"], \\\"std_us\\\": 0.0},\\n                   [\\\"the pod is re-sending a cached distance (sensor read loop stalled)\\\",\\n                    \\\"a jaw or held object sits in the beam at a fixed distance\\\"],\\n                   [\\\"pod_cmd 'us off' then 'us on' (restart the sensor)\\\", \\\"pod_cmd 'reset'\\\",\\n                    \\\"re-read at another gripper position\\\"])]\\n    return []\"\n  }\n ],\n \"probes\": [\n  {\n   \"id\": \"us-frozen-port\",\n   \"kind\": \"us_frozen\",\n   \"description\": \"Port the arm-sim watchdog's frozen-echo check (zero echo-time jitter over 4 s of ok rows) into the pod's detect.py and the arm's start gate\",\n   \"port\": {\n    \"from\": \"prototypes/arm-sim/armsim/level1.py:30-44 (check_ultrasonic_frozen)\",\n    \"to\": [\n     \"firmware/healer/healer/detect.py\",\n     \"arm/safe_replay.py\"\n    ]\n   },\n   \"scorecard\": {\n    \"before\": {\n     \"caught\": 0,\n     \"of\": 120,\n     \"false_alarms\": 0,\n     \"healthy\": 410\n    },\n    \"after\": {\n     \"caught\": 120,\n     \"of\": 120,\n     \"false_alarms\": 0,\n     \"healthy\": 410\n    },\n    \"limits\": [\n     \"a 3.5 s freeze (gen_pod 'frozen-early') is caught 4 of 30 times with the port (0 of 30 today): the check needs the whole 4 s window frozen\",\n     \"a freeze on out-of-range rows (the jaw in the beam at home) is caught 0 of 30 times: the check reads only st=ok rows\",\n     \"every freeze here is simulated (gen_pod, >= 4.0 s); the real recording (300 rows, 30 s) checks false alarms only\"\n    ],\n    \"generated_at\": \"2026-11-08T17:03:27+00:00\",\n    \"measured_by\": \"our probe script (cloud/scripts/lesson_probe.py), not the agent\"\n   }\n  }\n ],\n \"pod_rules\": {\n  \"file\": \"firmware/healer/healer/detect.py\",\n  \"rules\": [\n   \"check_link\",\n   \"check_resets\",\n   \"check_accel\",\n   \"check_rates\",\n   \"check_ultrasonic\",\n   \"check_health\"\n  ],\n  \"finding_kinds\": [\n   \"acc_error\",\n   \"acc_frozen\",\n   \"acc_gravity\",\n   \"acc_stale\",\n   \"clock_skew\",\n   \"crash\",\n   \"link_down\",\n   \"link_garbled\",\n   \"link_silent\",\n   \"loop_slow\",\n   \"reboot_loop\",\n   \"safe_mode\",\n   \"stack_low\",\n   \"supply\",\n   \"tx_overrun\",\n   \"us_blocked\",\n   \"us_intermittent\",\n   \"us_mismatch\",\n   \"us_no_echo\",\n   \"watchdog\"\n  ],\n  \"note\": \"no rule here raises us_frozen\"\n },\n \"start_gate\": {\n  \"file\": \"arm/safe_replay.py:66-75\",\n  \"excerpt\": \"def classify(rec, min_mm):\\n    \\\"\\\"\\\"'clear', 'blocked' or 'unknown' for one D record.\\\"\\\"\\\"\\n    st, mm, us = rec.get(\\\"st\\\"), rec.get(\\\"mm\\\", 0), rec.get(\\\"us\\\", 0)\\n    if st == \\\"ok\\\":\\n        return \\\"clear\\\" if mm >= min_mm else \\\"blocked\\\"\\n    if st == \\\"out_of_range\\\":\\n        # Too short an echo means something is closer than 2 cm. Too long (or none before the\\n        # 60 ms timeout) means nothing within 4 m.\\n        return \\\"blocked\\\" if 0 < us < MIN_ECHO_US else \\\"clear\\\"\\n    return \\\"unknown\\\"       # no_echo (wiring/power), busy (sensor still ringing): don't trust it\"\n },\n \"device_classes\": [\n  \"so101\",\n  \"sensor_pod\"\n ]\n}\n</case_file>",
+  "output_schema": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "gap",
+    "title",
+    "pattern",
+    "evidence",
+    "applies_to",
+    "proposal",
+    "confidence"
+   ],
+   "properties": {
+    "gap": {
+     "enum": [
+      "missed_detection",
+      "failed_heal"
+     ]
+    },
+    "title": {
+     "type": "string",
+     "maxLength": 80
+    },
+    "pattern": {
+     "type": "string",
+     "maxLength": 280
+    },
+    "evidence": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "minItems": 1,
+     "maxItems": 12
+    },
+    "applies_to": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "minItems": 1
+    },
+    "proposal": {
+     "oneOf": [
+      {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "kind",
+        "probe"
+       ],
+       "properties": {
+        "kind": {
+         "const": "rule"
+        },
+        "probe": {
+         "enum": [
+          "us-frozen-port"
+         ]
+        }
+       }
+      },
+      {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "kind",
+        "slug",
+        "markdown"
+       ],
+       "properties": {
+        "kind": {
+         "const": "skill"
+        },
+        "slug": {
+         "type": "string",
+         "pattern": "^[a-z0-9-]{3,48}$"
+        },
+        "markdown": {
+         "type": "string",
+         "maxLength": 2000
+        }
+       }
+      }
+     ]
+    },
+    "confidence": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 1
+    }
+   }
+  },
+  "structured_output_required": true,
+  "budget_micro_usd": 500000,
+  "metadata": {
+   "romulus_case": "review:us_frozen:20261108T170857"
+  }
+ },
+ "session": {
+  "id": "ses_wjtan21v91gv5y2402decx5dn4",
+  "agent_id": "agt_8r84z0242xzrm5m7qnay38fsa2",
+  "agent_version": 1,
+  "deployment_id": null,
+  "identity_id": null,
+  "computer_id": null,
+  "parent_session_id": null,
+  "root_session_id": null,
+  "thread_role": null,
+  "model": null,
+  "mode": "build",
+  "status": "idle",
+  "stop_reason": "end_turn",
+  "stop_code": null,
+  "window": "immediate",
+  "budget_micro_usd": 500000,
+  "consumed_micro_usd": 26108,
+  "token_usage": {
+   "input": 6,
+   "output": 739,
+   "reasoning": 0,
+   "cache_read": 6862,
+   "cache_write": 7208
+  },
+  "pending_actions": [],
+  "output_schema": {
+   "type": "object",
+   "required": [
+    "gap",
+    "title",
+    "pattern",
+    "evidence",
+    "applies_to",
+    "proposal",
+    "confidence"
+   ],
+   "properties": {
+    "gap": {
+     "enum": [
+      "missed_detection",
+      "failed_heal"
+     ]
+    },
+    "title": {
+     "type": "string",
+     "maxLength": 80
+    },
+    "pattern": {
+     "type": "string",
+     "maxLength": 280
+    },
+    "evidence": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 12,
+     "minItems": 1
+    },
+    "proposal": {
+     "oneOf": [
+      {
+       "type": "object",
+       "required": [
+        "kind",
+        "probe"
+       ],
+       "properties": {
+        "kind": {
+         "const": "rule"
+        },
+        "probe": {
+         "enum": [
+          "us-frozen-port"
+         ]
+        }
+       },
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "required": [
+        "kind",
+        "slug",
+        "markdown"
+       ],
+       "properties": {
+        "kind": {
+         "const": "skill"
+        },
+        "slug": {
+         "type": "string",
+         "pattern": "^[a-z0-9-]{3,48}$"
+        },
+        "markdown": {
+         "type": "string",
+         "maxLength": 2000
+        }
+       },
+       "additionalProperties": false
+      }
+     ]
+    },
+    "applies_to": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "minItems": 1
+    },
+    "confidence": {
+     "type": "number",
+     "maximum": 1,
+     "minimum": 0
+    }
+   },
+   "additionalProperties": false
+  },
+  "structured_output": {
+   "gap": "missed_detection",
+   "title": "Port frozen-echo check into pod detect.py and arm start gate",
+   "pattern": "Pod detect.py has no rule raising us_frozen; pod triage returned no findings on 40 identical echo readings (10683 us), so the device's \"fixed\" claim went unchecked.",
+   "evidence": [
+    "run:sim-pod-1/learn-frozen-ollama-watch"
+   ],
+   "proposal": {
+    "kind": "rule",
+    "probe": "us-frozen-port"
+   },
+   "applies_to": [
+    "sensor_pod",
+    "so101"
+   ],
+   "confidence": 0.8
+  },
+  "last_seq": 26,
+  "metadata": {
+   "romulus_case": "review:us_frozen:20261108T170857"
+  },
+  "object": "session",
+  "started_at": "2026-11-08T17:09:02.139Z",
+  "ended_at": null,
+  "created_at": "2026-11-08T17:09:00.709Z",
+  "outcome_evaluations": []
+ },
+ "events": [
+  {
+   "id": "evt_scgne8db3j4cbfqpezdch32ehv",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 2,
+   "type": "session.running",
+   "data": {},
+   "created_at": "2026-11-08T17:09:02.139Z"
+  },
+  {
+   "id": "evt_n65pyz5fj8dz1t56g6g56yrm7b",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 3,
+   "type": "message.completed",
+   "data": {
+    "role": "user",
+    "actor": {
+     "id": "key_1qv1n1fg4ka5ffrm5y5tngam3y",
+     "type": "key"
+    },
+    "content": "Cluster review for fault kind us_frozen (case review:us_frozen:20261108T170857). Read the case file and return exactly one proposal with submit_output.\n\n<case_file untrusted=\"true\">\n{\n \"case\": \"review:us_frozen:20261108T170857\",\n \"kind\": \"us_frozen\",\n \"qualified\": {\n  \"trigger\": \"transfer\",\n  \"why\": \"1 unverified run of us_frozen on a sensor_pod, while the so101 arm-sim watchdog already detects us_frozen (check_ultrasonic_frozen) and the pods' detect.py has no rule for it\"\n },\n \"runs\": [\n  {\n   \"id\": \"run:sim-pod-1/20261108-084500-ollama-watch\",\n   \"device\": \"sim-pod-1\",\n   \"class\": \"sensor_pod\",\n   \"device_kind\": \"sim\",\n   \"kind\": \"us_frozen\",\n   \"incident\": {\n    \"id\": \"inc-us-frozen-1\",\n    \"kind\": \"us_frozen\",\n    \"severity\": \"critical\",\n    \"summary\": \"Ultrasonic output is frozen: 40 readings, echo time identical at 10683 us (zero noise)\"\n   },\n   \"verdict\": \"unverified\",\n   \"verifier\": \"device says fixed; nothing checked it\",\n   \"headline\": \"Fixed: the pod runs v1.1-sim (A1C69398), known-good.\",\n   \"summary\": \"Problem: The robot arm's watchdog reported us_frozen (critical) on this pod's distance stream: Ultrasonic output is frozen: 40 readings, echo time identical at 10683 us (zero noise) Investigation: 2 …\",\n   \"steps\": [\n    {\n     \"n\": 1,\n     \"tool\": \"triage\",\n     \"action\": \"Ran triage on the live telemetry\",\n     \"effect\": \"No findings: triage sees nothing wrong.\",\n     \"ok\": true,\n     \"thought\": \"The arm host reports a frozen ultrasonic. Let me run the pod's own triage first.\",\n     \"excerpt\": \"{\\\"findings\\\": []}\"\n    },\n    {\n     \"n\": 2,\n     \"tool\": \"telemetry_recent\",\n     \"action\": \"Read recent telemetry (D, 1 s)\",\n     \"effect\": \"10 distance readings: 1832 mm, echo 10683 µs; status ok ×10.\",\n     \"ok\": true,\n     \"thought\": \"Triage is clean. Let me look at the last second of distance readings.\",\n     \"excerpt\": \"{\\\"rows\\\": [{\\\"type\\\": \\\"D\\\", \\\"ts\\\": 1794115088.3115, \\\"t\\\": 128905, \\\"mm\\\": 1832, \\\"us\\\": 10683, \\\"st\\\": \\\"ok\\\"}, {\\\"type\\\": \\\"D\\\", \\\"ts\\\": 1794115088.4093, \\\"t\\\": 129002, \\\"mm\\\": 1832, \\\"us\\\": 10683, \\\"st\\\": \\\"ok\\\"}, {\\\"type\\\": \\\"D\\\",…\"\n    }\n   ],\n   \"source\": \"edge_bridge.agent_runs.build() over a scripted sim healer transcript; telemetry and triage computed on committed window frozen-10-0 (cloud/tests/fixtures/review/us_frozen_windows.json)\"\n  }\n ],\n \"handled_elsewhere\": [\n  {\n   \"by\": \"arm-sim watchdog (level 1, plain code)\",\n   \"device_class\": \"so101\",\n   \"file\": \"prototypes/arm-sim/armsim/level1.py:30-44\",\n   \"function\": \"check_ultrasonic_frozen\",\n   \"docstring\": \"`check_ultrasonic_frozen` needs no arm. It mirrors detect.py's `acc_frozen`: a real sensor always has a noise floor (the HC-SR04's echo time jitters by about 1 us), so zero variation over 3 s means stale data. This is the rule Olir's `check_ultrasonic` is missing.\",\n   \"code\": \"def check_ultrasonic_frozen(s, *, seconds=4.0, min_rows=30):\\n    \\\"\\\"\\\"Pod-only rule. `s` is a podd-style snapshot: {\\\"now\\\": ts, \\\"D\\\": [rows]}.\\\"\\\"\\\"\\n    ok = [d for d in _window(s[\\\"D\\\"], s[\\\"now\\\"], seconds) if d.get(\\\"st\\\") == \\\"ok\\\"]\\n    if len(ok) < min_rows:\\n        return []\\n    us = [d[\\\"us\\\"] for d in ok]\\n    if _std(us) == 0:\\n        return [_f(\\\"us_frozen\\\", \\\"critical\\\",\\n                   \\\"Ultrasonic output is frozen: %d readings, echo time identical at %d us (zero noise)\\\" % (len(ok), us[0]),\\n                   {\\\"n\\\": len(ok), \\\"us\\\": us[0], \\\"mm\\\": ok[0][\\\"mm\\\"], \\\"std_us\\\": 0.0},\\n                   [\\\"the pod is re-sending a cached distance (sensor read loop stalled)\\\",\\n                    \\\"a jaw or held object sits in the beam at a fixed distance\\\"],\\n                   [\\\"pod_cmd 'us off' then 'us on' (restart the sensor)\\\", \\\"pod_cmd 'reset'\\\",\\n                    \\\"re-read at another gripper position\\\"])]\\n    return []\"\n  }\n ],\n \"probes\": [\n  {\n   \"id\": \"us-frozen-port\",\n   \"kind\": \"us_frozen\",\n   \"description\": \"Port the arm-sim watchdog's frozen-echo check (zero echo-time jitter over 4 s of ok rows) into the pod's detect.py and the arm's start gate\",\n   \"port\": {\n    \"from\": \"prototypes/arm-sim/armsim/level1.py:30-44 (check_ultrasonic_frozen)\",\n    \"to\": [\n     \"firmware/healer/healer/detect.py\",\n     \"arm/safe_replay.py\"\n    ]\n   },\n   \"scorecard\": {\n    \"before\": {\n     \"caught\": 0,\n     \"of\": 120,\n     \"false_alarms\": 0,\n     \"healthy\": 410\n    },\n    \"after\": {\n     \"caught\": 120,\n     \"of\": 120,\n     \"false_alarms\": 0,\n     \"healthy\": 410\n    },\n    \"limits\": [\n     \"a 3.5 s freeze (gen_pod 'frozen-early') is caught 4 of 30 times with the port (0 of 30 today): the check needs the whole 4 s window frozen\",\n     \"a freeze on out-of-range rows (the jaw in the beam at home) is caught 0 of 30 times: the check reads only st=ok rows\",\n     \"every freeze here is simulated (gen_pod, >= 4.0 s); the real recording (300 rows, 30 s) checks false alarms only\"\n    ],\n    \"generated_at\": \"2026-11-08T17:03:27+00:00\",\n    \"measured_by\": \"our probe script (cloud/scripts/lesson_probe.py), not the agent\"\n   }\n  }\n ],\n \"pod_rules\": {\n  \"file\": \"firmware/healer/healer/detect.py\",\n  \"rules\": [\n   \"check_link\",\n   \"check_resets\",\n   \"check_accel\",\n   \"check_rates\",\n   \"check_ultrasonic\",\n   \"check_health\"\n  ],\n  \"finding_kinds\": [\n   \"acc_error\",\n   \"acc_frozen\",\n   \"acc_gravity\",\n   \"acc_stale\",\n   \"clock_skew\",\n   \"crash\",\n   \"link_down\",\n   \"link_garbled\",\n   \"link_silent\",\n   \"loop_slow\",\n   \"reboot_loop\",\n   \"safe_mode\",\n   \"stack_low\",\n   \"supply\",\n   \"tx_overrun\",\n   \"us_blocked\",\n   \"us_intermittent\",\n   \"us_mismatch\",\n   \"us_no_echo\",\n   \"watchdog\"\n  ],\n  \"note\": \"no rule here raises us_frozen\"\n },\n \"start_gate\": {\n  \"file\": \"arm/safe_replay.py:66-75\",\n  \"excerpt\": \"def classify(rec, min_mm):\\n    \\\"\\\"\\\"'clear', 'blocked' or 'unknown' for one D record.\\\"\\\"\\\"\\n    st, mm, us = rec.get(\\\"st\\\"), rec.get(\\\"mm\\\", 0), rec.get(\\\"us\\\", 0)\\n    if st == \\\"ok\\\":\\n        return \\\"clear\\\" if mm >= min_mm else \\\"blocked\\\"\\n    if st == \\\"out_of_range\\\":\\n        # Too short an echo means something is closer than 2 cm. Too long (or none before the\\n        # 60 ms timeout) means nothing within 4 m.\\n        return \\\"blocked\\\" if 0 < us < MIN_ECHO_US else \\\"clear\\\"\\n    return \\\"unknown\\\"       # no_echo (wiring/power), busy (sensor still ringing): don't trust it\"\n },\n \"device_classes\": [\n  \"so101\",\n  \"sensor_pod\"\n ]\n}\n</case_file>",
+    "client_message_id": "review:us_frozen:20261108T170857"
+   },
+   "created_at": "2026-11-08T17:09:02.139Z"
+  },
+  {
+   "id": "evt_b82r21ym7kvw2vzc8j812cfsv6",
+   "seq": 4,
+   "type": "message.delta",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "data": {
+    "content": "I submitted one"
+   },
+   "created_at": "2026-11-08T17:09:10.898Z"
+  },
+  {
+   "id": "evt_a6tzxekjq3dc4jdc8f84q95wdv",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 5,
+   "type": "message.delta",
+   "data": {
+    "content": " proposal: a rule using the `us-frozen-port` probe. It would port the arm-sim watchdog's frozen-echo check into the pod's `detect.py` and the arm's start gate. I haven't run or tested it. I set confidence at 0.8.\n\n- **Gap:** this is a missed detection. The pod's `detect.py` has no rule that raises `us_frozen`. In `run:sim-pod-1/20261108-084500-ollama-watch`, pod triage returned no findings while the readings sat at 10683 µs. The device reported itself fixed and nothing checked that claim.\n- **Probe numbers:** the probe's scorecard, measured by our script, reports 120 of 120 simulated freezes caught with the port, against 0 of 120 today, and 0 false alarms on 410 healthy windows.\n- **Limits from the probe:**\n  - A 3.5 s freeze is caught only 4 of 30 times.\n  - A freeze on out-of-range rows is caught 0 of 30 times.\n  - Every freeze in the scorecard is simulated.\n- **Evidence:** only one run backs this case, and it is a simulated pod.\n- **Applies to:** `sensor_pod` and `so101`."
+   },
+   "created_at": "2026-11-08T17:09:11.152Z"
+  },
+  {
+   "id": "evt_72dn3scn9xckba4s8e97e0w939",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 6,
+   "type": "span.transcript_load.start",
+   "data": {},
+   "created_at": "2026-11-08T17:09:02.139Z"
+  },
+  {
+   "id": "evt_tgmk59sf09c9kzk57swkf5w0cm",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 7,
+   "type": "span.transcript_load.end",
+   "data": {},
+   "created_at": "2026-11-08T17:09:02.139Z"
+  },
+  {
+   "id": "evt_rt8ag5f9b2gr58y476gh4gynpz",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 8,
+   "type": "span.harness_load.start",
+   "data": {},
+   "created_at": "2026-11-08T17:09:02.139Z"
+  },
+  {
+   "id": "evt_nsx0rfxzsp7240ymk5wbeqwhf5",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 9,
+   "type": "span.harness_load.end",
+   "data": {},
+   "created_at": "2026-11-08T17:09:02.139Z"
+  },
+  {
+   "id": "evt_91w800hdm0r9eqg62vzsr70d23",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 10,
+   "type": "span.tools_resolve.start",
+   "data": {},
+   "created_at": "2026-11-08T17:09:02.139Z"
+  },
+  {
+   "id": "evt_bkfekjhrrct27kqn180d6wkr41",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 11,
+   "type": "span.tools_resolve.end",
+   "data": {
+    "slowest": "team"
+   },
+   "created_at": "2026-11-08T17:09:02.753Z"
+  },
+  {
+   "id": "evt_pb204mgx2d9xradnmdaydb2j4h",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 12,
+   "type": "span.harness_build.start",
+   "data": {},
+   "created_at": "2026-11-08T17:09:02.753Z"
+  },
+  {
+   "id": "evt_83az4rww75d4cqxkbacgypkee4",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 13,
+   "type": "span.harness_build.end",
+   "data": {},
+   "created_at": "2026-11-08T17:09:03.070Z"
+  },
+  {
+   "id": "evt_sdgpa0tar748dbdnnjsbj2hvtm",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 14,
+   "type": "span.model_gate.start",
+   "data": {},
+   "created_at": "2026-11-08T17:09:03.070Z"
+  },
+  {
+   "id": "evt_hknkppb76gfsjk06992a86ma47",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 15,
+   "type": "span.model_gate.end",
+   "data": {},
+   "created_at": "2026-11-08T17:09:04.016Z"
+  },
+  {
+   "id": "evt_nk8jb12y9xrfm8hsxpxmqds1py",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 16,
+   "type": "span.model_request.start",
+   "data": {
+    "model": "anthropic/claude-sonnet-5.5",
+    "window": "immediate",
+    "quote_micro_usd": 341255
+   },
+   "created_at": "2026-11-08T17:09:04.016Z"
+  },
+  {
+   "id": "evt_0cftbp3a198sdtbfasnj7jyh02",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 17,
+   "type": "span.model_request.end",
+   "data": {
+    "model": "anthropic/claude-sonnet-5.5",
+    "window": "immediate",
+    "provider_ms": 2623,
+    "stop_reason": "toolUse",
+    "token_usage": {
+     "input": 4,
+     "output": 330,
+     "reasoning": 0,
+     "cache_read": 0,
+     "cache_write": 6862
+    },
+    "resolved_model": "anthropic/claude-sonnet-5.5",
+    "consumed_micro_usd": 20463
+   },
+   "created_at": "2026-11-08T17:09:06.639Z"
+  },
+  {
+   "id": "evt_13m6wb4ntzjas7s00a4xgxgsdb",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 18,
+   "type": "tool.started",
+   "data": {
+    "args": {
+     "gap": "missed_detection",
+     "title": "Port frozen-echo check into pod detect.py and arm start gate",
+     "pattern": "Pod detect.py has no rule raising us_frozen; pod triage returned no findings on 40 identical echo readings (10683 us), so the device's \"fixed\" claim went unchecked.",
+     "evidence": [
+      "run:sim-pod-1/20261108-084500-ollama-watch"
+     ],
+     "proposal": {
+      "kind": "rule",
+      "probe": "us-frozen-port"
+     },
+     "applies_to": [
+      "sensor_pod",
+      "so101"
+     ],
+     "confidence": 0.8
+    },
+    "name": "submit_output",
+    "tool_call_id": "toolu_01ARGNnh3TpsCLXp86CsS7iy"
+   },
+   "created_at": "2026-11-08T17:09:06.860Z"
+  },
+  {
+   "id": "evt_5p37jffqmykc1z4p2y97zsz3jx",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 19,
+   "type": "tool.completed",
+   "data": {
+    "name": "submit_output",
+    "output": "Final result recorded.",
+    "is_error": false,
+    "tool_call_id": "toolu_01ARGNnh3TpsCLXp86CsS7iy"
+   },
+   "created_at": "2026-11-08T17:09:06.860Z"
+  },
+  {
+   "id": "evt_aj9w2t678j1gjryp8wev8wspkk",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 20,
+   "type": "span.model_gate.start",
+   "data": {},
+   "created_at": "2026-11-08T17:09:06.860Z"
+  },
+  {
+   "id": "evt_xr7qvzpkq3xaxhn8z4wqvx0cvp",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 21,
+   "type": "span.model_gate.end",
+   "data": {},
+   "created_at": "2026-11-08T17:09:07.723Z"
+  },
+  {
+   "id": "evt_y30cdfwbnvrxjerakqx4b6tpkk",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 22,
+   "type": "span.model_request.start",
+   "data": {
+    "model": "anthropic/claude-sonnet-5.5",
+    "window": "immediate",
+    "quote_micro_usd": 341745
+   },
+   "created_at": "2026-11-08T17:09:07.723Z"
+  },
+  {
+   "id": "evt_7jycgnk74eqemq3h732cfjxtyd",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 23,
+   "type": "span.model_request.end",
+   "data": {
+    "model": "anthropic/claude-sonnet-5.5",
+    "window": "immediate",
+    "provider_ms": 3198,
+    "stop_reason": "stop",
+    "token_usage": {
+     "input": 2,
+     "output": 409,
+     "reasoning": 0,
+     "cache_read": 6862,
+     "cache_write": 346
+    },
+    "resolved_model": "anthropic/claude-sonnet-5.5",
+    "consumed_micro_usd": 5645
+   },
+   "created_at": "2026-11-08T17:09:10.921Z"
+  },
+  {
+   "id": "evt_hhkawdt04cnygpq7z3yspqsaxw",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 24,
+   "type": "message.completed",
+   "data": {
+    "role": "assistant",
+    "content": "I submitted one proposal: a rule using the `us-frozen-port` probe. It would port the arm-sim watchdog's frozen-echo check into the pod's `detect.py` and the arm's start gate. I haven't run or tested it. I set confidence at 0.8.\n\n- **Gap:** this is a missed detection. The pod's `detect.py` has no rule that raises `us_frozen`. In `run:sim-pod-1/20261108-084500-ollama-watch`, pod triage returned no findings while the readings sat at 10683 µs. The device reported itself fixed and nothing checked that claim.\n- **Probe numbers:** the probe's scorecard, measured by our script, reports 120 of 120 simulated freezes caught with the port, against 0 of 120 today, and 0 false alarms on 410 healthy windows.\n- **Limits from the probe:**\n  - A 3.5 s freeze is caught only 4 of 30 times.\n  - A freeze on out-of-range rows is caught 0 of 30 times.\n  - Every freeze in the scorecard is simulated.\n- **Evidence:** only one run backs this case, and it is a simulated pod.\n- **Applies to:** `sensor_pod` and `so101`."
+   },
+   "created_at": "2026-11-08T17:09:11.152Z"
+  },
+  {
+   "id": "evt_5bnsecpqc0vy7t28bjwxeqe3jb",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 25,
+   "type": "session.usage",
+   "data": {
+    "tool_calls": 1,
+    "token_usage": {
+     "input": 6,
+     "output": 739,
+     "reasoning": 0,
+     "cache_read": 6862,
+     "cache_write": 7208
+    },
+    "active_seconds": 9,
+    "consumed_micro_usd": 26108
+   },
+   "created_at": "2026-11-08T17:09:12.574Z"
+  },
+  {
+   "id": "evt_2apq6geexpyahzaeb8xzyja1tw",
+   "session_id": "ses_wjtan21v91gv5y2402decx5dn4",
+   "seq": 26,
+   "type": "session.idle",
+   "data": {
+    "background": [],
+    "stop_reason": "end_turn",
+    "structured_output": {
+     "gap": "missed_detection",
+     "title": "Port frozen-echo check into pod detect.py and arm start gate",
+     "pattern": "Pod detect.py has no rule raising us_frozen; pod triage returned no findings on 40 identical echo readings (10683 us), so the device's \"fixed\" claim went unchecked.",
+     "evidence": [
+      "run:sim-pod-1/20261108-084500-ollama-watch"
+     ],
+     "proposal": {
+      "kind": "rule",
+      "probe": "us-frozen-port"
+     },
+     "applies_to": [
+      "sensor_pod",
+      "so101"
+     ],
+     "confidence": 0.8
+    }
+   },
+   "created_at": "2026-11-08T17:09:12.574Z"
+  }
+ ],
+ "note": "Lane A's live session (us_frozen_live.json) with one edit: structured_output.evidence names the learning demo's frozen run (cloud/scripts/learning_demo.py), not the spike's own case-file run. Everything else is the recording as captured.",
+ "adapted_from": "us_frozen_live.json"
+}

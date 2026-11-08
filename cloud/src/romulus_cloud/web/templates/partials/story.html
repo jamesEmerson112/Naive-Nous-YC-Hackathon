@@ -1,19 +1,44 @@
+{# One incident's story: header with the heal line, your-turn callout, agent runs, Fleet Doctor
+   ledger, timeline, evidence. Needs `story`. Polled into #story every 3 s. #}
+{% from "partials/ui.html" import icon, heal_line %}
+{# The full text goes in a title wherever shortid shortened it (BUILD.md, "Filters"). #}
+{% macro full(text) %}{% if text and text | shortid != text %} title="{{ text }}"{% endif %}{% endmacro %}
 {% set inc = story.incident %}
-<header class="story-head card">
-  <h1>{{ inc.device_id }} · {{ inc.kind }} <span class="status tone-{{ story.tone }}">{{ story.status }}</span></h1>
+{% set last_state = {"good": "done", "you": "you", "wait": "work", "bad": "bad", "info": "todo"}.get(story.tone, "todo") %}
+<header class="story-head">
+  <h1 class="story-title"><span>{{ inc.device_id }} · {{ inc.kind | kindword }}</span> <span class="status tone-{{ story.tone }}">{{ story.status }}</span></h1>
   <p class="summary">{{ inc.summary or 'No summary given.' }}</p>
   <p class="meta">Happened {{ story.day }} at {{ story.clock }}
     · suspected cause: {{ inc.suspected_cause or 'unknown' }}
     · {{ 'resolved on the device' if inc.resolved else 'not resolved on the device' }}{% if inc.resolving_action %} ({{ inc.resolving_action }}){% endif %}</p>
-  {% set links = story.links %}<p class="chain">{% include "partials/chain.html" %}</p>
+  {% if story.links %}
+  {% set stations = [] %}
+  {% for label, kind in story.links %}{% set _ = stations.append(((label | kindword) if label == inc.kind else (label | shortid), last_state if loop.last else "done")) %}{% endfor %}
+  <div class="story-line" title="{{ story.chain }}">{{ heal_line(stations) }}</div>
+  {% endif %}
   {% if story.device %}
   <p class="device-now health-{{ story.device.health }}{% if story.device.stale %} is-stale{% endif %}"><span class="dot" aria-hidden="true"></span>
     <span><strong>{{ story.device.id }} right now:</strong> {{ story.device.health }} · running <span class="mono">{{ story.device.build }}</span> · last check-in {{ story.device.seen }}</span></p>
   {% endif %}
   {% if story.touches_safety %}
-  <p class="safety-banner">⚠ Touches safety: this incident's patch changes the safety layer or visor. Any candidate made from it goes to a simulated canary first and stays under the kill switch (K17).</p>
+  <p class="safety-banner">{{ icon("alert") }}<span>Touches safety: this incident's patch changes the safety layer or visor. Any candidate made from it goes to a simulated canary first and stays under the kill switch (K17).</span></p>
   {% endif %}
 </header>
+
+{# Your turn: a technician case waits on a person. The link used to sit inside a timeline step. #}
+{% set diagnosed = story.steps | selectattr("technician_case") | selectattr("kind", "equalto", "technician.diagnosed") | list %}
+{% set case_steps = diagnosed or (story.steps | selectattr("technician_case") | list) %}
+{% if story.tone == "you" and case_steps %}
+{% set cs = case_steps[-1] %}
+<a class="turn story-turn" href="/technician/{{ cs.technician_case }}">
+  <span class="turn-mark">{{ icon("hand") }}</span>
+  <span>
+    <span class="turn-t">{% if "Staged " in cs.line %}A Naïve technician diagnosed this and staged a spare part for you to approve{% else %}A Naïve technician diagnosed this and needs you to decide{% endif %}</span>
+    <span class="turn-s"{{ full(cs.line) }}>{{ cs.line | shortid }}</span>
+  </span>
+  <span class="turn-cta">Review {{ icon("arrow") }}</span>
+</a>
+{% endif %}
 
 {% for run in story.runs %}
 {% include "partials/run.html" %}
@@ -21,14 +46,14 @@
 
 {% if story.ledger %}
 <section class="doctor-ledger">
-  <h2>Fleet Doctor <span class="muted">hypotheses, newest first</span></h2>
-  <ol>
+  <h2 class="section-h">Fleet Doctor <span class="muted">hypotheses, newest first</span></h2>
+  <ol class="ledger-rows">
     {% for h in story.ledger %}
     <li class="hypothesis">
       <p class="claim">{{ h.claim }}</p>
-      {% if h.how_to_check %}<p class="how"><span class="why-label">Check</span> {{ h.how_to_check }}</p>{% endif %}
+      {% if h.how_to_check %}<p class="how">Check: {{ h.how_to_check }}</p>{% endif %}
       <p class="hyp-meta"><span class="badge tone-info">{{ h.source }}</span>
-        <time datetime="{{ h.iso }}">{{ h.clock }}</time>{% if h.ref %} · {{ h.ref }}{% endif %}{% if h.model %} · {{ h.model }}{% endif %}
+        <time datetime="{{ h.iso }}">{{ h.clock }}</time>{% if h.ref %} · <span{{ full(h.ref) }}>{{ h.ref | shortid }}</span>{% endif %}{% if h.model %} · {{ h.model }}{% endif %}
         {% for flag in h.flags %}<span class="badge tone-wait">{{ flag }}</span> {% endfor %}</p>
     </li>
     {% endfor %}
@@ -37,57 +62,69 @@
 {% endif %}
 
 <h2 class="section-h">Timeline <span class="muted">every event on this incident, oldest first</span></h2>
+{# Each step is a node on the rail: who · what and the time, then the line, then the why. The
+   node is sun for a person, leaf for an agent, a sky ring for automation. A long why, or one
+   carrying JSON, shows its first part; the full text sits behind a disclosure. #}
 <ol class="steps">
   {% for s in story.steps %}
+  {% set why = s.why or "" %}
+  {% set actor_icon = {"human": "person", "agent": "agent"}.get(s.actor_class, "auto") %}
   {% if s.quiet %}
   <li class="step step-quiet actor-{{ s.actor_class }}">
-    <div class="step-when">
-      <time datetime="{{ s.iso }}">{{ s.clock }}</time>
-      <span class="gap">{{ s.gap or s.day }}</span>
-    </div>
+    <span class="step-node" aria-hidden="true"></span>
     <details class="step-body" id="{{ s.dom }}">
-      <summary class="step-line"><span class="actor">{{ s.who }}</span> · {{ s.line }}</summary>
-      <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="badge actor-badge">{{ s.actor_class }}</span>
-        <span class="actor">{{ s.who }}</span> · <span class="kind">{{ s.what }}</span></p>
-      <p class="step-why"><span class="why-label">Why</span> {{ s.why }}</p>
-      {% if s.recording %}<p class="evidence">Evidence: <a href="/v1/recordings/{{ s.recording }}">recording {{ s.recording }}</a></p>{% endif %}
+      <summary class="step-line"{{ full(s.line) }}><span class="actor">{{ s.who | shortid }}</span> · {{ s.line | shortid }}
+        <span class="step-when"><time datetime="{{ s.iso }}">{{ s.clock }}</time> <span class="gap">{{ s.gap or s.day }}</span></span></summary>
+      <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="actor-icon">{{ icon(actor_icon) }}</span><span class="badge actor-badge">{{ s.actor_class }}</span>
+        <span class="actor">{{ s.who | shortid }}</span> · <span class="kind">{{ s.what }}</span></p>
+      <p class="step-why"{{ full(why) }}>{{ why | shortid }}</p>
+      {% if s.recording %}<p class="evidence">Evidence: <a href="/v1/recordings/{{ s.recording }}" title="{{ s.recording }}">recording {{ s.recording[:8] }}…</a></p>{% endif %}
     </details>
   </li>
   {% else %}
   <li class="step actor-{{ s.actor_class }}{% if s.touches_safety %} step-safety{% endif %}">
-    <div class="step-when">
-      <time datetime="{{ s.iso }}">{{ s.clock }}</time>
-      <span class="gap">{{ s.gap or s.day }}</span>
-    </div>
+    <span class="step-node" aria-hidden="true"></span>
     <div class="step-body">
-      <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="badge actor-badge">{{ s.actor_class }}</span>
-        <span class="actor">{{ s.who }}</span> · <span class="kind">{{ s.what }}</span>
-        {% if s.touches_safety %}<span class="safety">touches safety</span>{% endif %}</p>
-      <p class="step-line">{{ s.line }}</p>
-      <p class="step-why"><span class="why-label">Why</span> {{ s.why }}</p>
-      {% if s.recording %}
-      <p class="evidence">Evidence: <a href="/v1/recordings/{{ s.recording }}">recording {{ s.recording }}</a></p>
+      <div class="step-head">
+        <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="actor-icon">{{ icon(actor_icon) }}</span><span class="badge actor-badge">{{ s.actor_class }}</span>
+          <span class="actor">{{ s.who | shortid }}</span> · <span class="kind">{{ s.what }}</span>
+          {% if s.touches_safety %}<span class="safety">touches safety</span>{% endif %}</p>
+        <p class="step-when"><time datetime="{{ s.iso }}">{{ s.clock }}</time> <span class="gap">{{ s.gap or s.day }}</span></p>
+      </div>
+      <p class="step-line"{{ full(s.line) }}>{{ s.line | shortid }}</p>
+      {% if why | length > 220 or '{"' in why %}
+      {% if '{"' in why %}{% set head = why.split('{"')[0].rstrip(":;,—-( ") %}{% else %}{% set head = why.split(". ")[0].rstrip(". ") ~ "." %}{% endif %}
+      <p class="step-why">{{ (head or "The reason is raw data") | truncate(220, end="…") | shortid }}</p>
+      <details class="why-more" id="{{ s.dom }}-why">
+        <summary>{{ icon("chevron") }}Full reason</summary>
+        <p class="why-full">{{ why }}</p>
+      </details>
+      {% else %}
+      <p class="step-why"{{ full(why) }}>{{ why | shortid }}</p>
       {% endif %}
-      {% if s.technician_case %}<p class="evidence">Naïve technician: <a href="/technician/{{ s.technician_case }}">case {{ s.technician_case }}</a></p>{% endif %}
+      {% if s.recording %}
+      <p class="evidence">Evidence: <a href="/v1/recordings/{{ s.recording }}" title="{{ s.recording }}">recording {{ s.recording[:8] }}…</a></p>
+      {% endif %}
+      {% if s.technician_case %}<p class="evidence">Naïve technician: <a href="/technician/{{ s.technician_case }}" title="{{ s.technician_case }}">case {{ s.technician_case | shortid }}</a></p>{% endif %}
     </div>
   </li>
   {% endif %}
   {% else %}
-  <li class="muted">No steps recorded yet.</li>
+  <li class="step-empty muted">No steps recorded yet. Each thing a device, agent or person does about this incident appears here, oldest first.</li>
   {% endfor %}
 </ol>
 
 {% if story.evidence or story.recordings %}
-<section class="evidence-list card">
-  <h2>Evidence <span class="muted">files the device uploaded</span></h2>
-  <ul>
+<section class="evidence-list">
+  <h2 class="section-h">Evidence <span class="muted">files the device uploaded</span></h2>
+  <ul class="evidence-rows">
     {% for ev in story.evidence %}
     <li><span class="ev-name">{{ ev.name }}</span>
       <span class="muted">{{ ev.format or '' }}{% if ev.size_bytes %} · {{ (ev.size_bytes / 1024) | round(1) }} KB{% endif %}</span>
-      {% if ev.stored and ev.download %}<a class="btn-link" href="{{ ev.download }}">Download</a>{% endif %}
-      <a class="muted-link" href="/v1/recordings/{{ ev.recording }}">details</a></li>
+      <span class="ev-actions">{% if ev.stored and ev.download %}<a class="btn-link" href="{{ ev.download }}">Download</a>{% endif %}
+      <a class="muted-link" href="/v1/recordings/{{ ev.recording }}">details</a></span></li>
     {% else %}
-    {% for r in story.recordings %}<li><a href="/v1/recordings/{{ r }}">recording {{ r }}</a></li>{% endfor %}
+    {% for r in story.recordings %}<li><a href="/v1/recordings/{{ r }}" title="{{ r }}">recording {{ r[:8] }}…</a></li>{% endfor %}
     {% endfor %}
   </ul>
 </section>

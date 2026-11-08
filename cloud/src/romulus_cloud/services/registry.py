@@ -312,16 +312,19 @@ def _most_common(session: Session, column, device_class: str, fleet_id: str) -> 
     return session.scalar(stmt)
 
 
+CANDIDATE_SOURCES = ("batch", "review")  # versions made for a candidate (cluster review: §5)
+
+
 def _released(model, kinds: tuple[str, ...], fleet_id: str):
-    """A version that is a release, not an unproven batch candidate: made by the seed or by
-    hand (`source != "batch"`), or promoted by the gate."""
+    """A version that is a release, not an unproven candidate: made by the seed or by hand
+    (`source` not in CANDIDATE_SOURCES), or promoted by the gate."""
     promoted = select(Candidate.version).where(
         Candidate.fleet_id == fleet_id,
         Candidate.status == "promoted",
         Candidate.type.in_(kinds),
         Candidate.version.is_not(None),
     )
-    return or_(model.source != "batch", model.version.in_(promoted))
+    return or_(model.source.not_in(CANDIDATE_SOURCES), model.version.in_(promoted))
 
 
 def default_assignment(

@@ -80,7 +80,7 @@ Each lane is one branch, one PR, and its own files. The coordinator session merg
 # in your worktree; pick your lane's port: 1→8010 2→8011 3→8012 4→8013 5→8014 6→8015
 printf 'TECHNICIAN_MODE=fake\nAPI_PORT=8012\n' > .env        # fake mode: no real email, no Naïve calls
 export COMPOSE_PROJECT_NAME=ui-fleet API_PORT=8012
-make dev && make seed && make sim                              # sim = fake arms that raise incidents
+docker compose -f compose.yaml -f compose.dev.yaml --profile sim up -d --build && make seed   # dev mounts the fixtures; plain `make sim` drops them
 python3 cloud/scripts/technician_demo.py fake --base http://localhost:8012 --no-open   # a case page
 ```
 - **Screenshots:** headless Chrome. The narrowest layout it renders is 500 px.
@@ -95,7 +95,7 @@ python3 cloud/scripts/technician_demo.py fake --base http://localhost:8012 --no-
   - `make reset`, on any shared stack
 
 ## PR checklist
-- [ ] `make test` and `make lint` are green.
+- [ ] **Targeted tests, run once before the PR:** `uv run pytest -q -x -p no:randomly cloud/tests/unit/web` plus the flow tests that fetch your pages (see `grep -rln '"/"\|/partials/' cloud/tests`), then `make lint`. Don't run the full `make test` (8 min); the coordinator runs it once on main after the last UI merge.
 - [ ] Screenshots of your pages at 1440×900, Day and Night, viewed and listed in the PR.
 - [ ] Nothing on the "Never use" list in your diff. Run `git diff origin/main | grep -nE '#[0-9a-fA-F]{3,6}\b|gradient|backdrop|border-left: *[2-9]|text-transform: *uppercase'` and justify every hit.
 - [ ] Commits: small, with a one-sentence message and **no AI co-author lines** (repo rule). Run `git pull --rebase origin main` before you push.

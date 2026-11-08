@@ -11,6 +11,7 @@ for help, the firmware it flashed, its write-up and every step), then the story'
 where bookkeeping steps (`story.BOOKKEEPING`) are one quiet line each.
 """
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -19,14 +20,21 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
+from sqlalchemy import select
 
 from romulus_cloud import events
 from romulus_cloud.api.deps import SessionDep, SettingsDep
-from romulus_cloud.domain.story import AGENT_OUTCOME_STATUS, recording_name
+from romulus_cloud.domain.story import (
+    AGENT_OUTCOME_STATUS,
+    STATUS,
+    WORK_ORDER_STATUS,
+    recording_name,
+)
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
-from romulus_cloud.models import AgentRun, Event
-from romulus_cloud.services import agent_runs, devices, incidents
+from romulus_cloud.models import AgentRun, Event, TechnicianCase
+from romulus_cloud.services import agent_runs, devices, incidents, learning
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 STATIC_DIR = WEB_DIR / "static"
@@ -36,6 +44,50 @@ router = APIRouter(tags=["web"], include_in_schema=False)
 
 # How many incidents the timeline shows (newest first).
 TIMELINE_LIMIT = 50
+
+# Statuses that wait on a person read in the `you` tone (sun) on the page. A presentation
+# mapping only: the domain keeps "bad" for them, and its tests pin that
+# (docs/impeccable-redesign/BUILD.md, "Tones").
+YOU_STATUSES: frozenset[tuple[str, str]] = frozenset(
+    {
+        STATUS["technician.diagnosed"],
+        WORK_ORDER_STATUS["needs_human"],
+        WORK_ORDER_STATUS["blocked_over_cap"],
+    }
+)
+
+
+def page_tone(status: tuple[str, str]) -> str:
+    """The tone a story status shows in: `you` when it waits on a person, else its own."""
+    words, tone = status
+    return "you" if (words, tone) in YOU_STATUSES else tone
+
+
+# A prefixed id (`wo_`, `tc_`, `ses_`, `cand_`, …) anywhere in the text, tail over 10 characters.
+_ID = re.compile(r"\b([a-z]{2,5}_)([A-Za-z0-9]{6})[A-Za-z0-9]{5,}\b")
+
+
+def shortid(value: Any) -> str:
+    """Shorten every long prefixed id in the text: `wo_3d7cd6464e2e4980a69acd0a3e031264` ->
+    `wo_3d7cd6…`, also inside a sentence ("case tc_a0177e9cb12f… opened" -> "case
+    tc_a0177e… opened"). Ids with a tail of 10 characters or fewer, and text with no id,
+    pass through. Put the full text in a `title` wherever this is shown."""
+    if value is None:
+        return ""
+    out = _ID.sub(r"\1\2…", str(value))
+    return Markup(out) if isinstance(value, Markup) else out
+
+
+def kindword(value: Any) -> str:
+    """`joint_stall` -> `Joint stall`, `technician.diagnosed` -> `Technician diagnosed`."""
+    if not value:
+        return ""
+    text = " ".join(str(value).replace(".", " ").replace("_", " ").split())
+    return text[:1].upper() + text[1:]
+
+
+templates.env.filters["shortid"] = shortid
+templates.env.filters["kindword"] = kindword
 
 
 def _tz(settings) -> ZoneInfo:
@@ -291,12 +343,33 @@ def _fleet(session, fleet_id: str) -> dict[str, Any]:
     }
 
 
+def _turn(session, incident_id: str) -> dict[str, Any]:
+    """Where a row waiting on a person sends them: its newest technician case (one indexed
+    lookup on `technician_cases.incident_id`) and the part it staged, if any."""
+    case = session.scalars(
+        select(TechnicianCase)
+        .where(TechnicianCase.incident_id == incident_id)
+        .order_by(TechnicianCase.created_at.desc())
+        .limit(1)
+    ).first()
+    if case is None:
+        return {"case_url": None, "ask": None, "part_staged": False}
+    part = (case.actions or {}).get("part") or {}
+    staged = bool(part.get("staged") and part.get("title"))
+    ask = None
+    if staged:
+        price = f", ${part['unit_usd']}" if part.get("unit_usd") else ""
+        vendor = f" at {part['vendor_label']}" if part.get("vendor_label") else ""
+        ask = f"Approve a spare part: {part['title']}{price}{vendor}"
+    return {"case_url": f"/technician/{case.id}", "ask": ask, "part_staged": staged}
+
+
 def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
     rows = []
     now = utcnow()
     for incident in incidents.list_incidents(session, limit=TIMELINE_LIMIT, fleet_id=fleet_id):
         _, story = incidents.story(session, incident.id)
-        status, tone = story.status
+        status, tone = story.status[0], page_tone(story.status)
         runs = [_run_view(r, tz, now) for r in agent_runs.for_incident(session, incident.id)]
         rows.append(
             {
@@ -313,15 +386,36 @@ def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
                 "touches_safety": any(s.refs.get("touches_safety") for s in story.steps),
                 "agent": _run_badge(runs[-1]) if runs else None,
                 "help": sum(len(r["help_requests"]) for r in runs),
+                **(_turn(session, incident.id) if tone == "you" else {}),
             }
         )
     return rows
 
 
-def _overview(rows: list[dict[str, Any]], fleet: dict[str, Any]) -> dict[str, int]:
-    """The numbers across the top of the timeline."""
+def _overview(rows: list[dict[str, Any]], fleet: dict[str, Any]) -> dict[str, Any]:
+    """The numbers across the top of the timeline, plus what the status sentence picks from:
+    frozen, the first row waiting on a person (the your-turn card), the first still-broken
+    and the first working row, and whether every other arm is healthy."""
     agents = [r["agent"] for r in rows if r["agent"]]
+    you = [r for r in rows if r["tone"] == "you"]
+    others = [r for r in rows if r["tone"] != "you"]
+    bad = [r for r in others if r["tone"] == "bad" or (r["agent"] or {}).get("status") == "broken"]
+    working = [
+        r for r in others if r["tone"] == "wait" or (r["agent"] or {}).get("status") == "working"
+    ]
+    devices = fleet.get("devices") or []
+    waiting_on = {r.get("device") for r in you}
+    rest = [d for d in devices if d.get("id") not in waiting_on]
     return {
+        "frozen": bool(fleet.get("frozen")),
+        "frozen_why": fleet.get("frozen_why"),
+        "turn": you[0] if you else None,
+        "first_bad": bad[0] if bad else None,
+        "first_working": working[0] if working else None,
+        "open": sum(1 for r in rows if r["tone"] == "bad"),
+        "busy": len(working),
+        "checked": sum(1 for d in devices if d.get("health")),
+        "rest_healthy": not bad and all(d.get("health") == "ok" for d in rest),
         "devices": len(fleet["devices"]),
         "healthy": sum(1 for d in fleet["devices"] if d.get("health") == "ok"),
         "incidents": len(rows),
@@ -329,6 +423,7 @@ def _overview(rows: list[dict[str, Any]], fleet: dict[str, Any]) -> dict[str, in
         "broken": sum(1 for a in agents if a["status"] == "broken"),
         "working": sum(1 for a in agents if a["status"] == "working"),
         "help": sum(r["help"] for r in rows),
+        "you": sum(1 for r in rows if r["tone"] == "you"),
     }
 
 
@@ -375,7 +470,7 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
         }
         for h in story.ledger
     ]
-    status, tone = story.status
+    status, tone = story.status[0], page_tone(story.status)
     return {
         "incident": incidents.view(incident),
         "day": day(incident.occurred_at, tz),
@@ -491,3 +586,38 @@ def run_partial(
 ):
     view = _run_page_view(session, device_id, run_id, _tz(settings))
     return _page(request, "partials/run_page.html", **view)
+
+
+def _technician_css() -> Markup:
+    """The Technician page's scoped `<style>` block (.tc-*), as it stands in
+    technician.html. /learning reuses .tc-head, .tc-stages and .tc-verdict, so the two
+    features read as one product and a restyle of that page reaches both. Empty once the
+    .tc-* rules move into romulus.css."""
+    source, _, _ = templates.env.loader.get_source(templates.env, "technician.html")
+    start = source.find("<style>")
+    end = source.find("</style>", start)
+    return Markup(source[start : end + len("</style>")] if 0 <= start < end else "")
+
+
+@router.get("/learning", response_class=HTMLResponse)
+def learning_page(
+    request: Request, session: SessionDep, settings: SettingsDep, case: str | None = None
+):
+    """Fleet learning (docs/recursive-self-improvement/demo.md §4): one cluster review (the
+    newest, or `?case=review:<kind>:<n>`), the probe's numbers and the fleet's own data."""
+    return _page(
+        request,
+        "learning.html",
+        v=learning.view(session, settings, now=utcnow(), case=case),
+        tc_css=_technician_css(),
+        fleet=_fleet(session, settings.fleet_id),
+        tz=settings.display_tz,
+    )
+
+
+@router.get("/partials/learning", response_class=HTMLResponse)
+def learning_partial(
+    request: Request, session: SessionDep, settings: SettingsDep, case: str | None = None
+):
+    v = learning.view(session, settings, now=utcnow(), case=case)
+    return _page(request, "partials/learning.html", v=v)

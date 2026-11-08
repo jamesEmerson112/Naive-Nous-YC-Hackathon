@@ -1,0 +1,18 @@
+{
+  "rest": {
+    "shoulder_pan": 4.66,
+    "shoulder_lift": -110.07,
+    "elbow_flex": 93.98,
+    "wrist_flex": -101.05,
+    "wrist_roll": -3.38,
+    "gripper": 1.35
+  },
+  "home": {
+    "shoulder_pan": 4.66,
+    "shoulder_lift": -110.07,
+    "elbow_flex": 93.98,
+    "wrist_flex": -101.05,
+    "wrist_roll": -3.38,
+    "gripper": 1.35
+  }
+}

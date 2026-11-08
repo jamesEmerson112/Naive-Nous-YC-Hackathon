@@ -43,6 +43,10 @@ def andre_library(library=REPO / "arm" / "prims" / "library"):
     poses.json is {name: {joint: deg}}; wave.json is {name, fps, joints, frames}."""
     poses_file = library / "poses.json"
     poses = json.loads(poses_file.read_text()) if poses_file.exists() else {}
+    if poses:                                  # a skill pose not taught yet is None: goto() refuses it
+        from .host import Skills
+        for name in Skills.NEEDED:
+            poses.setdefault(name, None)
     wave_file = library / "wave.json"
     wave = json.loads(wave_file.read_text()) if wave_file.exists() else None
     return poses, wave
@@ -138,7 +142,10 @@ class RealArm:
         mags = []
         for j in JOINTS:
             v = int(raw.get(j, 0))
-            mags.append((v & 0x3FF) / 1000.0)        # sign-magnitude: bit 10 is the direction
+            # LeRobot 0.7 (rustypot) already returns a signed value, so -78 means 7.8% the other way.
+            # Masking that with 0x3FF read it as 94.6% and raised false overloads on the bench.
+            # A raw sign-magnitude value (bit 10 = direction, as the mock bus sends) still works.
+            mags.append((-v if v < 0 else v & 0x3FF) / 1000.0)
         return np.array(mags) * STALL_NM
 
     def tick(self):
@@ -168,6 +175,9 @@ class RealArm:
             self.tick()
 
     def goto(self, pose, duration=1.5, *, tol_deg=2.0, settle_timeout=2.0):
+        if pose is None:
+            raise RuntimeError("that pose isn't taught on the real arm (arm/prims/library/poses.json): "
+                               "teach it with Andre first (arm/bin/prim-record.sh --pose <name>)")
         start = self._read_vec() if self._goal is None else self._goal.copy()
         goal = self._vec(pose)
         n = max(1, round(duration * self.fps))

@@ -12,6 +12,7 @@ The Naïve agent's single output is a typed report. The model proposes, code dis
 - `feed_line` turns one session event into a short line for the "agent at work" column.
 """
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
@@ -157,12 +158,26 @@ def _type_ok(value: Any, name: str) -> bool:
 
 
 def _check(value: Any, schema: Mapping[str, Any], path: str, errors: list[str]) -> None:
-    """The subset of JSON Schema that `report_schema` uses."""
+    """The subset of JSON Schema that `report_schema` and the cluster-review proposal
+    (`domain/review.py`) use. `oneOf` passes when exactly one branch does; when none does,
+    the closest branch's problems are reported."""
     types = schema.get("type")
     names = [types] if isinstance(types, str) else list(types or [])
     if names and not any(_type_ok(value, n) for n in names):
         errors.append(f"{path}: expected {' or '.join(names)}, got {type(value).__name__}")
         return
+    if "const" in schema and value != schema["const"]:
+        errors.append(f"{path}: must be {schema['const']!r}")
+    if "oneOf" in schema:
+        found: list[list[str]] = []
+        for sub in schema["oneOf"]:
+            found.append([])
+            _check(value, sub, path, found[-1])
+        passing = sum(1 for e in found if not e)
+        if passing > 1:
+            errors.append(f"{path}: matches more than one allowed shape")
+        elif not passing:
+            errors.extend(min(found, key=len) if found else [f"{path}: no allowed shape"])
     if value is None:
         return
     if "enum" in schema and value not in schema["enum"]:
@@ -174,7 +189,9 @@ def _check(value: Any, schema: Mapping[str, Any], path: str, errors: list[str]) 
             errors.append(f"{path}: shorter than {schema['minLength']} characters")
         if "pattern" in schema and not re.search(schema["pattern"], value):
             errors.append(f"{path}: does not match {schema['pattern']}")
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, float) and not math.isfinite(value):
+        errors.append(f"{path}: {value} is not a finite number")
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
         if value < schema.get("minimum", value) or value > schema.get("maximum", value):
             errors.append(f"{path}: {value} is out of range")
     if isinstance(value, list):

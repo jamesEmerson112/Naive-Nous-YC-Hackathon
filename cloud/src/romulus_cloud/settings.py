@@ -191,11 +191,12 @@ class Settings(BaseSettings):
     doctor_evidence_file_bytes: int = 4000  # per file named in the log or trace
     doctor_evidence_code_bytes: int = 16000  # all code excerpts together
 
-    # Naïve Technician (docs/naive-technician/design.md §10; D30). Off by default. A
+    # Naïve Technician (docs/naive-technician/design.md §10; D30). Live by default (Kent,
+    # Nov 8); live starts sessions on its own only for `kind: real` devices (K13). A
     # `needs_human` work order with no catalogued part opens a case: one Naïve session writes
     # a typed report, Romulus emails TECHNICIAN_EMAIL and stages a checked cart a person
     # approves. off | fake (recorded test fixture) | live (HttpNaive); replay is per case.
-    technician_mode: Literal["off", "fake", "live"] = "off"
+    technician_mode: Literal["off", "fake", "live"] = "live"
     naive_technician_agent: str = ""
     naive_technician_identity: str = ""
     naive_technician_inbox: str = ""
@@ -230,6 +231,38 @@ class Settings(BaseSettings):
     # = the bundled demo recording (cloud/tests/fixtures/technician/joint_stall_live2.json).
     technician_replay_file: str = ""
     technician_replay_seconds: float = 20
+
+    # Fleet learning (docs/recursive-self-improvement/design.md §3, §9). Off by default.
+    # data: the `learning.tick` step keeps the standing `fleet-runs` dataset (plain code, no
+    # model); fixture/live add cluster review later. A snapshot plus a `trajectories` export
+    # is taken whenever labelled pass/fail runs grew by LEARNING_MIN_NEW since the last one.
+    learning_mode: Literal["off", "data", "fixture", "live"] = "off"
+    learning_min_new: int = 1
+    # Fleet learning page (/learning; docs/recursive-self-improvement/design.md §9). Until a
+    # `review.*` event exists, the page shows this recorded cluster-review session (fixture
+    # JSON); empty = an empty state. Probe scorecards are read from PROBE_DIR.
+    review_fixture: str | None = None
+    probe_dir: str = "/data/learning/probes"
+
+    # Fleet learning T1 (docs/recursive-self-improvement/design.md §8 D31, §9). Off by default.
+    # After the gate promotes a skill the Naïve agent fleet-doctor proposed, mirror the fleet's
+    # healer playbook to Naïve Skills as a new version of NAIVE_SKILL_SLUG (created on first
+    # use). The worker publishes only when this is true and LEARNING_MODE is fixture or live
+    # (`review_publish.enabled`). The Skills page is a mirror, not a rollout lane.
+    review_publish: bool = False
+    naive_skill_slug: str = "romulus-healer-playbook"
+    # A card on NAIVE_BOARD_ID (the CEO's board) to comment on per published lesson; None = none.
+    review_insights_card: str | None = None
+
+    # Cluster review (design §4, §9; draft D31), run by `learning.tick` when LEARNING_MODE is
+    # fixture or live. The Naïve agent (`fleet-doctor`), the budget per session, at most this
+    # many sessions an hour, and how long a rejected kind cools down (or until a newer run of
+    # it arrives). In fixture mode REVIEW_FIXTURE, when set, replays for every case; unset,
+    # each kind replays cloud/tests/fixtures/review/<kind>.json if there is one.
+    naive_review_agent: str | None = None
+    review_budget_usd: float = 0.50
+    review_max_sessions_per_hour: int = 2
+    review_cooldown_s: int = 900
 
 
 @lru_cache
