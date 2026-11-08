@@ -31,7 +31,7 @@ SESSION_TIMEOUT_S = 5.0  # session and email calls run inside a worker tick (des
 EVENT_PAGES_MAX = 10  # at most 10 pages of 100 events per session_events call
 TEXT_MAX = 300
 RETRY_ATTEMPTS = 3  # Naïve answers 429 "at capacity" under load; session/email calls retry
-RETRY_BUDGET_S = 10.0
+RETRY_BUDGET_S = 2.0  # worker path; the spike passes more
 USER_AGENT = "romulus-cloud/0.1"
 TITLE_MAX = 200
 BODY_MAX = 20_000
@@ -108,8 +108,10 @@ class HttpNaive:
         version: str = DEFAULT_VERSION,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         http_client: httpx.Client | None = None,
+        retry_budget_s: float = RETRY_BUDGET_S,
     ) -> None:
         self.board_id = board_id
+        self.retry_budget_s = retry_budget_s
         self._base = base_url.rstrip("/")
         self._headers = {
             "Authorization": f"Bearer {api_key}",
@@ -126,20 +128,23 @@ class HttpNaive:
     def _request_retrying(self, method: str, path: str, **kw: Any) -> Any:
         """`_request` with a 5 s timeout, retrying retryable failures (429, 5xx, transport,
         409 idempotency_conflict/job_not_ready) up to RETRY_ATTEMPTS times with backoff that
-        honours Retry-After, sleeping at most RETRY_BUDGET_S in total. Same headers (so the
-        same Idempotency-Key) on every attempt."""
-        waited = 0.0
+        honours Retry-After, within `retry_budget_s` of wall time (requests included). The
+        default 2 s keeps a worker tick short: a 5 s timeout is not retried. Same headers (so
+        the same Idempotency-Key) on every attempt."""
+        start = time.monotonic()
+        slept = 0.0
         for attempt in range(RETRY_ATTEMPTS + 1):
             try:
                 return self._request(method, path, timeout=SESSION_TIMEOUT_S, **kw)
             except NaiveError as exc:
-                left = RETRY_BUDGET_S - waited
+                # real sleeps advance the clock; a test's fake sleep doesn't, so take the larger
+                left = self.retry_budget_s - max(time.monotonic() - start, slept)
                 if not exc.retryable or attempt == RETRY_ATTEMPTS or left <= 0:
                     raise
                 backoff = 0.5 * 2**attempt
                 delay = min(exc.retry_after if exc.retry_after is not None else backoff, left)
                 self._sleep(delay)
-                waited += delay
+                slept += delay
         raise AssertionError("unreachable")
 
     def _request(

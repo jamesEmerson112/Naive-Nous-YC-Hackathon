@@ -94,12 +94,27 @@ def test_user_message_is_not_an_agent_message():
 # --- HttpNaive -----------------------------------------------------------------------------
 
 
-def _http(handler):
+def _http(handler, **kw):
     naive = HttpNaive(
-        "sk_live_test", http_client=httpx.Client(transport=httpx.MockTransport(handler))
+        "sk_live_test", http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kw
     )
     naive._sleep = lambda s: None
     return naive
+
+
+def test_default_retry_budget_caps_the_worker_path_at_two_seconds():
+    sleeps = []
+
+    def handler(request):
+        return httpx.Response(
+            503, headers={"Retry-After": "5"}, json={"error": {"code": "unavailable"}}
+        )
+
+    naive = _http(handler)
+    naive._sleep = sleeps.append
+    with pytest.raises(NaiveError):
+        naive.get_session("ses_1")
+    assert sum(sleeps) <= 2.0
 
 
 def test_create_session_posts_body_with_key_and_user_agent():
@@ -137,7 +152,7 @@ def test_email_retries_429_with_same_key_then_succeeds():
             )
         return httpx.Response(202, json={"object": "email_send", "accepted": True})
 
-    naive = _http(handler)
+    naive = _http(handler, retry_budget_s=10.0)
     naive._sleep = sleeps.append
     naive.send_email(
         identity_id="i",

@@ -270,14 +270,16 @@ def case_file(incident: dict[str, Any], *, device_id: str, variant: str) -> str:
         "CASE FILE: Romulus hardware hand-off. Diagnose it and finish with submit_output.",
         "",
         "DEVICE",
-        f"- id: {device_id}; SO-101 arm: 6 Feetech STS3215 bus servos, Raspberry Pi 5, STM32 sensor pod",
+        f"- id: {device_id}; SO-101 arm: 6 Feetech STS3215 bus servos, Raspberry Pi 5,"
+        " STM32 sensor pod",
         "- servo ids: " + ", ".join(f"{j}={i}" for i, j in enumerate(JOINTS, start=1)),
         f"- servo variant on this arm: {variant} (order this variant only)",
         "",
-        "VENDORS (choose origin, handle and variant_id exactly as listed; prices are fetched by code)",
+        "VENDORS (choose origin, handle and variant_id exactly as listed;"
+        " prices are fetched by code)",
         *[
-            f"- {v['label']}: origin={v['origin']} handle={v['handle']} variant_id={v['variant_id']}"
-            f" (variant {v['servo_variant']})"
+            f"- {v['label']}: origin={v['origin']} handle={v['handle']}"
+            f" variant_id={v['variant_id']} (variant {v['servo_variant']})"
             for v in vendors
         ],
         "",
@@ -468,7 +470,10 @@ def main(argv: list[str] | None = None) -> int:
         base = env.get("NAIVE_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
         base = base if base.endswith("/v1") else base + "/v1"
         naive = HttpNaive(
-            env["NAIVE_API_KEY"], base_url=base, version=env.get("NAIVE_VERSION", DEFAULT_VERSION)
+            env["NAIVE_API_KEY"],
+            base_url=base,
+            version=env.get("NAIVE_VERSION", DEFAULT_VERSION),
+            retry_budget_s=10.0,  # a script can wait; the worker keeps the 2 s default
         )
         shop = shop_module
         agent_id = env["NAIVE_TECHNICIAN_AGENT"]
@@ -601,7 +606,8 @@ def main(argv: list[str] | None = None) -> int:
         identity, inbox = env.get("NAIVE_TECHNICIAN_IDENTITY"), env.get("NAIVE_TECHNICIAN_INBOX")
         if not (to and (args.fixture or (identity and inbox))):
             print(
-                "\n--send-email needs TECHNICIAN_EMAIL, NAIVE_TECHNICIAN_IDENTITY, NAIVE_TECHNICIAN_INBOX"
+                "\n--send-email needs TECHNICIAN_EMAIL, NAIVE_TECHNICIAN_IDENTITY,"
+                " NAIVE_TECHNICIAN_INBOX"
             )
         else:
             subject, text = email_text(report, part)
