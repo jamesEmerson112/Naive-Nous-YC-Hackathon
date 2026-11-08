@@ -12,7 +12,7 @@ store is over `BLOB_BUDGET_GB`; incident evidence is never deleted. Nothing here
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -27,15 +27,7 @@ from romulus_cloud.adapters.blobstore import (
 from romulus_cloud.domain.labels import auto_labels, split_label
 from romulus_cloud.errors import ApiError
 from romulus_cloud.log import log_line
-from romulus_cloud.models import (
-    Blob,
-    DatasetVersion,
-    Incident,
-    Label,
-    Overlay,
-    Recording,
-    WorkOrder,
-)
+from romulus_cloud.models import Blob, Incident, Label, Overlay, Recording, WorkOrder
 from romulus_cloud.services.devices import get_device
 from romulus_cloud.settings import Settings, get_settings
 from romulus_contracts import IncidentReport, RecordingMeta
@@ -437,21 +429,15 @@ def _curated(session: Session, recording_ids: list[str]) -> bool:
     return any(source != "auto" for source in current.values())
 
 
-def _prunable(session: Session, sha256: str) -> bool:
-    """A blob may go only if every recording using it is an episode with no incident,
-    no curated label and no dataset snapshot."""
+def _prunable(session: Session, sha256: str, pinned: set[str]) -> bool:
+    """A blob may go only if no dataset version pins it and every recording using it is
+    an episode with no incident and no curated label."""
+    if sha256 in pinned:
+        return False
     users = list(session.scalars(select(Recording).where(Recording.sha256 == sha256)))
     if not users or any(r.kind != "episode" or r.incident_id for r in users):
         return False
-    ids = [r.id for r in users]
-    if _curated(session, ids):
-        return False
-    # Blobs referenced by a dataset version are pinned and never deleted. TODO(M6): once
-    # PR #14 lands, use `services.datasets.pinned_blob_shas(session)` instead of this query.
-    in_snapshot = select(DatasetVersion.dataset_id).where(
-        or_(*(DatasetVersion.recording_ids.contains([rid]) for rid in ids))
-    )
-    return session.scalar(in_snapshot.limit(1)) is None
+    return not _curated(session, [r.id for r in users])
 
 
 def enforce_budget(
@@ -469,6 +455,10 @@ def enforce_budget(
     total = int(session.scalar(select(func.coalesce(func.sum(Blob.size_bytes), 0))) or 0)
     if total <= budget:
         return 0
+    # Imported here: services.datasets imports this module.
+    from romulus_cloud.services.datasets import pinned_blob_shas
+
+    pinned = pinned_blob_shas(session)  # snapshot members are never deleted (telemetry §7)
     before = total
     oldest = session.execute(
         select(Recording.id, Blob)
@@ -484,7 +474,7 @@ def enforce_budget(
         if blob.sha256 in seen:
             continue
         seen.add(blob.sha256)
-        if not _prunable(session, blob.sha256):
+        if not _prunable(session, blob.sha256, pinned):
             continue
         deleted.append(
             {"recording": recording_id, "sha256": blob.sha256, "size_bytes": blob.size_bytes}
