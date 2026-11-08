@@ -1,12 +1,11 @@
-"""Teleoperate the follower with the leader and record named primitives / poses.
+"""Record movements by moving the arm by hand (one arm, no teleoperation).
 
     python -m prims.record wave pick place      # record three primitives in a row
     python -m prims.record --pose home rest     # snapshot named poses instead
-    python -m prims.record --kinesthetic wave   # no leader: move the limp follower by hand
-    python -m prims.record --leader-only wave   # follower stays still: move the leader by hand
 
-Teleoperation runs the whole time. Press Enter to start a take, Enter again to stop and
-save it. Type 'r' + Enter while recording to discard and redo the take. Ctrl-C quits.
+The arm's torque is switched off so it can be moved freely: support it before starting.
+Press Enter to start a take, Enter again to stop and save it. Type 'r' + Enter while
+recording to discard and redo the take. Ctrl-C quits (an unsaved take is lost).
 """
 
 from __future__ import annotations
@@ -17,16 +16,7 @@ import sys
 import threading
 import time
 
-from .core import (
-    JOINTS,
-    Primitive,
-    connect_calibrated,
-    make_follower,
-    make_leader,
-    save_pose,
-    strip_pos,
-    to_vec,
-)
+from .core import JOINTS, Primitive, connect_calibrated, make_arm, save_pose, strip_pos, to_vec
 
 
 def _stdin_lines() -> queue.Queue[str]:
@@ -52,26 +42,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("names", nargs="+", help="names to record, in order")
     ap.add_argument("--pose", action="store_true", help="save single poses instead of trajectories")
-    ap.add_argument("--kinesthetic", action="store_true", help="no leader arm; follower torque off, move it by hand")
-    ap.add_argument("--leader-only", action="store_true", help="record the leader arm alone; the follower is not used")
     ap.add_argument("--fps", type=int, default=50)
-    ap.add_argument("--max-seconds", type=float, default=60.0, help="auto-stop a take after this long")
+    ap.add_argument("--max-seconds", type=float, default=120.0, help="auto-stop and save a take after this long")
     ap.add_argument("--no-trim", action="store_true", help="keep idle frames at start/end")
     args = ap.parse_args()
 
-    if args.kinesthetic and args.leader_only:
-        ap.error("--kinesthetic and --leader-only are mutually exclusive")
-    follower = None if args.leader_only else make_follower()
-    leader = None if args.kinesthetic else make_leader()
-    if follower:
-        connect_calibrated(follower, "follower")
-    if leader:
-        connect_calibrated(leader, "leader")
-    if args.leader_only:
-        print("Leader-only mode: the follower is not connected. Move the leader by hand.")
-    elif not leader:
-        follower.bus.disable_torque()
-        print("Kinesthetic mode: follower torque is OFF. Support the arm and move it by hand.")
+    arm = make_arm()
+    connect_calibrated(arm)
+    arm.bus.disable_torque()
+    print("Torque is OFF. Support the arm and move it by hand.")
 
     keys = _stdin_lines()
     period = 1.0 / args.fps
@@ -89,14 +68,7 @@ def main() -> None:
     try:
         while todo:
             tick = time.perf_counter()
-            if args.leader_only:
-                current = strip_pos(leader.get_action())
-            elif leader:
-                sent = follower.send_action(leader.get_action())
-                current = strip_pos(sent)  # what we commanded; replays most faithfully
-            else:
-                current = strip_pos(follower.get_observation())
-
+            current = strip_pos(arm.get_observation())
             if recording:
                 frames.append(to_vec(current))
 
@@ -114,16 +86,13 @@ def main() -> None:
             elif key is not None and not recording:
                 frames, recording, t_start = [], True, tick
                 print(f"\n● REC '{todo[0]}'  (Enter = stop & save, r + Enter = redo)")
-            elif recording and (key == "r"):
+            elif recording and key == "r":
                 recording = False
                 print("\nDiscarded. Press Enter to try again.")
             elif recording and (key is not None or tick - t_start >= args.max_seconds):
                 recording = False
-                prim = Primitive(todo[0], args.fps, frames, meta={
-                    "recorded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "kinesthetic" if args.kinesthetic else
-                              "so101_leader_only" if args.leader_only else "so101_leader",
-                })
+                meta = {"recorded_at": time.strftime("%Y-%m-%d %H:%M:%S"), "source": "kinesthetic"}
+                prim = Primitive(todo[0], args.fps, frames, meta=meta)
                 if not args.no_trim:
                     prim = prim.trimmed()
                 path = prim.save()
@@ -140,12 +109,9 @@ def main() -> None:
             if dt > 0:
                 time.sleep(dt)
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\nStopped." + (" The take in progress was NOT saved." if recording else ""))
     finally:
-        if leader:
-            leader.disconnect()
-        if follower:
-            follower.disconnect()
+        arm.disconnect()
     print("Done.")
 
 

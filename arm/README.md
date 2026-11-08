@@ -1,60 +1,46 @@
-# arm/ — SO-101 teleoperation, recording and motion primitives
+# arm/ — record SO-101 movements by hand
 
-Runs on the machine the arms are plugged into. LeRobot 0.7.0 pinned (see `docs/so101-research.md`).
-Two ways to capture movement, both while teleoperating leader → follower:
+One SO-101 arm, no teleoperation: switch its torque off, move it by hand, and save the
+movement as a small JSON trajectory (a *primitive*) in `prims/library/`. LeRobot 0.7.0 is
+pinned (see `docs/so101-research.md`).
 
-| | `bin/record.sh` | `bin/prim-record.sh` |
-|---|---|---|
-| Output | LeRobot dataset v3 (joints + optional camera video) in `arm/data/` | small JSON trajectories in `prims/library/` |
-| Use it for | training a policy later (ACT / SmolVLA), `lerobot-replay` | scripting the demo: play, chain, speed up, loop |
-
-## 1. Setup (once)
+## Setup (once per machine)
 ```bash
-cd arm && ./setup.sh            # venv + LeRobot; creates arm.env
-bin/find-ports.sh               # unplug each arm when asked; put ports in arm.env
-bin/calibrate.sh                # follower then leader; ids come from arm.env
+cd arm && ./setup.sh          # venv + LeRobot; creates arm.env
+ls /dev/tty.usbmodem*         # with the arm plugged in (USB + 12 V power)
 ```
-Plug in the **power** of both arms as well as USB. Keep the same `FOLLOWER_ID` / `LEADER_ID` everywhere: calibration is stored per id.
+Put that port in `ARM_PORT` in `arm.env`.
 
-## 2. Teleoperate
+The arm's calibration is checked in at `calibration/naive_follower.json` (`ARM_ID`). It is
+written to the motors automatically the first time a machine connects, so no calibration
+step is needed for this arm.
+
+## Record
 ```bash
-bin/teleop.sh                         # Ctrl-C to stop
-bin/teleop.sh --display_data=true     # with the rerun viewer
+bin/prim-record.sh wave                  # one movement
+bin/prim-record.sh wave pick present     # several in a row
+bin/prim-record.sh --pose home rest      # single named poses instead (Enter saves each)
 ```
+1. **Support the arm**: its torque goes off as soon as the script starts.
+2. Press **Enter** to start a take; the status line shows `[REC 3.2s]`.
+3. Move the arm, then press **Enter** to stop and save. Wait for `Saved '<name>'`.
+4. `r` + Enter while recording discards the take so you can redo it.
 
-## 3. Teleoperate + record a LeRobot dataset
-```bash
-bin/record.sh "Wave at the audience" 5 20     # task, episodes, seconds per episode
-```
-- **Right arrow:** end the episode early. **Left arrow:** redo it. **Esc:** stop.
-- Between episodes there's a reset window (`RESET_SECONDS`, default 10).
-- On macOS, arrow keys need the terminal app allowed under *Privacy & Security → Accessibility*; without it LeRobot 0.7 falls back to reading keys from the terminal.
-- Cameras: set `CAMERAS` in `arm.env` (find indexes with `.venv/bin/lerobot-find-cameras opencv`).
-- Replay an episode: `.venv/bin/lerobot-replay --robot.type=so101_follower --robot.port=... --robot.id=... --dataset.repo_id=naive-nous/so101_demo --dataset.root=arm/data/<folder> --dataset.episode=0`
+Ctrl-C quits and **loses a take in progress**. A take auto-saves after 120 s
+(`--max-seconds`). Idle frames at the start and end are trimmed (`--no-trim` keeps them).
+Joints are in degrees; the gripper is 0 (closed) to 100 (open).
 
-## 4. Primitives: record by teleop, program in Python
-```bash
-bin/prim-record.sh --pose home rest       # Enter saves the current pose under each name
-bin/prim-record.sh wave pick present      # Enter = start, Enter = stop & save, r+Enter = redo
-bin/prim-record.sh --kinesthetic wave     # no leader: follower goes limp, move it by hand
+## Recordings
+`prims/library/*.json`: `wave`, `recording_2`. Each file is `{name, fps, joints, frames}`,
+one row of 6 joint values per frame at 50 fps.
 
-bin/prim-play.sh --list
-bin/prim-play.sh home wave wave@1.5 present home   # name@speed
-bin/prim-play.sh wave --loop 3
-```
-Program a sequence (`demo.py`, run with `bin/demo.sh`):
+To play one back from Python:
 ```python
 from prims import Arm
 
 with Arm() as arm:
-    arm.goto("home")              # saved pose, eased from wherever the arm is
-    arm.play("wave", speed=1.2)   # eases to the primitive's start, then plays it
-    arm.close_gripper()           # gripper 0 = closed, 100 = open
-    arm.goto({"shoulder_pan": 20})  # partial poses: other joints stay put
-    arm.run(["home", ("play", "wave", 2.0), ("wait", 1)])
+    arm.play("wave")               # eases to the start pose, then plays it
+    arm.play("recording_2", speed=0.7)
 ```
-Joints are in degrees (`use_degrees=True`); the gripper is 0–100. A take records the leader's commanded positions and trims idle frames at both ends. Disconnecting turns torque off, so support the arm when a script ends.
-
-## Safety
-- `MAX_RELATIVE_TARGET` in `arm.env` caps how far any joint may move per control step (try 10–20). It applies to teleop, record and primitives.
-- Only one process can hold a serial port: stop teleop before running primitives.
+Playback switches torque on and drives the arm: keep the area clear. When the script ends
+the torque goes off again, so end recordings in the folded rest pose.

@@ -1,6 +1,6 @@
-"""Motion primitives for the SO-101 follower arm.
+"""Motion primitives for the SO-101 arm.
 
-A *primitive* is a named joint trajectory recorded by teleoperation and saved as JSON in
+A *primitive* is a named joint trajectory recorded by moving the arm by hand, saved as JSON in
 ``prims/library/<name>.json``. A *pose* is a single named joint configuration saved in
 ``prims/library/poses.json``. The ``Arm`` class plays them back and lets you chain them:
 
@@ -51,42 +51,47 @@ def load_env(path: Path = ARM_DIR / "arm.env") -> dict[str, str]:
     return env
 
 
+CALIBRATION_DIR = ARM_DIR / "calibration"  # checked in, so every machine uses the same calibration
+
+
 def _port_ok(port: str | None) -> bool:
-    return bool(port) and "XXXX" not in port and "YYYY" not in port and Path(port).exists()
+    return bool(port) and "XXXX" not in port and Path(port).exists()
 
 
-def make_follower(env: dict[str, str] | None = None):
+def make_arm(env: dict[str, str] | None = None):
+    """The SO-101 arm we record with and play back on (LeRobot's follower driver)."""
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
     env = env or load_env()
-    port = env.get("FOLLOWER_PORT")
+    port = env.get("ARM_PORT") or env.get("FOLLOWER_PORT")
     if not _port_ok(port):
-        raise SystemExit(f"FOLLOWER_PORT={port!r} not found. Run bin/find-ports.sh and edit arm/arm.env.")
+        raise SystemExit(
+            f"ARM_PORT={port!r} not found. Plug in the arm (USB + 12 V), list ports with "
+            "`ls /dev/tty.usbmodem*`, and set ARM_PORT in arm/arm.env."
+        )
     mrt = env.get("MAX_RELATIVE_TARGET") or None
     cfg = SO101FollowerConfig(
         port=port,
-        id=env.get("FOLLOWER_ID", "naive_follower"),
+        id=env.get("ARM_ID") or env.get("FOLLOWER_ID") or "naive_follower",
+        calibration_dir=CALIBRATION_DIR,
         max_relative_target=float(mrt) if mrt else None,
     )
     return SO101Follower(cfg)
 
 
-def make_leader(env: dict[str, str] | None = None):
-    from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+def connect_calibrated(arm) -> None:
+    """Connect without LeRobot's interactive calibration, using the checked-in calibration file.
 
-    env = env or load_env()
-    port = env.get("LEADER_PORT")
-    if not _port_ok(port):
-        raise SystemExit(f"LEADER_PORT={port!r} not found. Run bin/find-ports.sh and edit arm/arm.env.")
-    return SO101Leader(SO101LeaderConfig(port=port, id=env.get("LEADER_ID", "naive_leader")))
-
-
-def connect_calibrated(device, what: str) -> None:
-    """Connect without starting LeRobot's interactive calibration mid-demo."""
-    device.connect(calibrate=False)
-    if not device.is_calibrated:
-        device.disconnect()
-        raise SystemExit(f"The {what} is not calibrated. Run: bin/calibrate.sh {what}")
+    If the motors hold a different calibration than the file, the file is written to them
+    (torque off), which is what LeRobot does when you keep an existing calibration file.
+    """
+    if not arm.calibration:
+        raise SystemExit(f"No calibration file at {arm.calibration_fpath}.")
+    arm.connect(calibrate=False)
+    if not arm.is_calibrated:
+        arm.bus.disable_torque()
+        arm.bus.write_calibration(arm.calibration)
+        print(f"Wrote {arm.calibration_fpath.name} to the motors.")
 
 
 # --------------------------------------------------------------------------- data
@@ -209,7 +214,7 @@ def _smoothstep(a: float) -> float:
 
 
 class Arm:
-    """Programmatic control of the follower arm with recorded primitives and poses.
+    """Programmatic control of the arm with recorded primitives and poses.
 
     Every move is interpolated from where the arm actually is, so chaining primitives
     never jumps: ``play`` first eases to the primitive's start pose, then streams it.
@@ -218,13 +223,13 @@ class Arm:
     def __init__(self, fps: int = 50, max_speed_dps: float = 90.0, env: dict[str, str] | None = None):
         self.fps = fps
         self.max_speed_dps = max_speed_dps  # used to time goto() moves
-        self.robot = make_follower(env)
+        self.robot = make_arm(env)
         self._last: Pose | None = None
 
     # -- lifecycle
     def connect(self) -> Arm:
         _goal_to_present(self.robot)  # so enabling torque holds still instead of jumping to a stale goal
-        connect_calibrated(self.robot, "follower")
+        connect_calibrated(self.robot)
         self._last = self.read()
         return self
 
