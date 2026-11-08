@@ -696,7 +696,7 @@ details[open] > summary.block-h { margin-bottom: 12px; }
 .astep-fail .astep-n { background: var(--clay-wash); color: var(--clay-ink); }
 .astep-body { min-width: 0; }
 .astep-head { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
-.phase { display: inline-flex; padding: 1px 9px; border-radius: 999px; background: var(--well); color: var(--muted); font-size: 0.833rem; font-weight: 550; }
+.phase { display: inline-flex; padding: 3px 11px; line-height: 1.45; border-radius: 999px; background: var(--well); color: var(--muted); font-size: 0.833rem; font-weight: 550; }
 .astep-effect { margin: 2px 0 0; color: var(--ink-2); overflow-wrap: anywhere; }
 .astep-fail .astep-effect { color: var(--clay-ink); }
 .astep-effect .icon { margin-right: 4px; }
