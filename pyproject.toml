@@ -17,7 +17,7 @@ dev = [
 line-length = 100
 target-version = "py312"
 # Lint and format only our Python packages; teammates' docs and folders are theirs.
-extend-exclude = ["docs", "hub", "edge", "device", "firmware", "naive", "src"]
+extend-exclude = ["docs/**", "hub/**", "edge/**", "device/**", "firmware/**", "naive/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
