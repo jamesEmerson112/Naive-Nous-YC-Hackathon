@@ -45,7 +45,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 4:08 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 4:28 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
 
 **The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
 - **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
@@ -77,11 +77,10 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 - **RunPod:** with the LLM outside the control loop, diagnosis isn't latency-critical, so serverless is probably fine. The model should read images, because camera frames are the best evidence *(inferred)*.
 - **Venue Wi-Fi sinks robot demos.** Bring a router, an Ethernet cable and a recorded backup ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)).
 
-**Kent's status (branch `main`, all in `docs/cloud-platform-planning/`):**
-- **Now:** planning is finished and Kent is starting to write the cloud-platform code. First is M0 (scaffold, contracts v0.1 for the device teammate, one real Naïve card, one real LLM call), due by 5:15 PM. The overnight run launches at 12:30 AM and the code freeze is Sun 10 AM ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §2).
-- **Decisions locked (D15–D22, all ✅):** v0 plan v2; Docker Compose with **Postgres 17**, FastAPI, Jinja + htmx; Naïve integration is outbound only, with caps checked in our code and over-cap orders blocked until a person resolves them (D19, D19b); telemetry formats (D20); a coding agent for code patches (D21), built as M8 and the first P1 item once its blockers clear (D21a) ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
-- **Just pushed — D22, the batch job's models:** one OpenAI-compatible client that talks to Naïve's model proxy by default or to James's RunPod vLLM, plus a swappable `Coder` that starts as a local open-source agent in a new `coder` sandbox container ([architecture](docs/cloud-platform-planning/cloud-platform-architecture.md)).
-- **Just reviewed:** Kent accepted Ishaan's D5a change and logged the risk as K17 ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md)). Ishaan has claimed the device side (D14) in `features.txt`.
+**Kent's status (code goes in through PRs from `cloud/*` branches; the plans are in `docs/cloud-platform-planning/`):**
+- **Now:** coding M0, due 5:15 PM. That means contracts v0.1 for Ishaan, `make up` serving `/healthz`, one real Naïve card and one real LLM call through the Naïve proxy. The overnight run launches at 12:30 AM and the code freeze is Sun 10 AM ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §2).
+- **Just merged — PR #1 (`8eb532f`, from `cloud/m0-workspace`):** the uv workspace skeleton. It has three members: `packages/contracts` (`romulus-contracts`, shared with the device side), `cloud/` (`romulus-cloud`) and `tools/fake_device/`. It pins Python 3.12, with the library set from architecture §7 in `uv.lock`.
+- **Decisions locked (D0–D22):** Docker Compose, Postgres 17, FastAPI, Jinja + htmx (D17, D18). Naïve is outbound only, with caps in our code and over-cap orders blocked (D19, D19b). LLM access goes through the Naïve proxy or RunPod, with a swappable `Coder` for code patches (D21, D22). D5a is accepted, with its risk logged as K17 ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
 - **Blocked on Ishaan and James:** the device code and tests need to be in `device/` (B1), the code-package and `code_patch` formats need agreement (B2, B3), the STM32 toolchain has to go in the sandbox (B8), and Ishaan has to supply the list of safety and visor paths (K17). Either a Naïve key with `proxy:write` or James's RunPod endpoint is needed (B4) (build plan §3, M8). Ishaan's test bed lives in `edge/`, while the contracts expect `device/`, so the two need to agree on one folder *(inferred)*.
 <!-- romulus-sync:end -->
 
