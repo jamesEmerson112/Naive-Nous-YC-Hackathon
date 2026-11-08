@@ -437,6 +437,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
     ap.add_argument("--case-id", default=None)
+    ap.add_argument(
+        "--attach", default=None, help="poll this existing ses_… instead of creating one"
+    )
     ap.add_argument("--device-id", default="arm-1")
     ap.add_argument("--work-order", default="wo_spike")
     args = ap.parse_args(argv)
@@ -491,12 +494,25 @@ def main(argv: list[str] | None = None) -> int:
     state: SessionState | None = None
     for attempt in range(40):
         try:
-            state = naive.create_session(body, idempotency_key=case_id)
+            if args.attach:  # a session this case already created (POST held open while queued)
+                state = naive.get_session(args.attach)
+            else:
+                state = naive.create_session(body, idempotency_key=case_id)
             break
         except NaiveError as exc:
-            print(f"create_session attempt {attempt + 1}: {exc} (status={exc.status} code={exc.code})")
+            print(
+                f"create_session attempt {attempt + 1}: {exc} (status={exc.status} code={exc.code})"
+            )
             if not exc.retryable:
                 return 1
+            if exc.pending:  # created but the POST is held open: find it by case id
+                try:
+                    state = naive.find_session(agent_id, case_id)
+                except NaiveError as find_exc:
+                    print(f"  find_session failed: {find_exc}")
+                if state is not None:
+                    print(f"  found {state.id} by metadata.romulus_case={case_id}")
+                    break
             time.sleep(5)
     if state is None:
         print("create_session never settled")
