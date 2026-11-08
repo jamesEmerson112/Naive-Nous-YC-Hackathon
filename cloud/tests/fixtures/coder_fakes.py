@@ -61,6 +61,8 @@ class FakeDocker:
         agent_result: dict | None = None,
         timed_out: bool = False,
         extra_output: str = "",
+        proxy_logs: str = "llm_proxy ready on :8080\n",
+        fail: str | None = None,
     ) -> None:
         self.agent = agent
         self.agent_result = agent_result or {
@@ -76,12 +78,18 @@ class FakeDocker:
         }
         self.timed_out = timed_out
         self.extra_output = extra_output
+        self.proxy_logs = proxy_logs  # what `docker logs <egress proxy>` prints
+        self.fail = fail  # a docker subcommand (e.g. "network") that fails
         self.calls: list[dict] = []
         self.saw_git_in_work = False
         self.saw_verify_in_work = False
 
     def __call__(self, argv, *, stdin=None, env=None, timeout=None) -> ProcResult:
         self.calls.append({"argv": list(argv), "stdin": stdin, "env": dict(env or {})})
+        if argv[1] == self.fail:
+            return ProcResult(1, "", f"docker {self.fail}: simulated failure")
+        if argv[1] == "logs":
+            return ProcResult(0, "", self.proxy_logs)
         if argv[1] != "run":
             return ProcResult(0, "", "")
         work = Path(argv[argv.index("-v") + 1].removesuffix(f":{WORKDIR}"))
@@ -113,3 +121,7 @@ class FakeDocker:
     @property
     def run_call(self) -> dict:
         return next(c for c in self.calls if c["argv"][1] == "run")
+
+    def call(self, *prefix: str) -> dict:
+        """The first call whose argv (after `docker`) starts with `prefix`."""
+        return next(c for c in self.calls if c["argv"][1 : 1 + len(prefix)] == list(prefix))
