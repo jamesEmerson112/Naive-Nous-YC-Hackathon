@@ -38,6 +38,7 @@ tools/fake_device/src/fake_device/                   cloud/src/romulus_cloud/
   scenarios   + "consult"                               services/proposals.py    offer, pointer, result, expiry (PR 2 stub, PR 4)
   fake_cloud  + the 3 routes                            services/doctor_evidence.py  case-file readers     (PR 4 v0, PR 7 full)
                                                         services/doctor_jobs.py  Jobs seam                  (PR 2)
+                                                        services/doctor_spend.py spent_today               (PR 2)
 packages/contracts/src/romulus_contracts/              domain/doctor.py         pure rules                  (PR 2)
   doctor.py   DoctorAsk … ProposalResult  (PR 1)       adapters/llm.py          + complete()                (PR 2)
   tools.py    L3 device-tool catalog      (PR 8)       models.py                + DoctorConsult, DoctorProposal (PR 2)
@@ -200,7 +201,7 @@ class DoctorProposal(Base):         # __tablename__ = "doctor_proposals"
 def tick(session, now, *, settings=None, jobs=None, llm=None, coder=None) -> dict[str, int]
 ```
 
-- **Registration:** `worker.STEPS.append(Step("doctor.tick", doctor.tick, every_s=settings.doctor_tick_s))`. PR 2 appends it, with a stub tick that returns `{}`.
+- **Registration:** `worker.STEPS.append(Step("doctor.tick", doctor.tick, every_s=<doctor_tick_s default, 5>))`. PR 2 appends it, with a stub tick that returns `{}`. Importing `worker` never reads `.env`, so `worker.steps_for(settings)` binds the live `DOCTOR_TICK_S` when the worker starts.
 - **Injection:** `jobs`, `llm` and `coder` are injected the same way `workorders.sync` takes `naive=`. Adapters are cached per process.
 
 Each tick does five things, in order:
@@ -252,13 +253,19 @@ Imports only stdlib and `romulus_contracts`, and takes `now` as an argument.
 
 ```python
 @dataclass(frozen=True) class Spend: spent_today_usd: float; cap_usd: float
-@dataclass(frozen=True) class Decision: ok: bool; outcome: str | None; why: str     # outcome: declined | blocked_over_cap | gave_up
+@dataclass(frozen=True) class Decision: ok: bool; outcome: str | None; why: str; which: str | None = None
+    # outcome: declined | blocked_over_cap | gave_up, or None when ok or held (mode off, frozen: close nothing, retry later)
+    # which: off | frozen | no_code_rev | spend | asks | consults (the rule that refused; the
+    #   `which` of doctor.blocked_over_cap). The ask route maps off → 503, frozen → 409, the rest → 429
 def check_spend(spend: Spend, *, estimate_usd: float = 0.0) -> Decision            # fails closed on NaN/negative, like triage.check_caps
 def admit(*, frozen: bool, code_rev: str | None, consults_for_incident: int, consult_cap: int,
           spend: Spend, mode: str) -> Decision
 def admit_ask(*, frozen: bool, asks_for_incident: int, ask_cap: int, asks_for_device_today: int,
               device_day_cap: int, spend: Spend, mode: str) -> Decision
+    # Counts are of consults/asks *before* this one, so a count equal to its cap refuses. admit_ask's
+    #   caller passes 0 for a count that doesn't apply (device-day for an incident ask, and vice versa)
 def cost_usd(prompt_tokens: int, completion_tokens: int, usd_per_1k_tokens: float) -> float
+    # raises ValueError on a bad price or token count, so a bad price never counts as free
 def parse_hypotheses(text: str, *, max_items: int = 5, max_chars: int = 1200) -> tuple[list[dict], bool]
     # → ([{claim, how_to_check}], parsed_ok). Takes the first JSON object/array; if there's none, one
     #   hypothesis from the prose, with parsed_ok=False. Trims to the char budget (≈300 tokens).
@@ -284,7 +291,9 @@ class Jobs(Protocol):
     def submit(self, key: str, fn: Callable[[], T]) -> None: ...   # idempotent: a pending or done key is a no-op
     def poll(self, key: str) -> Pending | Done | Failed | Missing: ...
 class ThreadPoolJobs:   # ThreadPoolExecutor(max_workers=settings.doctor_job_workers), inside the worker process
-class InlineJobs:       # runs fn at submit; for tests
+class InlineJobs:       # runs fn at submit; for tests (`.calls` lists the keys actually run)
+# A failed key reruns on submit. Finished results are kept until MAX_FINISHED (256) newer ones
+# push them out (then Missing). ThreadPoolJobs.shutdown(wait) is for tests.
 def default_jobs(settings) -> Jobs                         # process-wide singleton
 ```
 
@@ -301,6 +310,7 @@ class Llm(Protocol):  # existing explain / write_skill, plus:
 
 - **`OpenAICompatLlm.complete`:** one chat call, with per-call `timeout` and `max_tokens` (`client.with_options(timeout=…)`). Usage comes from `resp.usage` (0 if it's missing). Errors raise `LlmError`.
 - **`FakeLlm.complete`:** deterministic `FAKE_BANNER` plus prose that echoes the first 80 characters of `user`. Tokens are `len // 4`, so caps can be tested.
+- **`LlmTimeout(LlmError)`** is raised when the call runs out of time, so the ask route can answer `504 doctor_timeout` rather than `502 doctor_unavailable`. A call with `timeout_s` set isn't retried (it is a hard budget).
 - `explain` and `write_skill` stay as they are.
 
 ### 6.4 `services/doctor_evidence.py`
@@ -390,7 +400,7 @@ Each setting also goes in `.env.example` (`test_settings_defaults.py:108` checks
 | `doctor.consult_closed` | `consult`, `proposal` if any | `outcome, why` |
 | `doctor.gave_up` | `consult` | `reason, consults_used` |
 
-**Spend today** is `SUM((data->>'cost_usd')::float)` over events whose `kind LIKE 'doctor.%'` and `ts >= day_start(now, fleet_timezone)`. It lives in `services/doctor_ask.spent_today(session, now, settings)`, and both L1 and L2 use it.
+**Spend today** is `SUM((data->>'cost_usd')::float)` over events whose `kind LIKE 'doctor.%'` and `ts >= day_start(now, fleet_timezone)`. It lives in `services/doctor_spend.spent_today(session, now, *, settings)` (PR 2), scoped to `settings.fleet_id`, and both L1 and L2 use it. Doctor events must therefore pass `fleet_id=settings.fleet_id` to `events.record` (its default is `"default"`).
 
 ## 9. Lock-in, timeline, digest, traces
 

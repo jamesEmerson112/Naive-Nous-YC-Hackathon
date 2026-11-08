@@ -458,3 +458,70 @@ class Event(Base):
     data: Mapped[dict[str, Any] | None]
 
     __table_args__ = (Index("ix_events_refs", "refs", postgresql_using="gin"),)
+
+
+# --- Fleet Doctor (docs/fleet-doctor/interfaces.md §4; D23-D26) ---------------------------
+# New tables only (after M7): `create_all` makes them on restart, no ALTER needed. An ask
+# has no table: it is its two events (`doctor.asked`, `doctor.advised`), `refs.ask`.
+
+
+class DoctorConsult(Base):
+    """One L2 consult on an incident: case file → hypotheses → draft → check → offer.
+
+    It moves at most one stage per worker tick (interfaces.md §5). Slow work (LLM, coder,
+    sandbox) runs off the tick as a job keyed `job_key`; the tick only submits and polls.
+    """
+
+    __tablename__ = "doctor_consults"
+
+    id: Mapped[str] = mapped_column(primary_key=True)  # cons_…
+    fleet_id: Mapped[str] = _fleet()
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey("incidents.id"), index=True)
+    origin: Mapped[str]  # device | cloud
+    trigger: Mapped[str | None]  # the device's T1..T7, an open string
+    attempt: Mapped[int] = mapped_column(Integer, default=1)  # 1-based, per incident
+    # admit | gather | diagnose | draft | check | offer | applied | closed
+    stage: Mapped[str] = mapped_column(default="admit")
+    status: Mapped[str] = mapped_column(default="open", index=True)  # open | waiting | closed
+    outcome: Mapped[str | None]  # interfaces.md §5.2
+    job_key: Mapped[str | None]
+    job_started_at: Mapped[datetime | None]
+    retry_at: Mapped[datetime | None]
+    case_file: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    ledger: Mapped[list[Any]] = mapped_column(JSONB, default=list)  # [{claim, how_to_check}]
+    draft: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    checks: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime | None]
+    raw: Mapped[dict[str, Any] | None] = _raw()
+
+
+class DoctorProposal(Base):
+    """A checked code patch offered to one device (architecture §5.4). The device pulls it,
+    verifies the sha256, applies it as an overlay carrying `proposal_id` and reports back."""
+
+    __tablename__ = "doctor_proposals"
+
+    id: Mapped[str] = mapped_column(primary_key=True)  # prop_…
+    fleet_id: Mapped[str] = _fleet()
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"), index=True)
+    consult_id: Mapped[str] = mapped_column(ForeignKey("doctor_consults.id"), index=True)
+    incident_id: Mapped[str] = mapped_column(index=True)
+    base: Mapped[dict[str, Any]]  # ProposalBase dump
+    code_patch: Mapped[str] = mapped_column(Text)  # unified diff relative to CODE_ROOT
+    repro_test: Mapped[str | None] = mapped_column(Text)
+    why: Mapped[str] = mapped_column(Text, default="")
+    checks: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    touches_safety: Mapped[bool] = mapped_column(default=False)
+    sha256: Mapped[str | None]  # of the exact body the device pulls
+    # offered | applied | rejected | stale | failed_verify | expired | held | reverted
+    status: Mapped[str] = mapped_column(default="offered", index=True)
+    overlay_id: Mapped[str | None]  # the device's overlay, once applied
+    result_reason: Mapped[str | None] = mapped_column(Text)
+    result_at: Mapped[datetime | None]
+    expires_at: Mapped[datetime]
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime | None]
+    raw: Mapped[dict[str, Any] | None] = _raw()

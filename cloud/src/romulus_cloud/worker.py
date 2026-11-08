@@ -10,7 +10,7 @@ and a step that raises is rolled back and logged without stopping the others.
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -19,8 +19,8 @@ from romulus_cloud import db
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
-from romulus_cloud.services import batch, datasets, gate, telemetry, workorders
-from romulus_cloud.settings import get_settings
+from romulus_cloud.services import batch, datasets, doctor, gate, telemetry, workorders
+from romulus_cloud.settings import Settings, get_settings
 
 
 @dataclass(frozen=True)
@@ -57,6 +57,19 @@ STEPS += [
 
 # M7: keep the blob store under BLOB_BUDGET_GB (oldest unlabeled episodes first).
 STEPS.append(Step("telemetry.enforce_budget", telemetry.enforce_budget_step, every_s=600))
+
+# Fleet Doctor consults (interfaces.md §5; a stub until PR 4). It does nothing while
+# DOCTOR_MODE=off. Every DOCTOR_TICK_S: the default here, the live setting via `steps_for`.
+STEPS.append(
+    Step("doctor.tick", doctor.tick, every_s=Settings.model_fields["doctor_tick_s"].default)
+)
+
+
+def steps_for(settings: Settings) -> list[Step]:
+    """`STEPS` with cadences that come from settings applied (importing this module never
+    reads `.env`, so they're bound when the worker starts)."""
+    every = {"doctor.tick": settings.doctor_tick_s}
+    return [replace(s, every_s=every[s.name]) if s.name in every else s for s in STEPS]
 
 
 def run_tick(
@@ -99,9 +112,10 @@ def main() -> None:
     db.create_all(engine)
     sessions = db.make_sessionmaker(engine)
     last_run: dict[str, datetime] = {}
-    log_line("worker.started", steps=[s.name for s in STEPS], tick_s=settings.worker_tick_s)
+    steps = steps_for(settings)
+    log_line("worker.started", steps=[s.name for s in steps], tick_s=settings.worker_tick_s)
     while True:
-        run_tick(STEPS, sessions, utcnow(), last_run)
+        run_tick(steps, sessions, utcnow(), last_run)
         time.sleep(settings.worker_tick_s)
 
 

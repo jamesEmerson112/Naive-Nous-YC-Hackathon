@@ -92,6 +92,8 @@ def clock(monkeypatch, now) -> FakeClock:
     fake = FakeClock(now)
     monkeypatch.setattr("romulus_cloud.api.device.utcnow", fake)
     monkeypatch.setattr("romulus_cloud.api.ops.utcnow", fake)
+    monkeypatch.setattr("romulus_cloud.api.doctor.utcnow", fake)  # Fleet Doctor L1 (PR 3)
+    monkeypatch.setattr("romulus_cloud.api.proposals.utcnow", fake)  # proposals (PR 4)
     return fake
 
 

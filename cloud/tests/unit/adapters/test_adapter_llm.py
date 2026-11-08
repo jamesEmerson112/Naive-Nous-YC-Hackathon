@@ -9,6 +9,8 @@ from romulus_cloud.adapters.llm import (
     FakeLlm,
     LlmConfigError,
     LlmError,
+    LlmReply,
+    LlmTimeout,
     OpenAICompatLlm,
     build_llm,
 )
@@ -128,3 +130,84 @@ def test_factory_passes_timeout_retries_and_max_tokens():
     assert llm._client.max_retries == 0
     default = build_llm("live", "naive_proxy", None, "openai/gpt-oss-120b", "sk")
     assert default._client.timeout == 30 and default._client.max_retries == 1
+
+
+# --- complete (Fleet Doctor, interfaces.md §6.3) ------------------------------------------
+
+SYSTEM = "Answer with JSON only."
+USER = "The gripper on arm-1 stalls when closing on a soft object; what should the healer check?"
+
+
+def test_fake_complete_is_deterministic_and_counts_tokens():
+    fake = FakeLlm()
+    reply = fake.complete(SYSTEM, USER)
+    assert reply == fake.complete(SYSTEM, USER)
+    assert isinstance(reply, LlmReply) and reply.model == "fake-templated"
+    assert reply.text.startswith(FAKE_BANNER) and USER[:80] in reply.text
+    assert USER[80:] not in reply.text
+    assert reply.prompt_tokens == (len(SYSTEM) + len(USER)) // 4
+    assert reply.completion_tokens == len(reply.text) // 4
+
+
+def test_fake_complete_respects_max_tokens():
+    reply = FakeLlm().complete(SYSTEM, USER, max_tokens=5, timeout_s=1)
+    assert len(reply.text) <= 20 and reply.completion_tokens <= 5
+
+
+def _usage(prompt, completion):
+    return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": 0}
+
+
+def test_openai_compat_complete_sends_one_chat_call_and_reads_usage():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        seen["timeout"] = request.extensions.get("timeout")
+        body = _completion('  {"hypotheses": []}  ') | {"usage": _usage(120, 7)}
+        return httpx.Response(200, json=body)
+
+    reply = _llm(handler).complete(SYSTEM, USER, max_tokens=400, timeout_s=3.5)
+    assert reply == LlmReply('{"hypotheses": []}', "test-model", 120, 7)
+    body = seen["body"]
+    assert body["model"] == "test-model" and body["max_tokens"] == 400
+    assert body["messages"] == [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": USER},
+    ]
+    assert "response_format" not in body
+    assert seen["timeout"]["read"] == 3.5
+
+
+def test_openai_compat_complete_defaults_and_missing_usage():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(200, json=_completion("A loose cable."))
+
+    reply = _llm(handler).complete(SYSTEM, USER)
+    assert (reply.text, reply.prompt_tokens, reply.completion_tokens) == ("A loose cable.", 0, 0)
+    assert seen["body"]["max_tokens"] == 800  # the client's default
+    assert seen["timeout"]["read"] == 30  # the client's default
+
+
+def test_openai_compat_complete_errors_raise_llm_error():
+    with pytest.raises(LlmError):
+        _llm(lambda r: httpx.Response(500, json={"error": {"message": "boom"}})).complete("s", "u")
+    with pytest.raises(LlmError):
+        _llm(lambda r: httpx.Response(200, json=_completion("  "))).complete("s", "u")
+
+
+def test_openai_compat_complete_timeout_is_not_retried_and_says_so():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        raise httpx.ReadTimeout("slow model", request=request)
+
+    with pytest.raises(LlmTimeout) as err:
+        _llm(handler).complete("s", "u", timeout_s=0.5)
+    assert isinstance(err.value, LlmError)
+    assert len(calls) == 1  # the client retries once by default; a timed call doesn't

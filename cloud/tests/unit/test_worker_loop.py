@@ -58,3 +58,16 @@ def test_steps_get_the_tick_time(now):
     got = []
     run_tick([Step("t", lambda s, n: got.append(n))], _sessions([]), now, {})
     assert got == [now]
+
+
+def test_the_doctor_tick_is_a_step_on_its_settings_cadence(make_settings, now):
+    from romulus_cloud import worker
+    from romulus_cloud.services import doctor
+
+    (step,) = [s for s in worker.STEPS if s.name == "doctor.tick"]
+    assert step.fn is doctor.tick and step.every_s == 5
+    (bound,) = [s for s in worker.steps_for(make_settings(doctor_tick_s=30)) if s.name == step.name]
+    assert bound.every_s == 30 and bound.fn is doctor.tick
+    assert [s.name for s in worker.steps_for(make_settings())] == [s.name for s in worker.STEPS]
+    # Off by default, and a stub until PR 4: it does nothing.
+    assert doctor.tick(None, now, settings=make_settings()) == {}

@@ -13,11 +13,17 @@ Notes from the live spike (Sat Nov 7):
   token limit and returns empty content, which is why an empty answer raises LlmError.
 - `max_tokens` is always sent: without it the proxy holds the model's full output limit
   against the org balance for the call.
+
+`complete` (Fleet Doctor, docs/fleet-doctor/interfaces.md §6.3) is the one generic call: a
+system and a user message in, an `LlmReply` with the token counts out, so callers can price
+it. No `response_format` is sent (not every provider has JSON mode); the prompt asks for
+JSON and `domain.doctor.parse_hypotheses` tolerates prose.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
@@ -36,6 +42,18 @@ class LlmError(Exception):
     """A live LLM call failed; the caller should fall back (e.g. to FakeLlm text)."""
 
 
+class LlmTimeout(LlmError):
+    """The call ran past its timeout (the Doctor's ask answers 504 instead of 502)."""
+
+
+@dataclass(frozen=True)
+class LlmReply:
+    text: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+
+
 class LlmConfigError(ValueError):
     """The LLM settings don't describe a usable provider."""
 
@@ -49,6 +67,18 @@ class Llm(Protocol):
 
     def write_skill(self, incident: dict[str, Any]) -> str:
         """A harness skill (markdown) distilled from an incident."""
+        ...
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+    ) -> LlmReply:
+        """One chat call: the reply's text and token counts. Raises LlmError (LlmTimeout
+        when it ran out of time)."""
         ...
 
 
@@ -76,6 +106,26 @@ class FakeLlm:
             f"{FAKE_BANNER}\n\n"
             f"Learned from incident {iid} on {device}. "
             "When this fault appears, park the arm, check health, and apply the known fix.\n"
+        )
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+    ) -> LlmReply:
+        """The banner plus prose echoing the first 80 characters of `user`. Tokens are
+        `len // 4` (cut to `max_tokens`), so caps and spend can be tested."""
+        text = f"{FAKE_BANNER} Likely cause, from the request: {user[:80]!r}."
+        if max_tokens is not None:
+            text = text[: max(max_tokens, 0) * 4]
+        return LlmReply(
+            text=text,
+            model=self.model,
+            prompt_tokens=(len(system) + len(user)) // 4,
+            completion_tokens=len(text) // 4,
         )
 
 
@@ -135,6 +185,43 @@ class OpenAICompatLlm:
 
     def write_skill(self, incident: dict[str, Any]) -> str:
         return self._chat(SKILL_SYSTEM, incident)
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+        timeout_s: float | None = None,
+    ) -> LlmReply:
+        """One chat call. A per-call `timeout_s` is a hard budget, so that call isn't retried.
+        Usage comes from `resp.usage` (0 when the provider leaves it out)."""
+        client = self._client
+        if timeout_s is not None:
+            client = client.with_options(timeout=timeout_s, max_retries=0)
+        try:
+            resp = client.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        except openai.APITimeoutError as exc:
+            raise LlmTimeout(f"LLM call to {self.model} timed out: {exc}") from exc
+        except openai.OpenAIError as exc:
+            raise LlmError(f"LLM call to {self.model} failed: {exc}") from exc
+        text = resp.choices[0].message.content if resp.choices else None
+        if not text or not text.strip():
+            raise LlmError(f"LLM {self.model} returned an empty answer")
+        usage = resp.usage
+        return LlmReply(
+            text=text.strip(),
+            model=self.model,
+            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
 
 
 def build_llm(

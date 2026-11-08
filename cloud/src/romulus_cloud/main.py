@@ -14,7 +14,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from romulus_cloud import db, errors
-from romulus_cloud.api import datasets, device, ops, web
+from romulus_cloud.api import datasets, device, doctor, ops, proposals, web
 from romulus_cloud.api.deps import SessionDep
 from romulus_cloud.log import log_line
 from romulus_cloud.settings import Settings, get_settings
@@ -62,6 +62,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
         return {"status": "ok", "db": "ok", "contract_version": CONTRACT_VERSION}
 
     app.include_router(device.router)
+    app.include_router(doctor.router)  # Fleet Doctor (PR 3 fills it)
+    app.include_router(proposals.router)  # Fleet Doctor (PR 4 fills it)
     app.include_router(ops.router)
     app.include_router(datasets.router)
     app.include_router(web.router)
