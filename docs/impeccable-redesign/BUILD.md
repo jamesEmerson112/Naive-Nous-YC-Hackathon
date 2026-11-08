@@ -80,7 +80,7 @@ Each lane is one branch, one PR, and its own files. The coordinator session merg
 # in your worktree; pick your lane's port: 1→8010 2→8011 3→8012 4→8013 5→8014 6→8015
 printf 'TECHNICIAN_MODE=fake\nAPI_PORT=8012\n' > .env        # fake mode: no real email, no Naïve calls
 export COMPOSE_PROJECT_NAME=ui-fleet API_PORT=8012
-make dev && make seed && make sim                              # sim = fake arms that raise incidents
+docker compose -f compose.yaml -f compose.dev.yaml --profile sim up -d --build && make seed   # dev mounts the fixtures; plain `make sim` drops them
 python3 cloud/scripts/technician_demo.py fake --base http://localhost:8012 --no-open   # a case page
 ```
 - **Screenshots:** headless Chrome. The narrowest layout it renders is 500 px.
