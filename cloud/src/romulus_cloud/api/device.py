@@ -1,22 +1,22 @@
 """Device-facing routes (APIs §3): check-in, pulls, installs, incidents, overlays.
 
-Recordings (3.7) come in M4. Bodies are read as raw JSON first, so the verbatim payload
-can be stored, and the contract version is checked before the shape: a device on an
-unsupported contract gets one clear error instead of a confusing validation failure.
-Retries are safe: a resent incident, install result or overlay status answers 200 and
-changes nothing.
+Recordings (3.7) send metadata first, then the raw bytes, streamed and hash-checked.
+JSON bodies are read raw first, so the verbatim payload can be stored, and the contract
+version is checked before the shape: a device on an unsupported contract gets one clear
+error instead of a confusing validation failure. Retries are safe: a resent incident,
+install result, overlay status or recording answers 200 and changes nothing.
 """
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Response
+from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from romulus_cloud.api.deps import BlobStoreDep, SessionDep, SettingsDep
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
-from romulus_cloud.services import devices, incidents, registry
+from romulus_cloud.services import devices, incidents, registry, telemetry
 from romulus_contracts import (
     SHA256_HEADER,
     SUPPORTED_VERSIONS,
@@ -24,6 +24,7 @@ from romulus_contracts import (
     IncidentReport,
     InstallResult,
     OverlayStatus,
+    RecordingMeta,
     is_supported,
 )
 
@@ -111,6 +112,8 @@ def report_incident(
     incident, created = incidents.report(
         session, device_id, body, raw, utcnow(), safety_paths=settings.safety_paths
     )
+    if created:  # recordings may have arrived first (M4)
+        telemetry.link_incident(session, incident, utcnow())
     session.commit()
     return JSONResponse({"incident_id": incident.id}, status_code=201 if created else 200)
 
@@ -124,3 +127,45 @@ def overlay_status(
     changed = incidents.set_overlay_status(session, device_id, overlay_id, body, raw, utcnow())
     session.commit()
     return Response(status_code=204) if changed else JSONResponse(DUPLICATE, status_code=200)
+
+
+@router.post("/devices/{device_id}/recordings", status_code=201)
+def create_recording(device_id: str, session: SessionDep, raw: dict[str, Any] = RawBody):
+    """Recording metadata (APIs §3.7a). Idempotent on the device-made `recording_id`."""
+    check_contract(raw, required=False)
+    meta = parse(RecordingMeta, raw)
+    rec, created, upload = telemetry.receive(session, device_id, meta, raw, utcnow())
+    session.commit()
+    return JSONResponse(
+        {"recording_id": rec.id, "upload": upload}, status_code=201 if created else 200
+    )
+
+
+@router.put("/recordings/{recording_id}/blob", status_code=204, response_model=None)
+async def upload_recording_blob(
+    recording_id: str,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    store: BlobStoreDep,
+):
+    """The recording's raw bytes (APIs §3.7b), checked against its sha256. Safe to resend."""
+    telemetry.get_recording(session, recording_id)  # 404 before reading a large body
+    cap = settings.recording_max_bytes
+    length = request.headers.get("content-length", "")
+    if length.isdigit() and int(length) > cap:
+        raise telemetry.too_large(cap)
+    with telemetry.Spool(cap) as spool:
+        async for chunk in request.stream():
+            spool.write(chunk)
+        telemetry.store_blob(
+            session,
+            store,
+            recording_id,
+            spool,
+            declared_sha256=request.headers.get(SHA256_HEADER),
+            media_type=request.headers.get("content-type"),
+            now=utcnow(),
+        )
+    session.commit()
+    return Response(status_code=204)

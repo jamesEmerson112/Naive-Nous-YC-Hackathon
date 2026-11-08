@@ -1,20 +1,23 @@
 """Operator JSON routes (APIs §4). M1: versions, devices, incidents and their stories.
+M4: one recording's metadata and its bytes (no listing route yet; telemetry §10).
 
 No auth in v0 (bench network only). Operators may name themselves with `by`; the event's
 actor is then `human:<by>`.
 """
 
+import re
 from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from romulus_cloud.api.deps import BlobStoreDep, SessionDep
 from romulus_cloud.errors import ApiError
 from romulus_cloud.models import CodeVersion, FirmwareVersion, HarnessVersion
-from romulus_cloud.services import devices, incidents, registry
+from romulus_cloud.services import devices, incidents, registry, telemetry
+from romulus_contracts import SHA256_HEADER
 
 router = APIRouter(prefix="/v1", tags=["ops"])
 
@@ -236,3 +239,35 @@ def freeze_fleet(body: FleetSwitch | None = None) -> dict:
 @router.post("/fleet/unfreeze")
 def unfreeze_fleet(body: FleetSwitch | None = None) -> dict:
     _kill_switch_stub()
+
+
+# --- recordings ------------------------------------------------------------------------------
+
+
+@router.get("/recordings/{recording_id}")
+def get_recording(recording_id: str, session: SessionDep) -> dict:
+    return telemetry.view(session, telemetry.get_recording(session, recording_id))
+
+
+@router.get("/recordings/{recording_id}/blob")
+def download_recording(recording_id: str, session: SessionDep, store: BlobStoreDep):
+    """The recording's bytes exactly as uploaded, with their sha256 in `X-Sha256`."""
+    rec = telemetry.get_recording(session, recording_id)
+    stream = telemetry.open_blob(session, store, rec)
+
+    def chunks():
+        with stream:
+            while chunk := stream.read(1024 * 1024):
+                yield chunk
+
+    ext = re.sub(r"[^A-Za-z0-9_.-]", "_", rec.format) or "bin"  # format is device-chosen
+    filename = f"{rec.id}.{ext}"
+    return StreamingResponse(
+        chunks(),
+        media_type="application/octet-stream",
+        headers={
+            SHA256_HEADER: rec.sha256,
+            "Content-Length": str(store.size(rec.sha256)),
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )

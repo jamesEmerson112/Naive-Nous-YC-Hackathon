@@ -8,6 +8,7 @@ romulus-contracts = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "mcap>=1.2",  # F7 writes and reads a real MCAP log window
     "pytest>=8.3",
     "ruff>=0.7",
 ]

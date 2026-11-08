@@ -1,0 +1,429 @@
+"""Telemetry ingest (APIs §3.7, telemetry §2–5, flow F7): store raw, interpret later.
+
+A recording arrives as metadata first (`receive`), then its bytes (`store_blob`). `kind`
+and `format` are open strings and nothing is parsed. Blobs are content-addressed, so two
+recordings with the same sha256 share one blob. Recording events carry `recording` and,
+when known, `incident` in their refs, so the incident's story shows them as evidence.
+An incident may arrive before or after its recordings; `link_incident` catches up.
+Incident evidence is never deleted here (the disk budget is M7). Nothing here commits.
+"""
+
+import hashlib
+import tempfile
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from romulus_cloud import events
+from romulus_cloud.adapters.blobstore import BlobNotFound, BlobStore, HashMismatch
+from romulus_cloud.domain.labels import auto_labels, split_label
+from romulus_cloud.errors import ApiError
+from romulus_cloud.models import Blob, Incident, Label, Overlay, Recording, WorkOrder
+from romulus_cloud.services.devices import get_device
+from romulus_contracts import IncidentReport, RecordingMeta
+
+RECEIVED = "recording.received"
+BLOB_STORED = "recording.blob_stored"
+LINKED = "recording.linked"
+SPOOL_IN_MEMORY_BYTES = 8 * 1024 * 1024
+
+
+def download_path(recording_id: str) -> str:
+    return f"/v1/recordings/{recording_id}/blob"
+
+
+def get_recording(session: Session, recording_id: str) -> Recording:
+    rec = session.get(Recording, recording_id)
+    if rec is None:
+        raise ApiError(
+            404,
+            "unknown_recording",
+            f"Recording {recording_id} does not exist. Send its metadata first "
+            "(POST /v1/devices/{device_id}/recordings).",
+        )
+    return rec
+
+
+def is_stored(session: Session, sha256: str) -> bool:
+    return session.get(Blob, sha256) is not None
+
+
+def current_labels(session: Session, target_type: str, target_id: str) -> list[str]:
+    """Labels as `key:value` strings after replaying the append-only rows and tombstones."""
+    rows = session.scalars(
+        select(Label)
+        .where(Label.target_type == target_type, Label.target_id == target_id)
+        .order_by(Label.id)
+    )
+    labels: dict[str, None] = {}
+    for row in rows:
+        label = row.key if row.value is None else f"{row.key}:{row.value}"
+        if row.removed:
+            labels.pop(label, None)
+        else:
+            labels[label] = None
+    return sorted(labels)
+
+
+def evidence(rec: Recording, stored: bool) -> dict[str, Any]:
+    """What a story shows for one recording: kind, format, size, time range, download."""
+    return {
+        "recording": rec.id,
+        "kind": rec.kind,
+        "format": rec.format,
+        "size_bytes": rec.size_bytes,
+        "sha256": rec.sha256,
+        "started_at": rec.started_at.isoformat() if rec.started_at else None,
+        "ended_at": rec.ended_at.isoformat() if rec.ended_at else None,
+        "stored": stored,
+        "download": download_path(rec.id),
+    }
+
+
+def view(session: Session, rec: Recording) -> dict[str, Any]:
+    """A recording's metadata as JSON for operators, with its current labels."""
+    return {
+        **evidence(rec, is_stored(session, rec.sha256)),
+        "device_id": rec.device_id,
+        "incident_id": rec.incident_id,
+        "overlay_id": rec.overlay_id,
+        "firmware": rec.firmware,
+        "harness": rec.harness,
+        "episode": rec.episode,
+        "streams": rec.streams,
+        "schema_version": rec.schema_version,
+        "received_at": rec.received_at.isoformat(),
+        "labels": current_labels(session, "recording", rec.id),
+    }
+
+
+# --- labels ----------------------------------------------------------------------------------
+
+
+def _incident_contract(incident: Incident | None) -> IncidentReport | None:
+    if incident is None or not incident.raw:
+        return None
+    return IncidentReport.model_validate(incident.raw)
+
+
+def _auto_labels_for(session: Session, rec: Recording, incident: Incident | None) -> set[str]:
+    overlay_status = None
+    if rec.overlay_id:
+        overlay = session.get(Overlay, (rec.device_id, rec.overlay_id))
+        overlay_status = overlay.status if overlay else None
+    escalated = incident is not None and (
+        session.scalar(select(WorkOrder.id).where(WorkOrder.incident_id == incident.id)) is not None
+    )
+    return auto_labels(
+        RecordingMeta.model_validate(rec.raw),
+        _incident_contract(incident),
+        overlay_status=overlay_status,
+        escalated=escalated,
+    )
+
+
+def _add_labels(
+    session: Session, rec: Recording, labels: set[str] | list[str], source: str, author: str
+) -> list[str]:
+    """Append the labels the recording doesn't carry yet; return the ones added."""
+    have = set(current_labels(session, "recording", rec.id))
+    added = sorted({label.strip() for label in labels if label.strip()} - have)
+    for label in added:
+        key, value = split_label(label)
+        session.add(
+            Label(
+                fleet_id=rec.fleet_id,
+                target_type="recording",
+                target_id=rec.id,
+                key=key,
+                value=value,
+                source=source,
+                author=author,
+            )
+        )
+    session.flush()
+    return added
+
+
+# --- ingest ----------------------------------------------------------------------------------
+
+
+def _refs(rec: Recording) -> dict[str, Any]:
+    refs: dict[str, Any] = {"recording": rec.id, "device": rec.device_id}
+    if rec.incident_id:
+        refs["incident"] = rec.incident_id
+    if rec.overlay_id:
+        refs["overlay"] = rec.overlay_id
+    return refs
+
+
+def _evidence_ts(rec: Recording) -> datetime:
+    # `recording.received` is placed when the evidence was complete on the device (the end
+    # of its window, device time), so the story shows it among the incident's own steps
+    # (K9). The upload and link events happen on the server, so they use `now`.
+    return rec.ended_at or rec.started_at or rec.received_at
+
+
+def _upload(session: Session, sha256: str) -> str:
+    return "exists" if is_stored(session, sha256) else "needed"
+
+
+def receive(
+    session: Session, device_id: str, meta: RecordingMeta, raw: dict[str, Any], now: datetime
+) -> tuple[Recording, bool, str]:
+    """Store a recording's metadata. Returns (recording, created, upload); a retry is a
+    no-op. `upload` is "exists" when a blob with that sha256 is already stored."""
+    device = get_device(session, device_id)
+    rid = str(meta.recording_id)
+    existing = session.get(Recording, rid)
+    if existing is not None:
+        if existing.device_id != device_id:
+            raise ApiError(
+                409,
+                "recording_id_conflict",
+                f"Recording {rid} was already sent by {existing.device_id}; "
+                "recording ids must be unique UUIDs.",
+            )
+        return existing, False, _upload(session, existing.sha256)
+
+    incident_id = str(meta.incident_id) if meta.incident_id else None
+    if incident_id is None:
+        # The incident may have listed this recording before the recording said whose it is.
+        incident_id = session.scalar(
+            select(Incident.id).where(
+                Incident.device_id == device_id, Incident.recording_ids.contains([rid])
+            )
+        )
+    running = meta.running
+    rec = Recording(
+        id=rid,
+        fleet_id=device.fleet_id,
+        device_id=device_id,
+        kind=meta.kind,
+        format=meta.format,
+        sha256=meta.sha256,
+        size_bytes=meta.size_bytes,
+        started_at=meta.started_at,
+        ended_at=meta.ended_at,
+        received_at=now,
+        firmware=running.firmware if running else None,
+        harness=running.harness if running else None,
+        overlay_id=meta.overlay_id,
+        incident_id=incident_id,
+        episode=meta.episode.model_dump(mode="json") if meta.episode else None,
+        streams=list(meta.streams),
+        schema_version=meta.schema_version,
+        raw=raw,
+    )
+    session.add(rec)
+    session.flush()
+
+    incident = session.get(Incident, incident_id) if incident_id else None
+    auto = _add_labels(session, rec, _auto_labels_for(session, rec, incident), "auto", "auto")
+    suggested = _add_labels(session, rec, meta.labels, "agent", f"device:{device_id}")
+    stored = is_stored(session, rec.sha256)
+
+    whose = f"incident {incident_id}" if incident_id else "no incident"
+    if incident_id and incident is None:
+        whose += " (not reported yet; it links when it arrives)"
+    then = (
+        "a blob with that sha256 is already stored, so no upload is needed"
+        if stored
+        else "the bytes come next"
+    )
+    events.record(
+        session,
+        f"device:{device_id}",
+        "automation",
+        RECEIVED,
+        _refs(rec),
+        f"{device_id} sent a {rec.kind} recording ({rec.format}, {_size(rec.size_bytes)}) "
+        f"for {whose}; {then}.",
+        data={
+            "evidence": evidence(rec, stored),
+            "upload": "exists" if stored else "needed",
+            "labels": {"auto": auto, "device": suggested},
+        },
+        ts=_evidence_ts(rec),
+        fleet_id=rec.fleet_id,
+    )
+    return rec, True, "exists" if stored else "needed"
+
+
+class Spool:
+    """Uploaded bytes on their way to the blob store: hashed, counted and capped."""
+
+    def __init__(self, max_bytes: int) -> None:
+        self.max_bytes = max_bytes
+        self.file = tempfile.SpooledTemporaryFile(max_size=SPOOL_IN_MEMORY_BYTES)
+        self._digest = hashlib.sha256()
+        self.size = 0
+
+    def write(self, chunk: bytes) -> None:
+        self.size += len(chunk)
+        if self.size > self.max_bytes:
+            raise too_large(self.max_bytes)
+        self._digest.update(chunk)
+        self.file.write(chunk)
+
+    @property
+    def sha256(self) -> str:
+        return self._digest.hexdigest()
+
+    def __enter__(self) -> "Spool":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.file.close()
+
+
+def too_large(max_bytes: int) -> ApiError:
+    return ApiError(
+        413,
+        "blob_too_large",
+        f"Recordings are capped at {_size(max_bytes)} (RECORDING_MAX_BYTES); nothing was "
+        "stored. Split the window or lower the camera resolution.",
+    )
+
+
+def _mismatch(detail: str) -> ApiError:
+    return ApiError(409, "sha256_mismatch", detail + " Nothing was stored; resend the file.")
+
+
+def store_blob(
+    session: Session,
+    store: BlobStore,
+    recording_id: str,
+    spool: Spool,
+    *,
+    declared_sha256: str | None,
+    media_type: str | None,
+    now: datetime,
+) -> bool:
+    """Keep a recording's bytes if they hash to its sha256. Returns whether this call
+    stored them for this recording (False on a harmless resend)."""
+    rec = get_recording(session, recording_id)
+    declared = (declared_sha256 or "").strip().lower()
+    if declared and declared != rec.sha256:
+        raise _mismatch(
+            f"The X-Sha256 header says {declared}, but recording {rec.id}'s metadata says "
+            f"{rec.sha256}."
+        )
+    if spool.sha256 != rec.sha256:
+        raise _mismatch(
+            f"The bytes received for recording {rec.id} hash to {spool.sha256}, not the "
+            f"{rec.sha256} its metadata declared."
+        )
+
+    blob = session.get(Blob, rec.sha256)
+    deduplicated = blob is not None
+    if blob is None or not store.exists(rec.sha256):
+        spool.file.seek(0)
+        try:
+            size = store.put(rec.sha256, spool.file)
+        except HashMismatch as exc:  # the spool and the store disagree: never keep it
+            raise _mismatch(str(exc)) from exc
+        if blob is None:
+            session.add(
+                Blob(
+                    sha256=rec.sha256,
+                    fleet_id=rec.fleet_id,
+                    size_bytes=size,
+                    media_type=media_type,
+                    path=rec.sha256,
+                )
+            )
+            session.flush()
+
+    noted = events.find(session, {"recording": rec.id}, kinds=[RECEIVED, BLOB_STORED])
+    if any(e.kind == BLOB_STORED or (e.data or {}).get("upload") == "exists" for e in noted):
+        return False  # a resend: the story already says these bytes are here
+    how = (
+        "already stored under that sha256 by another recording, so nothing was written twice"
+        if deduplicated
+        else "stored under its sha256"
+    )
+    events.record(
+        session,
+        f"device:{rec.device_id}",
+        "automation",
+        BLOB_STORED,
+        _refs(rec),
+        f"The {rec.kind} bytes from {rec.device_id} ({_size(spool.size)}) matched their "
+        f"sha256 and are {how}; they can be downloaded.",
+        data={
+            "evidence": evidence(rec, True),
+            "deduplicated": deduplicated,
+        },
+        ts=now,
+        fleet_id=rec.fleet_id,
+    )
+    return True
+
+
+def open_blob(session: Session, store: BlobStore, rec: Recording):
+    """The recording's bytes for download. 404 until they are uploaded."""
+    if not is_stored(session, rec.sha256):
+        raise ApiError(
+            404,
+            "blob_not_uploaded",
+            f"Recording {rec.id}'s bytes have not been uploaded yet "
+            f"(PUT /v1/recordings/{rec.id}/blob).",
+        )
+    try:
+        return store.get(rec.sha256)
+    except BlobNotFound as exc:
+        raise ApiError(
+            503, "blob_missing", f"Recording {rec.id}'s bytes are missing from the blob store."
+        ) from exc
+
+
+def link_incident(session: Session, incident: Incident, now: datetime) -> int:
+    """After an incident arrives: link recordings that came first and add the labels that
+    need the incident (kind, outcome, cause). Returns how many recordings changed."""
+    listed = [str(r) for r in incident.recording_ids or []]
+    stmt = select(Recording).where(Recording.device_id == incident.device_id)
+    if listed:
+        stmt = stmt.where((Recording.incident_id == incident.id) | Recording.id.in_(listed))
+    else:
+        stmt = stmt.where(Recording.incident_id == incident.id)
+    changed = 0
+    for rec in session.scalars(stmt.order_by(Recording.started_at, Recording.id)):
+        newly_linked = rec.incident_id is None
+        if newly_linked:
+            rec.incident_id = incident.id
+            session.flush()
+        added = _add_labels(session, rec, _auto_labels_for(session, rec, incident), "auto", "auto")
+        if not newly_linked and not added:
+            continue
+        changed += 1
+        what = "linked it" if newly_linked else "it already named the incident"
+        labels = f" and added labels {', '.join(added)}" if added else ""
+        events.record(
+            session,
+            "automation:telemetry",
+            "automation",
+            LINKED,
+            _refs(rec),
+            f"Incident {incident.id} ({incident.kind}) arrived after recording {rec.id} "
+            f"({rec.kind}); {what}{labels}.",
+            data={
+                "evidence": evidence(rec, is_stored(session, rec.sha256)),
+                "labels_added": added,
+                "linked": newly_linked,
+            },
+            ts=now,
+            fleet_id=rec.fleet_id,
+        )
+    return changed
+
+
+def _size(n: int | None) -> str:
+    if n is None:
+        return "size unknown"
+    for unit, scale in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= scale:
+            return f"{n / scale:.1f} {unit}"
+    return f"{n} B"

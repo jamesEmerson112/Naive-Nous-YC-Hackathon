@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     blob_dir: str = "/data/blobs"
     export_dir: str = "/data/exports"
     blob_budget_gb: float = 20
+    # Largest recording blob accepted in one PUT (telemetry §3: v0 stays under ~200 MB).
+    recording_max_bytes: int = 200 * 1024 * 1024
 
     # Tenancy (D1): one fleet for v0, but every table carries fleet_id.
     fleet_id: str = "default"
