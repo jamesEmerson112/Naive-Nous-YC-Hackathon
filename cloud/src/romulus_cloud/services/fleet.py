@@ -10,8 +10,9 @@
 - `unfreeze` puts every device back on its snapshot's `restore` version, so a freeze right
   after a promotion can't split the fleet for good, and a release a person backed out
   before the freeze stays backed out. **A device a person reassigned during the freeze
-  keeps that choice:** when its assignment no longer equals what freeze pinned, unfreeze
-  leaves it alone and the why names it (while frozen only people move assignments). A
+  keeps that choice:** a `human` `device.assigned` event since the freeze that moved a
+  type off its pin means unfreeze leaves that type alone, and the why names it. The
+  registry's automatic fill (`automation`) is not a person's choice. A
   device with no snapshot (registered during the freeze, or frozen before snapshots
   existed) goes to its class's promoted release. Then the gate moves again: frozen
   candidates restart from replay with a fresh window (F5).
@@ -173,16 +174,45 @@ def _snapshot(session: Session, fleet_id: str, canary: dict) -> dict[str, dict[s
     return snap
 
 
-def _last_snapshot(session: Session, fleet_id: str) -> dict[str, dict[str, Any]] | None:
-    """The snapshot kept by the latest `fleet.frozen` event (None if it has none)."""
-    ev = session.scalars(
+def _last_freeze(session: Session, fleet_id: str) -> Event | None:
+    """The latest `fleet.frozen` event (it keeps the snapshot)."""
+    return session.scalars(
         events.find_query({"fleet": fleet_id}, kinds=["fleet.frozen"])
         .where(Event.fleet_id == fleet_id)
         .order_by(None)
         .order_by(Event.ts.desc(), Event.recorded_at.desc())
         .limit(1)
     ).first()
-    return (ev.data or {}).get("snapshot") if ev else None
+
+
+def _changed_by_people(
+    session: Session, frozen: Event, snap: dict[str, dict[str, Any]]
+) -> set[tuple[str, str]]:
+    """(device, type) pairs a person reassigned since the freeze: a `human`
+    `device.assigned` event (PATCH /devices) that moved that type off what it had, starting
+    from the pin. The registry's automatic fill is `automation`, so it never counts."""
+    rows = session.scalars(
+        select(Event)
+        .where(
+            Event.fleet_id == frozen.fleet_id,
+            Event.kind == "device.assigned",
+            Event.actor_class == "human",
+            Event.recorded_at > frozen.recorded_at,
+        )
+        .order_by(Event.recorded_at, Event.id)
+    )
+    last: dict[tuple[str, str], Any] = {}
+    changed: set[tuple[str, str]] = set()
+    for ev in rows:
+        device, data = (ev.refs or {}).get("device"), ev.data or {}
+        for k in KINDS:
+            if k not in data:
+                continue
+            before = last.get((device, k), ((snap.get(device) or {}).get(k) or {}).get("pinned"))
+            if data[k] != before:
+                changed.add((device, k))
+            last[(device, k)] = data[k]
+    return changed
 
 
 def freeze(
@@ -235,7 +265,9 @@ def unfreeze(
     reason = why.strip() or "no reason given"
     row.frozen, row.frozen_by, row.frozen_at, row.frozen_reason = False, None, None, None
     row.updated_at = now
-    snap = _last_snapshot(session, fleet_id) or {}
+    frozen = _last_freeze(session, fleet_id)
+    snap = ((frozen.data or {}).get("snapshot") if frozen else None) or {}
+    by_people = _changed_by_people(session, frozen, snap) if frozen and snap else set()
     release = releases(session, fleet_id)
     kept: list[str] = []
 
@@ -243,8 +275,8 @@ def unfreeze(
         entry = (snap.get(d.id) or {}).get(k)
         if entry is None:
             return release.get((d.device_class, k))
-        current = getattr(d, f"assigned_{k}")
-        if current != entry["pinned"]:
+        if (d.id, k) in by_people:
+            current = getattr(d, f"assigned_{k}")
             kept.append(f"{d.id} on {k} {current}")
             return current
         return entry["restore"]

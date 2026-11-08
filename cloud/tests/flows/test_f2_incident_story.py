@@ -211,10 +211,17 @@ def test_f2_overlay_superseded_by_a_new_version_is_not_a_failed_fix(
     assert overlay.status == "held"
     assert "stays held for the next batch" in why
     assert overlay.raw["last_status"] == body
-    # After `superseded`, a late `held` or `reverted` changes nothing.
+    # After `superseded`, a late `held` changes nothing; a late `reverted` is recorded (with
+    # its body) but the overlay stays held; its resend is a no-op.
     assert client.post(url, json=example("overlay_status_held")).status_code == 200
-    assert client.post(url, json=example("overlay_status_reverted")).status_code == 200
-    assert count_events("overlay.reverted", {"incident": RULES}) == 0
+    reverted = example("overlay_status_reverted")
+    assert client.post(url, json=reverted).status_code == 204
+    assert client.post(url, json=reverted).status_code == 200
+    assert count_events("overlay.reverted", {"incident": RULES}) == 1
+    db_session.expire_all()
+    overlay = db_session.get(Overlay, ("arm-1", "ov-12"))
+    assert overlay.status == "held" and overlay.raw["last_status"] == body
+    assert overlay.raw["ignored_status"] == reverted
 
 
 def test_f2_cloud_status_is_sticky(client, arm, example, count_events, db_session):

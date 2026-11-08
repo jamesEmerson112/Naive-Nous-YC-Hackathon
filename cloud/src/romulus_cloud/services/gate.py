@@ -70,6 +70,7 @@ LIVE = fleet.LIVE
 LOCKIN_ROLLED_BACK = "lockin_rolled_back"
 LOCKIN_ERROR = "lockin_error"
 CORPUS_CACHE = "gate.release_corpus"  # session.info key, set for one tick
+STALE_RETRY_CAP = 3  # stale re-queues per overlay before it is sticky (PR #18 review)
 TRANSITION_KINDS = {
     "canary": "candidate.canary_started",
     "awaiting_canary": "candidate.awaiting_canary",
@@ -532,6 +533,8 @@ def _settle_overlays(
             note = " It is batched alone next (bisect)." if mark.get("solo") else ""
             if mark.get("retried"):
                 note += " This is its one retry."
+            if mark.get("stale"):
+                note += f" Stale re-queue {mark['stale']} of {STALE_RETRY_CAP}."
             events.record(
                 session,
                 ACTOR,
@@ -624,14 +627,27 @@ def _go_stale(session: Session, c: Candidate, why: str, now: datetime) -> None:
             f"withdrawn with {label(c)}: its overlays re-batch onto the new base",
             now,
         )
+    # Belt and braces: a fix whose candidates keep going stale stops re-batching after
+    # STALE_RETRY_CAP rounds, with a sticky why, so nothing is rebuilt all night.
+    keys = list(dict.fromkeys(k for x in (c, *siblings) for k in _keys(x)))
+    rounds = {k: _stale_rounds(session, k) for k in keys}
+    capped = {k for k, n in rounds.items() if n >= STALE_RETRY_CAP}
     _settle_overlays(
         session,
         [c, *siblings],
         now,
-        failed=set(),
-        failed_status=LOCKIN_ROLLED_BACK,
+        failed=capped,
+        failed_status=LOCKIN_ERROR,
         cause=f"{label(c)} went stale ({why})",
+        failed_cause=f"{label(c)} went stale ({why}); its candidates went stale "
+        f"{STALE_RETRY_CAP} times already, so it stops re-batching (stale cap)",
+        marks={k: {"stale": n + 1} for k, n in rounds.items() if k not in capped},
     )
+
+
+def _stale_rounds(session: Session, key: Key) -> int:
+    ov = session.get(Overlay, key)
+    return int(incidents.requeue_marks(session, ov).get("stale") or 0) if ov else 0
 
 
 def _apply(session: Session, c: Candidate, t: g.Transition, now: datetime) -> None:
@@ -670,6 +686,9 @@ def _apply(session: Session, c: Candidate, t: g.Transition, now: datetime) -> No
         return
     if old == "canary" and t.state == "awaiting_canary":  # passed, but now blocked
         t = t._replace(why=f"{t.why}; {_restore_canary(session, c)}")
+        # Off the canary: the next run starts fresh, and a freeze in between doesn't count
+        # the canary's incidents against it (`repeat_since`).
+        c.canary_started_at = None
     if t.state == "replaying":  # unfrozen: a fresh replay, then a fresh canary (F5)
         c.replay, c.canary_started_at = None, None
     _record(session, c, kind, t.why, now, device=c.canary_device, before=old)

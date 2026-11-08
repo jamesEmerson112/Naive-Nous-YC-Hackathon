@@ -179,8 +179,14 @@ def test_a_held_overlay_never_batched_survives_superseded_and_rebatches(db, tool
     (ev,) = _events(db, "overlay.superseded", {"device": "sim-3", "overlay": ov.id})
     assert "it was never locked in" in ev.why and ev.data["after"] == "held"
     # A late `reverted` after `superseded` changes nothing: the device no longer runs it.
+    # A later device status is recorded (review nit) but moves nothing; a resend is a no-op.
     late = OverlayStatus(status="reverted", reason="late")
-    assert not incidents.set_overlay_status(db, "sim-3", ov.id, late, {}, T0 + S)
+    body = {"status": "reverted", "reason": "late"}
+    assert incidents.set_overlay_status(db, "sim-3", ov.id, late, body, T0 + S)
+    assert ov.status == "held" and ov.raw["ignored_status"] == body
+    (ev,) = _events(db, "overlay.reverted", {"device": "sim-3", "overlay": ov.id})
+    assert "after reporting it superseded. Ignored" in ev.why and ev.data["after"] == "held"
+    assert not incidents.set_overlay_status(db, "sim-3", ov.id, late, body, T0 + 2 * S)
     again = _firmware(db, tools, settings, T0 + 2 * S)
     assert {(r["device_id"], r["overlay_id"]) for r in again.from_overlays} == {("sim-3", ov.id)}
     assert db.get(FirmwareVersion, ("default", again.version)).parent_version == first.version
@@ -558,3 +564,94 @@ def test_an_unknown_canary_never_counts_as_a_real_code_canary(db, settings):
     db.flush()
     inputs, k17 = gate._inputs(db, c, settings, False, None)
     assert inputs.real_code_canary is False and k17 is False  # not touches_safety
+
+
+# --- PR #18 review follow-ups ----------------------------------------------------------------
+
+
+def _only_the_canary(db) -> None:
+    """A class whose only device is the canary: no normal device has an assignment."""
+    for d in ("sim-1", "sim-3", "arm-1"):
+        db.get(Device, d).device_class = "other"
+    db.flush()
+
+
+def test_a_class_with_only_a_canary_does_not_rebuild_candidates_forever(db, tools, settings):
+    """Review finding 1: the fallback picked the newest version, i.e. the batch's own
+    candidates, so every harness candidate went stale and was rebuilt (v2…v7)."""
+    _only_the_canary(db)
+    _held(db, device="sim-2", diff={})
+    t = T0
+    for _ in range(6):
+        batch.run(db, t, tools)
+        gate.tick(db, t + S, settings=settings)
+        t += 10 * S
+    cands = db.scalars(select(Candidate)).all()
+    assert len(cands) <= 2, [(c.type, c.version, c.status) for c in cands]
+    assert not [c for c in cands if c.status == "stale"]
+
+
+def test_the_fallback_and_corpus_baseline_skip_unpromoted_batch_versions(db, tools, settings):
+    _only_the_canary(db)
+    _held(db, device="sim-2")
+    fw = _firmware(db, tools, settings)
+    assert db.get(FirmwareVersion, ("default", fw.version)).source == "batch"
+    assert registry.default_assignment(db, "so101") == (1, 1)  # the seed, not the candidate
+    assert gate._release_corpus(db, fw)[2] == 1
+    fw.status = "promoted"  # once promoted, it is the release
+    db.flush()
+    assert registry.default_assignment(db, "so101")[0] == fw.version
+
+
+def test_an_overlay_whose_candidates_keep_going_stale_is_capped(db, tools, settings):
+    """Belt and braces: after STALE_RETRY_CAP stale re-queues, sticky with a why."""
+    ov = _held(db)
+    for i in range(gate.STALE_RETRY_CAP + 1):
+        fw = _firmware(db, tools, settings, T0 + 10 * i * S)
+        manual = 100 * (i + 1)  # clear of the batch's own version numbers
+        _v(db, manual)  # a person moves the class to a new version before the gate runs
+        for d in ("sim-1", "sim-3", "arm-1"):
+            devices.update(db, d, firmware=manual, **KW)
+        gate.tick(db, T0 + (10 * i + 1) * S, settings=settings)
+        assert fw.status == "stale"
+        if i < gate.STALE_RETRY_CAP:
+            assert ov.status == "held"
+            assert incidents.requeue_marks(db, ov)["stale"] == i + 1
+    assert ov.status == "lockin_error" and "(stale cap)" in ov.status_reason
+    assert not batch.run(db, T0 + 100 * S, tools).candidates
+
+
+def test_unfreeze_does_not_mistake_the_registrys_fill_for_a_person(db):
+    """Review finding 3: the registry's automatic fill is `automation`, not a choice."""
+    d = db.get(Device, "sim-3")
+    d.assigned_firmware = None
+    db.flush()
+    fleet.freeze(db, "kent", "x", T0)
+    devices._fill_assignment(db, d, T0 + S, quiet=False)
+    result = fleet.unfreeze(db, "kent", "x", T0 + 2 * S)
+    assert "A person reassigned" not in result.why
+    assert d.assigned_firmware == 1
+
+
+def test_unfreeze_keeps_a_person_changing_back_to_the_pin(db):
+    """A person moved sim-3 off its pin and back: the pin is their choice, kept."""
+    _on_v2(db)
+    fleet.freeze(db, "kent", "x", T0)
+    assert db.get(Device, "sim-3").assigned_firmware == 1
+    devices.update(db, "sim-3", firmware=2, **KW)
+    devices.update(db, "sim-3", firmware=1, why="no, keep it on v1", **KW)
+    result = fleet.unfreeze(db, "kent", "x", T0 + S)
+    assert db.get(Device, "sim-3").assigned_firmware == 1
+    assert "sim-3 on firmware 1" in result.why
+
+
+def test_leaving_the_canary_for_awaiting_canary_clears_the_run_start(db, tools, settings):
+    """Review nit: the next canary run starts fresh, and a freeze in between can't count
+    the canary's incidents from when the candidate wasn't on it."""
+    _held(db)
+    fw = _firmware(db, tools, settings)
+    gate.tick(db, T0, settings=settings)
+    assert fw.status == "canary" and fw.canary_started_at == T0
+    gate._apply(db, fw, gate.g.Transition("awaiting_canary", "canary passed; blocked"), T0 + S)
+    assert fw.status == "awaiting_canary" and fw.canary_started_at is None
+    assert db.get(Device, "sim-2").assigned_firmware == 1  # given back

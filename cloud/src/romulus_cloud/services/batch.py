@@ -5,7 +5,10 @@ someone asked (`fleet_state.batch_requested`). Per device class, it folds **all*
 overlays into at most one candidate per kind (`lock_in = by_patch_kind(rules=merge_rules,
 harness=write_skill, code=draft_code)`), except overlays the gate marked `solo` (bisected
 out of a failed fold, `incidents.requeue_marks`): each of those gets candidates of its
-own, so a failure is pinned on it alone:
+own, so a failure is pinned on it alone. So a class can have several live candidates per
+kind at once; the gate canaries one per install type at a time and the others go stale
+and are rebuilt on the new base, so N solo overlays cost O(N²) versions (fine at this
+scale; the gate caps stale re-queues per overlay):
 
 - **rules / params → one `firmware` candidate:** the class's current manifest with each
   overlay's diff merged in, oldest first (deterministic `apply_overlay`, D3). An overlay
