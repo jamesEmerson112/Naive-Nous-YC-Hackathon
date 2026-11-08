@@ -10,6 +10,18 @@ Tonight's simulated SO-101 bench (P1 in James's plan note): the arm host, skills
 - `demo` goes home, waves, and goes home again. It writes `runs/<id>.jsonl` (an `arm-run/v1` record) and `runs/<id>.gif`.
 - `view` shows the same moves in MuJoCo's viewer. On macOS, run it with `mjpython` instead of `python`.
 
+**Commander (Hermes):**
+1. Start the arm host:
+   ```
+   uv run --python 3.12 --with-requirements requirements.txt python -m armsim.host --gif
+   ```
+   Add `--view` (with `mjpython`) to watch it live.
+2. Link the plugin: `ln -s "$PWD/hermes-plugin/so101-arm" ~/.hermes/plugins/so101-arm`.
+3. Enable it: `hermes plugins enable so101-arm`.
+4. Send a command: `hermes chat -q "wave, then go home" --oneshot -t so101_arm`.
+
+The plugin's tools ask the host to run one skill each; the LLM never sends joint angles. Its `pre_tool_call` guard blocks motion while a fault is open or a servo reports an alarm. The host listens on `$TMPDIR/armsim.sock`; set `ARMSIM_SOCK` to change that.
+
 **Units and formats:**
 - Arm joints are in degrees and the gripper is 0–100 (0 = closed), the same as LeRobot and Andre's primitive JSON.
 - Distance rows use the pod's `D` fields (`mm`, `us`, `st`).

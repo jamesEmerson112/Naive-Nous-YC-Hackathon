@@ -1,0 +1,15 @@
+name: so101-arm
+version: "0.1.0"
+description: >-
+  Skill menu for an SO-101 robot arm (go home, reach, grip, release, wave, park, status),
+  served by a local arm host. A pre_tool_call guard keeps the arm still while a fault is open.
+provides_tools:
+  - arm_go_home
+  - arm_reach
+  - arm_grip
+  - arm_release
+  - arm_wave
+  - arm_park
+  - arm_status
+provides_hooks:
+  - pre_tool_call
