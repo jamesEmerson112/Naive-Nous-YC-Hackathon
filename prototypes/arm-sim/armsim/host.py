@@ -21,6 +21,7 @@ import socket
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import level1, prims
@@ -177,6 +178,7 @@ class Watchdog:
         self.pod = pod                        # PodSource, or None in plain sim
         self.lock = threading.RLock()
         self.on_open, self.on_resolve = [], []    # callbacks(incident): the Romulus reporter
+        self.on_handoff = []                  # callbacks(incident): needs hands (hardware)
         self.verify_pending = None            # set from the pod thread, run on the main thread
         self.home = None                      # the pose verify() checks from (set by serve)
         arm.watchers.append(self)
@@ -257,6 +259,10 @@ class Watchdog:
                 did = [{"command": r.get("command"), "ok": r.get("ok")} for r in did]
             else:
                 self.arm.clear("us_frozen")
+        at = datetime.now(timezone.utc).isoformat()
+        for inc in self.open():
+            inc.setdefault("actions", []).append({"tool": f"arm_{action}", "args": {}, "ok": True, "at": at,
+                                                  **({"did": did} if did else {})})
         return {"ok": True, "action": action, "did": did, **self.verify(f"repair: {action}")}
 
     def verify(self, why):
@@ -277,7 +283,7 @@ class Watchdog:
         still = [f for f in level1.run(snap) if f["severity"] in ("critical", "warn")]
         rows_ok = sum(1 for r in arm.d_rows if r.get("st") == "ok")
         pod_crit = [i for i in (self.pod.open if self.pod else []) if i.get("severity") == "critical"]
-        resolved = []
+        resolved, handoffs = [], []
         with self.lock:
             for inc in self.open():
                 if inc["kind"] == "joint_stall":
@@ -289,8 +295,23 @@ class Watchdog:
                 if fixed:
                     inc.update(state="resolved", resolved_at=round(self.clock(), 2), fix=why)
                     resolved.append(inc)
+                else:
+                    # Needs hands: a joint that still won't move after a checked retry, or a sensor
+                    # that fails two checks. The arm stays parked; Romulus gets a hardware report.
+                    inc["verify_failures"] = inc.get("verify_failures", 0) + 1
+                    if not inc.get("handed_off") and (inc["kind"] == "joint_stall" or inc["verify_failures"] >= 2):
+                        inc.update(handed_off=round(self.clock(), 2), handoff_reason=(
+                            "still failing after a checked retry: " + ("; ".join(f["summary"] for f in still)
+                                                                     or f"home move arrived={moved.get('arrived')}")))
+                        handoffs.append(inc)
             if not self.open():
                 arm.halt_reason = None
+        for inc in handoffs:
+            print(f"WATCHDOG {inc['id']} handed off (hardware): {inc['handoff_reason']}", flush=True)
+            if self.pod:
+                self.pod.note("arm_handoff", id=inc["id"], kind=inc["kind"], reason=inc["handoff_reason"])
+            for cb in self.on_handoff:
+                cb(inc)
         for inc in resolved:
             print(f"WATCHDOG {inc['id']} resolved ({why})", flush=True)
             if self.pod:
@@ -315,9 +336,10 @@ def start_podd(port, var):
                             stdout=out, stderr=subprocess.STDOUT)
 
 
-def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR):
+def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romulus=None, device_id=None):
     """pod=None: plain sim (distance from the sim itself). pod="sim": a virtual pod on a pty, read by
-    Olir's real podd. pod="real": podd is already running on the real pod; `var` is its HEALER_VAR."""
+    Olir's real podd. pod="real": podd is already running on the real pod; `var` is its HEALER_VAR.
+    romulus: Romulus's URL; the arm then checks in and reports its incidents as `device_id`."""
     rec = RunRecorder(RUNS, task="arm host session", joints=JOINTS)
     arm = SimArm(recorder=rec, start=prims.REST)
     skills = Skills(arm)
@@ -347,6 +369,14 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR):
     else:
         dog = Watchdog(arm, rec)
     dog.home = skills.p["home"]
+    reporter = None
+    if romulus:
+        from .romulus import ArmReporter
+        kind = "real" if pod == "real" else "sim"
+        device_id = device_id or ("arm-1" if kind == "real" else "arm-twin-1")
+        reporter = ArmReporter(romulus, device_id, kind=kind, state_dir=ROOT.parents[1] / "data" / "armsim",
+                               arm=arm, dog=dog).start()
+        print(f"reporting to Romulus at {romulus} as {device_id} ({kind})", flush=True)
     if gif:
         from .render import Gif
         gif = Gif(arm, RUNS / f"{rec.run_id}.gif")
@@ -411,6 +441,12 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR):
             if source:
                 out["pod"] = {"podd_up": source.up, "image": vpod.image if vpod else None,
                               "incidents": [{k: i.get(k) for k in ("kind", "severity", "summary")} for i in source.open]}
+            if reporter:
+                out["romulus"] = {"device": reporter.device_id, "last_checkin": reporter.last.get("checkin"),
+                                  "error": reporter.last.get("error"), "queued": len(reporter.outbox),
+                                  "reported": reporter.last["reported"][-3:]}
+            out["handed_off"] = [{k: i[k] for k in ("id", "kind", "summary", "handoff_reason")}
+                                 for i in dog.open() if i.get("handed_off")]
             return out
         if op == "incidents":
             return {"ok": True, "incidents": dog.incidents}
@@ -463,6 +499,8 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR):
         srv.close()
         SOCK.unlink(missing_ok=True)
         rec.close("host stopped", findings=[{k: i[k] for k in ("kind", "severity", "summary")} for i in dog.incidents])
+        if reporter:
+            reporter.stop()
         if source:
             source.stop()
         if vpod:
@@ -484,5 +522,10 @@ if __name__ == "__main__":
     ap.add_argument("--pod", choices=["sim", "real"], help="read the wrist sensor through podd: a virtual pod "
                     "(sim), or a podd already running on the real pod (real)")
     ap.add_argument("--var", default=str(POD_VAR), help="podd's HEALER_VAR (default $ARMSIM_POD_VAR or $TMPDIR/armsim-pod)")
+    ap.add_argument("--romulus", default=os.environ.get("ARMSIM_ROMULUS"),
+                    help="Romulus's URL, e.g. http://localhost:8000 (check-ins and incident reports)")
+    ap.add_argument("--device-id", default=os.environ.get("ARMSIM_DEVICE_ID"),
+                    help="the arm's id in Romulus (default arm-twin-1 in sim, arm-1 with --pod real)")
     a = ap.parse_args()
-    serve(gif=a.gif, view=a.view, realtime=a.realtime, pod=a.pod, var=Path(a.var))
+    serve(gif=a.gif, view=a.view, realtime=a.realtime, pod=a.pod, var=Path(a.var), romulus=a.romulus,
+          device_id=a.device_id)
