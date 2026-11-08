@@ -69,12 +69,29 @@ def test_test_mode_fails_closed_when_it_cannot_make_itself_undumpable(
 
 
 def test_a_pytest_run_reports_its_junit_counts_from_outside_the_work_dir(tmp_path):
-    """A planted pytest.py in the work dir never runs (`-P`), and the counts come from a
-    JUnit report written outside it."""
-    (tmp_path / "test_x.py").write_text("def test_a():\n    pass\n\n\ndef test_b():\n    pass\n")
+    """A planted pytest.py in the work dir never runs (`-P`), and the per-test outcomes come
+    through the seal's pipe, not from a file in the work dir or the env."""
+    (tmp_path / "test_x.py").write_text(
+        "import os\n\n\ndef test_a():\n    assert 'ROMULUS_SEAL_FD' not in os.environ\n\n\n"
+        "def test_b():\n    pass\n"
+    )
     (tmp_path / "pytest.py").write_text('print("9 passed")\nraise SystemExit(0)\n')
     cmd = f"{shlex.quote(sys.executable)} -m pytest -q"
     out = run_agent.run_tests(cmd, 60, work=str(tmp_path))
     assert out["exit_code"] == 0 and "9 passed" not in out["output"]
-    assert out["report"] == {"tests": 2, "failures": 0, "errors": 0, "skipped": 0}
-    assert not list(tmp_path.glob("*.xml"))
+    assert out["results"]["tests"] == {"test_x.py::test_a": "passed", "test_x.py::test_b": "passed"}
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["pytest.py", "test_x.py"]
+
+
+def test_the_seal_ignores_everything_after_its_end_marker():
+    lines = [
+        b'{"id": "t::a", "outcome": "failed"}\n',
+        b'{"end": true, "exitstatus": 1}\n',
+        b'{"id": "t::a", "outcome": "passed"}\n',  # an atexit forger, too late
+        b'{"end": true, "exitstatus": 0}\n',
+    ]
+    assert run_agent.parse_seal(lines) == {"tests": {"t::a": "failed"}, "exitstatus": 1}
+    # A forged "passed" line can't override a real failure for the same id.
+    lines = [b'{"id": "t::a", "outcome": "failed"}\n', b'{"id": "t::a", "outcome": "passed"}\n']
+    assert run_agent.parse_seal([*lines, b'{"end": true}\n'])["tests"] == {"t::a": "failed"}
+    assert run_agent.parse_seal(lines) is None  # no marker: pytest never finished

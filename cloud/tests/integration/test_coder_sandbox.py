@@ -133,7 +133,7 @@ def test_real_image_runs_the_pinned_pytest_not_a_planted_one(sandbox, monkeypatc
     print(result.summary())
     assert result.patched is not None and not result.tests_passed, result.summary()
     assert "test_unknown_state_is_an_error" in result.patched.output
-    assert result.base.report and result.base.report["tests"] == 4
+    assert result.base.results and len(result.base.results) == 4
 
 
 @pytest.mark.skipif(not (LLM["LLM_BASE_URL"] and LLM["LLM_MODEL"]), reason="needs LLM_* env")

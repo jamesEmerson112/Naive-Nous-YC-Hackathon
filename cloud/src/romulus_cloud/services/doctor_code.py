@@ -263,6 +263,7 @@ def check_job(
         "timeout_s": timeout_s,
         "scratch_dir": scratch_dir,
         "extra_env": SAFE_ENV,
+        "split_tests": False,  # this check splits the patch itself (repro, code_only)
     }
     repro_cmd = repro_command(repro_test)
     repro_only = rules.split_patch(patch, repro_test)

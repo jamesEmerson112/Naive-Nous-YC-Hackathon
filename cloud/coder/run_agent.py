@@ -4,13 +4,14 @@ Three modes:
 - `agent` (default): read the task from stdin, run mini-swe-agent on /work with a step and
   time limit, then run the device test command.
 - `test`: run only the device test command (the gate's code replay; no LLM, no network).
-  `python -m` runs get `-P` (`pin_pytest`), so /work can't shadow pytest. Any pytest it
-  starts writes a JUnit report to a fresh dir outside /work (via PYTEST_ADDOPTS), and the
-  counts come back beside the exit code, so a printed "N passed" or an early `os._exit(0)`
-  can't pass for a test run.
-- `verify`: run the held-out `verify/` scripts with a fixed command the code under test
-  can't configure: isolated Python, no conftest, a clean pytest config, no cache, and the
-  pass/fail/skip counts from a JUnit report.
+  `python -m pytest` runs as `python -P <launcher>` (`pin_pytest`), so /work can't shadow
+  pytest, with the result seal (`romulus_seal`, from outside /work), which streams each
+  test's outcome to a pipe this process owns and ends with a marker, so a printed "N
+  passed", an early `os._exit(0)` or an `atexit` forger can't pass for a test run.
+- `verify`: run the held-out `verify/` scripts in a pytest process that never imports
+  anything from /work (isolated Python, cwd outside it, importlib mode, no conftest, a clean
+  config, no cache), with the counts from the seal. The scripts start the code under test
+  as a subprocess; this is the replay's decisive check.
 
 Every mode ends stdout with one line, `ROMULUS_RESULT <json>`. Agent logs go to stderr.
 
@@ -31,7 +32,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 WORK = "/work"
@@ -75,31 +75,144 @@ SAFE_PYTHON_ENV = {
 }
 
 
-def pin_pytest(cmd: str) -> str:
-    """`python -m pytest` -> `python -P -m pytest` (any `python[3[.x]] -m` in the command):
-    `-m` would put the cwd, /work, first on sys.path, so a planted `pytest.py` or `pytest/`
-    would run instead of the pinned pytest in site-packages. `-P` applies to that one
-    interpreter, not to the processes the tests start. A bare `pytest` (the console script
-    in /usr/local/bin) is already safe."""
+def pin_pytest(cmd: str, launcher: str) -> str:
+    """`python [flags] -m pytest ...` -> `python [flags] -P <launcher> ...`, wherever it is in
+    the command. `-m` would put the cwd, /work, first on sys.path, so a planted `pytest.py`
+    would run instead of the pinned pytest in site-packages; `-P` applies to that one
+    interpreter, not to the processes the tests start. The launcher (`LAUNCHER_SOURCE`) runs
+    pytest with the result seal. Any other way of starting pytest runs unsealed, and the
+    replay then has only its exit code (the base's too, so nothing is compared)."""
     import re  # here, not at the top: keeps this module's import block as it is
 
-    return re.sub(r"(?<![^\s;&|(])((?:\S*/)?python3?(?:\.\d+)?)(?=\s+-m\s)", r"\1 -P", cmd)
+    pattern = r"(?<![^\s;&|(])((?:\S*/)?python3?(?:\.\d+)?)((?:\s+-[A-Za-z]+)*?)\s+-m\s+pytest"
+    pattern += r"(?=$|[\s;&|)])"
+    return re.sub(pattern, lambda m: f"{m[1]}{m[2]} -P {launcher}", cmd)
 
 
-def junit_counts(report: Path) -> dict | None:
-    """tests/failures/errors/skipped summed over a JUnit report's suites; None without one."""
-    counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+# The result seal: a pytest plugin, loaded from outside /work, that streams each test's
+# outcome to a pipe this process owns, then an end marker. Nothing in /work can choose where
+# it goes, and lines after the marker (an `atexit` forger) are ignored.
+SEAL_MODULE = "romulus_seal"
+SEAL_FD_ENV = "ROMULUS_SEAL_FD"
+SEAL_SOURCE = """\
+# Romulus result seal (written by run_agent.py): each test's outcome to the harness's pipe.
+import ctypes
+import json
+import os
+import sys
+
+_raw = os.environ.pop("ROMULUS_SEAL_FD", "")  # gone before any test code can read it
+_fd = int(_raw) if _raw.isdigit() else None
+if _fd is not None:
     try:
-        root = ET.parse(report).getroot()
-        for suite in root.iter("testsuite"):
-            for key in counts:
-                counts[key] += int(suite.get(key, 0))
-    except (OSError, ET.ParseError, ValueError):
-        return None
-    return counts
+        os.set_inheritable(_fd, False)  # processes the tests start never get it
+    except OSError:
+        _fd = None
+if sys.platform.startswith("linux"):
+    try:  # other processes of this uid (the app under test) can't open /proc/<pid>/fd/<n>
+        ctypes.CDLL(None).prctl(4, 0, 0, 0, 0)
+    except Exception:
+        pass
 
 
-def _run(argv, *, shell: bool, cwd: str, timeout_s: int, env=None) -> tuple[int, str, bool]:
+def _send(obj):
+    if _fd is not None:
+        try:
+            os.write(_fd, (json.dumps(obj) + "\\n").encode())
+        except OSError:
+            pass
+
+
+def pytest_collectreport(report):
+    if report.failed:
+        _send({"id": "collect:" + (report.nodeid or "."), "outcome": "failed"})
+
+
+def pytest_runtest_logreport(report):
+    if report.when == "call" or report.outcome != "passed":
+        _send({"id": report.nodeid, "outcome": report.outcome})
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _send({"end": True, "exitstatus": int(exitstatus)})
+"""
+# Runs pytest with the seal, never adding anything from /work to sys.path: its own dir only
+# while it imports the seal. `python -P` / `python -I` keep the script's dir off sys.path.
+LAUNCHER = "romulus_pytest.py"
+LAUNCHER_SOURCE = """\
+import os
+import sys
+
+_here = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _here)
+import romulus_seal  # noqa: E402
+
+sys.path.remove(_here)
+import pytest  # noqa: E402
+
+sys.exit(pytest.main([*sys.argv[1:], "-p", "no:cacheprovider"], plugins=[romulus_seal]))
+"""
+_RANK = {"passed": 0, "skipped": 1, "failed": 2}
+
+
+def parse_seal(lines: list[bytes]) -> dict | None:
+    """{"tests": {node id: worst outcome}, "exitstatus"} from the seal's lines up to the first
+    end marker, or None when there is no marker (pytest didn't finish, or never ran)."""
+    results: dict[str, str] = {}
+    for raw in lines:
+        try:
+            item = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(item, dict):
+            continue
+        if item.get("end") is True:
+            return {"tests": results, "exitstatus": item.get("exitstatus")}
+        outcome = item.get("outcome") if item.get("outcome") in _RANK else "failed"
+        key = str(item.get("id"))
+        if _RANK[outcome] >= _RANK[results.get(key, "passed")]:
+            results[key] = outcome
+    return None
+
+
+def write_seal(plugin_dir: Path) -> str:
+    """Write the seal and its launcher to `plugin_dir` (outside /work); the launcher's path."""
+    (plugin_dir / f"{SEAL_MODULE}.py").write_text(SEAL_SOURCE)
+    (plugin_dir / LAUNCHER).write_text(LAUNCHER_SOURCE)
+    return str(plugin_dir / LAUNCHER)
+
+
+def _run_sealed(argv, *, shell: bool, cwd: str, timeout_s: int, env: dict):
+    """`_run` with the seal's pipe: (exit code, output, timed out, parse_seal result or None).
+    Only the pipe's fd number goes in the env (the seal pops it before any test code runs)."""
+    import threading  # here, not at the top: keeps this module's import block as it is
+
+    read_fd, write_fd = os.pipe()
+    lines: list[bytes] = []
+
+    def read() -> None:
+        with os.fdopen(read_fd, "rb") as stream:
+            for line in stream:
+                lines.append(line)
+                if b'"end": true' in line and parse_seal(lines) is not None:
+                    return  # anything after the first marker is ignored
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    env = {**env, SEAL_FD_ENV: str(write_fd)}
+    try:
+        code, output, timed_out = _run(
+            argv, shell=shell, cwd=cwd, timeout_s=timeout_s, env=env, pass_fds=(write_fd,)
+        )
+    finally:
+        os.close(write_fd)
+    reader.join(timeout=10)  # a leftover process holding the pipe can't stall us
+    return code, output, timed_out, parse_seal(list(lines))
+
+
+def _run(
+    argv, *, shell: bool, cwd: str, timeout_s: int, env=None, pass_fds=()
+) -> tuple[int, str, bool]:
     """(exit code, capped output, timed out); never raises."""
     try:
         proc = subprocess.run(
@@ -111,6 +224,7 @@ def _run(argv, *, shell: bool, cwd: str, timeout_s: int, env=None) -> tuple[int,
             text=True,
             errors="replace",
             timeout=timeout_s,
+            pass_fds=pass_fds,
         )
         return proc.returncode, _cap(proc.stdout + proc.stderr), False
     except subprocess.TimeoutExpired as exc:
@@ -120,51 +234,59 @@ def _run(argv, *, shell: bool, cwd: str, timeout_s: int, env=None) -> tuple[int,
 
 
 def run_tests(cmd: str, timeout_s: int, work: str | None = None) -> dict:
-    """Run the device's test command in the work dir. `report` is the JUnit counts of the
-    (last) pytest it ran, written outside the work dir, or None if no report appeared (not
-    a pytest command, or pytest never got to the end)."""
+    """Run the device's test command in the work dir. `results` is the seal's per-test
+    outcomes from the pytest it ran (`parse_seal`), or None (not a pytest command, or pytest
+    never reached its end)."""
     work = work or WORK
-    with tempfile.TemporaryDirectory(prefix="romulus-tests-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="romulus-seal-") as tmp:
         if Path(tmp).resolve().is_relative_to(Path(work).resolve()):
-            raise RuntimeError(f"report dir {tmp} is inside the work dir")
-        report = Path(tmp) / f"{os.urandom(8).hex()}.xml"
-        env = {**_clean_env(), "PYTEST_ADDOPTS": f"-p no:cacheprovider --junitxml={report}"}
-        code, output, timed_out = _run(
-            pin_pytest(cmd), shell=True, cwd=work, timeout_s=timeout_s, env=env
-        )
-        counts = junit_counts(report)
+            raise RuntimeError(f"seal dir {tmp} is inside the work dir")
+        launcher = write_seal(Path(tmp))
+        code, output, timed_out, results = _run_sealed(
+            pin_pytest(cmd, launcher), shell=True, cwd=work, timeout_s=timeout_s,
+            env=_clean_env(),
+        )  # fmt: skip
     return {
         "cmd": cmd,
         "exit_code": code,
         "output": output,
         "timed_out": timed_out,
-        "report": counts,
+        "results": results,
     }
 
 
 def run_verify(timeout_s: int, work: str | None = None, python: str = "python") -> dict:
-    """Run `verify/` as its own pytest call that ignores the code's conftest and config."""
+    """Run `verify/` in a pytest process that never imports anything from the work dir.
+
+    The work dir is never on its sys.path (`-I`, `--import-mode=importlib`, no `pythonpath`,
+    cwd outside it), no conftest or config from it applies, and the counts come from the
+    seal. The verify scripts reach the code under test only as data (paths, hashes) and by
+    starting it as a subprocess, so nothing in the patch can run inside this process."""
     work = work or WORK
     if not (Path(work) / VERIFY_DIR).is_dir():
         return {"ran": False, "tests": 0, "passed": 0, "exit_code": None, "output": ""}
-    tmp = Path(tempfile.mkdtemp(prefix="romulus-verify-"))
-    ini, report = tmp / "verify.ini", tmp / "verify.xml"
-    # -I: no cwd on sys.path (a planted pytest.py can't shadow pytest), no PYTHON* env, no
-    # user site. The code dir is added by the clean ini instead, after pytest has loaded.
-    ini.write_text(f"[pytest]\npythonpath = {work}\n")
-    argv = [
-        python, "-I", "-m", "pytest", VERIFY_DIR,
-        f"--rootdir={work}", "-c", str(ini), "--noconftest", "-p", "no:cacheprovider",
-        "-q", "-rA", f"--junitxml={report}",
-    ]  # fmt: skip
-    code, output, timed_out = _run(argv, shell=False, cwd=work, timeout_s=timeout_s)
-    # No report: zero tests, so it can't count as a pass.
-    counts = junit_counts(report) or {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
-    passed = counts["tests"] - counts["failures"] - counts["errors"] - counts["skipped"]
+    with tempfile.TemporaryDirectory(prefix="romulus-verify-") as tmp:
+        ini = Path(tmp) / "verify.ini"
+        ini.write_text("[pytest]\n")
+        # -I: no cwd or script dir on sys.path, no PYTHON* env, no user site.
+        argv = [
+            python, "-I", write_seal(Path(tmp)), str(Path(work) / VERIFY_DIR),
+            f"--rootdir={work}", "-c", str(ini), "--noconftest", "--import-mode=importlib",
+            "-q", "-rA",
+        ]  # fmt: skip
+        code, output, timed_out, sealed = _run_sealed(
+            argv, shell=False, cwd=tmp, timeout_s=timeout_s, env=_clean_env()
+        )
+    results = (sealed or {"tests": {}})["tests"]  # no marker: zero tests
+    outcomes = list(results.values())
     return {
         "ran": True,
-        **counts,
-        "passed": max(passed, 0),
+        "results": results,
+        "tests": len(outcomes),
+        "passed": outcomes.count("passed"),
+        "failures": outcomes.count("failed"),
+        "errors": 0,
+        "skipped": outcomes.count("skipped"),
         "exit_code": code,
         "timed_out": timed_out,
         "output": output,
@@ -281,7 +403,7 @@ def main() -> int:
             result["verify"] = {"ran": True, "tests": 0, "passed": 0, "exit_code": None,
                                 "output": why}  # fmt: skip
         else:
-            result["tests"] = {"cmd": cmd, "exit_code": None, "output": why, "report": None}
+            result["tests"] = {"cmd": cmd, "exit_code": None, "output": why, "results": None}
     elif mode == "verify":
         result["verify"] = run_verify(timeout_s)
     else:
