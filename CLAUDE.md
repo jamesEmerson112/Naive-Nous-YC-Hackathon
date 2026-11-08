@@ -45,59 +45,20 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 5:38 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 5:51 PM PST · write notes outside the markers_
 
-**The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
-- **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
-- **Fleet:** canary rollout and automatic rollback across many arms.
-- **Company:** every verified heal is also a billing event, an incident email and a training example *(inferred)*.
-
-**Why it matters for judging:** nobody closes the loop yet.
-- Formant F3 only *recommends* fixes ([BusinessWire](https://www.businesswire.com/news/home/20250630008190/en/Formant-F3-Brings-Generative-AI-and-Agentic-Reasoning-to-Robot-Ops)).
-- Alloy raised $8M in Aug 2026 to *diagnose* robot-fleet failures ([AI Insider](https://theaiinsider.tech/2026/08/13/alloy-robotics-raises-8m-in-new-funding-to-help-engineers-debug-robot-fleets-with-ai-agents/)).
-- AI incident response for software reached $1B valuations twice: Resolve ([TechCrunch](https://techcrunch.com/2026/02/04/ai-sre-resolve-ai-confirms-125m-raise-unicorn-valuation/)) and Traversal ([Dealroom](https://dealroom.co/news/169321-traversal-raises-120m-at-1b-valuation-to-automate-incident-response/)).
-- Main-track pitch: "PagerDuty with hands" *(inferred)*.
-
-**Design rules worth sharing:**
-- No LLM sits in the arm's real-time control loop. Fast deterministic reflexes run on the bench. **Updated:** under D5a the healer *may* patch the safety layer and the visor. Those candidates carry a `touches_safety` flag on the timeline, always go to a simulated canary first, and stay under the kill switch. The pitch no longer claims "the LLM never touches the safety layer" ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) K17). The LLM only *proposes* typed, reversible actions (`rollback(model, rev)`, `set_mode(safe)`, `restart(proc)`), and a checker approves them *(inferred)*.
-- Each type of action earns autonomy (suggest → approve → auto) and loses it after a bad fix. Showing that demotion live is what builds judges' trust *(inferred)*.
-- Get the company loop live tonight so it runs overnight unattended. A morning count of agent vs human actions answers "how much runs without you" *(inferred)*.
-
-**Hero demo:**
-1. A judge covers the camera, or we push a bad policy to the arm.
-2. The bench detects it and goes to a safe pose or rolls back automatically.
-3. The Fleet Doctor agent writes a root cause.
-4. AgentMail sends the incident report.
-5. If the fault is hardware, Mobilerun phones in a parts order. That's a sponsor-track fit *(inferred)*.
-
-**Answers to the open questions below (from Kent's research):**
-- **Pin versions.** LeRobot v0.7.0 (Nov 5) has breaking changes, and MuJoCo 4.0.0 shipped Nov 6 ([LeRobot release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
-- **Sim twins of the arm:** MuJoCo Menagerie ships `robotstudio_so101` and runs natively on Macs ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
-- **Zero-shot "did the task succeed?" from video:** Robometer-4B in LeRobot. It wants a GPU, so it fits on RunPod ([docs](https://github.com/huggingface/lerobot/blob/main/docs/source/robometer.mdx)).
-- **RunPod:** with the LLM outside the control loop, diagnosis isn't latency-critical, so serverless is probably fine. The model should read images, because camera frames are the best evidence *(inferred)*.
-- **Venue Wi-Fi sinks robot demos.** Bring a router, an Ethernet cable and a recorded backup ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)).
-
-**Kent's status (code goes in through PRs from `cloud/*` branches; the plans are in `docs/cloud-platform-planning/`):**
-- **Now:** coding M0, due 5:15 PM. That means contracts v0.1 for Ishaan, `make up` serving `/healthz`, one real Naïve card and one real LLM call through the Naïve proxy. The overnight run launches at 12:30 AM and the code freeze is Sun 10 AM ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §2).
-- **Just merged — PR #2 (`87d4e41`, 4:34 PM, from `cloud/m0-adapters`):** the M0 adapters in `cloud/src/romulus_cloud/adapters/`, each with a fake and unit tests.
-  - A content-addressed blob store that checks sha256 while streaming.
-  - `OpenAICompatLlm`, one client for both the Naïve proxy and RunPod vLLM (D22).
-  - `HttpNaive`, which posts cards with an `Idempotency-Key` and retries 409s that are safe to retry. Its fake walks cards to RESULT or STOPPED.
-  - `FakeCoder`, the stand-in for the M8 coding agent.
-- **Just merged:**
-  - **PR #3 (`84b4a93`, 4:52 PM):** `romulus-contracts` v0.1, with models, the shared `rules.evaluate`, `code_patch` checks, example payloads and a README for the device side. Ishaan should review it: it proposes the code-package and `code_patch` formats (B2, B3).
-  - **PR #4 (`b76b332`, 4:54 PM):** the cloud scaffold: settings, the data model, the event log, the FastAPI app with `/healthz`, the worker, the Compose stack, a Makefile and `cloud/CLAUDE.md`.
-  - **Earlier:** the workspace skeleton (PR #1) and the adapters (PR #2). M0's live Naïve card and LLM call are still to come *(inferred from the build plan)*.
-- **M1 and M2 merged (5:28–5:29 PM):**
-  - **#8 (`422d4bb`):** the walking skeleton. It has the device API Ishaan's Pi will call (I1–I3), the registry, the ops API, `/incidents/{id}/story`, seed data and flows F1 and F2.
-  - **#9 (`33def3d`):** the incident timeline (D10). It has a fleet strip, the incident list, a story page with a yellow banner when a change touches safety (K17), and a Freeze/Unfreeze button.
-  - **Earlier:** #7 (the gate core, M3a), #5 (the fake fleet and reference Pi visor/outbox) and #6 (work-order triage, spend caps and `parts.yaml`).
-- **Open — #10, `cloud/m4-telemetry` (M4, F7):** recordings arrive as metadata and then bytes. They're stored raw and content-addressed, deduplicated, capped at 200 MB, and shown as evidence in the incident's story. It's out of draft now that #8 is in.
-- **Not yet started in code:** M3's gate wiring into the worker and the kill switch (F3–F5), and M5's live work-order cards *(inferred from the PR list)*. Also added `.claude/workflows/project-status.js`, a workflow that writes a cited status report across every lane.
-- **Behind schedule:** M0's live Naïve card and LLM call were due at 5:15 PM and still aren't in any PR. B4 is probably blocking them: either a Naïve key with `proxy:write` or James's RunPod endpoint *(inferred)*.
-- **Ask from James:** the current Naïve key covers only agents and sessions. Hermes needs a key with Board scopes to pick up and close cards, either from Kent or via `naive mcp create` (team status).
-- **Decisions locked (D0–D22):** Docker Compose, Postgres 17, FastAPI, Jinja + htmx (D17, D18). Naïve is outbound only, with caps in our code and over-cap orders blocked (D19, D19b). LLM access goes through the Naïve proxy or RunPod, with a swappable `Coder` for code patches (D21, D22). D5a is accepted, with its risk logged as K17 ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
-- **Blocked on Ishaan and James:** the device code and tests need to be in `device/` (B1), the code-package and `code_patch` formats need agreement (B2, B3), the STM32 toolchain has to go in the sandbox (B8), and Ishaan has to supply the list of safety and visor paths (K17). Either a Naïve key with `proxy:write` or James's RunPod endpoint is needed (B4) (build plan §3, M8). Ishaan's test bed lives in `edge/`, while the contracts expect `device/`, so the two need to agree on one folder *(inferred)*.
+- **Pitch:** we sell uptime: one heal loop at arm, fleet and company scale. Rivals only diagnose ([Alloy](https://theaiinsider.tech/2026/08/13/alloy-robotics-raises-8m-in-new-funding-to-help-engineers-debug-robot-fleets-with-ai-agents/)) or recommend fixes ([Formant F3](https://www.businesswire.com/news/home/20250630008190/en/Formant-F3-Brings-Generative-AI-and-Agentic-Reasoning-to-Robot-Ops)). We close the loop: "PagerDuty with hands" *(inferred)*.
+- **Rule:** no LLM in the real-time control loop. Models propose reversible fixes, and the gate checks them: replay → simulated canary → automatic promote or rollback. People only touch the kill switch (D6, D11).
+- **Rule:** the healer may patch the safety layer and the visor (D5a). Those changes are flagged `touches_safety` and always go to the simulated canary first (K17).
+- **Rule:** each action type earns autonomy and loses it after a bad fix. The overnight unattended run is the proof *(inferred)*.
+- **Demo:** cover the camera or push a bad policy → arm parks or rolls back → root cause on the timeline → AgentMail incident report → hardware fault? Mobilerun orders the part.
+- **Research:** pin LeRobot v0.7.0, since it breaks the API ([release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
+- **Research:** the SO-101 sim twin is `robotstudio_so101` in MuJoCo Menagerie, and it runs on a Mac ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
+- **Research:** bring a router, Ethernet and a backup video, because venue Wi-Fi sinks demos ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)). Everything else is in [`docs/cloud-platform-planning/README.md`](docs/cloud-platform-planning/README.md).
+- **Now:** PRs #12 (M3b: batch, gate, kill switch; F3–F5) and #11 (M5: work orders → Naïve cards; F6) are open. Drafting the Fleet Doctor in [`docs/fleet-doctor/`](docs/fleet-doctor/), a proposal asking for D23–D27.
+- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3a #7 · M4 #10 · triage #6 · decisions D0–D22 locked.
+- **Blocked:** B4, a Naïve `proxy:write` key or RunPod endpoint. M0's live card and LLM call wait on it and are 35 min late *(inferred)*. Also B1 (device code in the repo), B8 (STM32 toolchain; Olir's `firmware/toolkit/` may solve it *(inferred)*) and the K17 path list.
+- **Asks:** Ishaan: move `edge/` to `device/`, review contracts #3 (B2, B3), send the safety and visor paths. James: the RunPod endpoint. Owed to James: a Naïve key with Board scopes.
 <!-- romulus-sync:end -->
 
 ### Device-side healer (Ishaan)
