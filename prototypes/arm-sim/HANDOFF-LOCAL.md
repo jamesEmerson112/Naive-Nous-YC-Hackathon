@@ -97,4 +97,4 @@ PYTHONPATH=. .venv/bin/python -m armsim.mission --board file --host 0.0.0.0 --ro
 ## 6. Bench log (add a line per run, newest last)
 | Time | Story or step | Result | Notes and log paths |
 |---|---|---|---|
-| | | | |
+| Sun 9:14 AM | Setup on James's Mac. The arm and pod will plug into the Mac by USB, so no Pi. | Backend and frontend up. Arm not plugged in yet; nothing moved. | Romulus rebuilt on main (`make up && make seed`, `/healthz` ok). Mission Control on `localhost:8765` (`runs/logs/mission.log`). LeRobot 0.7.0 in the arm-sim venv, and `arm/.venv` made. Pose guard `0e18ee8` on main. All 8 test files pass, run with `TMPDIR=/tmp` and a venv path with no spaces (two macOS path issues in the tests). Stopped 5 leftover sim edge bridges. Still to do: Andre's poses, the ports, podd (`HEALER_VAR=$TMPDIR/pod-real`). |
