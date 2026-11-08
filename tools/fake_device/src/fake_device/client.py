@@ -21,6 +21,7 @@ import io
 import json
 import logging
 import tarfile
+import threading
 from typing import Any
 
 import httpx
@@ -180,13 +181,31 @@ class DeviceClient:
         error**: unreachable, timeout, non-200 (503 doctor off, 409 frozen, 429 cap, 5xx),
         or a body that isn't advice. The caller's circuit breaker trips on None.
 
-        `timeout_s` is httpx's per-phase timeout (connect, write, read), so a slow LLM
-        answer is cut off by the read timeout. Pass the ask's `budget_s`.
+        `timeout_s` (pass the ask's `budget_s`) bounds the **total** wait. httpx's own
+        timeouts are per phase (connect, write, each read), so a server that drips bytes
+        could outlast them; the request therefore runs on a daemon thread and this method
+        stops waiting at `timeout_s`. A request still running then is abandoned, and
+        httpx's per-phase timeouts (also `timeout_s`) end it soon after.
         """
+        answer: list[dict[str, Any] | None] = []
+        worker = threading.Thread(
+            target=lambda: answer.append(self._ask_doctor(ask, timeout_s)),
+            name="doctor-ask",
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout_s)
+        if worker.is_alive() or not answer:
+            log.info("doctor ask: no answer within %.1f s", timeout_s)
+            return None
+        return answer[0]
+
+    def _ask_doctor(self, ask: dict[str, Any], timeout_s: float) -> dict[str, Any] | None:
         path = f"/v1/devices/{self.device_id}/doctor/ask"
         try:
             payload = body(DoctorAsk.model_validate(ask))
-            resp = self.http.request("POST", path, json=payload, timeout=timeout_s)
+            timeout = httpx.Timeout(timeout_s)
+            resp = self.http.request("POST", path, json=payload, timeout=timeout)
             if resp.status_code != 200:
                 log.info("doctor ask: no answer (%s %s)", resp.status_code, resp.text[:200])
                 return None

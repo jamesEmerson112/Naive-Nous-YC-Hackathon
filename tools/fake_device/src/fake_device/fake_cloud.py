@@ -9,10 +9,12 @@ Knobs: `offline` (every request raises `httpx.ConnectError`), `fail_status` (eve
 request gets that status), `corrupt` (paths whose advertised sha256 is wrong),
 `doctor_timeout` (a Doctor ask raises `httpx.ReadTimeout`).
 
-Fleet Doctor routes (3.8-3.10): an ask gets `advice` (canned, the contracts example); a
-proposal set up with `offer(device_id, proposal)` is pointed at by that device's
-check-ins (with its sha256) until a result for it arrives, and served with `X-Sha256`
-like the real cloud (`proposal_body_and_sha256`).
+Fleet Doctor routes (3.8-3.10), with the real cloud's errors: an ask gets `advice`
+(canned, the contracts example), or 409 while `frozen`. A proposal set up with
+`offer(device_id, proposal)` is pointed at by that device's check-ins (with its sha256)
+until a result for it arrives or it expires by `clock`, and served with `X-Sha256` like
+the real cloud (`proposal_body_and_sha256`); after a result or expiry the GET is 410, and
+while `frozen` it is 409.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ import io
 import json
 import re
 import tarfile
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -36,6 +40,7 @@ from romulus_contracts import (
     IncidentReport,
     InstallResult,
     OverlayStatus,
+    Proposal,
     ProposalResult,
     RecordingMeta,
     firmware_response,
@@ -96,10 +101,14 @@ CANNED_ADVICE: dict[str, Any] = {
 """What every Doctor ask gets, as in packages/contracts/examples/doctor_advice.json."""
 
 
-def canned_proposal(**changes: Any) -> dict[str, Any]:
+def canned_proposal(
+    now: datetime | None = None, ttl_s: float = 3600, **changes: Any
+) -> dict[str, Any]:
     """The D1 fix as a proposal (packages/contracts/examples/proposal.json), for a seeded
-    device on firmware 1, harness 1, code `c0de001` with no overlay. `changes` replace
-    top-level fields; pass `base={...}` to change the base."""
+    device on firmware 1, harness 1, code `c0de001` with no overlay. It expires `ttl_s`
+    after `now` (default: the real time now). `changes` replace top-level fields; pass
+    `base={...}` to change the base."""
+    expires = (now or datetime.now(UTC)) + timedelta(seconds=ttl_s)
     proposal = {
         "proposal_id": "prop_8c2e4a6b0d1f4e3a9b7c5d2e1f0a3b4c",
         "incident_id": "6d0a4c2e-9b1f-4e3a-8c5d-7f2e1a0b9c84",
@@ -109,7 +118,7 @@ def canned_proposal(**changes: Any) -> dict[str, Any]:
         "test_hand_near_while_holding_keeps_gripper_closed",
         "why": "SPEC.md forbids opening the gripper on the ultrasonic reading while holding.",
         "checks": {"stub": False, "fails_before": True, "passes_after": True},
-        "expires_at": "2026-11-08T04:20:00Z",
+        "expires_at": expires.astimezone(UTC).isoformat().replace("+00:00", "Z"),
     }
     return {**proposal, **changes}
 
@@ -157,6 +166,8 @@ class FakeCloud:
         self.fail_status: int | None = None
         self.corrupt: set[str] = set()
         self.doctor_timeout = False
+        self.clock: Callable[[], datetime] = lambda: datetime.now(UTC)
+        """The cloud's time, for proposal expiry. Tests set it."""
 
     # -- setup ------------------------------------------------------------------------
 
@@ -187,9 +198,10 @@ class FakeCloud:
         self.assigned[device_id] = {"firmware": firmware, "harness": harness}
 
     def offer(self, device_id: str, proposal: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Offer `proposal` (default `canned_proposal()`) to `device_id`: its check-ins point
-        at it until a result arrives. Returns the proposal."""
-        proposal = proposal or canned_proposal()
+        """Offer `proposal` (default `canned_proposal`, expiring an hour after `clock()`) to
+        `device_id`: its check-ins point at it until a result arrives or it expires.
+        Returns the proposal."""
+        proposal = proposal or canned_proposal(now=self.clock())
         self.proposals[proposal["proposal_id"]] = (device_id, proposal)
         self.offers[device_id] = proposal["proposal_id"]
         return proposal
@@ -197,7 +209,7 @@ class FakeCloud:
     def pointer(self, device_id: str) -> dict[str, Any] | None:
         """The check-in's `proposal` for `device_id`, with the sha256 of the served body."""
         pid = self.offers.get(device_id)
-        if pid is None or self.frozen:
+        if pid is None or self.frozen or self._expired(pid):
             return None
         proposal = self.proposals[pid][1]
         _, sha = proposal_body_and_sha256(proposal)
@@ -317,10 +329,16 @@ class FakeCloud:
 
     # -- Fleet Doctor (3.8-3.10) ------------------------------------------------------
 
+    def _expired(self, proposal_id: str) -> bool:
+        body = self.proposals[proposal_id][1]
+        return Proposal.model_validate(body).expires_at <= self.clock()
+
     def _doctor_ask(self, request, device):
         if self.doctor_timeout:
             raise httpx.ReadTimeout("fake doctor timed out", request=request)
         raw, _ = self._parse(request, DoctorAsk)
+        if self.frozen:
+            return _error(409, "fleet_frozen", "the kill switch is on")
         self.asks.append((device, raw))
         return httpx.Response(200, json={**self.advice, "ask_id": f"ask_fake{len(self.asks)}"})
 
@@ -328,6 +346,10 @@ class FakeCloud:
         owner, body = self.proposals.get(proposal, (None, None))
         if owner != device:
             return _error(404, "unknown_proposal", proposal)
+        if self.frozen:
+            return _error(409, "fleet_frozen", "the kill switch is on")
+        if proposal in self.proposal_results or self._expired(proposal):
+            return _error(410, "proposal_gone", f"{proposal} is no longer offered")
         content, sha = proposal_body_and_sha256(body)
         if request.url.path in self.corrupt:
             sha = "0" * 64

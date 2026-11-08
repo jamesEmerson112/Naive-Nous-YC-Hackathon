@@ -74,6 +74,8 @@ class SimDevice:
 
     _stored: dict[tuple[str, Any], Any] = field(default_factory=dict)
     """Versions kept "on disk" (kind, version) -> payload, so rollback needs no cloud."""
+    _snapshots: dict[str, tuple[Overlay | None, bool]] = field(default_factory=dict)
+    """Overlay snapshots "on disk" for the proposal applier, by handle."""
 
     def __post_init__(self) -> None:
         self.rng = random.Random(f"{self.device_id}:{self.seed}")
@@ -181,11 +183,15 @@ class SimDevice:
     def active_overlay_id(self) -> str | None:
         return self.overlay.overlay_id if self.overlay else None
 
-    def snapshot(self) -> tuple[Overlay | None, bool]:
-        return self.overlay, self.overlay_held
+    def snapshot(self) -> str:
+        """A handle (a string) to the current overlay state. The state is kept on this
+        object, which outlives a simulated restart, as a snapshot directory would on disk."""
+        handle = f"snap-{len(self._snapshots) + 1}"
+        self._snapshots[handle] = (self.overlay, self.overlay_held)
+        return handle
 
-    def restore(self, snapshot: tuple[Overlay | None, bool]) -> None:
-        self.overlay, self.overlay_held = snapshot
+    def restore(self, handle: str) -> None:
+        self.overlay, self.overlay_held = self._snapshots[handle]
 
     def verify(self, proposal: Proposal) -> tuple[bool, str]:
         check = proposal.repro_test or "the verify scripts"

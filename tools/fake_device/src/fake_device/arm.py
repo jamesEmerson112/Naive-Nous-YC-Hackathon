@@ -7,15 +7,18 @@ simulate a restart.
 
 The Fleet Doctor (`doctor.py`) rides along: `doctor` is the healer's L1 trigger hook, and
 on every tick `applier` runs its mark-good timer and takes any proposal the check-in
-points at (L2). A proposal overlay that was marked good is reported `held`
-`proposal_hold_after_s` later, as the scenarios do for the healer's own overlays.
+points at (L2). The first tick after a start runs `applier.recover` before anything else,
+so an overlay a crash left unconfirmed is reverted. The applier's clock is the tick's
+`now`: in the sim, the time passed to `tick` is the arm's monotonic time. A proposal
+overlay that was marked good is reported `held` `proposal_hold_after_s` later, as the
+scenarios do for the healer's own overlays.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -45,13 +48,22 @@ class FakeArm:
         self.outbox = Outbox(state_dir / "outbox")
         self.visor = Visor(self.client, self.device, self.outbox, state_dir / "visor.json")
         self.doctor = TriggerHook(self.client)
+        self._now: datetime | None = None  # the current tick's time: the applier's clock
         self.applier = ProposalApplier(
-            self.client, self.device, self.outbox, state_path=state_dir / "doctor.json"
+            self.client,
+            self.device,
+            self.outbox,
+            state_path=state_dir / "doctor.json",
+            clock=self._clock,
         )
+        self._booted = False
         self.proposal_hold_after_s = 1200.0
         """A marked-good proposal overlay is reported `held` this long after (20 min)."""
         self._holds: dict[str, datetime] = {}  # proposal overlay id -> when to report held
         self._repeated: set[int] = set()
+
+    def _clock(self) -> float:
+        return (self._now or datetime.now(UTC)).timestamp()
 
     @property
     def device_id(self) -> str:
@@ -63,6 +75,10 @@ class FakeArm:
         A device on a "late" bad version also repeats its last fault once (flow F4's
         "canary repeated camera_occluded after install").
         """
+        self._now = now
+        if not self._booted:  # boot: finish a proposal a crash interrupted, before anything
+            self._booted = True
+            self.applier.recover(now)
         result = self.visor.tick(now)
         fw = self.device.firmware
         if self.device.bad_versions.get(fw) == "late" and fw not in self._repeated:
