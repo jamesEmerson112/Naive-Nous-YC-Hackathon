@@ -76,23 +76,26 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sat Nov 7, 11:20 PM PST_
+_Last updated: Sat Nov 7, 11:30 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has two PRs open: #44 (Fleet Doctor PR 7, the last of 9, with a review fix pushed at 10:58 PM) and #46 (B5, coder sandbox reaches only the LLM). James opened five `CLAUDE.md` notice PRs (#47–#51) asking stale branches to merge main. Olir has the pod healer bench runs and the bad-ultrasonic arm heal test. The overnight launch is due by 12:30 AM (Kent's plan).
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. The Fleet Doctor is finished: all 9 planned PRs are merged, and it is off by default. Kent still has #46 open (B5, coder sandbox reaches only the LLM). Next on Kent's plan: the Stripe direction with James, the live Naïve card, and the overnight launch by 12:30 AM. Olir has the pod healer bench runs and the bad-ultrasonic arm heal test.
 
 **Recently done:**
-- James opened #47–#51 (11:02 PM), one per stale branch: `arm/teleop-recording` (Andre, 59 behind), `demo` (200), `firmware-harness-connection` (32), `firmware` (201), `local-model-serve` (20, all Olir). Each PR changes only `CLAUDE.md`, replacing it with main's copy plus a notice listing tonight's overlaps; nothing went to main (James's session)
-- Kent pushed a review fix to #44 (`6c04704`, 10:58 PM): the sandbox check now requires the repro test to fail on behaviour before the patch and pass after; a patch that edits existing tests fails without a sandbox run
-- James previewed the Stack Map hub built from main (11:16 PM, no console errors). Its team, lanes and "doing" text in `hub/src/content/` was last edited at 8:22 PM, so it misses tonight's merges (#32–#45), Olir's claims, the arm-file overlap and #47–#51 (James's session)
-- James's P1 prototypes run in simulation (local branch `james/arm-sim`, not pushed): arm host, `so101-arm` Hermes plugin with a `pre_tool_call` guard, approach-then-grasp, a level-1 watchdog, a fault factory, a ChatTS level-2 test on RunPod (pod terminated). Sim only (James's session)
+- Kent merged Fleet Doctor PR 7 as #44 (11:23 PM): real evidence, coder draft, sandbox check, consult traces. The repro must be a new test file that fails, then passes; test tampering and planted `pytest.py`/`sitecustomize`/`.pth` files are refused (`docs/fleet-doctor/implementation-plan.md`)
+- Kent merged #52 (11:25 PM): the final Fleet Doctor tracker, with every planned PR merged and reviewed, plus an open follow-ups table. He moved its lines to FINISHED in `features.txt` and added a P1 follow-ups line for himself
+- James opened #47–#51 (11:02 PM), one per stale branch (`arm/teleop-recording`, `demo`, `firmware-harness-connection`, `firmware`, `local-model-serve`). Each changes only `CLAUDE.md`; all five are still open
+- James's P1 prototypes run in simulation (local branch `james/arm-sim`, not pushed): arm host, `so101-arm` Hermes plugin with a `pre_tool_call` guard, a level-1 watchdog, a fault factory, a ChatTS level-2 test on RunPod (pod terminated) (James's session)
 
 **Open questions:**
+- Fleet Doctor follow-ups (#52): keep `DOCTOR_DRAFT=coder` off on real device text until B5 (#46) merges; `SAFETY_PATHS_CONFIRMED` stays false, discarding every proposal, until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder; gate replay hardening is in progress on `cloud/replay-hardening` (not on GitHub yet)
 - Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block)
-- Kent is still blocked only on the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor), plus his own go-ahead for the live Naïve card. Ishaan also still owes the contracts review (B2, B3)
-- Overlaps the notice PRs flag: Andre's arm files exist twice (his branch and a flat `arm/` on main from #36, with a different `arm/README.md`); three real-arm drivers (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, James's `prototypes/arm-sim/`); the cm-vs-mm ultrasonic and shared `/dev/ttyACM0` clash from #31. Which driver wins? *(inferred)*
+- Overlaps the notice PRs flag: Andre's arm files exist twice (his branch and a flat `arm/` on main from #36); three real-arm drivers (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, James's `prototypes/arm-sim/`); the cm-vs-mm ultrasonic and shared `/dev/ttyACM0` clash from #31. Which driver wins? *(inferred)*
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and when `james/arm-sim` gets pushed for Kent's 9–10 AM "real arm + polish" slot
 
 **Recent commits (all authors):**
+- `ff25437` Sat 23:25 · kgang · Fleet Doctor: final tracker (all PRs merged), open follow-ups, features.txt (#52)
+- `2e71f56` Sat 23:23 · kgang · Fleet Doctor PR 7: real evidence, coder draft, sandbox check, consult traces (#44)
+- `96ac33a` Sat 23:18 · jamesEmerson112 · Update team status in CLAUDE.md
 - `9c61066` Sat 23:16 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `126d521` Sat 23:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `7c734da` Sat 22:59 · jamesEmerson112 · Update team status and features.txt
@@ -100,9 +103,6 @@ _Last updated: Sat Nov 7, 11:20 PM PST_
 - `1f043d6` Sat 22:38 · jamesEmerson112 · Update team status in CLAUDE.md
 - `612ca01` Sat 22:38 · Kent Gang · Update Kent status in CLAUDE.md
 - `5ce8590` Sat 22:29 · jamesEmerson112 · Update team status in CLAUDE.md
-- `fba444e` Sat 22:29 · jamesEmerson112 · Update team status and features.txt
-- `cd261a2` Sat 22:28 · Olir Eswar · Claim pod healer bench runs and the ultrasonic arm heal test in features.txt
-- `ccb95fb` Sat 22:28 · kgang · Romulus docs: M8 status after #24, #28, #38 (#45)
 
-**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and `doctor/evidence-real` (#44, Kent); notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `doctor/evidence-real` (#44), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
