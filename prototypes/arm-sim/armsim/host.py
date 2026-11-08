@@ -8,6 +8,8 @@ also wants exactly one long-lived owner of the servo bus (note, "Traps").
     {"op": "read"} / {"op": "distance"} / {"op": "status"} / {"op": "incidents"} / {"op": "ping"}
     {"op": "inject", "fault": "us_frozen"}    plant a fault (sim only)
     {"op": "repair", "action": "restart_sensor"}  the healer's tool: fix the cause, then verify
+    {"op": "window", "seconds": 6, "until": ts}   the distance rows before `until` (the worker's packet)
+    {"op": "handoff", "id": "inc-1", "reason": ...}  a person takes an open incident (the arm stays parked)
 
 The watchdog is plain code (level 1, `level1.py`): on each distance row it checks the last few
 seconds. The first critical finding opens an incident: the sentence is spoken, motion halts, the
@@ -395,6 +397,24 @@ class Watchdog:
                 "still": [f["summary"] for f in still], "pod_critical": [i.get("summary") for i in pod_crit],
                 "resolved": [i["id"] for i in resolved], "open": [i["id"] for i in self.open()]}
 
+    def handoff(self, iid, reason):
+        """A person takes an open incident (the worker's handoff_human, armsim/worker.py): the arm stays
+        parked, the dispatcher waits, and Romulus gets the hardware report, as after a failed verify."""
+        with self.lock:
+            inc = next((i for i in self.open() if i["id"] == iid), None)
+            if inc is None:
+                return {"ok": False, "error": f"no open incident {iid!r}"}
+            new = not inc.get("handed_off")
+            if new:
+                inc.update(handed_off=round(self.clock(), 2), handoff_reason=reason)
+        if new:
+            print(f"WATCHDOG {iid} handed off (by the healer): {reason}", flush=True)
+            if self.pod:
+                self.pod.note("arm_handoff", id=iid, kind=inc["kind"], reason=reason)
+            for cb in self.on_handoff:
+                cb(inc)
+        return {"ok": True, "id": iid, "handed_off": inc["handed_off"], "handoff_reason": inc["handoff_reason"]}
+
 
 def state_path():
     """Where the host writes its state snapshot: $ARMSIM_STATE, else next to the socket
@@ -682,6 +702,14 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
             return out
         if op == "incidents":
             return {"ok": True, "incidents": dog.incidents}
+        if op == "window":                            # the worker's escalation packet (armsim/worker.py)
+            until = float(req.get("until") or dog.clock())
+            secs = float(req.get("seconds") or 6.0)
+            return {"ok": True, "now": round(dog.clock(), 3), "until": until, "seconds": secs,
+                    "rows": [r for r in list(arm.d_rows) if until - secs <= r["ts"] <= until],
+                    "arm": getattr(arm, "kind", "sim"), "kinematics": bool(getattr(arm, "use_ik", True))}
+        if op == "handoff":
+            return dog.handoff(req.get("id"), req.get("reason") or "handed to a person by the healer")
         if op == "repair":
             state["activity"] = {"what": f"repair: {req.get('action')}", "since": round(time.time(), 2)}
             try:

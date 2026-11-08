@@ -10,6 +10,11 @@ own, the arm works, a fault heals, the card closes. Nobody types.
 Options: --board file|naive (default $ARMSIM_BOARD_KIND, else file), --board-id ID, --exec scripted|hermes
 (default scripted), --every 5 (seconds between polls while idle), --once, --max-jobs N, --job-timeout 600
 (seconds; Hermes is killed after it, the scripted commander stops between steps).
+The worker/manager healer (armsim/worker.py, docs/worker-manager-healer.md), scripted commander only:
+--manager off|fake|hermes (default off: today's scripted heal), --manager-url (default $ARMSIM_MANAGER_URL;
+the key is $ARMSIM_MANAGER_KEY), --manager-deadline 90, --fake-mode good|bad_json|off_list|unsafe|slow|429|
+500|failed|refused (--manager fake), --worker-lm off|ollama, --ollama URL, --worker-model qwen3.5:4b,
+--exec-via code|lm (lm: the worker's model issues the checked action, gated to that exact call).
 
 How it works, one card at a time (there is one arm):
 1. At startup it takes the board's dispatcher lock (one dispatcher per board: a second one exits), then
@@ -156,8 +161,10 @@ class ScriptedExecutor:
     name = "scripted"
 
     def __init__(self, board, *, call=None, emit=None, max_heals=MAX_HEALS, pod_wait_s=90.0, pod_clear_s=10.0,
-                 hold_s=6.0, poll_s=1.0, sleep=time.sleep):
+                 hold_s=6.0, poll_s=1.0, sleep=time.sleep, worker=None):
         self.board, self.host = board, Host(call)
+        self.worker = worker                  # armsim.worker.Worker: heal through the manager first (None: off)
+        self.job_steps = []
         self.emit = emit or events.emit
         self.max_heals, self.pod_wait_s, self.pod_clear_s = max_heals, pod_wait_s, pod_clear_s
         self.hold_s, self.poll_s, self.sleep = hold_s, poll_s, sleep
@@ -173,7 +180,7 @@ class ScriptedExecutor:
         self.ctx = {"card": card["id"], "order": job["order"], "job": job["job"], "exec": self.name}
         self.healed = []
         t0 = time.time()
-        steps = job["steps"]
+        steps = self.job_steps = job["steps"]
         self._ev("job_started", f"the scripted commander starts {JOBS[job['job']]['title']}: {', '.join(steps)}",
                  steps=steps)
         for step in steps:
@@ -248,7 +255,10 @@ class ScriptedExecutor:
         handed = self._handed_off(st, iid)
         if handed:
             return False, f"{kind} was handed to a person: {handed.get('handoff_reason') or summary}"
-        if self._pod_side(inc, st) or (kind in MAYBE_POD_KINDS and self._hold_for_pod(inc)):
+        done = self.worker.heal(self, inc, step) if self.worker else None   # None: the scripted heal below
+        if done:
+            ok, action, detail = done
+        elif self._pod_side(inc, st) or (kind in MAYBE_POD_KINDS and self._hold_for_pod(inc)):
             ok, action, detail = self._wait_for_pod(inc)
         elif kind.startswith("us_"):
             r = self.host("repair", action="restart_sensor")
@@ -267,6 +277,8 @@ class ScriptedExecutor:
                 handed = self._handed_off(self.host("status"), iid)
                 ok, action, detail = False, "verify", ((handed or {}).get("handoff_reason")
                                                        or f"still failing after a checked retry at home: {self._still(r)}")
+        if self.worker:
+            detail = self.worker.closed(self, inc, step, ok, action, detail)
         secs = round(time.time() - t0, 1)
         verdict = "healed" if ok else "couldn't heal"
         self._ev("heal", f"{verdict} {kind}: {detail} ({secs:.0f} s)", step=step, ok=ok, action=action,
@@ -679,7 +691,24 @@ def main(argv=None):
     ap.add_argument("--once", action="store_true", help="one pass: work the oldest waiting card if there is one, then exit")
     ap.add_argument("--max-jobs", type=int, default=None, help="exit after this many jobs")
     ap.add_argument("--job-timeout", type=float, default=600.0, help="seconds a job may take (default 600)")
+    ap.add_argument("--manager", choices=["off", "fake", "hermes"], default="off",
+                    help="heal through the worker/manager loop first (armsim/worker.py); off = today's scripted heal")
+    ap.add_argument("--manager-url", default=os.environ.get("ARMSIM_MANAGER_URL", "http://127.0.0.1:8642"),
+                    help="the manager's Hermes API server, with /p/manager when the gateway multiplexes profiles")
+    ap.add_argument("--manager-deadline", type=float, default=90.0, help="seconds the manager gets (3-120)")
+    ap.add_argument("--fake-mode", default="good", choices=["good", "bad_json", "off_list", "unsafe", "slow", "429",
+                                                           "500", "failed", "refused"], help="--manager fake only")
+    ap.add_argument("--worker-lm", choices=["off", "ollama"], default="off", help="the worker's model writes its answer")
+    ap.add_argument("--ollama", default=os.environ.get("ARMSIM_OLLAMA", "http://127.0.0.1:11434/v1"),
+                    help="the worker model's OpenAI-compatible endpoint")
+    ap.add_argument("--worker-model", default="qwen3.5:4b")
+    ap.add_argument("--exec-via", choices=["code", "lm"], default="code",
+                    help="lm: the worker's model issues the checked action, gated to that exact call (needs --worker-lm)")
     a = ap.parse_args(argv)
+    if a.exec_via == "lm" and a.worker_lm == "off":
+        raise SystemExit("--exec-via lm needs --worker-lm ollama: the worker's model issues the call")
+    if a.manager != "off" and a.exec != "scripted":
+        raise SystemExit("--manager works with --exec scripted only: the Hermes commander heals with its own rules")
     kind = a.board or os.environ.get("ARMSIM_BOARD_KIND", "file")
     if a.exec == "hermes" and kind == "file":
         raise SystemExit("--exec hermes needs --board naive: Hermes reads and closes cards only through its "
@@ -699,7 +728,11 @@ def main(argv=None):
         print("[dispatch] stopping after the current step (signal again to stop now)", flush=True)
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
-    executor = HermesExecutor(board) if a.exec == "hermes" else ScriptedExecutor(board)
+    if a.exec == "hermes":
+        executor = HermesExecutor(board)
+    else:
+        from .worker import make as make_worker
+        executor = ScriptedExecutor(board, worker=make_worker(a))
     try:
         Dispatcher(board, executor, every=a.every, job_timeout=a.job_timeout, stop=stop).run(
             once=a.once, max_jobs=a.max_jobs)

@@ -1,0 +1,178 @@
+{
+ "$id": "arm-escalation/v1",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "schema",
+  "incident_id",
+  "device_id",
+  "category",
+  "opened_at",
+  "findings",
+  "worker",
+  "window",
+  "state",
+  "allowed_actions",
+  "deadline_s"
+ ],
+ "properties": {
+  "schema": {
+   "const": "arm-escalation/v1"
+  },
+  "incident_id": {
+   "type": "string",
+   "pattern": "^inc-[A-Za-z0-9-]{4,64}$"
+  },
+  "device_id": {
+   "type": "string"
+  },
+  "category": {
+   "enum": [
+    "fault",
+    "wrong_action"
+   ]
+  },
+  "opened_at": {
+   "type": "string",
+   "format": "date-time"
+  },
+  "findings": {
+   "type": "array",
+   "minItems": 1,
+   "maxItems": 8,
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "src",
+     "kind",
+     "severity",
+     "summary"
+    ],
+    "properties": {
+     "src": {
+      "enum": [
+       "watchdog",
+       "podd",
+       "l3a",
+       "dispatcher"
+      ]
+     },
+     "kind": {
+      "type": "string",
+      "maxLength": 40
+     },
+     "severity": {
+      "enum": [
+       "info",
+       "warn",
+       "critical"
+      ]
+     },
+     "summary": {
+      "type": "string",
+      "maxLength": 300
+     }
+    }
+   }
+  },
+  "worker": {
+   "type": [
+    "object",
+    "null"
+   ]
+  },
+  "window": {
+   "type": "string",
+   "maxLength": 12000
+  },
+  "state": {
+   "type": "object",
+   "required": [
+    "mode",
+    "kinematics",
+    "parked",
+    "tried"
+   ],
+   "properties": {
+    "mode": {
+     "enum": [
+      "sim",
+      "real"
+     ]
+    },
+    "kinematics": {
+     "type": "boolean"
+    },
+    "parked": {
+     "type": "boolean"
+    },
+    "pod_image": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "job": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "properties": {
+      "card_id": {
+       "type": "string"
+      },
+      "steps": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      },
+      "failed_step": {
+       "type": "string"
+      }
+     }
+    },
+    "tried": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "action",
+       "verified"
+      ],
+      "properties": {
+       "action": {
+        "type": "string"
+       },
+       "verified": {
+        "type": "boolean"
+       }
+      }
+     }
+    }
+   }
+  },
+  "allowed_actions": {
+   "type": "array",
+   "minItems": 1,
+   "uniqueItems": true,
+   "items": {
+    "enum": [
+     "restart_sensor",
+     "verify",
+     "pod_rollback",
+     "redo_step",
+     "park",
+     "handoff_human",
+     "no_action"
+    ]
+   }
+  },
+  "deadline_s": {
+   "type": "number",
+   "minimum": 3,
+   "maximum": 120
+  }
+ }
+}

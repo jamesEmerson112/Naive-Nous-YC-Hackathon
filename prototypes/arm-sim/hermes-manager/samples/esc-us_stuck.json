@@ -1,0 +1,45 @@
+{
+ "schema": "arm-escalation/v1",
+ "incident_id": "inc-90cce9e7-1-1",
+ "device_id": "arm-twin-1",
+ "category": "fault",
+ "opened_at": "2026-11-08T12:04:58+00:00",
+ "findings": [
+  {
+   "src": "watchdog",
+   "kind": "us_stuck",
+   "severity": "critical",
+   "summary": "Distance stuck at 130 mm while the arm moved 29 mm"
+  }
+ ],
+ "worker": null,
+ "window": "WINDOW src=arm-sim span=6.0s kinematics=on holding=no\nD01 +0.1 mm=- us=43 st=out_of_range pred=7.3\nD02 +0.2 mm=- us=42 st=out_of_range pred=7.3\nD03 +0.3 mm=- us=43 st=out_of_range pred=7.3\nD04 +0.4 mm=- us=42 st=out_of_range pred=7.3\nD05 +0.5 mm=- us=42 st=out_of_range pred=7.3\nD06 +0.6 mm=- us=42 st=out_of_range pred=7.3\nD07 +0.7 mm=- us=42 st=out_of_range pred=7.3\nD08 +0.8 mm=- us=43 st=out_of_range pred=7.3\nD09 +0.9 mm=- us=42 st=out_of_range pred=7.3\nD10 +1.0 mm=- us=42 st=out_of_range pred=7.3\nD11 +1.1 mm=- us=43 st=out_of_range pred=7.3\nD12 +1.2 mm=- us=42 st=out_of_range pred=7.3\nD13 +1.3 mm=- us=42 st=out_of_range pred=7.3\nD14 +1.4 mm=- us=43 st=out_of_range pred=7.3\nD15 +1.5 mm=- us=44 st=out_of_range pred=7.4\nD16 +1.6 mm=70 us=409 st=ok pred=37.7\nD17 +1.7 mm=74 us=432 st=ok pred=71.4\nD18 +1.8 mm=81 us=470 st=ok pred=78.4\nD19 +1.9 mm=86 us=502 st=ok pred=83.8\nD20 +2.0 mm=90 us=524 st=ok pred=91.7\nD21 +2.1 mm=96 us=558 st=ok pred=112.5\nD22 +2.2 mm=124 us=724 st=ok pred=124.4\nD23 +2.3 mm=126 us=734 st=ok pred=126.6\nD24 +2.4 mm=128 us=744 st=ok pred=128.5\nD25 +2.5 mm=129 us=754 st=ok pred=129.7\nD26 +2.6 mm=130 us=758 st=ok pred=130.0\nD27 +2.7 mm=130 us=758 st=ok pred=130.0\nD28 +2.8 mm=130 us=758 st=ok pred=130.0\nD29 +2.9 mm=130 us=758 st=ok pred=130.0\nD30 +3.0 mm=130 us=758 st=ok pred=130.0\nD31 +3.1 mm=130 us=758 st=ok pred=130.1\nD32 +3.2 mm=130 us=758 st=ok pred=130.1\nD33 +3.3 mm=130 us=758 st=ok pred=130.1\nD34 +3.4 mm=130 us=758 st=ok pred=130.1\nD35 +3.5 mm=130 us=758 st=ok pred=130.1\nD36 +3.6 mm=130 us=758 st=ok pred=130.1\nD37 +3.7 mm=130 us=758 st=ok pred=130.1\nD38 +3.9 mm=130 us=758 st=ok pred=130.1\nD39 +4.0 mm=130 us=758 st=ok pred=130.1\nD40 +4.1 mm=130 us=758 st=ok pred=130.1\nD41 +4.2 mm=130 us=758 st=ok pred=130.1\nD42 +4.3 mm=130 us=758 st=ok pred=130.1\nD43 +4.4 mm=130 us=758 st=ok pred=130.1\nD44 +4.5 mm=130 us=758 st=ok pred=130.1\nD45 +4.6 mm=130 us=758 st=ok pred=130.1\nD46 +4.7 mm=130 us=758 st=ok pred=130.3\nD47 +4.8 mm=130 us=758 st=ok pred=130.9\nD48 +4.9 mm=130 us=758 st=ok pred=131.8\nD49 +5.0 mm=130 us=758 st=ok pred=132.9\nD50 +5.1 mm=130 us=758 st=ok pred=134.1\nD51 +5.2 mm=130 us=758 st=ok pred=135.3\nD52 +5.3 mm=130 us=758 st=ok pred=136.4\nD53 +5.4 mm=130 us=758 st=ok pred=137.4\nD54 +5.5 mm=130 us=758 st=ok pred=108.3\nD55 +5.6 mm=130 us=758 st=ok pred=108.6\nD56 +5.7 mm=130 us=758 st=ok pred=108.4\nD57 +5.8 mm=130 us=758 st=ok pred=107.7\nD58 +5.9 mm=130 us=758 st=ok pred=106.7\nD59 +6.0 mm=130 us=758 st=ok pred=104.7\nJS pos=0.0,-95.0,90.0,55.0,90.8,-0.0 st=0,0,0,0,0,0 gripper_load=0.029\nL podd=up image=good\nINC1 src=watchdog kind=us_stuck severity=critical summary=\"Distance stuck at 130 mm while the arm moved 29 mm\"",
+ "state": {
+  "mode": "sim",
+  "kinematics": true,
+  "parked": true,
+  "pod_image": "good",
+  "job": {
+   "card_id": "crd_2304e6a59b3d",
+   "steps": [
+    "go_home",
+    "reach",
+    "approach",
+    "grip",
+    "lift",
+    "release",
+    "go_home"
+   ],
+   "failed_step": "reach"
+  },
+  "tried": []
+ },
+ "allowed_actions": [
+  "restart_sensor",
+  "verify",
+  "park",
+  "handoff_human",
+  "no_action"
+ ],
+ "deadline_s": 90.0
+}

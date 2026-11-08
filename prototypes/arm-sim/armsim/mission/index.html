@@ -442,6 +442,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @media (max-width: 1500px) {
   .fleetbox { display: none; }
   .pill { font-size: 2rem; max-width: 40vw; }
+  .pillsub { max-width: 34vw; }
+  .tag { letter-spacing: 0.14em; gap: 0.5rem; }
   .freeze { padding: 0.8rem 1.1rem; }
 }
 
@@ -519,7 +521,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 .sensor .v.bad { color: var(--bad); }
 .sensor .e { font-size: 0.95rem; color: var(--text-2); margin-top: 0.15rem; white-space: nowrap; }
 .sensor .e b { color: var(--text); font-weight: 650; }
-.hint { position: absolute; right: 1.2rem; bottom: 0.9rem; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); pointer-events: none; transition: opacity .4s; }
+.hint { position: absolute; right: 0.8rem; bottom: 0.6rem; padding: 0.22rem 0.5rem; border-radius: 6px; background: var(--hud-bg); font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); pointer-events: none; transition: opacity .4s; }
 .twin.alarm .hint, .twin.healing .hint { opacity: 0; }
 /* the state banner: in the panel's flow, above the stage, so it can never cover the arm */
 .banner { --c: var(--bad-rgb); --bb: var(--banner-bad); display: grid; grid-template-rows: 0fr; margin: 0 1.1rem; transition: grid-template-rows .45s cubic-bezier(.2, .8, .2, 1), margin .45s; flex: none; }
@@ -1086,7 +1088,8 @@ function renderHeal() {
   out += `<defs><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="rgba(${T.warn},0.35)"/><rect width="3" height="8" fill="rgba(${T.warn},0.85)"/></pattern></defs>`;
   for (let k = Math.ceil(t0 / tick) * tick; k <= now - tick * 0.25; k += tick) {
     const X = x(k);
-    out += `<line x1="${X}" x2="${X}" y1="6" y2="${axisY}" stroke="${T.tlGrid}"/><text x="${X}" y="${H - 5}" fill="${T.tlTick}" font-size="11.5" text-anchor="middle" font-family="${mono}">${hm(k)}</text>`;
+    const tl = hm(k), half = textW(tl, `400 11.5px ${T.mono}`) / 2;   // a tick label never hangs off the left edge
+    out += `<line x1="${X}" x2="${X}" y1="6" y2="${axisY}" stroke="${T.tlGrid}"/>` + (X - half < 2 ? "" : `<text x="${X}" y="${H - 5}" fill="${T.tlTick}" font-size="11.5" text-anchor="middle" font-family="${mono}">${tl}</text>`);
   }
   out += `<line x1="6" x2="${NOWX}" y1="${axisY}" y2="${axisY}" stroke="${T.tlAxis}"/>`;
   const laneJ = axisY - 14, laneI = [axisY - 52, axisY - 92];

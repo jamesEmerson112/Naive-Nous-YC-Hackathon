@@ -1,0 +1,32 @@
+# Merge these keys into ~/.hermes/profiles/manager/config.yaml (the file `hermes profile create manager --clone`
+# copied from the default profile). Keep the cloned `model:` block: it is the ChatGPT-plan login (openai-codex)
+# with gpt-6-sol at default reasoning, the same as the default profile (docs/pi-vs-hermes.md:12, 16).
+# H:L<n> = a line in docs/raw/hermes-llms-full.txt. Design: docs/worker-manager-healer.md §2.1.
+
+delegation:
+  max_concurrent_children: 3     # set explicitly: the docs say 10 (H:L19187) and 3 (H:L7001)
+  max_spawn_depth: 1             # flat: children can't delegate (H:L7004)
+  max_iterations: 8              # per child; default 250 (H:L19907, example at H:L19537)
+  child_timeout_seconds: 60      # default 0 = none, floor 30 (H:L19552-19553)
+  # NEW, not in the design's §2.1: join the children inside the run's own turn. Under the default `auto`,
+  # "the API server ... keep[s] background delegation" (H:L19782-19786), and a background delegation ends
+  # the parent's turn with a one-line status (H:L19771-19773): the run's output would be "working on it",
+  # not the fix plan. `inline`: "every gateway session joins its children inside the turn" (H:L19787).
+  # (inferred: that API-server runs count as gateway sessions here. If a run still answers with a status
+  # line, the worker refuses it and falls back; see README "If the run answers 'working on it'".)
+  gateway_mode: inline
+  # No base_url/model: children use the parent's gpt-6-sol (inferred: no per-token cost on the ChatGPT plan).
+agent:
+  # "remains authoritative" (H:L20395), applied after per-platform config (H:L4829-4840). --clone copies the
+  # default profile's plugins too (H:L9028), so so101_arm would otherwise be on (H:L16354-16357).
+  disabled_toolsets: [terminal, code_execution, file, browser, web, so101_arm, mcp-naive_board]
+  # web: added to the design's list (inferred: the analysts read only the packet). Add `memory` too if
+  # incidents start leaking into each other through the profile's memory (H:L4833-4834, H:L14365).
+approvals:
+  unattended_mode: deny          # the defaults (H:L10764-10783), written down so a clone can't change them
+  single_query_mode: deny
+gateway:
+  api_server:
+    max_concurrent_runs: 2       # default 10, then HTTP 429 (H:L39899, H:L39907); there is one arm
+kanban:
+  auto_decompose: false          # otherwise an extra LLM call every tick (H:L20749)
