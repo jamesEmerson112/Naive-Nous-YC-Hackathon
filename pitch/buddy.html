@@ -67,11 +67,6 @@ svg text.t{font-family:var(--text);font-weight:600}
 .buddy[data-e=worried] .b-open,.buddy[data-e=sad] .b-open{animation-duration:3.4s}
 .bandL{transform-box:fill-box;transform-origin:0 50%}
 #dl6.gone #dlt6{text-decoration:line-through;text-decoration-thickness:4px}
-/* HUD */
-#hud{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);display:flex;gap:14px;opacity:.5;transition:opacity .3s ease;pointer-events:none}
-#hud i{display:block;width:12px;height:12px;border-radius:6px;background:var(--faint);transition:width .3s ease,background .3s ease}
-#hud i.on{width:34px;background:var(--mute)}
-#hud.hide{opacity:0}
 </style>
 </head>
 <body>
@@ -88,7 +83,6 @@ svg text.t{font-family:var(--text);font-weight:600}
   <section class="scene" id="s7"></section>
   <section class="scene" id="s8"></section>
   <section class="scene" id="s9"></section>
-  <div id="hud"></div>
 </div>
 <script>
 "use strict";
@@ -563,9 +557,8 @@ beats:[
 
 /* ============ engine: state machine of (scene, beat) ============ */
 const BEATS=[[2500,4500],[4000,4000,3500],[5000],[3500,4000],[3000,3000,4000],[2500,3500,3500],[3000,3000],[4000],[3500,null]];
-const stage=document.getElementById('stage'), secs=[...document.querySelectorAll('.scene')], hud=document.getElementById('hud');
-hud.innerHTML=BEATS.map(()=>'<i></i>').join('');
-let cur={s:-1,b:0}, auto=false, autoT=null, hudOff=false, lastBase=0;
+const stage=document.getElementById('stage'), secs=[...document.querySelectorAll('.scene')];
+let cur={s:-1,b:0}, auto=false, autoT=null, lastBase=0;
 function cancelRun(s){
   RUN.timers.forEach(clearTimeout);RUN.timers=[];RUN.ticks=[];
   RUN.anims.forEach(({a,si})=>{try{if(si===s)a.cancel();else a.pause();}catch(e){}});
@@ -588,7 +581,7 @@ function render(s,b,mode,instant){
   }
   if(instant){void stage.offsetWidth;stage.classList.remove('instant');}
   cur={s,b};
-  updHud();schedule();
+  schedule();
 }
 function next(){const n=BEATS[cur.s].length;if(cur.b+1<n)render(cur.s,cur.b+1,'play');else if(cur.s<8)render(cur.s+1,0,'play');}
 function prev(){if(cur.b>0)render(cur.s,cur.b-1,'snap');else if(cur.s>0)render(cur.s-1,BEATS[cur.s-1].length-1,'snap');}
@@ -596,10 +589,6 @@ function schedule(){
   clearTimeout(autoT);autoT=null;if(!auto)return;
   const d=BEATS[cur.s][cur.b];if(d==null)return;
   autoT=setTimeout(()=>{autoT=null;next();},d+lastBase);
-}
-function updHud(){
-  [...hud.children].forEach((el,i)=>el.classList.toggle('on',i===cur.s));
-  hud.classList.toggle('hide',hudOff||auto);
 }
 function toggleFs(){
   const d=document,el=d.documentElement;
@@ -613,9 +602,8 @@ window.addEventListener('keydown',e=>{
   else if(k==='ArrowLeft'||k==='PageUp'){e.preventDefault();prev();}
   else if(/^[1-9]$/.test(k)){e.preventDefault();render(+k-1,0,'play');}
   else if(k==='Home'){e.preventDefault();render(0,0,'play');}
-  else if(k==='a'||k==='A'){auto=!auto;updHud();schedule();}
+  else if(k==='a'||k==='A'){auto=!auto;schedule();}
   else if(k==='f'||k==='F'){toggleFs();}
-  else if(k==='h'||k==='H'){hudOff=!hudOff;updHud();}
 });
 window.addEventListener('click',()=>next());
 window.addEventListener('hashchange',()=>{const h=parseInt(location.hash.slice(1),10);if(h>=1&&h<=9&&h-1!==cur.s)render(h-1,0,'play');});
