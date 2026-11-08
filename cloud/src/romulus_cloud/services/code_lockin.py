@@ -413,12 +413,16 @@ def gate_replay(
         base_verify = any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
         try:
             extra = verify_files(settings.coder_verify_dir)
-        except CoderError as exc:
-            if not base_verify and not settings.coder_allow_unverified:
-                # e.g. the default data/verify/device before `make device-verify`: wait for
-                # it, never roll back (a single-overlay fix would go sticky)
+        except CoderError:
+            # A missing CODER_VERIFY_DIR (e.g. the default data/verify/device before `make
+            # device-verify`) is a configuration problem: always wait, never roll back (a
+            # single-overlay fix would go sticky). Only a verify that runs and fails rolls back.
+            if not base_verify:
                 return no_verify(settings.coder_verify_dir, parent.rev)
-            return g.ReplayResult(False, f"code replay could not start: {exc}")
+            return AwaitingVerify(
+                f"configured verify dir `{settings.coder_verify_dir}` is missing: run `make "
+                "device-verify` (or fix `CODER_VERIFY_DIR`)"
+            )
         stale = stale_verify(session, extra, parent)
         if stale:
             return g.ReplayResult(False, f"code replay failed: {stale}")

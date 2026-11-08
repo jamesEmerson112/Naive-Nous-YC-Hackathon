@@ -248,12 +248,30 @@ def test_the_default_verify_dir_missing_waits_with_the_dir_and_the_command(
     assert jobs.submitted == []
 
 
-def test_a_missing_verify_dir_still_fails_when_the_base_has_verify(
+def test_a_missing_verify_dir_waits_even_when_the_base_has_verify(
     db_session, settings, code_versions, tmp_path
 ):
-    tools = _tools(settings, code_versions, StuckJobs(), coder_verify_dir=str(tmp_path / "no"))
+    missing = str(tmp_path / "no")
+    jobs = StuckJobs()
+    tools = _tools(settings, code_versions, jobs, coder_verify_dir=missing)
     result = code_lockin.gate_replay(db_session, _cand("fix0001"), tools)
-    assert not result.passed and "is not a directory" in result.why
+    assert isinstance(result, code_lockin.AwaitingVerify), result
+    assert f"configured verify dir `{missing}` is missing" in result.why
+    assert "run `make device-verify` (or fix `CODER_VERIFY_DIR`)" in result.why
+    assert jobs.submitted == []
+
+
+def test_a_missing_verify_dir_waits_even_with_allow_unverified(db_session, settings, tmp_path):
+    store = _bare(db_session, settings)
+    tools = _tools(
+        settings,
+        store,
+        StuckJobs(),
+        coder_verify_dir=str(tmp_path / "no"),
+        coder_allow_unverified=True,
+    )
+    result = code_lockin.gate_replay(db_session, _cand("bfix001"), tools)
+    assert isinstance(result, code_lockin.AwaitingVerify), result
 
 
 def test_a_parked_candidate_reads_its_base_once(db_session, settings, monkeypatch):
