@@ -71,6 +71,8 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 - **Branch and files:** `ishaan/pod-agent-loop` in worktree `naive-pod-loop` (`firmware/harness/agent.py`, `evaluate.py`, tests, README). Main checkout on `main`, clean, 11 behind origin.
 <!-- ishaan-sync:end -->
 
+**Pod healer agent loop, for Olir's session:** running or benchmarking it on the bench (`firmware/harness/`, merged as #41)? Start with [`firmware/harness/HANDOFF.md`](firmware/harness/HANDOFF.md): bench steps, what's verified, what to report.
+
 ## Team status
 <!-- team-status:start -->
 _Last updated: Sat Nov 7, 10:00 PM PST_
