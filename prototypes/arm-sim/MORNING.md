@@ -1,7 +1,8 @@
 # Morning brief (James): the prototype, everything together
 
 _Updated Sun Nov 8, about 7:40 AM PST. The 1:55 AM brief is kept below, from "What works"._
-- **Branch** `james/arm-sim-ydcsss`, merged into `main` this morning. Pull `main` (or `git fetch && git checkout james/arm-sim-ydcsss`).
+- **Branch:** run `main` (`git pull origin main`). `james/arm-sim-ydcsss` is the cloud session's working branch; its review fixes merge into `main` once checked.
+- **On the real arm today:** start with [`HANDOFF-LOCAL.md`](HANDOFF-LOCAL.md) (which code to run, where each piece runs, the bench steps, what not to edit).
 - **Stack Map:** https://claude.ai/artifact/7TriXR2KDUm9GxLg3o3aZ2. Its plan checklist (`hub/src/content/proposal.ts`) now marks items 8, Soak, 9, UI, WM, C2 and WB done; rebuild with `npm run build` in `hub/` to republish it.
 - **Tests:** 112 pass across the 8 files in `tests/` (each runs as `PYTHONPATH=. .venv/bin/python tests/test_<name>.py`).
 
@@ -88,7 +89,7 @@ It's the real-hardware version of our story A, built separately: his healer driv
 - **The Pi:** podd (Olir), the arm host, the edge bridge.
 
 1. **R0, the Pi** (with Andre and Olir):
-   1. SSH in; `git fetch && git checkout james/arm-sim`.
+   1. SSH in; `git pull origin main` (`james/arm-sim` is retired).
    2. Python 3.12 venv with `lerobot[feetech]==0.7.0`, plus `prototypes/arm-sim/requirements.txt` and the two `-e` installs in its README.
    3. Pin both ports by `/dev/serial/by-id`: `ARM_PORT` in `arm/arm.env`, `POD_PORT` for podd. Start podd.
    4. Teach the poses with Andre: `arm/bin/prim-record.sh --pose rest home above_block pick`.

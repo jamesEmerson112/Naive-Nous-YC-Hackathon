@@ -23,7 +23,7 @@ Romulus case page               Naïve session (agt_t1qy…)                Naï
 
 ## What was created (live)
 - **Agent** `agt_t1qy0q1xagnhsqbkt81qtk74c1`, `technician-approval-example`: harness `pi`, `anthropic/claude-haiku-5.5`, tools deny-by-default with only `ask_operator` named in `configs` at `ask` (needed under a deny default, F:13884; `ask_operator` has no `allow`, F:14005). Budget $5 a month and $1 a task, `handoffs: false`, question emails to Kent.
-- **Session 1** `ses_vndazsrs5vsm0mffvt42nqkx3a`: parked on `awaiting_answer` 6 s after creation and **left for Kent to answer in the Studio**.
+- **Session 1** `ses_vndazsrs5vsm0mffvt42nqkx3a`: parked on `awaiting_answer` 6 s after creation and was left for Kent. It was answered **Approve & open cart** at 16:24:13Z, outside our scripts, presumably by Kent on the Studio card *(inferred: the event names no actor)*. The script's watcher caught it, printed `resolve(approve, by="naive-studio")`, and the agent replied `DECISION: approve`. The session ended `idle` / `end_turn` at a cost of $0.0016.
 - **Session 2** `ses_7fmtg6ae3zprf939s2pycy2nhv`: started with `--answer approve`. It parked at 16:11:17Z, was answered through the API at 16:12:08Z, the agent replied `DECISION: approve`, and the session ended `idle` / `end_turn` at a cost of $0.0003.
 - **Script:** [`cloud/scripts/technician_approval_example.py`](../../cloud/scripts/technician_approval_example.py) (stdlib only). Without flags it waits up to 15 min for a Studio answer. `--answer approve|deny` answers through the API. `--session ses_…` watches or answers an existing session.
 
@@ -42,4 +42,4 @@ The other primitive: put a tool at `ask`, and its call parks as `awaiting_approv
 - **It holds the session open.** On `pi`, an idle session holds a micro-VM (F:21540), though it burns no budget (F:22567). The card waits until someone answers or Romulus cancels the session.
 - **Both sides must sync.** Romulus has to poll the session (or stream it) to catch a Studio answer, and answer the Studio when its own button is pressed. Otherwise the card goes stale. Whichever answer lands first wins *(inferred)*. A second answer should get a refusal, since the row is gone (F:10420).
 - **Platform latency today.** `POST /v1/sessions` and the polls returned `429 "the service is at capacity"` several times. The script retries reads and keyed writes with backoff for up to 3 min, and resends the session create with the same Idempotency-Key. Once a session started, it parked in about 5 s.
-- **Spend:** two sessions, about $0.001 in total.
+- **Spend:** two sessions, about $0.002 in total.
