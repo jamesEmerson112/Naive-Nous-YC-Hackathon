@@ -9,10 +9,12 @@ It changes the copy: it points `toolkit/opt` at the image's toolchain and writes
 1. Every project whose Makefile includes the toolkit's `mk/stm32.mk` is built with the
    firmware's own `make`; it reports pass/fail, flash and RAM use, the .bin size and warnings.
 2. `demo/scenario build-images` rebuilds each known-bad demo release (v1.0 + its bug.patch)
-   and says whether its commit matches the prebuilt image's build.json.
+   and checks that its commit matches the prebuilt image's build.json.
 3. Tests that need the board (`healer/tests/*.py`, make flash/check) are listed, not run.
 
-Ends stdout with one line, `ROMULUS_RESULT <json>`. Exit 0 only if every build passed.
+It fails when a build fails, a demo image differs from its prebuilt one, or the image's
+toolchain is not the one `firmware/toolkit/versions.env` pins (stale image); `failures` says why.
+Ends stdout with one line, `ROMULUS_RESULT <json>`. Exit 0 only if nothing failed.
 Standard library only: it runs on the device's Python in the image.
 """
 
@@ -136,13 +138,28 @@ def check(fw: Path, toolchain: Path = TOOLCHAIN) -> dict:
     )
     builds = [build_project(p, str(gcc.with_name("arm-none-eabi-size"))) for p in find_projects(fw)]
     demo = build_demo_images(fw)
+    stale = image_pins != wanted_pins
+    failures = [f"make -C {b['project']} failed" for b in builds if not b["passed"]]
+    if not builds:
+        failures.append("no STM32 projects found (no Makefile includes mk/stm32.mk)")
+    if stale:
+        failures.append(
+            "firmware/toolkit/versions.env pins other tools than this image has: "
+            "rebuild it with make coder-image"
+        )
+    if demo.get("ran") and not demo["passed"]:
+        failures.append("demo/scenario build-images failed")
+    failures += [
+        f"demo image {img['name']}: commit {img['commit']} differs from its prebuilt build.json"
+        for img in demo.get("images", [])
+        if not img["matches_prebuilt"]
+    ]
     return {
         "toolchain": {
             "gcc": gcc_version.splitlines()[0] if gcc_version else "",
             "make": make_version.splitlines()[0] if make_version else "",
             "pinned": image_pins.get("GCC_VERSION", ""),
-            # firmware/ pins another toolchain than the image has: rebuild with make coder-image
-            "stale": image_pins != wanted_pins,
+            "stale": stale,
         },
         "builds": builds,
         "demo_images": demo,
@@ -150,26 +167,23 @@ def check(fw: Path, toolchain: Path = TOOLCHAIN) -> dict:
             str(t.relative_to(fw)): HARDWARE_ONLY for t in sorted(fw.glob("healer/tests/*.py"))
         }
         | {"make flash / check / gdb (every project)": "SWD probe; no OpenOCD in the sandbox"},
-        "passed": bool(builds) and all(b["passed"] for b in builds) and demo.get("passed", True),
+        "failures": failures,
+        "passed": not failures,
     }
 
 
 def report(result: dict) -> str:
     tc = result["toolchain"]
     lines = [f"toolchain: {tc['gcc']} (pinned {tc['pinned']}); {tc['make']}"]
-    if tc["stale"]:
-        lines.append(
-            "WARN  firmware/toolkit/versions.env differs from the image's: run make coder-image"
-        )
     for b in result["builds"]:
         size = b.get("size") or {}
-        detail = (
-            f"flash {size.get('flash')} B, RAM {size.get('ram')} B, .bin {b.get('bin_bytes')} B"
-            if size
-            else ""
-        )
+        parts = [f"{b['warnings']} warnings"]
+        if size:
+            parts.insert(
+                0, f"flash {size['flash']} B, RAM {size['ram']} B, .bin {b['bin_bytes']} B"
+            )
         mark = "PASS" if b["passed"] else "FAIL"
-        lines.append(f"{mark}  make -C {b['project']}  {detail}, {b['warnings']} warnings")
+        lines.append(f"{mark}  make -C {b['project']}  {', '.join(parts)}")
     demo = result["demo_images"]
     if demo.get("ran"):
         mark = "PASS" if demo["passed"] else "FAIL"
@@ -179,6 +193,7 @@ def report(result: dict) -> str:
             lines.append(f"        {img['name']}: commit {img['commit']} {same} the prebuilt image")
     for name, why in result["hardware_only"].items():
         lines.append(f"SKIP  {name}: {why}")
+    lines += [f"WHY   {why}" for why in result["failures"]]
     lines.append(f"RESULT: {'PASS' if result['passed'] else 'FAIL'}")
     return "\n".join(lines)
 

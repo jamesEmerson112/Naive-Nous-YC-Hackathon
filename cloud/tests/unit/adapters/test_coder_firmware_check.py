@@ -63,3 +63,48 @@ def test_check_fails_without_a_toolchain_and_lists_the_bench_tests(tmp_path):
     assert "healer/tests/bench.py" in result["hardware_only"]
     assert result["demo_images"] == {"ran": False}
     assert "RESULT: FAIL" in fc.report(result)
+
+
+def _fake_firmware(tmp_path: Path, *, built_commit: str = "abc1234"):
+    """A firmware/ whose build and demo script succeed without a toolchain, and a fake image."""
+    fw, image = tmp_path / "firmware", tmp_path / "image"
+    (fw / "toolkit").mkdir(parents=True)
+    (fw / "toolkit" / "versions.env").write_text("GCC_VERSION=15.2.1-1.1\n")
+    (image / "opt").mkdir(parents=True)
+    (image / "versions.env").write_text("GCC_VERSION=15.2.1-1.1\n")
+    (fw / "blinky").mkdir()
+    (fw / "blinky" / "Makefile").write_text("# built with toolkit/mk/stm32.mk\nall:\n\ttrue\n")
+    (fw / "demo" / "bad-images" / "01-bug" / "image").mkdir(parents=True)
+    (fw / "demo" / "bad-images" / "01-bug" / "image" / "build.json").write_text(
+        '{"commit": "abc1234"}'
+    )
+    (fw / "demo" / "scenario").write_text(
+        f'print("01-bug                 pod v1.1 2026-11-08T01:57:45Z  crc 32ACFDAF  '
+        f'commit {built_commit}")\n'
+    )
+    return fw, image
+
+
+def test_check_passes_when_everything_matches(tmp_path):
+    fw, image = _fake_firmware(tmp_path)
+    result = fc.check(fw, image)
+    assert result["passed"] and result["failures"] == [], result["failures"]
+    assert "make -C blinky  0 warnings" in fc.report(result)  # no stray comma without a size
+
+
+def test_a_stale_toolchain_fails_the_check(tmp_path):
+    fw, image = _fake_firmware(tmp_path)
+    (fw / "toolkit" / "versions.env").write_text("GCC_VERSION=16.1.0-1.1\n")  # Olir upgraded
+    result = fc.check(fw, image)
+    assert not result["passed"] and result["toolchain"]["stale"]
+    assert any("make coder-image" in why for why in result["failures"])
+    assert "RESULT: FAIL" in fc.report(result)
+
+
+def test_a_demo_image_that_differs_from_its_prebuilt_one_fails_the_check(tmp_path):
+    fw, image = _fake_firmware(tmp_path, built_commit="def5678")
+    result = fc.check(fw, image)
+    assert not result["passed"]
+    assert result["failures"] == [
+        "demo image 01-bug: commit def5678 differs from its prebuilt build.json"
+    ]

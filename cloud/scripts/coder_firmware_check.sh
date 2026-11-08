@@ -11,7 +11,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/romulus-fw-check.XXXXXX")"
 trap 'rm -rf "$SCRATCH"' EXIT
 
-# The tracked tree only: host-installed tools, downloads and build output stay behind.
+# firmware/ as it is on disk, local edits and untracked files included. Host-installed tools,
+# downloads, healer state and every folder named build/ or backups/ (build output) stay behind.
 tar -C "$ROOT" --exclude=firmware/toolkit/opt --exclude=firmware/toolkit/downloads \
   --exclude=firmware/toolkit/dist --exclude=firmware/healer/var --exclude=build \
   --exclude=backups -cf - firmware | tar -C "$SCRATCH" -xf -
