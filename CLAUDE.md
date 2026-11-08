@@ -85,15 +85,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 12:48 PM PST_
+_Last updated: Sun Nov 8, 12:58 PM PST_
 
-**Current focus:** P4: hacking stopped at 11 AM; prepping the judges' table and the 1 PM stage. James's chips generate-and-test (`armsim/gentest.py`, Hermes `Astra` designing each trial) is **running again on the real arm** in probe mode, capped at 3 tests: each test first stops with the jaws open at the closing point so Astra can check they straddle the bag's edge, and only a go runs the full motion (`f82c4df`). The run ends by about 12:53 with the arm folded and the host up for 1 PM. Grasps still squeeze to 99% but the bag has slipped after ~0.5–0.7 s (`ded0a78`). The `armsim/eye.py` calibration was dropped (James: not possible), so the OpenCV idea is pixel-space aiming, not centimetres (not built); friction tape and staging the bag need no code. The fault stories (`a`, `b`, `stall`) haven't run on the real arm. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
+**Current focus:** P4: hacking stopped at 11 AM; the 1 PM stage is starting. James's chips generate-and-test (`armsim/gentest.py`, Hermes `Astra`) is on its last probes on the real arm: each frame Astra sees now carries a labelled grid (A–L × 1–9) and Astra names the jaws' cell and the bag edge's cell (`205f64d`). Probes so far are NO-GO but closing in: the jaws went from E7 to D7 against the edge at D6, about 13 mm short; up to 2 tests remain, ending about 1:02, and the arm host stays down until then. Mission Control's live camera shows the same grid (G or the Grid button, `d82a1ec`). The fault stories (`a`, `b`, `stall`) haven't run on the real arm. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
 
 **Recently done:**
-- James: gentest snaps a camera frame 1 s after the Pi prints `CLOSING` (the 1 fps capture guarantees the jaws are on the bag), saves it as `runs/gentest/HHMMSS-gN-close.jpg`, and shows Astra that CLOSE frame next to BEFORE and AFTER to read the miss directly; checked offline only, live from the next loop start (`1de2b0d`)
-- James: gentest probes first: the arm stops with the jaws open at the closing point and holds 3 s for the camera; Astra says go or no-go before any full run (`f82c4df`)
-- James: Mission Control has two chips orders: key 2 packs the red bag (`wave`, the default) and key 9 packs any bag (`wave_any`), with dispatch and mission tests (`557b026`)
-- James: gentest squeezes every grasp to 99% closed; Astra measures the bag in each after-frame (size, centre, nearest edge), grabs by its edge, and knows the white labels are part of the bag (`ded0a78`)
+- James: Mission Control's live camera overlays the 12 × 9 grid Astra sees (A–L, 1–9), toggled with G or the Grid button (`d82a1ec`)
+- James: gentest draws the labelled grid on every frame it shows Astra, and Astra reports the jaws' and the edge's cells with each go or no-go (`205f64d`)
+- James: gentest snaps a camera frame 1 s after the Pi prints `CLOSING` and shows Astra that CLOSE frame next to BEFORE and AFTER (`1de2b0d`)
+- James: gentest probes first: the arm stops with the jaws open at the closing point and holds 3 s; Astra says go or no-go before any full run (`f82c4df`)
 
 **Open questions:**
 - Naïve is flaky (429s and an `internal_error` this morning): go with the live board on stage, or the local fallback (Mission Control's button + the Pi's scripted dispatcher, proven at 11:10)? `armsim/hermes_file.py` (Hermes over the file board) isn't built (`HANDOFF-LOCAL.md` §4)
@@ -102,16 +102,16 @@ _Last updated: Sun Nov 8, 12:48 PM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `d82a1ec` Sun 12:55 · jamesEmerson112 · Mission Control: the live camera shows the labelled grid Astra sees (12 x 9, A-L, 1-9); G or the Grid button toggles it
+- `0921fe8` Sun 12:53 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
+- `205f64d` Sun 12:53 · jamesEmerson112 · arm-sim: gentest draws a labelled grid (A-L x 1-9) on every frame Astra sees; Astra names the jaws' and the edge's cells
+- `f69ecb3` Sun 12:48 · jamesEmerson112 · Update team status in CLAUDE.md
 - `1de2b0d` Sun 12:48 · jamesEmerson112 · arm-sim: gentest snaps the camera the moment the jaws close and shows Astra that CLOSE frame
 - `1a6cc9a` Sun 12:46 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 - `f82c4df` Sun 12:46 · jamesEmerson112 · arm-sim: gentest probes first: stop with the jaws open at the closing point, Astra checks they straddle the bag's edge, full run only on a go
 - `558a57d` Sun 12:39 · jamesEmerson112 · Update team status in CLAUDE.md
 - `626e20c` Sun 12:29 · jamesEmerson112 · Update team status in CLAUDE.md
 - `7e41fa4` Sun 12:25 · jamesEmerson112 · Merge the two chips orders: pack the red bag (key 2, default) and pack any bag (key 9)
-- `557b026` Sun 12:24 · jamesEmerson112 · Mission Control: two chips orders, pack the red bag (key 2, wave) and pack any bag (key 9, wave_any)
-- `a239a7e` Sun 12:23 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
-- `ded0a78` Sun 12:23 · jamesEmerson112 · arm-sim: gentest squeezes every grasp to 99% closed; Astra measures the bag, grabs by its edge, knows the white labels
-- `0472f14` Sun 12:19 · jamesEmerson112 · Update team status in CLAUDE.md
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
