@@ -161,7 +161,7 @@
     "every freeze here is simulated (gen_pod, >= 4.0 s); the real recording (300 rows, 30 s) checks false alarms only"
   ],
   "command": "python3 cloud/scripts/lesson_probe.py",
-  "rev": "6a10f1e",
-  "generated_at": "2026-11-08T17:03:27+00:00",
-  "seconds": 0.83
+  "rev": "e58eaee",
+  "generated_at": "2026-11-08T17:11:04+00:00",
+  "seconds": 0.88
 }
