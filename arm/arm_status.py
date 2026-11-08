@@ -9,7 +9,8 @@
 state reads the joint positions (degrees; gripper 0-100), torque, load and temperature straight from the
 servo bus. It never changes torque, so a limp arm stays limp and a holding arm keeps holding.
 report summarises a run record written by safe_replay.py: the start gate's verdict and samples, the
-obstacle reflex (swings, base range, direction changes), and the playback: frames played, and for each joint
+obstacle reflex (swings, base range, direction changes), loops done (--loops), each pause for something close
+and how it ended (--watch), and the playback: frames played, and for each joint
 the range commanded against the range the arm actually reached (range_coverage: the share of the commanded
 range the arm reached, 1.0 = all of it) and the median tracking error. Fast moves lag the command on purpose
 (--max-step), so per-instant errors there are large and normal.
@@ -66,12 +67,21 @@ def summarize(rec):
         sides = [1 if t > r["home_pan"] else -1 for t in targets]
         meas = [t[3][pan] for t in track if t[1] == "reflex"]
         out["obstacle_reflex"] = {
-            "ran": True, "cleared": r.get("cleared"), "swings": len(targets),
+            "ran": True, "cleared": r.get("cleared"), "episodes": r.get("episodes", 1), "swings": len(targets),
             "direction_changes": sum(1 for a, b in zip(sides, sides[1:]) if a != b),
             "base_home_deg": r["home_pan"], "base_targets_deg": targets[:20],
             "base_measured_range_deg": _rng(meas), "nearest_mm_seen": [s["nearest_mm"] for s in r.get("swings", [])][:20]}
     else:
         out["obstacle_reflex"] = {"ran": False}
+
+    if rec.get("loops_planned", 1) > 1:
+        out["loops"] = {"planned": rec["loops_planned"], "done": rec.get("loops_done", 0),
+                        "frames_per_loop": rec.get("frames_per_loop")}
+    w = rec.get("watch")
+    if w:                                   # --watch: every time something close paused the arm, and how it ended
+        out["watch"] = {"hold_s": w.get("hold_s"), "pauses": [
+            {k: p.get(k) for k in ("t", "loop", "loops_done", "phase", "step", "of", "state", "nearest_mm", "held_s",
+                                   "outcome", "samples", "samples_end")} for p in w.get("pauses", [])[:10]]}
 
     play = [t for t in track if t[1] == "playback"]
     planned, sent = rec.get("frames_planned"), rec.get("frames_sent", 0)

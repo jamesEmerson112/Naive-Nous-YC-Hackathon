@@ -16,6 +16,13 @@ the job; if it never clears within --reflex-s it returns to the start pose and e
 and wrist flex hold their pose throughout. Every run writes a record (gate samples, phases, reflex swings, commanded and measured
 joint positions) to arm/runs/; arm/arm_status.py summarises it.
 
+--loops N plays the recording N times (each loop: ramp in, play, ramp back to the start pose). --watch keeps
+reading the sensor for the whole job, loops and moves included: when something comes within --min-mm, the arm
+pauses where it is, and carries on from there once the way has read clear for --clear-s. If it's still blocked
+after --hold-s, the arm backs off to its start pose and runs the obstacle reflex (--on-blocked reflex); if that
+clears, the arm goes back to where it paused and carries on, and if not, the job ends there (exit 4). With
+--on-blocked refuse, or if the sensor stops giving trustworthy readings for --hold-s, the job stops (exit 3).
+
 Exit codes: 0 the job ran, 2 refused to start, 3 stopped mid-motion, 4 the reflex gave up.
 
 Distance comes from podd (firmware/healer) if it is running, otherwise straight from the pod's serial
@@ -169,6 +176,28 @@ def describe_samples(samples, n=5):
     return "; ".join("mm=%s us=%s st=%s" % (r.get("mm"), r.get("us"), r.get("st")) for r in rows) or "none"
 
 
+def sensor_now(sensor, min_mm):
+    """What the sensor says right now, for --watch: ('clear' | 'blocked' | 'unknown', nearest mm, why). Blocked
+    takes the two newest samples both blocked, so one stray echo doesn't stop the arm; unknown is no sample in
+    the last 0.5 s, or the two newest both untrustworthy (no_echo, busy)."""
+    s = sensor.samples(0.5)
+    if not s:
+        why = " (%s)" % sensor.error if sensor.error else ""
+        return "unknown", None, "no distance samples in 0.5 s%s" % why
+    last = [r for _, r in s[-2:]]
+    verdicts = [classify(r, min_mm) for r in last]
+    if len(last) == 2 and verdicts == ["blocked", "blocked"]:
+        near = min(r.get("mm", 0) for r in last)
+        return "blocked", near, "object at %d mm" % near
+    if len(last) == 2 and verdicts == ["unknown", "unknown"]:
+        return "unknown", None, "sensor not trustworthy: %s" % ", ".join(sorted({r.get("st") for r in last}))
+    return "clear", None, "clear"
+
+
+def sample_rows(sensor, seconds=0.6, n=5):
+    return [{k: r.get(k) for k in ("mm", "us", "st")} for _, r in sensor.samples(seconds)[-n:]]
+
+
 # --------------------------------------------------------------------------- arm
 
 def load_motion(path):
@@ -192,6 +221,21 @@ class ClampCounter(logging.Filter):
         return True
 
 
+TORQUE_RETRIES = 5        # LeRobot's own MotorsBus.disconnect() retries its torque-off this many times
+
+
+def with_torque_retries(bus, retries=TORQUE_RETRIES):
+    """LeRobot's configure() turns torque back on for all six servos with one try per motor
+    (MotorsBus.torque_disabled() calls enable_torque(motors) with num_retry=0), so a single lost status reply
+    fails the whole connect: "Failed to enable torque after 1 tries on 'shoulder_lift' (motor ID 2): Operation
+    timed out" on this arm, Nov 8, while every motor answered 20 of 20 pings at 11.9 V. Give each motor the
+    retries that LeRobot's num_retry argument is there for; a caller that passes num_retry keeps its own."""
+    for name in ("enable_torque", "disable_torque"):
+        orig = getattr(bus, name)
+        setattr(bus, name, lambda motors=None, num_retry=retries, _orig=orig: _orig(motors, num_retry=num_retry))
+    return bus
+
+
 def connect_arm(port, robot_id, max_step, units):
     logging.getLogger("lerobot.robots.utils").addFilter(ClampCounter())
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
@@ -200,6 +244,7 @@ def connect_arm(port, robot_id, max_step, units):
     cfg = SO101FollowerConfig(port=port, id=robot_id, max_relative_target=max_step,
                               use_degrees=(units == "degrees"))
     robot = SO101Follower(cfg)
+    with_torque_retries(robot.bus)
     robot.connect()      # runs the interactive calibration if this robot id hasn't been calibrated
     return robot
 
@@ -221,6 +266,10 @@ class Halt(Exception):
     pass
 
 
+class GaveUp(Exception):
+    """--watch: the obstacle reflex ran mid-job and the way never cleared. The arm is back at its start pose."""
+
+
 # --------------------------------------------------------------------------- run record
 
 class Recorder:
@@ -233,11 +282,14 @@ class Recorder:
     def __init__(self, args, joints, fps, n_frames, source):
         self.t0 = time.time()
         self.run_id = time.strftime("%Y%m%d-%H%M%S", time.localtime(self.t0)) + "-%03d" % (self.t0 % 1 * 1000)
+        loops = max(1, args.loops)
         self.rec = {"run_id": self.run_id, "started": self.t0, "motion": Path(args.motion).name, "source": source,
                     "fps": fps, "joints": [j.removesuffix(".pos") for j in joints], "min_mm": args.min_mm,
                     "arm": args.arm_port or None, "mode": "check-only" if args.check_only else
                     ("dry-run" if args.dry_run else "arm"), "on_blocked": args.on_blocked,
-                    "frames_planned": n_frames, "frames_sent": 0, "gate": None, "reflex": None,
+                    "loops_planned": loops, "loops_done": 0, "frames_per_loop": n_frames,
+                    "frames_planned": n_frames * loops, "frames_sent": 0, "gate": None, "reflex": None,
+                    "watch": {"hold_s": args.hold_s, "clear_s": args.clear_s, "pauses": []} if args.watch else None,
                     "phases": [], "track": []}
         self.dir = Path(args.runs_dir) if args.runs_dir else RUNS_DIR
         self.enabled = not args.no_record
@@ -279,8 +331,9 @@ class Recorder:
 
 # --------------------------------------------------------------------------- motion
 
-def play(robot, joints, frames, fps, sensor, args, label, rec=None):
-    """Send frames at fps. With a sensor (--live-check), check it before every step."""
+def play(robot, joints, frames, fps, sensor, args, label, rec=None, watch=None):
+    """Send frames at fps. With a sensor (--live-check), check it before every step and stop if it isn't clear.
+    With a watch (--watch), check it before every step and pause while it isn't (Watch.interrupted)."""
     period = 1.0 / fps
     t_next = time.monotonic()
     if rec:
@@ -290,14 +343,89 @@ def play(robot, joints, frames, fps, sensor, args, label, rec=None):
             ok, msg = check_clear(sensor, args.min_mm, args.live_window, 1)
             if not ok:
                 raise Halt("%s, step %d/%d: %s" % (label, i + 1, len(frames), msg))
+        if watch is not None and watch.interrupted(robot, label, i, len(frames)):
+            if rec:
+                rec.phase(label)            # carry on with the same phase where it paused
+            t_next = time.monotonic()
         if robot is not None:
             send_pose(robot, joints, pose)
+        if watch is not None:
+            watch.pose = pose
         if rec:
             rec.frame(robot, joints, pose, playback=(label == "playback"))
         t_next += period
         time.sleep(max(0.0, t_next - time.monotonic()))
     if rec:
         rec.end_phase()
+
+
+class Watch:
+    """--watch: the sensor is read before every step of the job. Something within --min-mm pauses the arm where it
+    is; it carries on once the way has read clear for --clear-s. Still blocked after --hold-s: the arm backs off to
+    its start pose and runs the obstacle reflex (--on-blocked reflex), then goes back to where it paused and carries
+    on, or, if the reflex gives up, the job ends (GaveUp, exit 4). With --on-blocked refuse, or when the sensor
+    stays untrustworthy for --hold-s, the job stops where it is (Halt, exit 3). Each pause goes in the run record
+    with the samples that caused it and the samples when it ended."""
+
+    def __init__(self, sensor, args, rec, joints, start, fps):
+        self.sensor, self.args, self.rec, self.joints, self.fps = sensor, args, rec, joints, fps
+        self.start = list(start)            # the start pose: where the arm backs off to
+        self.pose = list(start)             # the last pose sent
+        self.loop, self.loops = 1, max(1, args.loops)
+
+    def interrupted(self, robot, label, i, n):
+        """Called before step i of n. False: the way is clear. True: the arm paused and the way cleared again
+        (the arm is back at the pose it paused at). Raises GaveUp or Halt if the job can't go on."""
+        state, near, why = sensor_now(self.sensor, self.args.min_mm)
+        if state == "clear":
+            return False
+        a, rec, here = self.args, self.rec, list(self.pose)
+        rec.end_phase()
+        ev = {"t": round(time.time() - rec.t0, 2), "loop": self.loop, "loops_done": rec.rec["loops_done"],
+              "phase": label, "step": i + 1, "of": n, "state": state, "nearest_mm": near, "held_s": None,
+              "outcome": None, "samples": sample_rows(self.sensor), "samples_end": None}
+        rec.rec["watch"]["pauses"].append(ev)
+        print("watch: %s during loop %d/%d (%s, step %d/%d): holding still" % (why, self.loop, self.loops, label,
+                                                                                i + 1, n), flush=True)
+        print("watch: samples: %s" % describe_samples(self.sensor.samples(0.6)), flush=True)
+        rec.phase("paused")
+        t0 = time.monotonic()
+        need = max(3, int(a.clear_s * 4))
+        while time.monotonic() - t0 < a.hold_s:
+            if check_clear(self.sensor, a.min_mm, a.clear_s, need)[0]:
+                ev |= {"held_s": round(time.monotonic() - t0, 2), "outcome": "cleared",
+                       "samples_end": sample_rows(self.sensor)}
+                rec.end_phase()
+                print("watch: clear again after %.1f s, carrying on" % ev["held_s"], flush=True)
+                return True
+            rec.frame(robot, self.joints, here)
+            time.sleep(1.0 / REFLEX_HZ)
+        rec.end_phase()
+        ok, msg = check_clear(self.sensor, a.min_mm, a.clear_s, need)
+        ev |= {"held_s": a.hold_s, "samples_end": sample_rows(self.sensor)}
+        print("watch: after %.0f s: %s; samples: %s" % (a.hold_s, msg, describe_samples(self.sensor.samples(0.6))),
+              flush=True)
+        if ok:                              # cleared in the last instant
+            ev["outcome"] = "cleared"
+            return True
+        if not msg.startswith("object at") or a.on_blocked != "reflex":
+            ev["outcome"] = "stopped"
+            raise Halt("%s for %.0f s (loop %d/%d, %s step %d/%d)" % (msg, a.hold_s, self.loop, self.loops, label,
+                                                                       i + 1, n))
+        ramp = max(1, int(a.ramp_s * self.fps))
+        print("watch: still blocked: backing off to the start pose, then the obstacle reflex (up to %.0f s)"
+              % a.reflex_s, flush=True)
+        play(robot, self.joints, lerp_path(here, self.start, ramp), self.fps, None, a, "back off", rec)
+        cleared = reflex(robot, self.joints, self.start, self.sensor, a, rec)
+        ev["samples_end"] = sample_rows(self.sensor)
+        if not cleared:
+            ev["outcome"] = "reflex gave up"
+            raise GaveUp("obstacle reflex gave up after %.0f s: never clear (%d swings), in loop %d/%d after a %.0f s "
+                         "pause" % (a.reflex_s, len(rec.rec["reflex"]["swings"]), self.loop, self.loops, a.hold_s))
+        ev["outcome"] = "reflex cleared"
+        print("ultrasonic: clear now, going back to loop %d (%s, step %d/%d)" % (self.loop, label, i + 1, n), flush=True)
+        play(robot, self.joints, lerp_path(self.start, here, ramp), self.fps, None, a, "go back", rec)
+        return True
 
 
 def reflex(robot, joints, home, sensor, args, rec):
@@ -315,10 +443,14 @@ def reflex(robot, joints, home, sensor, args, rec):
     caps = {pan: speed, roll: REFLEX_ROLL_SPEED, grip: REFLEX_GRIP_SPEED}          # per joint, units per second
     limits = {pan: (home[pan] - amp, home[pan] + amp), roll: (home[roll] - roll_amp, home[roll] + roll_amp),
               grip: (min(home[grip], 0.0), max(home[grip], REFLEX_GRIP_MAX))}
-    pose, side, swings = list(home), 1, []
+    pose, side = list(home), 1
     rec.phase("reflex")
-    rec.rec["reflex"] = {"amp_deg": amp, "speed_deg_s": speed, "limit_s": args.reflex_s, "home_pan": round(home[pan], 2),
-                         "swings": [], "cleared": False}
+    if not rec.rec.get("reflex"):           # the first episode of this job (with --watch there can be more)
+        rec.rec["reflex"] = {"amp_deg": amp, "speed_deg_s": speed, "limit_s": args.reflex_s,
+                             "home_pan": round(home[pan], 2), "swings": [], "cleared": False, "episodes": 0}
+    rec.rec["reflex"]["episodes"] += 1
+    rec.rec["reflex"]["cleared"] = False
+    swings = rec.rec["reflex"]["swings"]
 
     def clamp(i, v):
         lo, hi = limits[i]
@@ -351,6 +483,7 @@ def reflex(robot, joints, home, sensor, args, rec):
             ok, _ = check_clear(sensor, args.min_mm, args.precheck_s, min_samples=max(3, int(args.precheck_s * 4)))
             if ok:
                 rec.rec["reflex"]["cleared"] = True
+                move({pan: home[pan], roll: home[roll], grip: home[grip]}, rate=0.6)   # calmly back where it started
                 return True
             mms = [r["mm"] for _, r in sensor.samples(0.6) if r.get("st") == "ok"] or [0]
             near = min(mms)
@@ -374,7 +507,6 @@ def reflex(robot, joints, home, sensor, args, rec):
         move({pan: home[pan], roll: home[roll], grip: home[grip]}, rate=0.6)   # back where it started, calmly
         return False
     finally:
-        rec.rec["reflex"]["swings"] = swings
         rec.end_phase()
 
 
@@ -411,6 +543,16 @@ def main():
                          "(default: the sensor only gates the start)")
     ap.add_argument("--live-window", type=float, default=0.5,
                     help="with --live-check: stop if no clear sample arrived in this many seconds")
+    ap.add_argument("--loops", type=int, default=1,
+                    help="play the recording this many times (each loop: ramp in, play, ramp back to the start pose)")
+    ap.add_argument("--watch", action="store_true",
+                    help="watch the sensor for the whole job: something within --min-mm pauses the arm where it is, "
+                         "and it carries on once the way is clear (see --hold-s)")
+    ap.add_argument("--hold-s", type=float, default=3.0,
+                    help="with --watch: how long the arm waits, paused, for the way to clear before it backs off to "
+                         "its start pose and runs the obstacle reflex (--on-blocked reflex) or stops (refuse)")
+    ap.add_argument("--clear-s", type=float, default=1.0,
+                    help="with --watch: how long the way must read clear before the arm carries on")
     ap.add_argument("--speed", type=float, default=1.0, help="playback speed factor (0.5 = half speed)")
     ap.add_argument("--ramp-s", type=float, default=3.0, help="seconds to move to the first frame and back")
     ap.add_argument("--max-step", type=float, default=8.0,
@@ -425,11 +567,20 @@ def main():
     args = ap.parse_args()
     if not (args.dry_run or args.check_only) and not args.arm_port:
         ap.error("--arm-port is required (or use --dry-run / --check-only)")
+    if args.watch and args.live_check:
+        ap.error("--watch and --live-check are two policies for the same thing: pick one")
+    if args.loops < 1:
+        ap.error("--loops must be at least 1")
     args.robot_id = args.robot_id or default_robot_id()
 
     joints, fps, frames, source, units = load_motion(args.motion)
     fps *= args.speed
     print("motion: %d frames at %.0f fps (%.1f s) from %s" % (len(frames), fps, len(frames) / fps, source))
+    if args.loops > 1 or args.watch:
+        print("job: %d loop%s%s" % (args.loops, "s" if args.loops > 1 else "",
+                                    ", watching the sensor the whole time (something within %d mm pauses the arm; "
+                                    "still blocked after %.0f s: back off and run the reflex)" % (args.min_mm, args.hold_s)
+                                    if args.watch else ""))
     rec = Recorder(args, joints, fps, len(frames), source)
     code, verdict = 1, "error"
     robot, sensor = None, None
@@ -458,7 +609,13 @@ def main():
 
         start = frames[0]
         if not args.dry_run:
-            robot = connect_arm(args.arm_port, args.robot_id, args.max_step, units)
+            try:
+                robot = connect_arm(args.arm_port, args.robot_id, args.max_step, units)
+            except ConnectionError as e:     # the servo bus didn't answer: nothing has moved
+                print("ARM NOT REACHABLE: %s" % e)
+                print("arm: check the arm's power supply and the servo cables, then try again")
+                code, verdict = 1, "the arm didn't answer on its servo bus: %s" % e
+                return code
             start = read_pose(robot, joints)
             print("arm: connected (%s), start pose %s" % (args.robot_id, [round(v, 1) for v in start]))
         if reflex_wanted:
@@ -470,23 +627,46 @@ def main():
                     args.reflex_s, len(rec.rec["reflex"]["swings"]))
                 return code
             print("ultrasonic: clear now, starting the job")
-        if not args.live_check:
+        watch = None
+        if args.watch:
+            watch = Watch(sensor, args, rec, joints, start, fps)
+            print("ultrasonic: start gate passed, watching it for the whole job")
+        elif not args.live_check:
             sensor.close()          # start gate passed; the motion itself ignores the sensor
             sensor = None
             print("ultrasonic: start gate passed, not watching during the motion")
+        live = sensor if args.live_check else None
 
         ramp = max(1, int(args.ramp_s * fps))
-        print("arm: moving to first frame (%.1f s)" % args.ramp_s)
-        play(robot, joints, lerp_path(start, frames[0], ramp), fps, sensor, args, "ramp in", rec)
-        print("arm: playing recording")
-        play(robot, joints, frames, fps, sensor, args, "playback", rec)
-        if not args.no_return:
-            print("arm: returning to start pose")
-            play(robot, joints, lerp_path(frames[-1], start, ramp), fps, sensor, args, "ramp out", rec)
+        here = start
+        for k in range(1, args.loops + 1):
+            if watch:
+                watch.loop = k
+            if args.loops > 1:
+                print("loop %d/%d" % (k, args.loops), flush=True)
+            print("arm: moving to first frame (%.1f s)" % args.ramp_s)
+            play(robot, joints, lerp_path(here, frames[0], ramp), fps, live, args, "ramp in", rec, watch)
+            print("arm: playing recording")
+            play(robot, joints, frames, fps, live, args, "playback", rec, watch)
+            here = frames[-1]
+            if not args.no_return:
+                print("arm: returning to start pose")
+                play(robot, joints, lerp_path(frames[-1], start, ramp), fps, live, args, "ramp out", rec, watch)
+                here = start
+            rec.rec["loops_done"] = k
+            if args.loops > 1:
+                print("loop %d/%d done" % (k, args.loops), flush=True)
         if ClampCounter.n:
             print("arm: --max-step slowed %d commands (fast parts of the motion)" % ClampCounter.n)
         print("done.")
-        code, verdict = 0, "the job ran: %d of %d frames played" % (rec.rec["frames_sent"], len(frames))
+        pauses = (rec.rec.get("watch") or {}).get("pauses") or []
+        code, verdict = 0, "the job ran: %s%d of %d frames played%s" % (
+            "%d loops, " % args.loops if args.loops > 1 else "", rec.rec["frames_sent"], rec.rec["frames_planned"],
+            ", paused %d time%s for something close" % (len(pauses), "s" if len(pauses) > 1 else "") if pauses else "")
+        return code
+    except GaveUp as e:
+        print("REFLEX GAVE UP: the sensor never reported a clear way. Back at the start pose; stopping the job.")
+        code, verdict = 4, str(e)
         return code
     except (Halt, KeyboardInterrupt) as e:
         print("STOPPED:", e if isinstance(e, Halt) else "Ctrl-C")
