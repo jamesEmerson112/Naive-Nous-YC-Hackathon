@@ -2,6 +2,7 @@ import hashlib
 import io
 
 import pytest
+
 from romulus_cloud.adapters.blobstore import (
     BlobNotFound,
     FsBlobStore,

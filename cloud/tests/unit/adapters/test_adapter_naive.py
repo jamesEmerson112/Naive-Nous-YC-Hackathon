@@ -2,6 +2,7 @@ import json
 
 import httpx
 import pytest
+
 from romulus_cloud.adapters.naive import (
     FakeNaive,
     HttpNaive,
