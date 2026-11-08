@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from romulus_cloud.api.deps import BlobStoreDep, SessionDep
+from romulus_cloud.errors import ApiError
 from romulus_cloud.models import CodeVersion, FirmwareVersion, HarnessVersion
 from romulus_cloud.services import devices, incidents, registry
 
@@ -210,3 +211,28 @@ def list_incidents(
 def incident_story(incident_id: str, session: SessionDep) -> dict:
     incident, story = incidents.story(session, incident_id)
     return {**incidents.view(incident), **story.to_dict()}
+
+
+# --- fleet (kill switch, D11) ----------------------------------------------------------------
+
+
+class FleetSwitch(BaseModel):
+    by: str | None = None
+    reason: str = ""
+
+
+def _kill_switch_stub() -> None:
+    """A stub that announces itself until M3 implements freeze and unfreeze."""
+    raise ApiError(
+        501, "not_implemented", "Kill switch not wired yet (M3); nothing was frozen or unfrozen."
+    )
+
+
+@router.post("/fleet/freeze")
+def freeze_fleet(body: FleetSwitch | None = None) -> dict:
+    _kill_switch_stub()
+
+
+@router.post("/fleet/unfreeze")
+def unfreeze_fleet(body: FleetSwitch | None = None) -> dict:
+    _kill_switch_stub()
