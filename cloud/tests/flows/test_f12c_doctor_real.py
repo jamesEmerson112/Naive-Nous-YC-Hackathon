@@ -33,7 +33,7 @@ from romulus_cloud.adapters.coder import CodeDraft, CoderError, Sandbox
 from romulus_cloud.adapters.llm import FakeLlm
 from romulus_cloud.domain import coder_retry
 from romulus_cloud.models import Blob, DoctorConsult, DoctorProposal, Event, Recording
-from romulus_cloud.services import code_lockin, datasets, doctor, doctor_code, registry
+from romulus_cloud.services import batch, code_lockin, datasets, doctor, doctor_code, registry
 from romulus_cloud.services.doctor_jobs import InlineJobs
 from romulus_cloud.worker import Step, run_tick
 
@@ -474,13 +474,18 @@ def test_a_compound_test_command_is_run_as_configured_never_appended_to(
 ):
     """CODER_TEST_CMD `pytest -q; true` would become `pytest -q; true tests/x.py` if the repro
     file were appended to it. The repro step has its own fixed command; the device-test step
-    gets CODER_TEST_CMD verbatim (the image runs it through a shell; FakeDocker can't, so
-    only the commands handed to the sandbox are checked here)."""
+    gets CODER_TEST_CMD verbatim (the image runs it through a shell, and so does FakeDocker
+    now, with the image's own `run_tests`)."""
     compound = "python -m pytest -q; true"
     doc = make_doctor(ScriptedCoder(GOOD), coder_test_cmd=compound)
     clock.at(T0)
     incident_id = _report(client, example)
-    _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    t = T0 + timedelta(seconds=2)
+    for _ in range(8):  # the good fix passes every check and is applied
+        t = doc.tick(t)
+        if len(_test_cmds(doc.docker)) >= 6:
+            break
+    assert _consults(db_session, incident_id)[0].stage != "closed"  # it passed and moved on
     cmds = _test_cmds(doc.docker)
     assert cmds == [REPRO_CMD] * 4 + [compound] * 2
 
@@ -522,16 +527,17 @@ HIDDEN_CONFTEST = _patch_paths({**CODE_AND_REPRO, ".gitignore": "conftest.py\n"}
             "edits the existing test file tests/test_gripper.py",
         ),
         # Item 2: a planted test runner, at the top, under tests/, deeper, or as a package.
+        # The replay's own `patch_refusal` refuses these first (#replay-hardening).
         (
             {**CODE_AND_REPRO, "pytest.py": PLANTED_RUNNER},
-            "it plants pytest.py, which can shadow the test runner",
+            "pytest.py (it can shadow the test runner)",
         ),
-        ({**CODE_AND_REPRO, "tests/pytest.py": PLANTED_RUNNER}, "it plants tests/pytest.py"),
+        ({**CODE_AND_REPRO, "tests/pytest.py": PLANTED_RUNNER}, "tests/pytest.py (it can shadow"),
         ({**CODE_AND_REPRO, "control/sitecustomize.py": "x = 1\n"}, "sitecustomize.py"),
-        ({**CODE_AND_REPRO, "evil.pth": "import os\n"}, "it plants evil.pth"),
-        ({**CODE_AND_REPRO, "_pytest/__init__.py": "x = 1\n"}, "it plants _pytest/__init__.py"),
+        ({**CODE_AND_REPRO, "evil.pth": "import os\n"}, "evil.pth (it can shadow"),
+        ({**CODE_AND_REPRO, "_pytest/__init__.py": "x = 1\n"}, "_pytest/__init__.py (it can"),
         # Item 6: a conftest.py that a .gitignore would hide from `git add -A`.
-        (HIDDEN_CONFTEST, "test_harness: conftest.py (added)"),
+        (HIDDEN_CONFTEST, "conftest.py (test-runner config)"),
         # Item 7: the code change only adds a module-level flag.
         (
             {"control/gripper.py": FLAGGED, REPRO_PATH: IMPORT_IN_BODY},
@@ -570,7 +576,10 @@ def test_a_gaming_patch_is_refused_before_any_sandbox_run(
         for e in _events(db_session, incident_id, "doctor.consult_closed")
         if e.refs["consult"] == first.id
     ]
-    assert "refused before any run" in closed.data["why"] and reason in closed.data["why"]
+    why = closed.data["why"]
+    # The Doctor's screen ("refused before any run") or, for runner and harness files, the
+    # replay's own patch_refusal ("diff is refused") says no first; either way, no run.
+    assert ("refused before any run" in why or "diff is refused" in why) and reason in why
     assert doc.docker.calls == []  # decided from the patch alone
     assert _events(db_session, incident_id, "doctor.checked") == []
 
@@ -828,6 +837,7 @@ def test_a_provider_blip_backs_off_is_refunded_and_retries(
     # Refunded: one coder.started, but nothing counted against the budget of 1.
     assert len(_events(db_session, incident_id, "coder.started")) == 1
     assert doctor_code.coder_budget(db_session, "default", t, 1) == (0, None)
+    assert batch._drafts_this_hour(db_session, "default", t) == 0  # the batch agrees
 
     doc.tick(retry - timedelta(seconds=1))  # still backing off: nothing happens
     assert len(coder.calls) == 1

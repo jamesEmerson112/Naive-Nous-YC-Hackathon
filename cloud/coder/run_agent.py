@@ -4,6 +4,10 @@ Three modes:
 - `agent` (default): read the task from stdin, run mini-swe-agent on /work with a step and
   time limit, then run the device test command.
 - `test`: run only the device test command (the gate's code replay; no LLM, no network).
+  `python -m` runs get `-P` (`pin_pytest`), so /work can't shadow pytest. Any pytest it
+  starts writes a JUnit report to a fresh dir outside /work (via PYTEST_ADDOPTS), and the
+  counts come back beside the exit code, so a printed "N passed" or an early `os._exit(0)`
+  can't pass for a test run.
 - `verify`: run the held-out `verify/` scripts with a fixed command the code under test
   can't configure: isolated Python, no conftest, a clean pytest config, no cache, and the
   pass/fail/skip counts from a JUnit report.
@@ -56,17 +60,53 @@ def _cap(text: str) -> str:
 
 
 def _clean_env() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if not k.startswith(("LLM_", "PYTEST"))}
+    """The env every test or verify command gets: no LLM_*, no PYTEST*, and no PYTHON* from
+    outside (PYTHONPATH, PYTHONSTARTUP, PYTHONSAFEPATH, ...), only the image's fixed ones.
+    PYTHONSAFEPATH is dropped on purpose: children inherit it, and the device's tests start
+    `python app.py`, which must find its sibling modules (`pin_pytest` protects pytest)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("LLM_", "PYTEST", "PYTHON"))}
+    return {**env, **SAFE_PYTHON_ENV}
 
 
-def _run(argv, *, shell: bool, cwd: str, timeout_s: int) -> tuple[int, str, bool]:
+SAFE_PYTHON_ENV = {
+    "PYTHONNOUSERSITE": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1",
+}
+
+
+def pin_pytest(cmd: str) -> str:
+    """`python -m pytest` -> `python -P -m pytest` (any `python[3[.x]] -m` in the command):
+    `-m` would put the cwd, /work, first on sys.path, so a planted `pytest.py` or `pytest/`
+    would run instead of the pinned pytest in site-packages. `-P` applies to that one
+    interpreter, not to the processes the tests start. A bare `pytest` (the console script
+    in /usr/local/bin) is already safe."""
+    import re  # here, not at the top: keeps this module's import block as it is
+
+    return re.sub(r"(?<![^\s;&|(])((?:\S*/)?python3?(?:\.\d+)?)(?=\s+-m\s)", r"\1 -P", cmd)
+
+
+def junit_counts(report: Path) -> dict | None:
+    """tests/failures/errors/skipped summed over a JUnit report's suites; None without one."""
+    counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    try:
+        root = ET.parse(report).getroot()
+        for suite in root.iter("testsuite"):
+            for key in counts:
+                counts[key] += int(suite.get(key, 0))
+    except (OSError, ET.ParseError, ValueError):
+        return None
+    return counts
+
+
+def _run(argv, *, shell: bool, cwd: str, timeout_s: int, env=None) -> tuple[int, str, bool]:
     """(exit code, capped output, timed out); never raises."""
     try:
         proc = subprocess.run(
             argv,
             shell=shell,
             cwd=cwd,
-            env=_clean_env(),
+            env=env if env is not None else _clean_env(),
             capture_output=True,
             text=True,
             errors="replace",
@@ -80,9 +120,26 @@ def _run(argv, *, shell: bool, cwd: str, timeout_s: int) -> tuple[int, str, bool
 
 
 def run_tests(cmd: str, timeout_s: int, work: str | None = None) -> dict:
-    """Run the device's test command in the work dir."""
-    code, output, timed_out = _run(cmd, shell=True, cwd=work or WORK, timeout_s=timeout_s)
-    return {"cmd": cmd, "exit_code": code, "output": output, "timed_out": timed_out}
+    """Run the device's test command in the work dir. `report` is the JUnit counts of the
+    (last) pytest it ran, written outside the work dir, or None if no report appeared (not
+    a pytest command, or pytest never got to the end)."""
+    work = work or WORK
+    with tempfile.TemporaryDirectory(prefix="romulus-tests-") as tmp:
+        if Path(tmp).resolve().is_relative_to(Path(work).resolve()):
+            raise RuntimeError(f"report dir {tmp} is inside the work dir")
+        report = Path(tmp) / f"{os.urandom(8).hex()}.xml"
+        env = {**_clean_env(), "PYTEST_ADDOPTS": f"-p no:cacheprovider --junitxml={report}"}
+        code, output, timed_out = _run(
+            pin_pytest(cmd), shell=True, cwd=work, timeout_s=timeout_s, env=env
+        )
+        counts = junit_counts(report)
+    return {
+        "cmd": cmd,
+        "exit_code": code,
+        "output": output,
+        "timed_out": timed_out,
+        "report": counts,
+    }
 
 
 def run_verify(timeout_s: int, work: str | None = None, python: str = "python") -> dict:
@@ -101,14 +158,8 @@ def run_verify(timeout_s: int, work: str | None = None, python: str = "python") 
         "-q", "-rA", f"--junitxml={report}",
     ]  # fmt: skip
     code, output, timed_out = _run(argv, shell=False, cwd=work, timeout_s=timeout_s)
-    counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
-    try:
-        root = ET.parse(report).getroot()
-        for suite in root.iter("testsuite"):
-            for key in counts:
-                counts[key] += int(suite.get(key, 0))
-    except (OSError, ET.ParseError, ValueError):
-        pass  # no report: zero tests, so it can't count as a pass
+    # No report: zero tests, so it can't count as a pass.
+    counts = junit_counts(report) or {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
     passed = counts["tests"] - counts["failures"] - counts["errors"] - counts["skipped"]
     return {
         "ran": True,
@@ -221,10 +272,19 @@ def main() -> int:
             os.environ.pop("LLM_API_KEY", None)
         else:
             result["agent"] = run_agent(sys.stdin.read())
-    if mode == "verify":
+    cmd = os.environ.get("CODER_TEST_CMD") or "python -m pytest -q"
+    if mode != "agent" and not undumpable and sys.platform.startswith("linux"):
+        # Fail closed: the code under test could write a forged result line to our stdout
+        # through /proc/1/fd/1. A verify with no report counts as ran-and-failed.
+        why = "prctl(PR_SET_DUMPABLE) failed, so the result can't be trusted"
+        if mode == "verify":
+            result["verify"] = {"ran": True, "tests": 0, "passed": 0, "exit_code": None,
+                                "output": why}  # fmt: skip
+        else:
+            result["tests"] = {"cmd": cmd, "exit_code": None, "output": why, "report": None}
+    elif mode == "verify":
         result["verify"] = run_verify(timeout_s)
     else:
-        cmd = os.environ.get("CODER_TEST_CMD") or "python -m pytest -q"
         result["tests"] = run_tests(cmd, timeout_s)
     sys.stdout.write("\n" + MARKER + json.dumps(result) + "\n")
     sys.stdout.flush()

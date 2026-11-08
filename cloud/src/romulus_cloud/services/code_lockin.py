@@ -51,12 +51,13 @@ from romulus_cloud.adapters.coder import (
     redact,
 )
 from romulus_cloud.domain import gate as g
+from romulus_cloud.domain.doctor import patch_changes
 from romulus_cloud.models import Candidate, CodeVersion, Overlay
 from romulus_cloud.services import registry
 from romulus_cloud.services.coder_runs import CodeReplay, replay_code_patch
 from romulus_cloud.services.jobs import Done, Failed, Jobs, Missing, Pending, default_jobs
 from romulus_cloud.settings import Settings
-from romulus_contracts.codepatch import CODE_ROOT, is_under
+from romulus_contracts.codepatch import CODE_ROOT, is_under, summarize_code_patch
 
 SOURCE = "coder"  # code_versions.source for a version the coding agent drafted
 # Sources the gate replays for real (`replay_code_patch`) and never treats as pass-through:
@@ -110,14 +111,16 @@ def read_package(store: BlobStore, cv: CodeVersion) -> dict[str, bytes]:
 
 
 def apply_diff(files: Mapping[str, bytes], diff: str) -> dict[str, bytes]:
-    """The package `files` with `diff` (a code_patch, paths relative to `device/`) applied."""
+    """The package `files` with `diff` (a code_patch, paths relative to `device/`) applied.
+    The changed files come from the parsed diff, not `git status`, so a `.gitignore` can't
+    drop one from the new package."""
     with tempfile.TemporaryDirectory(prefix="romulus-lockin-") as tmp:
         repo = ScratchRepo.create(Path(tmp), files)
         error = repo.apply(diff)
         if error:
             raise CoderError(f"the coder's diff does not apply to the base code: {error}")
         out = dict(files)
-        for status, rel in repo.changes():
+        for status, rel in patch_changes(diff):
             name = f"{CODE_ROOT}/{rel}"
             if status.startswith("D"):
                 out.pop(name, None)
@@ -127,7 +130,26 @@ def apply_diff(files: Mapping[str, bytes], diff: str) -> dict[str, bytes]:
 
 
 def package_diff(base: Mapping[str, bytes], new: Mapping[str, bytes]) -> str:
-    """The code_patch that turns package `base` into package `new` (their `device/` parts)."""
+    """The code_patch that turns package `base` into package `new` (their `device/` parts).
+    Raises CoderError when the diff doesn't name every changed file (git ignored one, e.g.
+    through the base's `.gitignore`): the replay must test exactly what would ship."""
+    prefix = f"{CODE_ROOT}/"
+    changed = {
+        name.removeprefix(prefix)
+        for name in set(base) | set(new)
+        if name.startswith(prefix) and base.get(name) != new.get(name)
+    }
+    diff = _git_package_diff(base, new)
+    missing = sorted(changed - set(summarize_code_patch(diff).paths))
+    if missing:
+        raise CoderError(
+            "the new code's diff leaves out changed files (ignored by git?): "
+            + ", ".join(missing[:10])
+        )
+    return diff
+
+
+def _git_package_diff(base: Mapping[str, bytes], new: Mapping[str, bytes]) -> str:
     with tempfile.TemporaryDirectory(prefix="romulus-lockin-") as tmp:
         repo = ScratchRepo.create(Path(tmp), base)
         for name in base:
