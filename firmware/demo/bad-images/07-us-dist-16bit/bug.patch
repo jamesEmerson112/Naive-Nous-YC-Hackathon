@@ -1,0 +1,13 @@
+diff --git a/src/hcsr04.c b/src/hcsr04.c
+index d86357c..277aeca 100644
+--- a/src/hcsr04.c
++++ b/src/hcsr04.c
+@@ -119,7 +119,7 @@ int hcsr04_poll(uint32_t now_ms, hcsr04_result_t *out)
+     } else if (pulse_done) {
+         uint32_t us = pulse_us;
+         out->echo_us = us;
+-        out->dist_mm = (us * 343u + 1000u) / 2000u;   /* us * 0.343 mm/us / 2, rounded */
++        out->dist_mm = (uint16_t)(us * 343u + 1000u) / 2000u;   /* us * 0.343 mm/us / 2, rounded */
+         out->status  = (us < HCSR04_MIN_ECHO_US || us > HCSR04_MAX_ECHO_US) ? HCSR04_OUT_OF_RANGE : HCSR04_OK;
+     } else if (now_ms - start_ms >= HCSR04_TIMEOUT_MS) {
+         /* Rose but never fell within 60 ms: past max range. Never rose: no echo at all. */
