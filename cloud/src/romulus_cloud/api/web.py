@@ -33,7 +33,7 @@ from romulus_cloud.domain.story import (
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
 from romulus_cloud.models import AgentRun, Event
-from romulus_cloud.services import agent_runs, devices, incidents
+from romulus_cloud.services import agent_runs, devices, incidents, learning
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 STATIC_DIR = WEB_DIR / "static"
@@ -543,3 +543,35 @@ def run_partial(
 ):
     view = _run_page_view(session, device_id, run_id, _tz(settings))
     return _page(request, "partials/run_page.html", **view)
+
+
+def _technician_css() -> Markup:
+    """The Technician page's scoped `<style>` block (.tc-*), as it stands in
+    technician.html. /learning reuses .tc-head, .tc-stages and .tc-verdict, so the two
+    features read as one product and a restyle of that page reaches both. Empty once the
+    .tc-* rules move into romulus.css."""
+    source, _, _ = templates.env.loader.get_source(templates.env, "technician.html")
+    start = source.find("<style>")
+    end = source.find("</style>", start)
+    return Markup(source[start : end + len("</style>")] if 0 <= start < end else "")
+
+
+@router.get("/learning", response_class=HTMLResponse)
+def learning_page(request: Request, session: SessionDep, settings: SettingsDep):
+    """Fleet learning (docs/recursive-self-improvement/demo.md §4): the newest cluster
+    review, the probe's numbers and the fleet's own labelled data."""
+    return _page(
+        request,
+        "learning.html",
+        v=learning.view(session, settings, now=utcnow()),
+        tc_css=_technician_css(),
+        fleet=_fleet(session, settings.fleet_id),
+        tz=settings.display_tz,
+    )
+
+
+@router.get("/partials/learning", response_class=HTMLResponse)
+def learning_partial(request: Request, session: SessionDep, settings: SettingsDep):
+    return _page(
+        request, "partials/learning.html", v=learning.view(session, settings, now=utcnow())
+    )
