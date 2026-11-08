@@ -294,6 +294,7 @@ Pick by running both on the benchmark. *(team: "make the harness better for it, 
 - **Our additions to propose** *(inferred)*:
   - Send the audit JSON (§8.3) with check-ins or incidents.
   - Report the STM32's build ID in check-ins, since the device reflashes its own C firmware.
+- **The sensor pod is already covered from our side** (D29): `tools/edge_bridge` runs next to Olir's pod healer on the Pi, reads what podd and the heal tools record, and sends check-ins, incidents and recordings in this contract. Nothing changes in the healer; a fault it hands to a person becomes a Naïve work order. Details: [`tools/edge_bridge/README.md`](../tools/edge_bridge/README.md).
 - **What the cloud build plan asks of the device side** (`docs/cloud-platform-planning/cloud-platform-build-plan.md`):
   - agreement on contracts v0.1, including the frozen dataset schema
   - a first real check-in

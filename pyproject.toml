@@ -1,10 +1,12 @@
 # uv workspace root for the Romulus cloud platform (architecture §3).
-# Members: the shared contracts package, the cloud platform, and the fake device.
+# Members: the shared contracts package, the cloud platform, the fake device, and the edge
+# bridge (reports the pod healer's records to the cloud).
 [tool.uv.workspace]
-members = ["packages/contracts", "cloud", "tools/fake_device"]
+members = ["packages/contracts", "cloud", "tools/fake_device", "tools/edge_bridge"]
 
 [tool.uv.sources]
 romulus-contracts = { workspace = true }
+fake-device = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -23,8 +25,13 @@ extend-exclude = ["docs/**", "hub/**", "edge/**", "device/**", "firmware/**", "n
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["romulus_cloud", "romulus_contracts", "fake_device"]
+known-first-party = ["romulus_cloud", "romulus_contracts", "fake_device", "edge_bridge"]
 
 [tool.pytest.ini_options]
 addopts = "-q --import-mode=importlib"
-testpaths = ["packages/contracts/tests", "cloud/tests", "tools/fake_device/tests"]
+testpaths = [
+    "packages/contracts/tests",
+    "cloud/tests",
+    "tools/fake_device/tests",
+    "tools/edge_bridge/tests",
+]
