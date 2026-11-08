@@ -90,6 +90,14 @@ class Report:
             "work_orders_created": d.work_orders_created,
             "work_orders_posted": d.work_orders_posted,
             "freezes": d.freezes,
+            "doctor_asks": d.doctor_asks,
+            "doctor_consults": d.doctor_consults,
+            "doctor_proposals_offered": d.doctor_proposals_offered,
+            "doctor_proposals_applied": d.doctor_proposals_applied,
+            "doctor_consults_held": d.doctor_consults_held,
+            "doctor_gave_up": d.doctor_gave_up,
+            "doctor_by_kind": {k: dict(v) for k, v in d.doctor_by_kind.items()},
+            "doctor_spend_usd": d.doctor_spend_usd,
             "by_kind": dict(d.by_kind),
             "human_actions": [
                 {"at": h.occurred_at.isoformat(), "actor": h.actor, "kind": h.kind, "why": h.why}

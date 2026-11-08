@@ -44,6 +44,31 @@ def _ev(session, kind, ts, actor_class="automation", **refs):
     events.record(session, "gate", actor_class, kind, refs, f"{kind} happened", ts=ts)
 
 
+def test_report_carries_the_fleet_doctor_metrics(db_session, now):
+    data = {"incident_kind": "camera_occluded", "cost_usd": 0.004}
+    when = now - timedelta(hours=1)
+    events.record(db_session, "fleet-doctor", "agent", "doctor.asked", {}, "asked", ts=when)
+    events.record(
+        db_session, "fleet-doctor", "agent", "doctor.advised", {}, "advised", data=data, ts=when
+    )
+    db_session.flush()
+    d = digest.report(db_session, now).to_dict()
+    assert d["doctor_asks"] == 1 and d["doctor_consults"] == 0
+    assert d["doctor_spend_usd"] == 0.004
+    assert d["doctor_by_kind"] == {"unknown": {**dict.fromkeys(_METRICS, 0), "asks": 1}}
+    assert "Fleet Doctor: 1 asks" in digest.report(db_session, now).text()
+
+
+_METRICS = (
+    "asks",
+    "consults",
+    "proposals_offered",
+    "proposals_applied",
+    "consults_held",
+    "gave_up",
+)
+
+
 def test_report_counts_the_window_and_old_waiting_orders(db_session, now):
     _ev(db_session, "incident.reported", now - timedelta(hours=13))  # before the window
     old_order = {"work_order": "wo_1", "status": "needs_human"}

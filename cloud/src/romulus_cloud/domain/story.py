@@ -12,6 +12,12 @@ Evidence (M4): `recording.*` events carry an `evidence` dict in their data (kind
 size, download link, whether the bytes are stored). Their steps carry it too, and
 `Story.evidence` lists each recording once, with its latest state.
 
+Fleet Doctor (PR 6): `doctor.*` steps carry their event's data as `doctor`, and
+`Story.ledger` lists the hypotheses from `doctor.advised` (an L1 ask) and
+`doctor.diagnosed` (an L2 consult), newest first. A closed consult picks its badge from
+`data.outcome` (`CONSULT_OUTCOME_STATUS`). All doctor kinds share one `STAGE`, so on a
+tied `ts` they keep the order they were written in.
+
 Order is by when things happened (`ts`, the device's `occurred_at` for device events),
 never by when the server received them (K9). Events with the same `ts` are ordered by
 their stage in the loop (`STAGE`), then by the order they were given in.
@@ -46,6 +52,7 @@ class Step:
     label: str
     refs: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] | None = None  # recording steps only (M4)
+    doctor: dict[str, Any] | None = None  # doctor.* steps only: the event's data (PR 6)
 
 
 @dataclass(frozen=True)
@@ -83,6 +90,32 @@ class Story:
         return tuple(latest.values())
 
     @property
+    def ledger(self) -> list[dict[str, Any]]:
+        """The Fleet Doctor's hypotheses, newest first: from `doctor.advised` (source `ask`)
+        and `doctor.diagnosed` (source `consult`). Each is `{at, source, claim,
+        how_to_check, ask | consult, model, stub}`; one event's hypotheses keep their rank.
+        `data.hypotheses` that isn't a list adds nothing, and an item without a claim is
+        skipped."""
+        out: list[dict[str, Any]] = []
+        for s in reversed(self.steps):
+            source = LEDGER_SOURCES.get(s.kind)
+            if source is None or s.doctor is None:
+                continue
+            for claim, how in _hypotheses(s.doctor):
+                out.append(
+                    {
+                        "at": s.at,
+                        "source": source,
+                        "claim": claim,
+                        "how_to_check": how,
+                        source: s.refs.get(source),
+                        "model": _model(s.doctor),
+                        "stub": bool(s.doctor.get("stub")),
+                    }
+                )
+        return out
+
+    @property
     def status(self) -> tuple[str, str]:
         """Where the incident stands, from the latest step whose kind is in `STATUS`:
         (words, tone), e.g. ("overlay held", "good"). Steps that don't move it (evidence,
@@ -90,6 +123,8 @@ class Story:
         for s in reversed(self.steps):
             if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
                 return WORK_ORDER_STATUS[s.refs["status"]]
+            if s.kind == "doctor.consult_closed":
+                return _consult_status(s.doctor or {})
             if s.kind in STATUS and s.label:
                 return STATUS[s.kind]
         return ("no events", "info") if not self.steps else ("open", "bad")
@@ -116,6 +151,7 @@ class Story:
             "links": [{"label": label, "kind": kind} for label, kind in self.links],
             "steps": steps,
             "evidence": list(self.evidence),
+            "ledger": [{**h, "at": h["at"].isoformat()} for h in self.ledger],
         }
 
 
@@ -399,7 +435,7 @@ LABELS.update(
     }
 )
 
-# --- Fleet Doctor (docs/fleet-doctor/interfaces.md §8). PR 6 adds LINES, STAGE and STATUS.
+# --- Fleet Doctor (docs/fleet-doctor/interfaces.md §8). LINES here; STATUS, STAGE below.
 
 
 def _stub(e: EventLike, label: str) -> str:
@@ -435,6 +471,210 @@ LABELS.update(
         "doctor.gave_up": lambda e: "Fleet Doctor gave up",
     }
 )
+
+
+def _doctor(e: EventLike) -> dict[str, Any] | None:
+    """A doctor step's data, for the ledger and the consult badge."""
+    if not e.kind.startswith("doctor."):
+        return None
+    return dict(e.data) if isinstance(e.data, Mapping) else {}
+
+
+def _hypotheses(d: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """(claim, how_to_check) pairs from `data.hypotheses`. A string item is a bare claim;
+    an item without a non-blank string claim is skipped; anything but a list gives []."""
+    raw = d.get("hypotheses")
+    if not isinstance(raw, list | tuple):
+        return []
+    out: list[tuple[str, str]] = []
+    for h in raw:
+        claim, how = (h, "") if isinstance(h, str) else (None, "")
+        if isinstance(h, Mapping):
+            claim, how = h.get("claim"), h.get("how_to_check")
+        if isinstance(claim, str) and claim.strip():
+            out.append((claim.strip(), how.strip() if isinstance(how, str) else ""))
+    return out
+
+
+def _model(d: Mapping[str, Any]) -> str:
+    m = d.get("model")
+    return m.strip() if isinstance(m, str) else ""
+
+
+def _count(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def _is_count(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
+
+def _by_model(d: Mapping[str, Any]) -> str:
+    """` (model fake-templated)`, ` (stub)`, both, or nothing: stubs announce themselves."""
+    parts = [f"model {_model(d)}"] if _model(d) else []
+    if d.get("stub"):
+        parts.append("stub")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+def _text(d: Mapping[str, Any], key: str) -> str:
+    v = d.get(key)
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _asked_line(e: EventLike) -> str:
+    d = _data(e)
+    trigger = f" (trigger {_text(d, 'trigger')})" if _text(d, "trigger") else ""
+    question = _text(d, "question")
+    said = f": {question}" if question else "."
+    return f"The healer on {_device(e)} asked the Fleet Doctor for advice{trigger}{said}"
+
+
+def _advised_line(e: EventLike) -> str:
+    d = _data(e)
+    n = len(_hypotheses(d))
+    line = f"The Fleet Doctor sent {_count(n, 'hypothesis', 'hypotheses')} to {_device(e)}"
+    line += _by_model(d) + "."
+    removed = d.get("removed_for_safety")
+    if _is_count(removed):
+        were = "was" if removed == 1 else "were"
+        line += (
+            f" {_count(removed, 'hypothesis', 'hypotheses')} named a safety or visor path and "
+            f"{were} removed."
+        )
+    if d.get("parsed_ok") is False:
+        line += " Its reply wasn't the JSON asked for, so the advice is the raw prose."
+    return line
+
+
+def _over_cap_line(e: EventLike) -> str:
+    d = _data(e)
+    which = _text(d, "which") or "daily"
+    spent, cap = d.get("spent_today_usd"), d.get("cap_usd")
+    amounts = ""
+    if all(isinstance(v, int | float) and not isinstance(v, bool) for v in (spent, cap)):
+        amounts = f" (${spent:.2f} of ${cap:.2f} spent today)"
+    return f"The Fleet Doctor did not run: it is over its {which} cap{amounts}."
+
+
+def _declined_line(e: EventLike) -> str:
+    d = _data(e)
+    stage = f" at {_words(_text(d, 'stage'))}" if _text(d, "stage") else ""
+    reason = f": {_words(_text(d, 'reason'))}" if _text(d, "reason") else ""
+    return f"The Fleet Doctor declined{stage}{reason}."
+
+
+def _consult_opened_line(e: EventLike) -> str:
+    d = _data(e)
+    attempt = d.get("attempt")
+    nth = f" (attempt {attempt})" if _is_count(attempt) else ""
+    by = {"device": " because the device asked for one", "cloud": " on the cloud's own"}
+    trigger = f", trigger {_text(d, 'trigger')}" if _text(d, "trigger") else ""
+    return (
+        f"The Fleet Doctor opened a consult on this incident{nth}"
+        f"{by.get(_text(d, 'origin'), '')}{trigger}."
+    )
+
+
+def _diagnosed_line(e: EventLike) -> str:
+    d = _data(e)
+    n = len(_hypotheses(d))
+    line = f"The Fleet Doctor diagnosed the incident: {_count(n, 'hypothesis', 'hypotheses')}"
+    line += _by_model(d) + "."
+    if d.get("parsed_ok") is False:
+        line += " Its reply wasn't the JSON asked for, so the ledger is the raw prose."
+    return line
+
+
+def _drafted_line(e: EventLike) -> str:
+    d = _data(e)
+    raw = d.get("paths")
+    paths = [p for p in raw if isinstance(p, str)] if isinstance(raw, list) else []
+    where = f" touching {', '.join(paths)}" if paths else ""
+    repro = " with a reproduction test" if d.get("has_repro_test") else ""
+    stub = " It is a labeled stub patch, not a real fix." if d.get("stub") else ""
+    return f"The Fleet Doctor drafted a fix{where}{repro}.{stub}"
+
+
+def _checked_line(e: EventLike) -> str:
+    d = _data(e)
+    if d.get("stub"):
+        line = "The Fleet Doctor's checks are a stub: nothing ran."
+    else:
+        line = f"The fix {'passed' if d.get('passed') else 'failed'} the Fleet Doctor's checks."
+    if _text(d, "summary"):
+        line += f" {_text(d, 'summary')}"
+    if d.get("touches_safety"):
+        line += " It touches the safety layer or visor."
+    return line
+
+
+DISCARD_REASONS = {
+    "touches_safety": "it touches the safety layer or visor",
+    "safety_paths_unknown": "the safety paths aren't confirmed yet",
+}
+
+
+def _discarded_line(e: EventLike) -> str:
+    reason = _text(_data(e), "reason")
+    why = DISCARD_REASONS.get(reason, _words(reason) or "no reason given")
+    return f"The Fleet Doctor discarded its fix: {why}."
+
+
+def _proposal(e: EventLike) -> str:
+    return f"fix {e.refs.get('proposal') or '?'}"
+
+
+def _offered_line(e: EventLike) -> str:
+    stub = " Its checks were a stub." if _data(e).get("stub_checked") else ""
+    return f"The Fleet Doctor offered {_proposal(e)} to {_device(e)}.{stub}"
+
+
+def _result_line(e: EventLike) -> str:
+    d = _data(e)
+    result = _words(_text(d, "result") or "an unknown result")
+    overlay = f" as overlay {e.refs['overlay']}" if e.refs.get("overlay") else ""
+    reason = f": {_text(d, 'reason')}" if _text(d, "reason") else ""
+    return f"{_device(e)} reported {_proposal(e)} {result}{overlay}{reason}."
+
+
+def _closed_line(e: EventLike) -> str:
+    outcome = _words(_text(_data(e), "outcome") or "no outcome")
+    consult = f" {e.refs['consult']}" if e.refs.get("consult") else ""
+    return f"The Fleet Doctor closed consult{consult}: {outcome}."
+
+
+def _gave_up_line(e: EventLike) -> str:
+    d = _data(e)
+    used = d.get("consults_used")
+    after = f" after {_count(used, 'consult', 'consults')}" if _is_count(used) else ""
+    reason = f": {_text(d, 'reason')}" if _text(d, "reason") else ""
+    return f"The Fleet Doctor gave up on this incident{after}{reason}."
+
+
+LINES.update(
+    {
+        "doctor.asked": _asked_line,
+        "doctor.advised": _advised_line,
+        "doctor.blocked_over_cap": _over_cap_line,
+        "doctor.declined": _declined_line,
+        "doctor.consult_opened": _consult_opened_line,
+        "doctor.diagnosed": _diagnosed_line,
+        "doctor.drafted": _drafted_line,
+        "doctor.checked": _checked_line,
+        "doctor.proposal_discarded": _discarded_line,
+        "doctor.proposal_offered": _offered_line,
+        "doctor.proposal_result": _result_line,
+        "doctor.proposal_expired": lambda e: (
+            f"{_proposal(e).capitalize()} expired before {_device(e)} applied it."
+        ),
+        "doctor.consult_closed": _closed_line,
+        "doctor.gave_up": _gave_up_line,
+    }
+)
+
+# The kinds whose hypotheses make the ledger, and the source each one is.
+LEDGER_SOURCES: dict[str, str] = {"doctor.advised": "ask", "doctor.diagnosed": "consult"}
 
 # Kinds about a device, a version, the fleet or a dataset, never one incident: their
 # events don't carry `refs.incident`, so they need no chain label. A kind that starts
@@ -539,6 +779,46 @@ STAGE: dict[str, int] = {
 }
 _DEFAULT_STAGE = 50
 
+# --- Fleet Doctor: where an incident stands, and tie order (PR 6) ------------------------
+# A consult moves the badge while it is open; a closed one picks it from `data.outcome`
+# (interfaces.md §5.2). L1 asks (asked, advised) and the consult's inner steps don't move it.
+STATUS.update(
+    {
+        "doctor.consult_opened": ("Fleet Doctor consulting", "wait"),
+        "doctor.proposal_offered": ("Fleet Doctor fix offered", "wait"),
+        "doctor.consult_closed": ("Fleet Doctor consult closed", "info"),  # no outcome given
+        "doctor.gave_up": ("Fleet Doctor gave up", "bad"),
+    }
+)
+CONSULT_OUTCOME_STATUS: dict[str, tuple[str, str]] = {
+    "held": ("Fleet Doctor fix held", "good"),
+    "advised": ("Fleet Doctor advised", "info"),
+    "declined": ("Fleet Doctor declined", "info"),
+    "blocked_over_cap": ("Fleet Doctor: over cap", "bad"),
+    "discarded": ("Fleet Doctor fix discarded", "bad"),
+    "failed_checks": ("Fleet Doctor fix failed checks", "bad"),
+    "reverted": ("Fleet Doctor fix reverted", "bad"),
+    "failed_verify": ("Fleet Doctor fix failed verify", "bad"),
+    "stale": ("Fleet Doctor fix stale", "info"),
+    "rejected": ("Fleet Doctor fix rejected", "info"),
+    "expired": ("Fleet Doctor fix expired", "info"),
+    "gave_up": ("Fleet Doctor gave up", "bad"),
+}
+
+
+def _consult_status(d: Mapping[str, Any]) -> tuple[str, str]:
+    outcome = _text(d, "outcome")
+    if not outcome:
+        return STATUS["doctor.consult_closed"]
+    return CONSULT_OUTCOME_STATUS.get(outcome, (f"consult closed: {_words(outcome)}", "info"))
+
+
+# One stage for every doctor kind: after the device's own heal and its evidence, before
+# work orders and lock-in. A tick can write several doctor events with one `ts` (open,
+# refuse, close; close, then attempt 2), so among themselves they keep their write order.
+DOCTOR_STAGE = 30
+STAGE.update({kind: DOCTOR_STAGE for kind in LABELS if kind.startswith("doctor.")})
+
 
 def _default_label(e: EventLike) -> str:
     return e.kind.replace(".", " ").replace("_", " ")
@@ -563,6 +843,7 @@ def build_story(events: Iterable[EventLike], incident_id: str) -> Story:
             label=LABELS.get(e.kind, _default_label)(e),
             refs=dict(e.refs),
             evidence=_evidence(e) if "recording" in e.refs else None,
+            doctor=_doctor(e),
         )
         for _, e in indexed
     )
