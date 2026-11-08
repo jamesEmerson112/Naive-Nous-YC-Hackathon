@@ -224,7 +224,7 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 | `POST /v1/fleet/freeze`, `POST /v1/fleet/unfreeze` | Kill switch (D11). Body `{"by": "kent", "why": "…"}` (`reason` is accepted too); `by` may be bare or `human:kent`, default `operator`. → `{"frozen", "changed", "why", "pinned"}`. Freeze pins each device to its `last_good`, and a canary running an in-flight candidate to what it had before that candidate; unfreeze puts every device back on its class's latest promoted release. A second press changes nothing and writes no event |
 | `GET /v1/work-orders?status=`, `GET /v1/work-orders/{id}` | Work orders and their Naïve card status; the single read adds the order's events |
 | `POST /v1/work-orders/{id}/resolve` | A person resolves an order waiting for one (D19b). Body `{"action": "approve" \| "deny", "by": "kent", "why": "…"}`. `by` and `why` must be non-blank (`422`). `approve` re-queues an order with no card (the card frozen on the first attempt is resent with the same `Idempotency-Key`; refused for an order created in another `NAIVE_MODE`), or accepts as `done` a card that Naïve finished (`done`) but that came back `needs_human`/`stopped`. `deny` closes it as `denied`, only for an order waiting for a person whose card (if any) is finished, or a card-less `pending` one. `409` otherwise, with the reason (e.g. "close card crd_… on the board first") |
-| `GET /v1/digest?since=` | Counts for the morning digest |
+| `GET /v1/digest?since=&until=` | Counts for the morning digest. `since`: ISO time or `30m` / `12h` / `2d` ago; default the overnight start, else 12 h. JSON counts plus `text` (what `make digest` prints) and `storage` (blob bytes vs budget) |
 | `GET /v1/events?since=&ref=` | The raw event log |
 
 ### 4.5 Pages
@@ -247,9 +247,9 @@ Every event has `actor`, `kind`, `refs` and `why` (v0 plan §4).
 | Incidents | `incident.reported`, `incident.agent_acted`, `overlay.applied`, `overlay.held`, `overlay.reverted`, `overlay.superseded`, `overlay.locked_in`, `overlay.dropped` |
 | Batch and gate (events for overlays and candidates whose diff touches safety-layer or visor paths carry `touches_safety: true` in `refs`; D5a, K17) | `batch.requested`, `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.restarted` (unfrozen; back to replay), `candidate.awaiting_canary`, `candidate.stale` (its base was replaced; its overlays go back to `held`), `candidate.error`, `batch.error`, `overlay.deferred` (stays held for the next batch), `overlay.requeued`, `overlay.lockin_rolled_back` and `overlay.lockin_error` (sticky cloud statuses; the device keeps its fix). A candidate folded from several incidents lists them in `refs.incidents` |
 | Coding agent (D21) | `coder.started`, `coder.drafted`, `coder.tests_passed`, `coder.tests_failed`, `code.version_created` |
-| Fleet | `fleet.frozen`, `fleet.unfrozen` |
+| Fleet | `fleet.frozen`, `fleet.unfrozen`, `fleet.overnight_started`, `fleet.overnight_stopped` (M7: `cli overnight start/stop`; `reset` refuses while started) |
 | Work orders (each carries `refs.work_order`, `refs.incident` and `refs.status`; changes add `refs.from`/`refs.to`) | `workorder.created`, `workorder.card_posted`, `workorder.status_changed`, `workorder.post_retried` (a retryable Naïve error; the order stays `pending`), `workorder.post_held` (not posted while the fleet is frozen; once per order), `workorder.card_updated` (Naïve changed the card but the platform status stayed, e.g. a new comment on a parked card) |
-| Data | `recording.received`, `recording.blob_stored`, `recording.linked` (an incident arrived after its recording), `label.changed`, `dataset.snapshotted`, `export.built` |
+| Data | `recording.received`, `recording.blob_stored`, `recording.linked` (an incident arrived after its recording), `recording.blobs_pruned` (M7: the disk budget deleted the oldest unlabeled episode blobs; one event per batch), `label.changed`, `dataset.snapshotted`, `export.built` |
 
 ## 6. Where your v1 list went
 

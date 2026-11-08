@@ -487,6 +487,13 @@ def _request(
     return request
 
 
+def _real_device(session: Session, device_id: str) -> bool:
+    """Only a device registered as exactly `real` may get a live card (sim, test and
+    unknown devices, including auto-registered ones, never do)."""
+    device = session.get(Device, device_id)
+    return device is not None and device.kind == "real"
+
+
 def _post(
     session: Session,
     order: WorkOrder,
@@ -502,6 +509,11 @@ def _post(
     created_mode = raw.get("naive_mode", "unknown")
     if created_mode != settings.naive_mode:
         why = f"Not posted: created in {created_mode} mode; not posted {settings.naive_mode}."
+        _set_status(session, order, "needs_human", why, now)
+        return 0
+    if settings.naive_mode == "live" and not _real_device(session, order.device_id):
+        # K13: a simulated (or unknown) arm's fault must never reach a real supplier.
+        why = "Not posted: simulated device; not posted live."
         _set_status(session, order, "needs_human", why, now)
         return 0
     request = _request(session, order, settings, naive, catalog)

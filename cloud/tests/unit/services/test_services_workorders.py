@@ -238,6 +238,35 @@ def test_live_mode_refuses_any_spelling_of_the_placeholder(db_session, settings,
     assert "request" not in order.raw
 
 
+@pytest.mark.parametrize("kind", ["sim", "test", "unknown", "Real", ""])
+def test_live_never_posts_for_a_device_that_is_not_exactly_real(db_session, settings, kind):
+    """K13 (PR #16 review): the overnight chaos parks simulated arms; in live mode their
+    orders go to a person, never out to a supplier."""
+    device = devices.register(db_session, "sim-9", actor="human:test", actor_class="human")
+    device.kind = kind  # incl. kinds `register` refuses, e.g. a future auto-registered "unknown"
+    db_session.flush()
+    live = settings.model_copy(update={"naive_mode": "live", "work_order_phone": "+1 mate"})
+    incident_id = _incident(db_session, "sim-9")
+    _triage(db_session, live)
+    naive = FakeNaive()
+    _sync(db_session, live, naive)
+    order = _order(db_session, incident_id)
+    assert order.status == "needs_human" and naive.cards == {}
+    assert workorders.history(db_session, order.id)[-1]["why"] == (
+        "Not posted: simulated device; not posted live."
+    )
+
+
+def test_fake_mode_still_posts_for_simulated_devices(db_session, settings):
+    devices.register(db_session, "sim-9", kind="sim", actor="human:test", actor_class="human")
+    db_session.flush()
+    incident_id = _incident(db_session, "sim-9")
+    _triage(db_session, settings)
+    naive = FakeNaive()
+    _sync(db_session, settings, naive)
+    assert _order(db_session, incident_id).naive_card_id and len(naive.cards) == 1
+
+
 def test_live_never_posts_an_order_created_in_fake_mode(db_session, settings, arm):
     """Decision (c): the fake backlog goes to a person instead of out to Naïve."""
     incident_id = _incident(db_session, arm)

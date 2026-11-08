@@ -1,0 +1,131 @@
+"""`make overnight-check` asks the app's own settings for the Naïve mode (K13), so a
+lowercase `naive_mode=live` can't slip past it. The script runs against a stub `docker`."""
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from romulus_cloud import cli
+from romulus_cloud.settings import get_settings
+
+SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "overnight_check.sh"
+
+STUB = r"""#!/usr/bin/env bash
+a="$*"
+case "$1" in
+  info) exit 0 ;;
+  inspect)
+    case "$a" in
+      *Args*) echo "-m fake_device --chaos=overnight" ;;
+      *) echo "running healthy unless-stopped" ;;
+    esac ;;
+  compose)
+    case "$a" in
+      *"worker python -m romulus_cloud.cli setting naive_mode"*) echo "$STUB_WORKER_NAIVE" ;;
+      *"api python -m romulus_cloud.cli setting naive_mode"*) echo "$STUB_API_NAIVE" ;;
+      *"setting canary_window_s"*) echo 1200 ;;
+      *"setting batch_interval_s"*) echo 3600 ;;
+      *"setting overnight_started"*) echo True ;;
+      *"setting llm_mode"*) echo fake ;;
+      *"overnight status"*) echo "overnight: started at 2026-11-08T08:30:00+00:00" ;;
+      *schema-check*) echo "${STUB_SCHEMA:-schema: the database matches the models.}" ;;
+      *" ps "*) echo cid ;;
+      *logs*) echo '"worker.step"'; [ -n "${STUB_STEP_FAILED:-}" ] && echo '"worker.step_failed"' ;;
+    esac ;;
+esac
+"""
+
+
+@pytest.fixture
+def lowercase_env(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)  # no .env
+    get_settings.cache_clear()
+    yield monkeypatch
+    get_settings.cache_clear()
+
+
+def test_setting_prints_what_the_app_resolves(lowercase_env, capsys):
+    lowercase_env.setenv("naive_mode", "live")  # lowercase: printenv NAIVE_MODE misses it
+    assert cli.main(["setting", "NAIVE_MODE"]) == 0
+    assert capsys.readouterr().out.strip() == "live"
+
+
+def test_setting_hides_secrets_and_rejects_unknown_names(lowercase_env, capsys):
+    lowercase_env.setenv("NAIVE_API_KEY", "sk-very-secret")
+    assert cli.main(["setting", "naive_api_key"]) == 0
+    assert capsys.readouterr().out.strip() == "<secret>"
+    assert cli.main(["setting", "nope"]) == 2
+
+
+def run_check(tmp_path, api: str, worker: str, **extra: str) -> str:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "docker"
+    stub.write_text(STUB)
+    stub.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "COMPOSE": "docker compose",
+        "API_PORT": "1",
+        "STUB_API_NAIVE": api,
+        "STUB_WORKER_NAIVE": worker,
+        **extra,
+    }
+    out = subprocess.run(
+        ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60, cwd=tmp_path
+    )
+    return out.stdout
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize(
+    "api,worker,expected",
+    [
+        (
+            "fake",
+            "fake",
+            [
+                "PASS  NAIVE_MODE resolves to fake in api",
+                "PASS  NAIVE_MODE resolves to fake in worker",
+            ],
+        ),
+        ("live", "fake", ["FAIL  NAIVE_MODE resolves to 'live' in api"]),
+        ("fake", "live", ["FAIL  NAIVE_MODE resolves to 'live' in worker"]),
+        ("", "fake", ["FAIL  can't read the effective NAIVE_MODE in api"]),
+    ],
+)
+def test_check_fails_unless_both_containers_resolve_fake(tmp_path, api, worker, expected):
+    out = run_check(tmp_path, api, worker)
+    for line in expected:
+        assert line in out, out
+    assert "PASS  canary_window_s=1200" in out and "PASS  overnight_started=True" in out
+
+
+def test_check_fails_on_recent_step_failures(tmp_path):
+    out = run_check(tmp_path, "fake", "fake")
+    assert "PASS  worker: no failed steps in the last 5 minutes" in out
+    out = run_check(tmp_path, "fake", "fake", STUB_STEP_FAILED="1")
+    assert "FAIL  worker: 1 failed step(s) in the last 5 minutes" in out
+
+
+def test_check_fails_when_the_schema_is_behind(tmp_path):
+    out = run_check(tmp_path, "fake", "fake")
+    assert "PASS  schema: the database matches the models." in out
+    lacks = "schema: the database lacks fleet_state.overnight_started_at"
+    out = run_check(tmp_path, "fake", "fake", STUB_SCHEMA=lacks)
+    assert f"FAIL  {lacks}" in out
+
+
+def test_check_reports_the_active_env_files(tmp_path):
+    out = run_check(tmp_path, "fake", "fake")
+    assert "FAIL  .env.overnight is missing" in out and "WARN  env file .env is absent" in out
+    (tmp_path / ".env").write_text("NAIVE_API_KEY=k\n")
+    (tmp_path / ".env.overnight").write_text("NAIVE_MODE=fake\n")
+    out = run_check(tmp_path, "fake", "fake")
+    assert "PASS  env file .env is present and loaded" in out
+    assert "PASS  env file .env.overnight is present and loaded" in out
+    assert ".env.overnight is missing" not in out

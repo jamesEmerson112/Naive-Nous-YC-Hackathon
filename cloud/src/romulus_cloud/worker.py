@@ -19,7 +19,7 @@ from romulus_cloud import db
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
-from romulus_cloud.services import batch, datasets, gate, workorders
+from romulus_cloud.services import batch, datasets, gate, telemetry, workorders
 from romulus_cloud.settings import get_settings
 
 
@@ -54,6 +54,9 @@ STEPS += [
     Step("datasets.sync_regression_cases", datasets.sync_regression_cases, every_s=30),
     Step("datasets.run_exports", _run_exports, every_s=5),
 ]
+
+# M7: keep the blob store under BLOB_BUDGET_GB (oldest unlabeled episodes first).
+STEPS.append(Step("telemetry.enforce_budget", telemetry.enforce_budget_step, every_s=600))
 
 
 def run_tick(

@@ -56,7 +56,8 @@ class SimDevice:
       until the cloud assigns another version.
     """
     bad_next: str | None = None
-    """Mark the next firmware version installed as bad with this mode, whatever its number."""
+    """Mark the next new firmware version installed as bad with this mode, whatever its
+    number (a version the arm already ran, e.g. a rollback target, is never marked)."""
 
     _stored: dict[tuple[str, Any], Any] = field(default_factory=dict)
     """Versions kept "on disk" (kind, version) -> payload, so rollback needs no cloud."""
@@ -109,8 +110,11 @@ class SimDevice:
     def install(self, kind: str, version: Any, payload: Any) -> None:
         if kind not in ("firmware", "code", "harness"):
             raise ValueError(f"unknown install kind {kind!r}")
+        new = (kind, version) not in self._stored
         self._stored[(kind, version)] = payload
-        if kind == "firmware" and self.bad_next:
+        # Only a version this arm never ran can be the bad candidate: the gate rolling the
+        # canary back to its old firmware must work even while bad mode is armed.
+        if kind == "firmware" and self.bad_next and new:
             self.bad_versions[version] = self.bad_next
             self.bad_next = None
         self._switch(kind, version)

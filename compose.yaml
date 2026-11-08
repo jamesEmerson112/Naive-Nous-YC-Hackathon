@@ -9,6 +9,11 @@ x-cloud: &cloud
   env_file:
     - path: .env
       required: false
+    # Overnight values on top (M7): `cp .env.overnight.example .env.overnight`. Later files
+    # win, so NAIVE_MODE=fake here beats a live key in .env (build plan K13).
+    - path: .env.overnight
+      required: false
+  restart: unless-stopped  # the overnight run recovers on its own (F10, build plan K4)
   environment:
     # Inside Compose these always point at the db service and the mounted data dir,
     # whatever .env says for host-side use.
@@ -24,6 +29,7 @@ x-cloud: &cloud
 services:
   db:
     image: postgres:17
+    restart: unless-stopped
     environment:
       POSTGRES_USER: romulus
       POSTGRES_PASSWORD: romulus
@@ -60,9 +66,22 @@ services:
     build:
       context: .
       dockerfile: tools/fake_device/Dockerfile
-    command: ["--n", "${FAKE_DEVICES_N:-3}"]
+    # Chaos schedule (M7, F10): overnight | demo | off; CHAOS_SPEED=60 plays it 60x faster.
+    command:
+      - "--n=${FAKE_DEVICES_N:-3}"
+      - "--chaos=${CHAOS:-overnight}"
+      - "--speed=${CHAOS_SPEED:-1}"
+      - "--seed=${CHAOS_SEED:-0}"
+    env_file:  # same layering as api and worker (the fake device reads none of it today)
+      - path: .env
+        required: false
+      - path: .env.overnight
+        required: false
     environment:
       CLOUD_URL: http://api:8000
+    volumes:
+      - ./data/fake_device:/app/data/fake_device  # outboxes survive a restart (F9)
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy

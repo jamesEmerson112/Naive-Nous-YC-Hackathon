@@ -11,9 +11,12 @@ optional `data`, and a time: `occurred_at`, or `ts` as on the ORM `Event` row.
 `EventView` is a ready-made one.
 
 **What counts as an action** (the share's denominator). Only decisions and actions, from
-the APIs §5 list (`ACTION_KINDS`): the batch job, the gate, the coding agent, the kill
-switch, work orders, dataset snapshots and exports, and the platform locking in or
-dropping an overlay. Pure intake (`incident.reported`, `recording.received`,
+the APIs §5 list (`ACTION_KINDS`): the on-device agent acting on an incident
+(`incident.agent_acted`, one per incident it handled), the batch job, the gate, the
+coding agent, the kill switch, work orders, dataset snapshots and exports, and the
+platform locking in or dropping an overlay. Housekeeping (the disk budget's
+`recording.blobs_pruned`) is not counted: no judge counts garbage collection as running
+the company. Pure intake (`incident.reported`, `recording.received`,
 `label.changed`, `device.*`, `install.reported`, `overlay.held`, `overlay.reverted`) and
 unknown kinds don't count, **except** that any event by a human always counts as a
 human action, so a person stepping in is never hidden.
@@ -40,13 +43,14 @@ orders created / posted; kill switch `fleet.frozen`.
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, tzinfo
 from typing import Any
 
 ACTOR_CLASSES = ("agent", "automation", "human")
 
 ACTION_KINDS = frozenset(
     {
+        "incident.agent_acted",
         "overlay.locked_in",
         "overlay.dropped",
         "batch.ran",
@@ -208,17 +212,51 @@ def summarize(events: Iterable[Any], since: datetime, until: datetime | None = N
     )
 
 
-def _fmt(when: datetime | None) -> str:
-    return when.strftime("%Y-%m-%d %H:%M %Z").strip() if when else "now"
+def _fmt(when: datetime | None, tz: tzinfo | None = None) -> str:
+    if when is None:
+        return "now"
+    return (when.astimezone(tz) if tz else when).strftime("%Y-%m-%d %H:%M %Z").strip()
 
 
-def render_text(digest: Digest) -> str:
-    """Plain text for `make digest`."""
+def _hours(d: Digest, now: datetime | None) -> float | None:
+    end = d.until or now
+    return None if end is None else max((end - d.since).total_seconds(), 0) / 3600
+
+
+def headline(digest: Digest, now: datetime | None = None, fleet: str | None = None) -> str:
+    """One sentence for a demo slide: what happened, on which fleet (say when it is
+    simulated, e.g. "4 simulated arms + 0 real"), how many humans it took, and how many
+    things are still waiting for one."""
+    d = digest
+    hours = _hours(d, now)
+    span = f"In {hours:.1f} h" if hours is not None else "Since then"
+    if fleet:
+        span += f" on {fleet}"
+    share = d.no_human_share
+    no_human = "" if share is None else f" ({share:.0%} of {d.actions} actions with no human)"
+    return (
+        f"{span}: {d.incidents} incidents, {d.heals} healed on the device, "
+        f"{d.candidates_promoted} fleet fixes promoted, {d.candidates_rolled_back} rolled back, "
+        f"{d.work_orders_created} work orders; {len(d.human_actions)} human actions, "
+        f"{len(d.waiting_for_person)} waiting for a person{no_human}."
+    )
+
+
+def render_text(
+    digest: Digest,
+    tz: tzinfo | None = None,
+    now: datetime | None = None,
+    fleet: str | None = None,
+) -> str:
+    """Plain text for `make digest`, pasteable into a slide. Times shown in `tz` if given;
+    `now` sizes an open-ended window in the headline; `fleet` names the fleet there."""
     d = digest
     classes = " · ".join(f"{c} {n}" for c, n in d.actions_by_class.items())
     share = d.no_human_share
     lines = [
-        f"Romulus digest: {_fmt(d.since)} → {_fmt(d.until)}",
+        f"Romulus digest: {_fmt(d.since, tz)} → {_fmt(d.until, tz)}",
+        headline(d, now, fleet),
+        "",
         f"Events: {d.total_events}. Actions (decisions and actions, not intake): {d.actions}"
         + (f" ({classes})" if d.actions else ""),
         "Actions with no human: " + ("n/a" if share is None else f"{share:.1%}"),
@@ -233,11 +271,13 @@ def render_text(digest: Digest) -> str:
     ]
     if d.human_actions:
         lines.append("Human actions:")
-        lines += [f"  {_fmt(h.occurred_at)}  {h.actor}  {h.kind}: {h.why}" for h in d.human_actions]
+        lines += [
+            f"  {_fmt(h.occurred_at, tz)}  {h.actor}  {h.kind}: {h.why}" for h in d.human_actions
+        ]
     if d.waiting_for_person:
         lines.append("Waiting for a person:")
         lines += [
-            f"  {w.work_order}  {w.status} since {_fmt(w.since)}: {w.why}"
+            f"  {w.work_order}  {w.status} since {_fmt(w.since, tz)}: {w.why}"
             for w in d.waiting_for_person
         ]
     return "\n".join(lines) + "\n"

@@ -33,7 +33,7 @@ def test_write_chunk_caps_with_a_413(tmp_path):
     "n,text", [(None, "size unknown"), (12, "12 B"), (2048, "2.0 KB"), (3 << 20, "3.0 MB")]
 )
 def test_size_reads_well(n, text):
-    assert telemetry._size(n) == text
+    assert telemetry.size_text(n) == text
 
 
 @pytest.fixture

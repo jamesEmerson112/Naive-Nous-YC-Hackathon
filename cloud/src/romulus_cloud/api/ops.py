@@ -28,6 +28,7 @@ from romulus_cloud.services import (
     telemetry,
     workorders,
 )
+from romulus_cloud.services import digest as digest_service
 from romulus_contracts import SHA256_HEADER
 
 router = APIRouter(prefix="/v1", tags=["ops"])
@@ -386,3 +387,26 @@ def download_recording(recording_id: str, session: SessionDep, store: BlobStoreD
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+# --- digest (F10, M7) ----------------------------------------------------------------------
+
+
+@router.get("/digest")
+def get_digest(
+    session: SessionDep,
+    settings: SettingsDep,
+    since: str | None = None,
+    until: str | None = None,
+) -> dict:
+    """Counts for the morning digest. `since`: ISO time or 30m / 12h / 2d ago; by default
+    from the overnight start, else the last 12 h."""
+    report = digest_service.report(
+        session,
+        utcnow(),
+        since=since,
+        until=until,
+        budget_gb=settings.blob_budget_gb,
+        fleet_id=settings.fleet_id,
+    )
+    return {**report.to_dict(), "text": report.text(settings.display_tz)}

@@ -34,6 +34,7 @@ from romulus_cloud.domain.labels import split_label
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import new_id
 from romulus_cloud.models import (
+    Blob,
     Dataset,
     DatasetVersion,
     Device,
@@ -257,6 +258,12 @@ def snapshot(session: Session, dataset_id: str, *, actor: str, now: datetime) ->
     ds = get_dataset(session, dataset_id, lock=True)  # serializes concurrent snapshots
     f = parse_filter(ds.filter)
     recs = find_recordings(session, f, fleet_id=ds.fleet_id)
+    # Only recordings whose bytes are stored: an export of a pruned episode (M7 disk budget)
+    # or of one not uploaded yet could never be built.
+    stored = set(
+        session.scalars(select(Blob.sha256).where(Blob.sha256.in_({r.sha256 for r in recs})))
+    )
+    recs = [r for r in recs if r.sha256 in stored]
     incident_ids = {r.incident_id for r in recs if r.incident_id}
     if not f.recording_only:
         stmt = select(Incident.id, Incident.device_id, Incident.occurred_at).where(
