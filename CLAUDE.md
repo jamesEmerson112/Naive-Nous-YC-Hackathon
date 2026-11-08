@@ -93,6 +93,8 @@ _Last updated: Sun Nov 8, 1:48 AM PST_
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo (live texts a teammate's phone)
 
 **Recent commits (all authors):**
+- `06b6c39` Sun 01:49 · jamesEmerson112 · Update team status and features.txt
+- `51c68b1` Sun 01:48 · Kent Gang · Update Kent status in CLAUDE.md
 - `3694e27` Sun 01:42 · kgang · Romulus: harden code replay against test gaming (#53)
 - `34d04e4` Sun 01:39 · jamesEmerson112 · Update team status and features.txt
 - `0871be7` Sun 01:32 · jamesEmerson112 · Merge pull request #55 from jamesEmerson112/james/arm-sim
@@ -101,8 +103,6 @@ _Last updated: Sun Nov 8, 1:48 AM PST_
 - `dc56bf0` Sun 01:27 · jamesEmerson112 · arm-sim: final regression numbers in the morning brief
 - `5393d64` Sun 01:23 · jamesEmerson112 · arm-sim S5 docs: README for the whole loop, the morning brief; Stack Map: S5 done
 - `7d193f8` Sun 01:21 · jamesEmerson112 · arm-sim: story A defaults to bad image 07, the bench demo's fault (#54); up.sh runs on macOS bash 3.2
-- `c87098e` Sun 01:18 · jamesEmerson112 · Update team status in CLAUDE.md
-- `3a32db0` Sun 01:18 · Kent Gang · Update Kent status in CLAUDE.md
 
 **Branches on GitHub:** `main`; open PR branch `cloud/b5-egress` (#46, Kent, WIP review fixes) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `full-test-2` (Olir, 1 commit ahead of main, no PR); `doctor/repro-seal` (Kent, #56 closed unmerged); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
