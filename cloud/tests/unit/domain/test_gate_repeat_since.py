@@ -12,20 +12,33 @@ def at(s: float) -> datetime:
     return T0 + timedelta(seconds=s)
 
 
-def test_repeat_since_counts_this_or_an_unknown_version_after_the_start():
+def test_repeat_since_prefers_a_proven_repeat_after_the_start():
     hit = repeat_since(
         [
             IncidentObs(at(-5), "camera_occluded", 2),  # before the run
             IncidentObs(at(30), "camera_occluded", 1),  # the previous version
             IncidentObs(at(40), "gripper_stall", 2),  # another kind
-            IncidentObs(at(60), "camera_occluded", None),  # unknown: fail closed
+            IncidentObs(at(45), "camera_occluded", None),  # unknown: only unproven
             IncidentObs(at(50), "camera_occluded", 2),
         ],
         T0,
         version=2,
         repeat_kinds=KINDS,
     )
-    assert hit == "canary repeated camera_occluded 50 s after the canary started"
+    assert hit == ("canary repeated camera_occluded 50 s after the canary started", True)
+
+
+def test_repeat_since_an_unknown_version_only_is_unproven():
+    obs = [IncidentObs(at(45), "camera_occluded", None), IncidentObs(at(30), "x", 2)]
+    assert repeat_since(obs, T0, version=2, repeat_kinds=KINDS) == (
+        "canary repeated camera_occluded 45 s after the canary started on an unknown version",
+        False,
+    )
+
+
+def test_unfreeze_marks_an_unknown_version_repeat_as_unproven():
+    t = next_state("frozen", _unfrozen(IncidentObs(at(400), "camera_occluded", None)), at(900))
+    assert t.state == "rolled_back" and t.unproven and "unknown version" in t.why
 
 
 def test_repeat_since_ignores_everything_else():
@@ -50,7 +63,7 @@ def _unfrozen(*obs, started=T0) -> GateInputs:
 
 def test_unfreeze_rolls_back_a_candidate_whose_canary_repeated_while_frozen():
     t = next_state("frozen", _unfrozen(IncidentObs(at(400), "camera_occluded", 2)), at(900))
-    assert t.state == "rolled_back"
+    assert t.state == "rolled_back" and not t.unproven
     assert t.why == (
         "canary repeated camera_occluded 400 s after the canary started (seen on unfreeze); "
         "not restarting"

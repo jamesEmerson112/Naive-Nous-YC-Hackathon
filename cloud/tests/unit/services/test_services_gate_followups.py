@@ -166,12 +166,37 @@ def test_requeued_overlay_stays_held_when_its_device_reports_superseded(db, tool
     assert db.get(FirmwareVersion, ("default", again.version)).parent_version == first.version
 
 
-def test_a_held_overlay_never_batched_is_still_terminal_on_superseded(db):
-    """Only a re-queued overlay is kept: plain `held` → `superseded` stays the D7 contract."""
-    ov = _held(db)
+def test_a_held_overlay_never_batched_survives_superseded_and_rebatches(db, tools, settings):
+    """Orchestrator decision 2: v2 (from another overlay) didn't contain sim-3's held fix."""
+    _held(db, device="sim-1")
+    first = _firmware(db, tools, settings)
+    for d in devices.list_devices(db):  # v2 promoted and installed everywhere
+        d.assigned_firmware = first.version
+    ov = _held(db, device="sim-3", diff={"params": {"max_speed": 0.5}})  # never batched
+    gone = OverlayStatus(status="superseded", reason=f"replaced by firmware {first.version}")
+    assert incidents.set_overlay_status(db, "sim-3", ov.id, gone, {"status": "superseded"}, T0)
+    assert ov.status == "held"
+    (ev,) = _events(db, "overlay.superseded", {"device": "sim-3", "overlay": ov.id})
+    assert "it was never locked in" in ev.why and ev.data["after"] == "held"
+    # A late `reverted` after `superseded` changes nothing: the device no longer runs it.
+    late = OverlayStatus(status="reverted", reason="late")
+    assert not incidents.set_overlay_status(db, "sim-3", ov.id, late, {}, T0 + S)
+    again = _firmware(db, tools, settings, T0 + 2 * S)
+    assert {(r["device_id"], r["overlay_id"]) for r in again.from_overlays} == {("sim-3", ov.id)}
+    assert db.get(FirmwareVersion, ("default", again.version)).parent_version == first.version
+
+
+def test_superseded_while_active_or_locked_in_keeps_the_old_rules(db):
+    """`active` (not kept yet) ends `superseded`; `locked_in` (the version has it) stays."""
+    active = _held(db)
+    active.status = "active"
     gone = OverlayStatus(status="superseded", reason="replaced by firmware 2")
-    assert incidents.set_overlay_status(db, "sim-1", ov.id, gone, {}, T0)
-    assert ov.status == "superseded"
+    assert incidents.set_overlay_status(db, "sim-1", active.id, gone, {}, T0)
+    assert active.status == "superseded"
+    locked = _held(db, device="sim-3")
+    locked.status = "locked_in"
+    assert incidents.set_overlay_status(db, "sim-3", locked.id, gone, {}, T0)
+    assert locked.status == "locked_in"
 
 
 # --- 2. unfreeze respects manual reassignments ---------------------------------------------
@@ -271,7 +296,7 @@ def test_freeze_with_nothing_promoted_pins_to_what_the_class_runs(db):
 # --- 4. a repeat incident during a freeze -------------------------------------------------
 
 
-def _repeat(db, firmware: int, at: datetime) -> None:
+def _repeat(db, firmware: int | None, at: datetime) -> None:
     db.add(
         Incident(
             id=str(uuid.uuid4()),
@@ -279,35 +304,67 @@ def _repeat(db, firmware: int, at: datetime) -> None:
             occurred_at=at,
             received_at=at,
             kind="camera_occluded",
-            running={"firmware": firmware, "harness": 1},
+            running={"harness": 1} if firmware is None else {"firmware": firmware, "harness": 1},
         )
     )
     db.flush()
 
 
-@pytest.mark.parametrize(("running", "rolled_back"), [(None, True), (1, False)])
-def test_a_repeat_incident_received_while_frozen_fails_the_candidate_on_unfreeze(
-    db, tools, settings, running, rolled_back
-):
-    _held(db)
+def _frozen_canary(db, tools, settings) -> tuple[Candidate, Overlay]:
+    ov = _held(db)
     fw = _firmware(db, tools, settings)
     gate.tick(db, T0, settings=settings)
     assert fw.status == "canary"
     fleet.freeze(db, "kent", "x", T0 + S)
     gate.tick(db, T0 + 2 * S, settings=settings)
     assert fw.status == "frozen"
-    # The canary repeats the fault while frozen: on the candidate (or an unknown version,
-    # fail closed), or on its previous version, which it was pinned back to.
-    _repeat(db, fw.version if running is None else running, T0 + 10 * S)
-    fleet.unfreeze(db, "kent", "x", T0 + 500 * S)
-    gate.tick(db, T0 + 501 * S, settings=settings)
-    if rolled_back:
-        assert fw.status == "rolled_back"
-        assert fw.verdict["why"].startswith("canary repeated camera_occluded 10 s after")
-        assert "seen on unfreeze" in fw.verdict["why"]
-        assert db.get(Device, "sim-2").assigned_firmware == 1
-    else:
-        assert fw.status == "replaying"
+    return fw, ov
+
+
+def _unfreeze_and_tick(db, settings, at: datetime) -> None:
+    fleet.unfreeze(db, "kent", "x", at)
+    gate.tick(db, at + S, settings=settings)
+
+
+def test_a_repeat_on_the_candidates_version_while_frozen_fails_it_for_good(db, tools, settings):
+    fw, ov = _frozen_canary(db, tools, settings)
+    _repeat(db, fw.version, T0 + 10 * S)
+    _unfreeze_and_tick(db, settings, T0 + 500 * S)
+    assert fw.status == "rolled_back"
+    assert fw.verdict["why"].startswith("canary repeated camera_occluded 10 s after")
+    assert "seen on unfreeze" in fw.verdict["why"] and "unknown" not in fw.verdict["why"]
+    assert db.get(Device, "sim-2").assigned_firmware == 1
+    assert ov.status == "lockin_rolled_back"  # proven: sticky
+
+
+def test_a_repeat_on_the_previous_version_while_frozen_restarts_it(db, tools, settings):
+    fw, _ = _frozen_canary(db, tools, settings)
+    _repeat(db, 1, T0 + 10 * S)  # the canary was pinned back to v1
+    _unfreeze_and_tick(db, settings, T0 + 500 * S)
+    assert fw.status == "replaying"
+
+
+def test_an_unknown_version_repeat_rolls_back_but_retries_the_overlay_once(db, tools, settings):
+    """Orchestrator decision 3: unproven, so like stale: held again, one retry."""
+    fw, ov = _frozen_canary(db, tools, settings)
+    _repeat(db, None, T0 + 10 * S)
+    _unfreeze_and_tick(db, settings, T0 + 500 * S)
+    assert fw.status == "rolled_back" and "on an unknown version" in fw.verdict["why"]
+    assert ov.status == "held" and ov.candidate_id is None
+    assert incidents.requeue_marks(db, ov) == {"retried": True}
+    (ev,) = _events(db, "overlay.requeued", {"device": "sim-1", "overlay": ov.id})
+    assert "unproven" in ev.why and "This is its one retry." in ev.why
+
+    # The retry: rebuilt, canaried, frozen, and the same unproven repeat → sticky now.
+    retry = _firmware(db, tools, settings, T0 + 600 * S)
+    gate.tick(db, T0 + 601 * S, settings=settings)
+    assert retry.status == "canary"
+    fleet.freeze(db, "kent", "x", T0 + 602 * S)
+    gate.tick(db, T0 + 603 * S, settings=settings)
+    _repeat(db, None, T0 + 610 * S)
+    _unfreeze_and_tick(db, settings, T0 + 700 * S)
+    assert retry.status == "rolled_back"
+    assert ov.status == "lockin_rolled_back" and "one retry is already used" in ov.status_reason
 
 
 # --- 5. the regression corpus in the gate -------------------------------------------------
@@ -409,6 +466,59 @@ def test_the_release_is_replayed_once_per_tick_per_class(db, tools, settings, mo
     assert all(c.replay is not None for c in fws) and len(fws) == 2
     assert calls == ["so101"]  # one corpus load (and release replay) for both candidates
     assert gate.CORPUS_CACHE not in db.info  # the cache lives for one tick only
+
+
+# --- bisect: a failed fold retries each overlay alone, once (orchestrator decision 1) ---
+
+
+def test_a_failed_fold_bisects_and_only_the_bad_overlay_ends_sticky(db, tools, settings):
+    old = _case(db)
+    good = _held(db, device="sim-1")
+    bad = _held(db, device="sim-3", diff=BREAKS_GRIPPER, **OWN)
+    fold = _firmware(db, tools, settings)
+    assert len(fold.from_overlays) == 2
+    gate.tick(db, T0, settings=settings)
+    assert fold.status == "rolled_back" and old in fold.verdict["why"]
+    # Neither is blamed yet: both go back to held, marked solo, with the reason.
+    for ov in (good, bad):
+        assert ov.status == "held" and ov.candidate_id is None
+        assert incidents.requeue_marks(db, ov) == {"solo": True}
+        assert "retried alone once" in ov.status_reason
+        (ev,) = _events(db, "overlay.requeued", {"device": ov.device_id, "overlay": ov.id})
+        assert "batched alone next (bisect)" in ev.why
+
+    # The batch builds each alone; the gate pins the failure on the bad one.
+    made = batch.run(db, T0 + S, tools).candidates
+    solo = {c.from_overlays[0]["device_id"]: c for c in made if c.type == "firmware"}
+    assert set(solo) == {"sim-1", "sim-3"}
+    assert all(len(c.from_overlays) == 1 for c in made)
+    gate.tick(db, T0 + 2 * S, settings=settings)
+    assert solo["sim-1"].status == "canary"
+    assert solo["sim-3"].status == "rolled_back" and old in solo["sim-3"].verdict["why"]
+    assert good.status == "locked_in"
+    assert bad.status == "lockin_rolled_back" and old in bad.status_reason
+
+
+def test_an_overlay_already_tried_solo_is_sticky_if_a_fold_fails_again(db, tools, settings):
+    """Bounded: each overlay is tried solo at most once, even if it lands in a fold."""
+    _case(db)
+    good = _held(db, device="sim-1")
+    bad = _held(db, device="sim-3", diff=BREAKS_GRIPPER, **OWN)
+    fold = _firmware(db, tools, settings)
+    events.record(  # as if sim-3's overlay had been bisected out of an earlier fold
+        db,
+        "gate",
+        "automation",
+        "overlay.requeued",
+        {"device": "sim-3", "overlay": bad.id},
+        "test: earlier bisect",
+        data={"marks": {"solo": True}},
+        ts=T0,
+    )
+    gate.tick(db, T0, settings=settings)
+    assert fold.status == "rolled_back"
+    assert bad.status == "lockin_rolled_back"  # its solo try is used up
+    assert good.status == "held" and incidents.requeue_marks(db, good) == {"solo": True}
 
 
 # --- K17 fails closed on a canary of unknown kind (PR #17: auto-registered → `unknown`) ------

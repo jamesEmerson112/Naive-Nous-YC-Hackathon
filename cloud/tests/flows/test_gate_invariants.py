@@ -17,6 +17,8 @@ Checked at the end:
   land while another candidate is on the canary), or a sibling withdrawn with one. An
   overlay already on the canary when its run started is not a cause. Stale candidates are
   not rollbacks.
+- no fix is lost without a sticky why: each overlay is waiting, carried by a live or
+  promoted candidate, or ended with a reason; a kept (`held`) fix never ends `superseded`.
 """
 
 import re
@@ -27,10 +29,18 @@ from sqlalchemy import select
 
 from fake_device.arm import FakeArm
 from fake_device.scenarios import SCENARIOS
-from romulus_cloud.models import Candidate, Device, FirmwareVersion, HarnessVersion, Overlay
+from romulus_cloud.models import (
+    Candidate,
+    Device,
+    Event,
+    FirmwareVersion,
+    HarnessVersion,
+    Overlay,
+)
 
 S = timedelta(seconds=1)
 LIVE = {"replaying", "awaiting_canary", "canary", "frozen"}
+STICKY = {"lockin_rolled_back", "lockin_error", "dropped", "reverted"}
 HOLD_S = 60
 SCHEDULE = [  # (at s, device, scenario)
     (20, "sim-1", "rules"),
@@ -149,6 +159,33 @@ def test_gate_invariants_over_a_mixed_overnight_run(
             continue
         why = (c["verdict"] or {}).get("why", "")
         assert why.startswith("withdrawn:") and any(lb in why for lb in labels), (c["label"], why)
+
+    # No fix is lost without a sticky why (PR #18): every overlay the cloud knows is still
+    # waiting (`active`/`held`), carried by a live or promoted candidate (`locked_in`), or
+    # ended with a reason. `superseded` only ends an overlay the device never kept.
+    carried: dict[tuple[str, str], set[str]] = {}
+    for c in cands:
+        for r in c["from_overlays"]:
+            carried.setdefault((r["device_id"], r["overlay_id"]), set()).add(c["status"])
+    db_session.expire_all()
+    overlays = db_session.scalars(select(Overlay).where(Overlay.incident_id.is_not(None))).all()
+    assert overlays
+    for ov in overlays:
+        key = (ov.device_id, ov.id)
+        if ov.status in ("active", "held"):
+            continue
+        if ov.status == "locked_in":
+            assert carried.get(key, set()) & (LIVE | {"promoted"}), (key, carried.get(key))
+        elif ov.status == "superseded":
+            held = db_session.scalars(
+                select(Event).where(
+                    Event.kind == "overlay.held",
+                    Event.refs.contains({"device": ov.device_id, "overlay": ov.id}),
+                )
+            ).first()
+            assert held is None, (key, "a kept fix ended superseded")
+        else:
+            assert ov.status in STICKY and ov.status_reason, (key, ov.status, ov.status_reason)
 
     # The fleet converged on the release; the canary too, once nothing is in flight.
     release = {k: max(v for v in promoted[k] if v is not None) for k in ("firmware", "harness")}

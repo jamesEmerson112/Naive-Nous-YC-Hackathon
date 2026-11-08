@@ -3,7 +3,9 @@
 `maybe_run(session, now)` runs when `BATCH_INTERVAL_S` has passed since the last run, or
 someone asked (`fleet_state.batch_requested`). Per device class, it folds **all** held
 overlays into at most one candidate per kind (`lock_in = by_patch_kind(rules=merge_rules,
-harness=write_skill, code=draft_code)`):
+harness=write_skill, code=draft_code)`), except overlays the gate marked `solo` (bisected
+out of a failed fold, `incidents.requeue_marks`): each of those gets candidates of its
+own, so a failure is pinned on it alone:
 
 - **rules / params → one `firmware` candidate:** the class's current manifest with each
   overlay's diff merged in, oldest first (deterministic `apply_overlay`, D3). An overlay
@@ -57,7 +59,7 @@ from romulus_cloud.models import (
     Incident,
     Overlay,
 )
-from romulus_cloud.services import fleet, registry
+from romulus_cloud.services import fleet, incidents, registry
 from romulus_cloud.services.gate import label
 from romulus_cloud.settings import Settings, get_settings
 from romulus_contracts import touches_safety as code_touches_safety
@@ -220,19 +222,22 @@ def run(session: Session, now: datetime, tools: Tools) -> RunResult:
     classes = sorted({i.device_class for i in items})
     for device_class in classes:
         group = [i for i in items if i.device_class == device_class]
-        marks = (len(result.dropped), len(result.deferred))
-        try:
-            with session.begin_nested():
-                result.candidates += _fold(session, group, now, tools, result)
-        except Exception as exc:  # the savepoint rolled the class back; forget its notes
-            del result.dropped[marks[0] :], result.deferred[marks[1] :]
-            _mark_error(
-                session,
-                [i.overlay for i in group],
-                f"locking in class {device_class} failed: {exc!r}",
-                now,
-                result,
-            )
+        solo = [i for i in group if incidents.requeue_marks(session, i.overlay).get("solo")]
+        rest = [i for i in group if i not in solo]
+        for part in ([rest] if rest else []) + [[i] for i in solo]:
+            marks = (len(result.dropped), len(result.deferred))
+            try:
+                with session.begin_nested():
+                    result.candidates += _fold(session, part, now, tools, result)
+            except Exception as exc:  # the savepoint rolled the part back; forget its notes
+                del result.dropped[marks[0] :], result.deferred[marks[1] :]
+                _mark_error(
+                    session,
+                    [i.overlay for i in part],
+                    f"locking in class {device_class} failed: {exc!r}",
+                    now,
+                    result,
+                )
 
     # Bookkeeping last, in a few statements: the fleet_state row is locked only from here
     # to the worker's commit, never across the LLM calls above (the kill switch shares it).

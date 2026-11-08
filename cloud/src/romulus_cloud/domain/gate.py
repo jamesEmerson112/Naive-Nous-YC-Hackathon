@@ -378,11 +378,16 @@ def repeat_since(
     *,
     version: Version,
     repeat_kinds: Iterable[str],
-) -> str | None:
-    """Why the candidate failed, if the canary repeated one of `repeat_kinds` at or after
-    `started_at` on this `version` (or an unknown one: fail closed, as `canary_verdict`
-    does). The gate asks on unfreeze, so a repeat the canary reported while the fleet was
-    frozen (outside any open window) still counts against the candidate it hit."""
+) -> tuple[str, bool] | None:
+    """`(why, proven)` if the canary repeated one of `repeat_kinds` at or after
+    `started_at` on this `version` or an unknown one; None otherwise. The gate asks on
+    unfreeze, so a repeat the canary reported while the fleet was frozen (outside any open
+    window) still counts against the candidate it hit.
+
+    `proven` is True when a repeat is known to come from this version: a real failure.
+    A repeat of unknown version only (the canary was pinned back to its previous version
+    while frozen, so it may not be the candidate's) is unproven: the gate still rolls the
+    candidate back, but retries its overlays once instead of marking them sticky."""
     repeat = set(repeat_kinds)
     hits = sorted(
         (
@@ -395,9 +400,12 @@ def repeat_since(
         ),
         key=lambda o: o.at,
     )
-    if not hits:
+    proven = [o for o in hits if o.version is not None]
+    first = (proven or hits or [None])[0]
+    if first is None:
         return None
-    return f"canary repeated {hits[0].kind} {_ts(hits[0].at, started_at)}"
+    why = f"canary repeated {first.kind} {_ts(first.at, started_at)}"
+    return (why, True) if proven else (f"{why} on an unknown version", False)
 
 
 # --------------------------------------------------------------------------- state machine
@@ -466,6 +474,7 @@ class Transition(NamedTuple):
     state: str
     why: str
     start_canary: bool = False
+    unproven: bool = False  # rolled back on evidence that may not be the candidate's
 
 
 def _canary_blocker(inputs: GateInputs) -> str | None:
@@ -511,7 +520,12 @@ def _step(state: str, inputs: GateInputs, now: datetime) -> Transition:
                 repeat_kinds=inputs.repeat_kinds,
             )
             if hit:
-                return Transition("rolled_back", f"{hit} (seen on unfreeze); not restarting")
+                why, proven = hit
+                return Transition(
+                    "rolled_back",
+                    f"{why} (seen on unfreeze); not restarting",
+                    unproven=not proven,
+                )
         return Transition("replaying", "fleet unfrozen; restarting from replay")
 
     if state == "replaying":

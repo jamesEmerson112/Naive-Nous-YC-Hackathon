@@ -24,8 +24,14 @@ reason and the rest go on.
 - **promote:** assign the candidate to every device of its class.
 - **roll back** (a real replay or canary failure): give the canary back its previous
   assignment (not `last_good`, which can already be the bad candidate in F4's late path),
-  withdraw live candidates sharing its overlays, and mark the failed candidate's overlays
-  `lockin_rolled_back`: sticky, never re-batched, and the device keeps its local fix.
+  withdraw live candidates sharing its overlays, and settle the failed candidate's
+  overlays so no fix is lost without a sticky why:
+  - from one overlay: `lockin_rolled_back`, sticky, never re-batched; the device keeps
+    its local fix;
+  - folded from several: a bounded bisect. Each goes back to `held` marked `solo` and
+    the batch builds it alone; one already tried solo is sticky;
+  - an unproven failure (a repeat of unknown version seen on unfreeze): like stale, each
+    goes back to `held` for one retry (`retried`); one already retried is sticky.
 - **freeze:** while the kill switch is on nothing moves; frozen candidates restart from
   replay on unfreeze, with a fresh canary window (F5). A candidate whose canary repeated
   one of its incidents' kinds on its version since the run started (including while
@@ -53,7 +59,7 @@ from romulus_cloud.models import (
     InstallReport,
     Overlay,
 )
-from romulus_cloud.services import datasets, fleet, registry
+from romulus_cloud.services import datasets, fleet, incidents, registry
 from romulus_cloud.services.fleet import install_type
 from romulus_cloud.settings import Settings, get_settings
 
@@ -453,20 +459,42 @@ def _close(session: Session, c: Candidate, status: str, kind: str, why: str, now
     )
 
 
+Key = tuple[str, str]  # (device_id, overlay_id)
+
+
+def _keys(c: Candidate) -> list[Key]:
+    return [(r["device_id"], r["overlay_id"]) for r in c.from_overlays or []]
+
+
+def _marked(session: Session, keys: list[Key], mark: str) -> set[Key]:
+    """The overlays among `keys` already carrying a re-queue `mark` (`solo`, `retried`)."""
+    found = set()
+    for key in keys:
+        ov = session.get(Overlay, key)
+        if ov is not None and incidents.requeue_marks(session, ov).get(mark):
+            found.add(key)
+    return found
+
+
 def _settle_overlays(
     session: Session,
     closed: list[Candidate],
     now: datetime,
     *,
-    failed: set[tuple[str, str]],
+    failed: set[Key],
     failed_status: str,
     cause: str,
+    failed_cause: str | None = None,
+    marks: dict[Key, dict[str, bool]] | None = None,
 ) -> None:
     """After `closed` candidates end without promotion: overlays in `failed` get the sticky
-    `failed_status`; the others go back to `held` (re-batched) unless another live or
-    promoted candidate still carries them."""
+    `failed_status` (with `failed_cause`, default `cause`); the others go back to `held`
+    (re-batched) unless another live or promoted candidate still carries them. A re-queue
+    event carries the overlay's `marks` (`solo`: batch it alone; `retried`: its one retry
+    is used), read back by `incidents.requeue_marks`."""
     closing = {c.id for c in closed}
-    seen: set[tuple[str, str]] = set()
+    seen: set[Key] = set()
+    marks = marks or {}
     for c in closed:
         for ref in c.from_overlays or []:
             key = (ref["device_id"], ref["overlay_id"])
@@ -478,7 +506,8 @@ def _settle_overlays(
             if ov.incident_id:
                 refs["incident"] = ov.incident_id
             if key in failed:
-                ov.status, ov.status_reason, ov.updated_at = failed_status, cause, now
+                why = failed_cause or cause
+                ov.status, ov.status_reason, ov.updated_at = failed_status, why, now
                 what = "lock-in rolled back" if failed_status == LOCKIN_ROLLED_BACK else "error"
                 events.record(
                     session,
@@ -486,7 +515,7 @@ def _settle_overlays(
                     "automation",
                     f"overlay.{failed_status}",
                     refs,
-                    f"Overlay {ov.id} on {ov.device_id}: {what} ({cause}). It is never "
+                    f"Overlay {ov.id} on {ov.device_id}: {what} ({why}). It is never "
                     "re-batched; the device keeps its local fix.",
                     ts=now,
                     fleet_id=ov.fleet_id,
@@ -497,23 +526,28 @@ def _settle_overlays(
             ]
             if others:
                 continue
+            mark = marks.get(key, {})
             ov.status, ov.candidate_id, ov.updated_at = "held", None, now
             ov.status_reason = f"re-queued: {cause}"
+            note = " It is batched alone next (bisect)." if mark.get("solo") else ""
+            if mark.get("retried"):
+                note += " This is its one retry."
             events.record(
                 session,
                 ACTOR,
                 "automation",
                 "overlay.requeued",
                 refs,
-                f"Overlay {ov.id} on {ov.device_id} is held again for the next batch: {cause}.",
+                f"Overlay {ov.id} on {ov.device_id} is held again for the next batch: "
+                f"{cause}.{note}",
+                data={"marks": mark} if mark else None,
                 ts=now,
                 fleet_id=ov.fleet_id,
             )
     session.flush()
 
 
-def _fail(session: Session, c: Candidate, why: str, now: datetime) -> None:
-    """A real replay or canary failure."""
+def _close_with_siblings(session: Session, c: Candidate, why: str, now) -> list[Candidate]:
     _close(session, c, "rolled_back", "candidate.rolled_back", why, now)
     siblings = _siblings(session, c)
     for s in siblings:
@@ -525,14 +559,55 @@ def _fail(session: Session, c: Candidate, why: str, now: datetime) -> None:
             f"withdrawn: {label(c)} from the same overlay(s) was rolled back",
             now,
         )
-    failed = {(r["device_id"], r["overlay_id"]) for r in c.from_overlays or []}
+    return siblings
+
+
+def _fail(session: Session, c: Candidate, why: str, now: datetime) -> None:
+    """A real replay, corpus or canary failure.
+
+    A candidate from one overlay: that overlay is sticky (`lockin_rolled_back`). A
+    candidate folded from several: we can't tell which one broke it, so each goes back to
+    `held` marked `solo` and the batch builds it alone (a bisect). An overlay already
+    tried solo is sticky instead, so each is tried solo at most once.
+    """
+    siblings = _close_with_siblings(session, c, why, now)
+    keys = _keys(c)
+    cause = f"{label(c)} was rolled back: {why}"
+    if len(keys) <= 1:
+        failed, solo = set(keys), set()
+    else:
+        failed = _marked(session, keys, "solo")
+        solo = set(keys) - failed
+        if solo:
+            cause += f"; it folded {len(keys)} overlays, so each is retried alone once"
     _settle_overlays(
         session,
         [c, *siblings],
         now,
         failed=failed,
         failed_status=LOCKIN_ROLLED_BACK,
-        cause=f"{label(c)} was rolled back: {why}",
+        cause=cause,
+        failed_cause=f"{label(c)} was rolled back: {why}",
+        marks={k: {"solo": True} for k in solo},
+    )
+
+
+def _fail_unproven(session: Session, c: Candidate, why: str, now: datetime) -> None:
+    """Rolled back on evidence that may not be the candidate's (a repeat of unknown
+    version seen on unfreeze). Like stale for its overlays: each goes back to `held` for
+    one retry; one already retried this way is sticky."""
+    siblings = _close_with_siblings(session, c, why, now)
+    keys = _keys(c)
+    failed = _marked(session, keys, "retried")
+    _settle_overlays(
+        session,
+        [c, *siblings],
+        now,
+        failed=failed,
+        failed_status=LOCKIN_ROLLED_BACK,
+        cause=f"{label(c)} was rolled back on an unproven cause ({why}); retried once",
+        failed_cause=f"{label(c)} was rolled back: {why}; its one retry is already used",
+        marks={k: {"retried": True} for k in set(keys) - failed},
     )
 
 
@@ -562,7 +637,7 @@ def _go_stale(session: Session, c: Candidate, why: str, now: datetime) -> None:
 def _apply(session: Session, c: Candidate, t: g.Transition, now: datetime) -> None:
     old = c.status
     if t.state == "rolled_back":
-        _fail(session, c, t.why, now)
+        (_fail_unproven if t.unproven else _fail)(session, c, t.why, now)
         return
     c.status, c.updated_at = t.state, now
     kind = TRANSITION_KINDS[t.state]
