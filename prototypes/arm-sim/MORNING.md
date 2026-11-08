@@ -14,6 +14,10 @@ _Final version, Sun Nov 8, about 1:55 AM PST._
 | `b --hermes` | a Naïve card drives Hermes. Done once tonight on card `crd_m27qc…`: Hermes healed the sensor, finished the job, commented `RESULT:`, and the card went to done |
 | `stall` | a dead elbow servo fails the checked retry and is handed to a person; Romulus opens a `needs_human` work order |
 
+**Final regression (about 2 AM, on the pushed code):**
+- **Stories:** `a` (image 07 and image 02), `b` and `stall` all pass.
+- **Fault factory, 1,000 runs:** none of 142 healthy runs flagged, and all 115 dead servos caught. The other planted faults are caught in 23–54% of runs. The rest look fine to level 1, which is the gap level 3 is for.
+
 **Also working:**
 - **Romulus on your Mac** (`localhost:8000`) gets `arm-twin-1`'s incidents and `pod-1`'s (through Kent's edge bridge), with the right outcomes and recordings.
 - **Backup-video clips** are in `prototypes/arm-sim/runs/media/` (`story-a/b/stall.mp4`, about 0.2–0.3 MB each). Story A there is the image-02 version.
