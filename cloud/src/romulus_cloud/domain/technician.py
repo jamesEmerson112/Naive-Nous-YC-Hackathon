@@ -12,6 +12,7 @@ The Naïve agent's single output is a typed report. The model proposes, code dis
 - `feed_line` turns one session event into a short line for the "agent at work" column.
 """
 
+import math
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
@@ -188,7 +189,9 @@ def _check(value: Any, schema: Mapping[str, Any], path: str, errors: list[str]) 
             errors.append(f"{path}: shorter than {schema['minLength']} characters")
         if "pattern" in schema and not re.search(schema["pattern"], value):
             errors.append(f"{path}: does not match {schema['pattern']}")
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    if isinstance(value, float) and not math.isfinite(value):
+        errors.append(f"{path}: {value} is not a finite number")
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
         if value < schema.get("minimum", value) or value > schema.get("maximum", value):
             errors.append(f"{path}: {value} is out of range")
     if isinstance(value, list):

@@ -40,6 +40,7 @@ EVIDENCE_MAX = 12
 SKILL_MAX = 2000
 SLUG_PATTERN = "^[a-z0-9-]{3,48}$"
 PROBE_MAX_AGE = timedelta(hours=24)
+PROBE_CLOCK_SKEW = timedelta(minutes=5)  # a probe "from the future" beyond this is rejected
 
 DEFAULT_SAFETY_PATHS = (
     "arm/safe_replay.py",  # the arm's start gate (`safe_replay.py:66-75`)
@@ -235,6 +236,8 @@ def _probe_failures(probe: Mapping[str, Any], now: datetime) -> list[str]:
         if age >= PROBE_MAX_AGE:
             hours = age.total_seconds() / 3600
             out.append(f"The probe {pid} is {hours:.1f} h old; it must be less than 24 h old.")
+        elif age < -PROBE_CLOCK_SKEW:
+            out.append(f"The probe {pid} has a generated_at in the future ({at.isoformat()}).")
     b, a = probe.get("before") or {}, probe.get("after") or {}
     bc, ac = _int(b.get("caught")), _int(a.get("caught"))
     bf, af = _int(b.get("false_alarms")), _int(a.get("false_alarms"))
@@ -589,7 +592,7 @@ def check(
             failures.append("The skill's markdown contains a URL.")
         if _FENCE.search(markdown):
             failures.append("The skill's markdown contains a code fence.")
-        hits = skill_safety_hits(markdown, needles)
+        hits = _unique([*safety_hits(slug, needles), *skill_safety_hits(markdown, needles)])
         touches = bool(hits)
         named = hits[0] if hits else ""
         owner = owner_for(named, owners) if hits else None
