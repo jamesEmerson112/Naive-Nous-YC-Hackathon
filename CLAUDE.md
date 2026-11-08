@@ -73,32 +73,33 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 8:19 PM PST_
+_Last updated: Sat Nov 7, 8:30 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged B8 (#24) at 8:12 PM and the Fleet Doctor contracts (#26) at 8:18 PM; three PRs are still open: the edge bridge (#25), the Fleet Doctor foundation (#27, behind `doctor_mode=off`) and M8b, the coding agent wired into batch and gate (#28). James's session is folding #24 and Ishaan's 8:12 PM status into the Stack Map for v10 *(James's session)*. Andre is calibrating the arm; Ishaan is still blocked on the Jetson link, and the device code (B1) is not pushed.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged the edge bridge (#25), the Fleet Doctor foundation (#27) and `build_doctor_llm` (#29) between 8:23 and 8:24 PM; Ishaan's device code (B1, #31) merged at 8:28 PM. M8b (#28) and the draft L3 tool contract (#30) are still open. Andre pushed `arm/teleop-recording` (no PR yet) and is calibrating the arm.
 
 **Recently done:**
-- Kent merged #24 (`34c52c7`, 8:12 PM): the coder sandbox image now carries the STM32 toolchain, with an offline firmware build check (`cloud/coder/firmware_check.py`), a `coder_firmware_check.sh` script and unit plus integration tests. This closes blocker B8 *(inferred from Kent's block: "B8 closes with #24")*
-- Ishaan's 8:12 PM update: the Jetson is in the right USB-C port and the Mac saw the replug, but no USB device comes up; either Linux USB device mode isn't running on the Jetson or the cable carries no data, and there is still no LAN path
-- Kent merged #26 (`3239ad1`, 8:18 PM): Fleet Doctor contracts for ask, advice, proposal and proposal result, with no contract version bump per D28. #25 (edge bridge, D29), #27 (foundation) and #28 (M8b, F11 code-patch flow test) are still open
+- Kent merged #25 (`6c5576f`): `tools/edge_bridge` runs on the Pi next to Olir's pod healer and reports check-ins, one incident per fault, and log and agent-trace recordings to the cloud, with no device or contract change (D29). It ships an interop flow test and a root README. Kent marked both edge-bridge lines finished (`c53d301`)
+- Kent merged #27 (`d27c9c6`) and #29 (`fdf03a5`): Fleet Doctor settings, tables, pure domain rules, jobs seam, `Llm.complete`, 14 `doctor.*` event labels and stubs, plus one place that picks the Doctor's LLM. All of it stays off unless `DOCTOR_MODE=live`
+- Ishaan merged #31 (`6c3b006`, 8:28 PM): `device/` (Pi app, supervisor tiers 1–3, fake arm and sensor, 18 tests), healer harnesses h1–h3 and the benchmark. Nothing has run on the Pi or the real arm yet
+- Kent opened #30 (`doctor/l3-contract`, draft): the typed L3 device-tool contract, 8 read tools and 5 act tools with no raw shell, and no route or socket (D27 stays deferred). James's session added the phase ranking to `features.txt` (`99a83ce`) and Andre's branch to the hub (`15c184e`)
 
 **Open questions:**
-- Kent still waits on: device code in the repo (B1; Ishaan's Jetson shows no USB data and has no LAN path), the K17 safety and visor path list (it also gates the Fleet Doctor, D25), and Kent's go-ahead for the live Naïve card
-- Nobody owns the pod healer's agent loop and blind scenario eval yet; `HARNESS.md` marks both "you build this". Is that Ishaan's device healer, a Hermes plugin, or new work? Fleet Doctor's L3 agent loop location (D27) is deferred too
-- Arm prototypes for tomorrow (control program with a servo error-bit watchdog, approach-then-grasp with the ultrasonic, predicted-vs-measured check, frozen-ultrasonic rule, labelled run logger) have no `features.txt` lines or owners yet, and they need to be ready before Kent's 9–10 AM "real arm + polish" slot. James's overview fixes `79f938b` and `952cf79` are committed locally but not on `main` *(James's session, inferred)*
-- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email) *(James's session)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all?
+- B1 is on `main` with #31. Kent still waits on the K17 safety and visor path list (it also gates the Fleet Doctor, D25) and on his own go-ahead for the live Naïve card. Is the Jetson link still blocked? Ishaan's block is from 8:12 PM
+- #31 flags two clashes: the ultrasonic is on Olir's pod in mm while `robot/` still reads cm from Pi GPIO, and the arm's servo bus and `podd` both default to `/dev/ttyACM0`. Who picks the `/dev/serial/by-id/` paths and the one ultrasonic source?
+- Nobody owns the pod healer's agent loop and blind scenario eval yet (`HARNESS.md` says "you build this"). Arm prototypes for tomorrow have no owner in a box section yet, and they need to be ready before Kent's 9–10 AM "real arm + polish" slot
+- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email) *(James's session)*. Should pi drive the arm at all?
 
 **Recent commits (all authors):**
-- `cc95fa9` Sat 20:18 · jamesEmerson112 · Update team status and features.txt
-- `a1fdfd9` Sat 20:18 · Kent Gang · Update Kent status in CLAUDE.md
-- `95f1497` Sat 20:18 · Kent Gang · Update Kent status in CLAUDE.md
-- `3239ad1` Sat 20:18 · kgang · Fleet Doctor contracts: ask, advice, proposal, proposal result (PR 1, no version bump per D28) (#26)
-- `34c52c7` Sat 20:12 · kgang · Romulus B8: STM32 toolchain in the coder sandbox (#24)
-- `f3669cc` Sat 20:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `e7b5a54` Sat 20:09 · jamesEmerson112 · Update team status and features.txt
-- `aec1f68` Sat 20:08 · Kent Gang · Update Kent status in CLAUDE.md
-- `b11f910` Sat 19:59 · jamesEmerson112 · Update team status in CLAUDE.md
-- `02ffd52` Sat 19:58 · Kent Gang · Update Kent status in CLAUDE.md
+- `6c3b006` Sat 20:28 · Ishaan Ranjan · Device code (B1), healer harness h1-h3 and benchmark (#31)
+- `c53d301` Sat 20:25 · Kent Gang · features.txt: edge bridge (#25) finished
+- `6c5576f` Sat 20:24 · kgang · Edge bridge: report the pod healer to the cloud with no device-side changes (D29) (#25)
+- `fdf03a5` Sat 20:24 · kgang · Fleet Doctor: build_doctor_llm, the one place the Doctor picks its LLM (fake unless DOCTOR_MODE=live) (#29)
+- `d27c9c6` Sat 20:23 · kgang · Fleet Doctor foundation: settings, tables, domain rules, jobs seam, Llm.complete, event labels, stubs (#27)
+- `15c184e` Sat 20:22 · jamesEmerson112 · Hub and features.txt: Andre's first push (arm/teleop-recording)
+- `7608d69` Sat 20:20 · jamesEmerson112 · Hub: refresh to 8:20 PM (Fleet Doctor contracts #26 merged)
+- `99a83ce` Sat 20:18 · jamesEmerson112 · features.txt: rank each person's work by phase (P0 now to P6 later)
+- `9df8cfb` Sat 20:12 · jamesEmerson112 · Hub: catch-up on who is doing what (team, branches and open PRs, Romulus progress, pod faults)
+- `6b98c9e` Sat 20:19 · jamesEmerson112 · Update team status in CLAUDE.md
 
-**Branches on GitHub:** `main`; Kent's open PR branches `edge/bridge` (#25), `doctor/foundation` (#27), `cloud/m8b-wiring` (#28); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `cloud/b8-stm32-toolchain` and `doctor/contracts` are gone after #24 and #26 merged
+**Branches on GitHub:** `main`; open PR branches `cloud/m8b-wiring` (#28, Kent), `doctor/l3-contract` (#30, Kent, draft); `ishaan/device-healer` (Ishaan, merged as #31); `arm/teleop-recording` (Andre, no PR); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `edge/bridge` and `doctor/foundation` are gone after #25 and #27 merged
 <!-- team-status:end -->
