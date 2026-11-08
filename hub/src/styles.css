@@ -720,3 +720,41 @@ svg.mini { display: block; width: 100%; height: auto; }
 @media (max-width: 460px) { .org { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .org-tile { display: grid; gap: 4px; padding: 10px 12px; background: var(--ls); border: 1px solid color-mix(in srgb, var(--l) 40%, transparent); border-radius: var(--radius); }
 .org-tile b { font: 600 var(--fs-md)/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* ---------- Not worked on = black (diagram + feature map) ---------- */
+:root { --void: #050607; --void-line: #2e343c; }
+.node.untouched rect { fill: var(--void); stroke: var(--void-line); stroke-dasharray: 6 4; }
+.node.untouched.on rect { stroke: var(--ink); filter: none; }
+.node.untouched .node-sub { fill: #6b737d; }
+
+/* ---------- Features inside ---------- */
+.fmap { display: grid; gap: 12px; }
+.fmap-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.fkey { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-xs); color: var(--muted); }
+.fkey li { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.fkey .fcell { width: 22px; height: 18px; padding: 0; justify-content: center; --l: var(--sim); --ls: var(--sim-soft); }
+.fband { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.band-label-html { color: var(--muted); font: 600 var(--fs-xs)/1.2 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+.fband-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); align-items: start; }
+.fbox { display: grid; gap: 8px; padding: 10px; border: 2px solid var(--l); border-radius: var(--radius); background: var(--ls); }
+.fbox.untouched { background: var(--void); border: 2px dashed var(--void-line); }
+.fbox-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.fbox-head b { font: 700 var(--fs-lg)/1.2 var(--font-display); }
+.fbox-who { font: 700 var(--fs-xs)/1 var(--font-mono); color: var(--l); }
+.fbox.untouched .fbox-who { color: var(--muted); font-weight: 500; }
+.fbox-counts { margin-left: auto; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+.fbox-counts .has-gap { color: var(--ink); }
+.fcells { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.fcell { display: flex; align-items: center; gap: 7px; margin: 0; padding: 5px 8px; border-radius: 6px; font-size: var(--fs-sm); line-height: 1.25; border: 1px solid transparent; }
+.fcell-mark { flex: none; width: 1em; text-align: center; font: 700 var(--fs-xs)/1 var(--font-mono); }
+.fcell-text { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.fcell-who { flex: none; font-weight: 700; font-size: var(--fs-xs); }
+/* finished: full layer color */
+.fcell.s-done { background: var(--l); color: #0b0d10; }
+/* claimed: layer-tinted, outlined */
+.fcell.s-building { background: color-mix(in srgb, var(--l) 22%, var(--panel)); border-color: var(--l); color: var(--ink); }
+.fcell.s-building .fcell-who { color: var(--l); }
+/* nobody yet: black */
+.fcell.s-gap, .fcell.s-hold { background: var(--void); border: 1px dashed var(--void-line); color: #aab2bc; }
+.fcell.s-hold { opacity: 0.7; }
+.view-toggle { justify-self: start; }

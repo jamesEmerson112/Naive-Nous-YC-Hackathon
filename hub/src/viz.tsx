@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { Layer } from "./content/meta";
+import { ownersOf, untouched } from "./content/features";
 
 /* ---------- Motion preference ---------- */
 export function useReducedMotion() {
@@ -176,7 +177,7 @@ export function Timeline({ events }: { events: { at: string; label: string; when
 }
 
 /* ---------- System loop: the whole company in one animated picture ---------- */
-type NodeId = "naive" | "board" | "models" | "sim" | "hermes" | "romulus" | "pi" | "so101";
+export type NodeId = "naive" | "board" | "models" | "sim" | "hermes" | "romulus" | "pi" | "so101";
 
 interface LoopNode {
   id: NodeId;
@@ -187,62 +188,65 @@ interface LoopNode {
   layer: Layer;
   href: string;
   owner: string;
-  /** Owner initials drawn on the box; "?" means nobody owns it yet (a gap). */
-  who: string[];
-  proposed?: boolean;
   plain: string;
   a: { h: string; items: string[] };
   b: { h: string; items: string[] };
 }
 
 const NW = 180;
+
+/** Owner initials drawn on a box, from features.txt; "?" when nobody has a line there yet. */
+const whoOf = (id: NodeId) => {
+  const w = ownersOf(id);
+  return w.length ? w.slice(0, 3) : ["?"];
+};
 const NH = 66;
 
 const NODES: LoopNode[] = [
   {
-    id: "naive", x: 30, y: 62, who: ["K"],  title: "Naïve", sub: "the office", layer: "naive", href: "#hosts", owner: "Kent set up the org · hires on hold (N1)",
+    id: "naive", x: 30, y: 62,  title: "Naïve", sub: "the office", layer: "naive", href: "#hosts", owner: "Kent set up the org · hires on hold (N1)",
     plain: "A hosted platform where AI agents run the company. Naïve provides the infrastructure the agents live on; we write the agents. Both notes are right. It never touches the arm. Today: Pro plan, $249.92, one CEO agent.",
     a: { h: "Naïve gives us", items: ["agent runtime (micro-VMs)", "Board", "persona inbox + phone", "vault for secrets", "apps + database", "CRM", "budgets + approvals", "audit log"] },
     b: { h: "We build on it", items: ["agent configs: planner, ops", "fleet-ops work-order agent", "customer intake", "Stripe store"] },
   },
   {
-    id: "board", x: 300, y: 62, who: ["K"],  title: "Board", sub: "shared to-do list", layer: "naive", href: "#infra", owner: "part of Naïve · Kent's setup",
+    id: "board", x: 300, y: 62,  title: "Board", sub: "shared to-do list", layer: "naive", href: "#infra", owner: "part of Naïve · Kent's setup",
     plain: "Naïve's shared to-do list, like Trello. Each job is a card that moves todo → doing → blocked → done.",
     a: { h: "Cards come from", items: ["Naïve agents: arm jobs", "Romulus: work orders"] },
     b: { h: "Cards go to", items: ["Hermes on the bench: arm jobs (scoped token, no tunnel)", "fleet-ops agent: work orders"] },
   },
   {
-    id: "models", x: 560, y: 62, who: ["?"],  title: "Models", sub: "RunPod · OpenAI", layer: "compute", href: "#ours", owner: "machine room",
+    id: "models", x: 560, y: 62,  title: "Models", sub: "RunPod · OpenAI", layer: "compute", href: "#ours", owner: "Kent: batch model proxy (D22) · bench key open",
     plain: "The LLMs the bench and Romulus call: open models on rented RunPod GPUs, or an API.",
     a: { h: "Options", items: ["Qwen3-VL-8B on vLLM (RunPod)", "OpenAI ($100 credits)", "Claude API (Kent's batch)"] },
     b: { h: "Needs", items: ["≥ 64K context for Hermes", "reads images", "tool calling", "an endpoint by 5:15 PM"] },
   },
   {
-    id: "sim", x: 790, y: 62, who: ["J", "C"], proposed: true,  title: "NVIDIA sim", sub: "RunPod · canary", layer: "sim", href: "#ours", owner: "James + Claude · proposed, not started",
+    id: "sim", x: 790, y: 62,  title: "NVIDIA sim", sub: "RunPod · canary", layer: "sim", href: "#ours", owner: "nobody yet · James + Claude later",
     plain: "A simulated arm on a RunPod GPU. It can be Romulus's canary: new versions run here before the real arm gets them.",
     a: { h: "Tools", items: ["Isaac Sim 5.1 + Isaac Lab", "LeIsaac SO-101 tasks", "MuJoCo + Menagerie"] },
     b: { h: "Our use", items: ["canary device sim-2", "fault drills", "VLA vs LLM benchmark"] },
   },
   {
-    id: "hermes", x: 300, y: 252, who: ["?"],  title: "Hermes", sub: "the hands", layer: "hermes", href: "#hosts", owner: "bench control lane (open)",
+    id: "hermes", x: 300, y: 252,  title: "Hermes", sub: "the hands", layer: "hermes", href: "#hosts", owner: "nobody yet · the bench control lane",
     plain: "Nous Research's agent, running at the bench. It pulls the next card and works the arm through our plugin.",
     a: { h: "Hermes gives us", items: ["agent loop", "plugins + tools", "pre_tool_call guard", "cron every 60 s", "gateway → phone", "any model endpoint"] },
     b: { h: "We build on it", items: ["arm plugin", "guard rules", "card-pulling job", "alerts"] },
   },
   {
-    id: "romulus", x: 790, y: 330, who: ["K"],  title: "Romulus", sub: "Kent's laptop", layer: "heal", href: "#interfaces", owner: "Kent",
+    id: "romulus", x: 790, y: 330,  title: "Romulus", sub: "Kent's laptop", layer: "heal", href: "#interfaces", owner: "Kent",
     plain: "Kent's back office for the arm's health, on his laptop on the bench network. It logs incidents, turns fixes into versions, tests them on the sim canary, and rolls out or back.",
     a: { h: "What it does", items: ["incident timeline", "version registry", "batch lock-in", "replay + canary", "kill switch", "work-order cards"] },
     b: { h: "Built with", items: ["FastAPI :8000", "worker", "Postgres 17", "Docker Compose", "outbound calls only"] },
   },
   {
-    id: "pi", x: 300, y: 432, who: ["?"],  title: "Pi 5", sub: "app · healer · visor", layer: "edge", href: "#interfaces", owner: "device side: TBD (D14)",
+    id: "pi", x: 300, y: 432,  title: "Pi 5", sub: "app · healer · visor", layer: "edge", href: "#interfaces", owner: "Ishaan: app, healer, health checks",
     plain: "The computer next to the arm. It runs the robot app, a healer agent with a small local model, and the visor that installs new versions.",
     a: { h: "Runs", items: ["robot app (Python)", "healer + llama.cpp", "visor: check in, pull, install", "LeRobot 0.7", "incident outbox"] },
     b: { h: "Talks to Romulus", items: ["check-in every ~10 s", "incidents + recordings", "pulls firmware + harness"] },
   },
   {
-    id: "so101", x: 30, y: 432, who: ["O"],  title: "SO-101", sub: "the metal", layer: "edge", href: "#lanes", owner: "Olir: STM32 firmware",
+    id: "so101", x: 30, y: 432,  title: "SO-101", sub: "the metal", layer: "edge", href: "#lanes", owner: "Olir + Andre: build · Olir: STM32",
     plain: "The physical arm and its sensors on the bench.",
     a: { h: "Hardware", items: ["6× STS3215 servos", "USB camera 720p", "HC-SR04 ultrasonic", "STM32 Nucleo-F042K6", "e-stop"] },
     b: { h: "STM32 firmware (Olir)", items: ["LED + boot banner", "1 s heartbeat", "build ID via make check"] },
@@ -304,7 +308,7 @@ export function SystemLoop() {
           {NODES.map((n) => (
             <g
               key={n.id}
-              className={`node l-${n.layer}${sel === n.id ? " on" : ""}${n.proposed ? " proposed" : ""}`}
+              className={`node l-${n.layer}${sel === n.id ? " on" : ""}${untouched(n.id) ? " untouched" : ""}`}
               role="button"
               tabIndex={0}
               aria-pressed={sel === n.id}
@@ -318,7 +322,7 @@ export function SystemLoop() {
               }}
             >
               <rect x={n.x} y={n.y} width={NW} height={NH} rx="8" />
-              {n.who.map((w, i) => (
+              {whoOf(n.id).map((w, i) => (
                 <g key={w} className={`badge${w === "?" ? " unknown" : ""}`}>
                   <circle cx={n.x + NW - 16 - i * 22} cy={n.y + 18} r="10" />
                   <text x={n.x + NW - 16 - i * 22} y={n.y + 22} textAnchor="middle">
@@ -339,7 +343,7 @@ export function SystemLoop() {
 
       <div className="owners-row" aria-label="Who owns which box">
         <span className="eyebrow">Owners</span>
-        {NODES.filter((n) => !n.who.includes("?")).map((n) => (
+        {NODES.filter((n) => !untouched(n.id)).map((n) => (
           <button key={n.id} type="button" className={`chip owner-chip l-${n.layer}`} onClick={() => setSel(n.id)}>
             <span className="dot" aria-hidden="true" />
             {n.title}: {n.owner}
@@ -348,8 +352,8 @@ export function SystemLoop() {
         <span className="chip">Ishaan: overview + fault catalog (spans boxes)</span>
       </div>
       <div className="owners-row gaps" aria-label="Boxes nobody owns yet">
-        <span className="eyebrow">Gaps · nobody yet</span>
-        {NODES.filter((n) => n.who.includes("?")).map((n) => (
+        <span className="eyebrow">Black · not worked on yet</span>
+        {NODES.filter((n) => untouched(n.id)).map((n) => (
           <button key={n.id} type="button" className="chip gap-chip" onClick={() => setSel(n.id)}>
             ? {n.title}
           </button>

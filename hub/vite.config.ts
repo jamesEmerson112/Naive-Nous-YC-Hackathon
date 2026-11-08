@@ -6,6 +6,8 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 // so every script and style is inlined at build time.
 export default defineConfig({
   plugins: [react(), viteSingleFile()],
+  // The hub reads ../features.txt (the team's tracker) with ?raw.
+  server: { fs: { allow: [".."] } },
   build: {
     outDir: "dist",
     emptyOutDir: true,

@@ -4,11 +4,21 @@ import { JOURNEY, JOURNEY_FAIL, JOURNEY_NOTES } from "../content/journey";
 import { PLAIN } from "../content/plain";
 import { LayerChip, More, Section, Sources } from "../ui";
 import { DevOpsLoop, Icon, JourneyPlayer, Ranked, SystemLoop } from "../viz";
+import { FeatureMap } from "./FeatureMap";
 
 export function Glance() {
+  const [view, setView] = useState<"flow" | "inside">("flow");
   return (
-    <Section id="glance" title="The whole thing" sub="Tap a box. Dots are data moving.">
-      <SystemLoop />
+    <Section id="glance" title="The whole thing" sub="Tap a box. Dots are data moving. Colored boxes have work done or under way; black ones nobody has started.">
+      <div className="seg-toggle view-toggle" role="group" aria-label="Diagram view">
+        <button type="button" aria-pressed={view === "flow"} onClick={() => setView("flow")}>
+          Flow
+        </button>
+        <button type="button" aria-pressed={view === "inside"} onClick={() => setView("inside")}>
+          Features inside
+        </button>
+      </div>
+      {view === "flow" ? <SystemLoop /> : <FeatureMap />}
       <div className="plain" aria-label="Words in one line">
         {PLAIN.map((p) => (
           <div key={p.term} className={`plain-card l-${p.layer}`}>

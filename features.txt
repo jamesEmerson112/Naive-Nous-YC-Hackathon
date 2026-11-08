@@ -1,33 +1,64 @@
 FEATURES: who is on what
-Claim a line by adding "<--- Name". Move done lines to FINISHED.
-Updated Sat Nov 7, 3:52 PM PST from CLAUDE.md, commits and docs/.
+Claim a line by adding "<--- Name" (several names: "<--- Olir, Andre").
+Sections match the boxes in the stack hub's diagram. Done lines move to
+FINISHED with their box in front, like "Romulus: build plan <--- Kent".
+Updated Sat Nov 7, 4:06 PM PST from CLAUDE.md, commits and docs/.
 
-BUSINESS (Naive)
+NAIVE
 Naive API key for Romulus (by 5:15 PM)
 fleet-ops agent: work orders (by 11:30 PM)
 Mobilerun bearer in Naive vault
-Bench board token (scoped MCP session)
 Hire Operator, Insights, Roboticist (on hold, N1)
 Parts catalogue (parts.yaml)
 Naive company agents setup
 Order intake (inbox or form)
-Planner creates arm job cards
 Stripe payment for jobs
 Daily digest and budgets
 AgentMail incident email
 
-BENCH CONTROL (Hermes)
+BOARD
+Arm job card format
+Planner creates arm job cards
+Bench board token (scoped MCP session)
+Work-order cards from Romulus (M5)      <--- Kent
+
+MODELS
+OpenAI key for bench Hermes
+Naive model proxy for batch (D22)       <--- Kent
+RunPod LLM endpoint (D22, optional)
+
+NVIDIA SIM
+NVIDIA sim on RunPod
+Sim canary device for Romulus
+VLA vs LLM control benchmark
+Self-reset retry loop
+VLA policy (if training allowed)
+
+HERMES
+Hermes install on the bench
 Hermes arm plugin tools
 pre_tool_call safety guard
+Board link via Hermes MCP client
 Cron pulls next board card
 Gateway phone alerts
 Hermes plugin catalog submission
 
-DEVICE (Pi 5, STM32)
+ROMULUS
+Scaffold, contracts, spikes (M0)        <--- Kent
+Walking skeleton F1+F2 (M1)             <--- Kent
+Incident timeline page (M2)             <--- Kent
+Batch, gate, kill switch (M3)           <--- Kent
+Telemetry ingest F7 (M4)                <--- Kent
+Overnight launch F10 (M7)               <--- Kent
+Datasets and exports F8 (M6)            <--- Kent
+Coding agent for code patches (M8)
+
+PI 5
 Device side owner (D14)                 <--- Ishaan
-Pi app: hold object                     <--- Ishaan
-Ultrasonic distance reading
+LeRobot 0.7 on Python 3.12
 One serial-port owner (arm host)
+Bench to cloud API bridge
+Pi app: hold object                     <--- Ishaan
 Healer agent on the Pi                  <--- Ishaan
 Health checks, tiers 1-3                <--- Ishaan
 Snapshot and park on fault
@@ -35,20 +66,14 @@ Overlay patches with self-revert
 Visor: check in, pull, install
 Incident + recording outbox
 Local model on the Pi
+
+SO-101
+Arm assembly                            <--- Olir, Andre
+Calibration with LeRobot                <--- Olir, Andre
+Camera and ultrasonic wiring            <--- Olir, Andre
+Ultrasonic distance reading
 STM32 firmware control loop             <--- Olir
 STM32 to Pi link
-
-ROMULUS (Kent's laptop, bench LAN)
-Scaffold, contracts, spikes (M0)        <--- Kent
-Walking skeleton F1+F2 (M1)             <--- Kent
-Incident timeline page (M2)             <--- Kent
-Batch, gate, kill switch (M3)           <--- Kent
-Telemetry ingest F7 (M4)                <--- Kent
-Work orders to Naive F6 (M5)            <--- Kent
-Overnight launch F10 (M7)               <--- Kent
-Datasets and exports F8 (M6)            <--- Kent
-Coding agent for code patches (D21)
-Batch LLM endpoint (by 5:15 PM)
 
 DEMO AND FAULTS
 Plant demo faults D1-D3                 <--- Ishaan
@@ -58,28 +83,21 @@ Healer benchmark, harness versions      <--- Ishaan
 Demo script and rehearsal
 Backup demo video
 
-SIM AND CONTROL
-Bench to cloud API bridge
-NVIDIA sim on RunPod
-Sim canary device for Romulus
-VLA vs LLM control benchmark
-Self-reset retry loop
-VLA policy (if training allowed)
-
 HUB AND DOCS
-Stack hub: put it all together         <--- James
+Stack hub: put it all together          <--- James
+Hermes harness gap notes                <--- James
 
 FINISHED
-Team status sync in CLAUDE.md           <--- James
-SO-101 research notes                   <--- James
-Stack hub artifact v1                   <--- James
-Stack hub refresh, features.txt         <--- James
-Cloud platform PRD and APIs             <--- Kent
-Romulus v0 plan and decisions           <--- Kent
-Build plan, Naive, telemetry docs       <--- Kent
-Cloud planning D15-D21, v0 plan v2      <--- Kent
-Naive company setup notes               <--- Kent
-Project overview                        <--- Ishaan
-Fault catalog                           <--- Ishaan
-Device-side answers (healer scope)      <--- Ishaan
-STM32 firmware boilerplate              <--- Olir
+Hub: team status sync in CLAUDE.md      <--- James
+Hub: SO-101 research notes              <--- James
+Hub: stack hub artifact v1              <--- James
+Hub: stack hub refresh, features.txt    <--- James
+Romulus: cloud platform PRD and APIs    <--- Kent
+Romulus: v0 plan and decisions          <--- Kent
+Romulus: build plan, Naive, telemetry docs <--- Kent
+Romulus: planning D15-D22, v0 plan v2   <--- Kent
+Naive: company setup notes              <--- Kent
+Demo: project overview                  <--- Ishaan
+Demo: fault catalog                     <--- Ishaan
+Pi 5: device-side answers (healer scope) <--- Ishaan
+SO-101: STM32 firmware boilerplate      <--- Olir

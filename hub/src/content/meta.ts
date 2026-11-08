@@ -1,5 +1,5 @@
 export const REPO = "https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon";
-export const AS_OF = "Sat Nov 7, 2026 · 3:52 PM PST";
+export const AS_OF = "Sat Nov 7, 2026 · 4:06 PM PST";
 export const TEAM_AS_OF = "main at 3:47 PM (CLAUDE.md, Kent's docs and Naïve setup, Ishaan's overview and catalog) and Olir's firmware branch at 3:11 PM";
 
 /** Each layer keeps one color everywhere on the page. */
