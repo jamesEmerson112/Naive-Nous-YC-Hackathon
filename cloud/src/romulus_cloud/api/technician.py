@@ -58,9 +58,14 @@ def get_case(case_id: str, session: SessionDep) -> dict:
 def latest(request: Request, session: SessionDep, settings: SettingsDep):
     case = technician.latest_case(session, settings.fleet_id)
     if case is None:
-        return HTMLResponse(
-            "<!doctype html><title>Naïve technician</title><p>No Naïve technician cases yet. "
-            'A work order with no catalogued part opens one. <a href="/">Back to incidents</a>',
+        return templates.TemplateResponse(
+            request,
+            "technician_empty.html",
+            {
+                "fleet": _fleet(session, settings.fleet_id),
+                "tz": settings.display_tz,
+                "mode": settings.technician_mode,
+            },
         )
     return RedirectResponse(f"/technician/{case.id}", status_code=302)
 

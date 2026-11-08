@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Romulus · Naïve technician{% endblock %}
+{% block content %}
+{# /technician when no case exists yet: teach what lands here instead of a bare line. #}
+<h1 class="page-h">Naïve technician</h1>
+<p class="empty">No Naïve technician cases yet. When a healer hands a fault to a person and no catalogued part fits, a Naïve agent opens a case here: its diagnosis, a checked spare part for you to approve, and the email to the technician.{% if mode == 'off' %} Technician mode is off on this cloud (<code>TECHNICIAN_MODE=off</code>).{% endif %} <a href="/">Back to the fleet</a></p>
+{% endblock %}
