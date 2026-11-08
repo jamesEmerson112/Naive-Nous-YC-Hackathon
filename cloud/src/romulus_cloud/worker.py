@@ -19,7 +19,7 @@ from romulus_cloud import db
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
-from romulus_cloud.services import datasets, workorders
+from romulus_cloud.services import batch, datasets, gate, workorders
 from romulus_cloud.settings import get_settings
 
 
@@ -37,6 +37,11 @@ def _run_exports(session: Session, now: datetime) -> object:
 
 
 STEPS: list[Step] = []
+# The gate moves first, so a candidate the batch makes waits one tick; the LLM call lives
+# only in the batch, off the gate's path. `maybe_run` checks BATCH_INTERVAL_S itself, so
+# a "run now" press is seen on the next tick.
+STEPS.append(Step("gate.tick", gate.tick))
+STEPS.append(Step("batch.maybe_run", batch.maybe_run))
 
 # M5: hardware incidents → work orders (every tick); post and poll Naïve cards (every 15 s).
 STEPS += [

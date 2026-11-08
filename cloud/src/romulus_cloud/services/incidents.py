@@ -25,7 +25,9 @@ from romulus_contracts import IncidentReport, OverlayStatus, summarize_code_patc
 # A new version replaced the overlay (D7). Terminal.
 SUPERSEDED = "superseded"
 # Statuses the cloud sets (M3). A late `held` from the device never moves an overlay back.
-CLOUD_STATUSES = ("locked_in", "dropped")
+# `lockin_rolled_back`: its candidate failed replay or canary; `lockin_error`: locking it
+# in raised. Both keep the device's local fix and are never re-batched.
+CLOUD_STATUSES = ("locked_in", "dropped", "lockin_rolled_back", "lockin_error")
 
 
 def view(i: Incident) -> dict[str, Any]:
@@ -336,6 +338,8 @@ def story(session: Session, incident_id: str) -> tuple[Incident, Story]:
     if incident is None:
         raise ApiError(404, "unknown_incident", f"Incident {incident_id} does not exist.")
     found = {e.id: e for e in events.find(session, {"incident": incident_id})}
+    # A candidate folded from several incidents lists them all under `incidents` (M3).
+    found.update({e.id: e for e in events.find(session, {"incidents": [incident_id]})})
     if incident.overlay_id:
         # A status that arrived before its incident carries no incident ref; include the
         # overlay's own `overlay.*` events.

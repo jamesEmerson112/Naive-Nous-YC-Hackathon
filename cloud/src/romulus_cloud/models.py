@@ -241,6 +241,10 @@ class Candidate(Base):
     # replaying | awaiting_canary | canary | promoted | rolled_back | frozen
     canary_device: Mapped[str | None]
     canary_started_at: Mapped[datetime | None]
+    # The canary's assigned version of this type before the candidate; restored on
+    # rollback (not `last_good`, which can already be the bad candidate in F4's late path).
+    canary_prev_version: Mapped[int | None]
+    incident_id: Mapped[str | None] = mapped_column(index=True)  # the triggering incident
     replay: Mapped[dict[str, Any] | None]  # cases checked and passed
     verdict: Mapped[dict[str, Any] | None]
     why: Mapped[str] = mapped_column(Text, default="")
@@ -248,6 +252,28 @@ class Candidate(Base):
     stub_stages: Mapped[list[Any]] = mapped_column(JSONB, default=list)  # e.g. ["draft_code"]
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime | None]
+
+
+class CanaryCheckin(Base):
+    """One check-in from a `role = canary` device, kept for the gate's canary verdict.
+
+    Routine check-ins write no event (APIs §1), so this is the canary's health history.
+    `at` is the server's receive time, the same clock as install reports' `received_at`.
+    """
+
+    __tablename__ = "canary_checkins"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    fleet_id: Mapped[str] = _fleet()
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id"))
+    at: Mapped[datetime]
+    health: Mapped[str]
+    firmware: Mapped[int | None]
+    harness: Mapped[int | None]
+    code_rev: Mapped[str | None]
+    overlay_id: Mapped[str | None]
+
+    __table_args__ = (Index("ix_canary_checkins_device_at", "device_id", "at"),)
 
 
 class WorkOrder(Base):
@@ -417,7 +443,9 @@ class Event(Base):
     id: Mapped[str] = mapped_column(primary_key=True)  # evt_…
     fleet_id: Mapped[str] = _fleet()
     ts: Mapped[datetime] = mapped_column(index=True)  # when it happened
-    recorded_at: Mapped[datetime] = _created()  # when the server wrote it
+    # When the server wrote it: clock_timestamp(), not now(), so events written in one
+    # transaction keep their insertion order (ties on `ts` read in the order they happened).
+    recorded_at: Mapped[datetime] = mapped_column(server_default=func.clock_timestamp())
     actor: Mapped[str]  # device:arm-1 | agent:batch | gate | naive:ses_… | human:kent
     actor_class: Mapped[str] = mapped_column(index=True)  # agent | automation | human
     kind: Mapped[str] = mapped_column(index=True)  # APIs §5

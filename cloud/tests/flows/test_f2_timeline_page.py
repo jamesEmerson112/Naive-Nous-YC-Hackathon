@@ -129,15 +129,18 @@ def test_unknown_incident_page_is_404(client):
     assert resp.status_code == 404 and resp.json()["error"] == "unknown_incident"
 
 
-def test_freeze_button_posts_to_honest_stub(client):
+def test_freeze_button_posts_to_the_kill_switch(client):
     page = _text(client.get("/"))
     assert 'data-url="/v1/fleet/freeze"' in page
     ks = _text(client.get("/partials/killswitch"))
     assert 'id="killswitch"' in ks and "Freeze fleet" in ks
-    for route in ("/v1/fleet/freeze", "/v1/fleet/unfreeze"):
-        resp = client.post(route, json={"by": "dashboard", "reason": "test"})
-        assert resp.status_code == 501
-        assert resp.json()["detail"].startswith("Kill switch not wired yet (M3)")
+    # The button's body (M3 wired the routes; the page shows the answer's `why`).
+    resp = client.post("/v1/fleet/freeze", json={"by": "dashboard", "reason": "test"})
+    assert resp.status_code == 200 and resp.json()["why"].startswith("human:dashboard froze")
+    assert "FLEET FROZEN" in _text(client.get("/partials/killswitch"))
+    resp = client.post("/v1/fleet/unfreeze", json={"by": "dashboard", "reason": "test"})
+    assert resp.status_code == 200 and resp.json()["why"].startswith("human:dashboard unfroze")
+    assert "Freeze fleet" in _text(client.get("/partials/killswitch"))
 
 
 def test_frozen_fleet_shows_on_every_page(client, arm, example, db_session):
