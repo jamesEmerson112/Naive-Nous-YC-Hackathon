@@ -274,7 +274,14 @@ class _During:
         self.risks = ev.risks
         self.images = ev.images
         self.events = ev.logs.get("events", [])
-        self.calls = inside(ev.audit)
+        # A call belongs to the fault if it ran during it: one that started a moment before
+        # the incident opened and ended after counts too.
+        self.calls = [
+            c
+            for c in ev.audit
+            if float(c["ts"]) <= end
+            and float(c["ts"]) + float(c.get("duration_s") or 0) >= fault.start
+        ]
         self.notes = [e for e in inside(self.events) if e.get("ev") == "agent_note"]
         self.notifications = inside(ev.notifications)
         self.deployments = inside(ev.deployments)
@@ -293,11 +300,14 @@ class _During:
         their result instead (podd answers `{"ok": false}` when the serial port is closed).
         A pod command took when the pod's reply ends `R … end=1 ok=1`; a baud change when
         podd logs `baud_changed`. Other tools raise on failure, so `ok` is enough."""
+        # podd serializes commands, and the reply is logged before the call returns, so the
+        # final reply inside the call's own time span is this command's.
         start = float(call["ts"])
-        end = start + float(call.get("duration_s") or 0) + 1
+        end = start + float(call.get("duration_s") or 0)
         near = [e for e in self.events if start <= float(e["ts"]) <= end]
         if call.get("tool") == "pod_cmd":
-            return any(e.get("type") == "R" and "end" in e and bool(e.get("ok")) for e in near)
+            final = [e for e in near if e.get("type") == "R" and e.get("end") in (1, "1")]
+            return bool(final) and bool(final[-1].get("ok"))
         if call.get("tool") == "link_set_baud":
             return any(e.get("ev") == "baud_changed" for e in near)
         return True
@@ -423,7 +433,7 @@ def _log_window(
 def _agent_trace(
     incident_id: uuid.UUID, fault: Fault, ev: Evidence, d: _During, running: Running
 ) -> tuple[RecordingMeta, bytes] | None:
-    if not d.calls:
+    if not d.calls and not d.notes:
         return None
     rows = sorted(
         [{"source": "audit", **c} for c in d.calls] + [{"source": "note", **n} for n in d.notes],

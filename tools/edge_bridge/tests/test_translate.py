@@ -284,3 +284,22 @@ def test_long_log_windows_keep_both_ends_and_say_what_was_left_out():
     assert [r["ts"] for r in kept] == [0.0, 1.0, 2.0, 8.0, 9.0]
     assert kept[2] == {"log": "edge_bridge", "ts": 2.0, "ev": "elided", "count": 6}
     assert translate._sample(list(range(10)), 4) == [0, 3, 6, 9]
+
+
+def test_the_final_reply_decides_a_command(pod):
+    t = T0 + 100
+    stale = pod.open("acc_stale", t, severity="warn")
+    pod._append(pod.paths.log("events"), {"type": "R", "id": 1001, "v": 5, "ok": 1, "ts": t + 8.05})
+    pod.pod_cmd("acc init", t + 8, ok=False)  # an intermediate line, then end=1 ok=0
+    pod.resolve(stale, t + 20)
+    assert _only(pod, t + 60)["outcome"]["resolving_action"] is None
+
+
+def test_notes_alone_still_make_a_trace(pod):
+    t = T0 + 100
+    blip = pod.open("us_intermittent", t, severity="warn")
+    pod.event(t + 3, "agent_note", text="Probably a hand passing the sensor.")
+    pod.resolve(blip, t + 12)
+    inc = _only(pod, t + 60)
+    assert sorted(inc["_recordings"]) == ["agent_trace", "log_window"]
+    assert inc["agent"]["reasoning"] == "Probably a hand passing the sensor."

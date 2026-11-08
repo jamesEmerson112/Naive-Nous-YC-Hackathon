@@ -169,3 +169,17 @@ def test_read_window_widens_for_a_log_written_slightly_out_of_order(tmp_path):
     assert {"ts": 10_000.5, "tool": "fw_flash"} not in podd.read_window(base, 10_000, 10_001)
     widened = podd.read_window(base, 10_000, 10_001, disorder_s=20_000)
     assert {"ts": 10_000.5, "tool": "fw_flash"} in widened
+
+
+def test_read_new_follows_several_rotations(tmp_path):
+    path = tmp_path / "events.jsonl"
+    _write(path, {"ts": 1.0, "n": 1})
+    _, cursor = podd.read_new(path, None)
+    _write(path, {"ts": 2.0, "n": 2})
+    os.replace(path, tmp_path / "events.jsonl.1")
+    _write(path, {"ts": 3.0, "n": 3})
+    os.replace(tmp_path / "events.jsonl.1", tmp_path / "events.jsonl.2")
+    os.replace(path, tmp_path / "events.jsonl.1")
+    _write(path, {"ts": 4.0, "n": 4})
+    recs, _ = podd.read_new(path, cursor)
+    assert [r["n"] for r in recs] == [2, 3, 4]

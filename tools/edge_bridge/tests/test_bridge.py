@@ -1,5 +1,6 @@
 """The bridge end to end against the fake cloud: check-ins, reports, restarts, outages."""
 
+import json
 import logging
 
 from edge_bridge import translate
@@ -204,3 +205,46 @@ def test_the_cli_keeps_going_after_a_failed_tick(pod, tmp_path, monkeypatch):
         ]
     )
     assert len(calls) == 2
+
+
+def test_a_fault_already_open_at_the_first_start_is_reported(make_bridge, pod, sock, cloud):
+    t = T0 - 300
+    pod.open("reboot_loop", t, summary="3 abnormal boots in 30 s")
+    sock.open_incidents = [
+        {"id": f"reboot_loop-{int(t)}", "kind": "reboot_loop", "severity": "critical"}
+    ]
+    pod.open("us_intermittent", t - 100, severity="warn")  # long over: podd doesn't list it
+    pod.resolve(f"us_intermittent-{int(t - 100)}", t - 90)
+    bridge = make_bridge()
+    bridge.tick(T0)
+    pod.resolve(f"reboot_loop-{int(t)}", T0 + 20)
+    sock.open_incidents = []
+    bridge.tick(T0 + 40)
+    (incident,) = cloud.incidents.values()
+    assert incident["kind"] == "reboot_loop" and incident["outcome"]["resolved"] is True
+
+
+def test_a_failed_tick_loses_nothing(make_bridge, pod, cloud, monkeypatch):
+    bridge = make_bridge()
+    bridge.tick(T0)
+    t = T0 + 60
+    scenario_01_fixed(pod, t)
+    monkeypatch.setattr(
+        bridge.outbox, "add_incident", lambda *_: (_ for _ in ()).throw(OSError("disk full"))
+    )
+    try:
+        bridge.tick(t + 200)
+    except OSError:
+        pass
+    monkeypatch.undo()
+    bridge.tick(t + 210)  # reloads the saved state: the fault is still there
+    assert len(cloud.incidents) == 1
+
+
+def test_an_unreadable_state_file_is_moved_aside(make_bridge, cloud, tmp_path):
+    state = tmp_path / "state" / "pod-1" / "state.json"
+    state.parent.mkdir(parents=True)
+    state.write_text("")  # left empty by a power cut
+    assert make_bridge().tick(T0).checked_in
+    assert (state.parent / "state.json.unreadable").exists()
+    assert json.loads(state.read_text())["since"] == T0

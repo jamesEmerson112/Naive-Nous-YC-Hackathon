@@ -61,12 +61,22 @@ class State:
 
     @classmethod
     def load(cls, path: Path) -> State | None:
+        """The saved state; None if there's none. A file that can't be read (damaged, or
+        from an incompatible version) is moved aside, so the bridge starts fresh instead of
+        failing every tick."""
         try:
             data = json.loads(path.read_text())
+            cursors = {k: Cursor.from_dict(v) for k, v in data.get("cursors", {}).items()}
+            return cls(**(data | {"cursors": cursors}))
         except FileNotFoundError:
             return None
-        cursors = {k: Cursor.from_dict(v) for k, v in data.get("cursors", {}).items()}
-        return cls(**(data | {"cursors": cursors}))
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            aside = path.with_name(f"{path.name}.unreadable")
+            path.replace(aside)
+            log.warning(
+                "state %s is unreadable (%s); moved to %s, starting fresh", path, exc, aside
+            )
+            return None
 
     def save(self, path: Path) -> None:
         data = {
@@ -119,11 +129,20 @@ class Bridge:
         self._warned_assigned = False
 
     def tick(self, now: float) -> TickResult:
-        state, tracker = self._load(now)
+        try:
+            return self._tick(now)
+        except Exception:
+            # Forget what this tick read and popped; the next one reloads the last saved
+            # state, so nothing is skipped (re-queued reports keep their ids).
+            self.state = self.tracker = None
+            raise
+
+    def _tick(self, now: float) -> TickResult:
+        state, tracker, fresh = self._load(now)
         status = self.sock.call("status")
         stats = self.sock.call("stats", seconds=10) if status else None
 
-        for kind, rec in self._new_records(state):
+        for kind, rec in self._new_records(state, status if fresh else None):
             self._observe(state, tracker, kind, rec)
         self._track_build(state, status)
 
@@ -141,16 +160,26 @@ class Bridge:
 
     # -- reading ------------------------------------------------------------------------
 
-    def _load(self, now: float) -> tuple[State, FaultTracker]:
+    def _load(self, now: float) -> tuple[State, FaultTracker, bool]:
+        """The state and tracker, loading them if needed; `True` when starting fresh."""
+        fresh = False
         if self.state is None or self.tracker is None:
-            self.state = State.load(self.state_path) or State(since=now - self.backfill_s)
+            loaded = State.load(self.state_path)
+            fresh = loaded is None
+            self.state = loaded or State(since=now - self.backfill_s)
             faults = [Fault.from_dict(f) for f in self.state.faults]
             self.tracker = FaultTracker(self.timing, faults)
-        return self.state, self.tracker
+        return self.state, self.tracker, fresh
 
-    def _new_records(self, state: State) -> list[tuple[str, dict[str, Any]]]:
-        """New records from the four streams, oldest first. Boot records count even before
-        `since`, because they say what's running; everything else from before is ignored."""
+    def _new_records(
+        self, state: State, status: dict[str, Any] | None = None
+    ) -> list[tuple[str, dict[str, Any]]]:
+        """New records from the four streams, oldest first. Records from before `since` are
+        ignored, except boot records (they say what's running) and, on the first start
+        (`status` given), the open records of incidents podd says are still open, so a
+        fault already in progress when the bridge starts is reported too."""
+        still_open = {i.get("id") for i in (status or {}).get("open_incidents") or []}
+        reported = set(state.reported)
         streams = {
             "incidents": (self.paths.log("incidents"), None),
             "audit": (self.paths.log("audit"), None),
@@ -164,9 +193,10 @@ class Bridge:
                 state.cursors[kind] = cursor
             for rec in records:
                 is_boot = kind == "events" and rec.get("ev") == "boot"
-                if float(rec["ts"]) < state.since and not is_boot:
+                in_progress = kind == "incidents" and rec.get("id") in still_open
+                if float(rec["ts"]) < state.since and not (is_boot or in_progress):
                     continue
-                if kind == "incidents" and rec.get("id") in state.reported:
+                if kind == "incidents" and rec.get("id") in reported:
                     continue
                 out.append((kind, rec))
         return sorted(out, key=_stream_time)

@@ -96,8 +96,9 @@ def read_new(
     """The complete lines added to `path` since `cursor`, parsed, and the new cursor.
 
     - A missing file returns nothing and keeps the cursor.
-    - A file podd rotated away (`path.1` now has the cursor's inode) is first read to its
-      end, so lines written just before the rotation aren't lost; then the new file.
+    - If podd rotated the file away since (one of `path.1` … `path.5` has the cursor's
+      inode), that file is read on from the cursor and every newer one in full, so nothing
+      written in between is lost; then the current file.
     - A truncated file is read from the start.
     - A line still being written (no newline yet) is left for the next read.
     - `keep`: parse only lines containing one of these byte strings (most of the event log
@@ -112,12 +113,13 @@ def read_new(
     if cursor is not None and cursor.inode == st.st_ino:
         offset = cursor.offset if cursor.offset <= st.st_size else 0
     elif cursor is not None:
-        rotated = path.with_name(f"{path.name}.1")
-        try:
-            if rotated.stat().st_ino == cursor.inode:
-                records, _ = _read_from(rotated, cursor.offset, keep)
-        except FileNotFoundError:
-            pass
+        rotated = [p for p in _rotations(path) if p != path]  # oldest first
+        inodes = [p.stat().st_ino for p in rotated]
+        if cursor.inode in inodes:
+            k = inodes.index(cursor.inode)
+            for i, p in enumerate(rotated[k:]):
+                more, _ = _read_from(p, cursor.offset if i == 0 else 0, keep)
+                records += more
     new, end = _read_from(path, offset, keep, st.st_size)
     return records + new, Cursor(st.st_ino, end)
 
@@ -125,13 +127,23 @@ def read_new(
 def _read_from(
     path: Path, offset: int, keep: tuple[bytes, ...] | None, size: int | None = None
 ) -> tuple[list[dict[str, Any]], int]:
-    """Complete lines from `offset` on, and the offset after the last one."""
+    """Complete lines from `offset` up to `size`, and the offset after the last one. Read
+    line by line, so a first read of a 20 MB log doesn't load it all at once."""
     size = path.stat().st_size if size is None else size
+    out: list[dict[str, Any]] = []
+    end = offset
     with open(path, "rb") as f:
         f.seek(offset)
-        data = f.read(max(0, size - offset))
-    end = data.rfind(b"\n") + 1
-    return _parse(data[:end], path, keep), offset + end
+        for line in f:
+            if end + len(line) > size or not line.endswith(b"\n"):
+                break  # past the size we looked at, or still being written
+            end += len(line)
+            if keep is not None and not any(k in line for k in keep):
+                continue
+            rec = _record(line)
+            if rec is not None:
+                out.append(rec)
+    return out, end
 
 
 def read_all(path: Path) -> list[dict[str, Any]]:

@@ -12,7 +12,8 @@ wants one incident per fault, and a report it can't amend later (it's idempotent
   keep it in progress, so a report isn't sent while the healer is still working. A flash
   in progress (`flash_start` without its `flash_done`) holds the fault for up to
   `busy_max_s`: podd writes a tool's audit record only when the call returns, and
-  `fw_flash` can run for a minute.
+  `fw_flash` can run for a minute. Other heal tools leave no start marker; they take
+  about 10 s at most (HARNESS.md §4), so `settle_s` must stay above that.
 - **Ready** at `due()`, for one of these reasons:
   - `resolved`: every incident resolved, and `settle_s` passed with no new activity;
   - `handed_off`: still unresolved, the healer asked a person to act (`notify_human` with
