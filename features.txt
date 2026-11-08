@@ -73,7 +73,7 @@ P3 Monid step in the order flow
 P3 AgentMail incident email
 P3 Emotion moves on the real arm (James's lamp gestures as the model)
 P5 pre_tool_call guard, cron pulls cards, gateway alerts, catalog submission
-P6 Level 3: MuJoCo fault factory, bench recordings, fine-tune a small model
+P6 Level 3: MuJoCo fault factory, bench recordings, fine-tune a small model (docs/healer-data-levels.md) <--- James
 If time runs short, cut in this order: ChatTS test, MuJoCo twin, Monid, Tavily, emotion moves.
 Never cut: command → break → heal → resume, the work-order card, the overnight run, the backup video.
 
