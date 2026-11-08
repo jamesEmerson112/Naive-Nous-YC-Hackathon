@@ -76,12 +76,12 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sat Nov 7, 10:29 PM PST_
+_Last updated: Sat Nov 7, 10:31 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged #38, so Ishaan's real `device/` code now goes through the coder path; #44 (Fleet Doctor PR 7, the last of 9) and #45 (M8 status docs) are open. James's P1 arm prototypes work in the MuJoCo sim but aren't pushed yet. The pod healer bench runs (`firmware/harness/HANDOFF.md`) are still next on the bench.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged #38, so Ishaan's real `device/` code now goes through the coder path, and the M8 status docs merged as #45; #44 (Fleet Doctor PR 7, the last of 9) is still open. James's P1 arm prototypes work in the MuJoCo sim but aren't pushed yet. Olir has claimed the pod healer bench runs (`firmware/harness/HANDOFF.md`) and a new arm heal test with bad ultrasonic image 07.
 
 **Recently done:**
-- Kent merged #38 (`c8b58cb`, 10:20 PM): real device code in the coder path (B1, B3): `devicecode/` packaging and bench verify, coder retry, `code register` CLI, F11 real-device flow test. Opened #45 (`cloud/docs-m8`, 10:28 PM), M8 status docs
+- Kent merged #38 (`c8b58cb`, 10:20 PM): real device code in the coder path (B1, B3): `devicecode/` packaging and bench verify, coder retry, `code register` CLI, F11 real-device flow test. Then merged #45 (`ccb95fb`, 10:28 PM), M8 status docs
 - James's P1 prototypes run in simulation (local branch `james/arm-sim`, 9 commits, not pushed): an arm host and the `so101-arm` Hermes plugin with a `pre_tool_call` guard, approach-then-grasp on the wrist sensor, a level-1 watchdog that parks and repairs, a fault factory (1,000 labeled runs in about a minute), and a ChatTS level-2 test on RunPod (pod terminated, about $0.50). Sim only: the 3 cm block, the centreline sensor mount and the grip back-off still need checking on the real arm (James's session)
 - Olir merged #43 (`84c802e`, 10:12 PM): `server/` serves qwen3.5:4b from the laptop to the Pi over Ethernet. Not yet run against the harness on the bench
 - Kent merged #42 (`f510ec3`, 10:09 PM): Fleet Doctor F12 interop, the real cloud and the unmodified fake device end to end
@@ -93,6 +93,8 @@ _Last updated: Sat Nov 7, 10:29 PM PST_
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and when `james/arm-sim` gets pushed for Kent's 9–10 AM "real arm + polish" slot. The overnight launch is due by 12:30 AM (Kent's plan)
 
 **Recent commits (all authors):**
+- `cd261a2` Sat 22:28 · Olir Eswar · Claim pod healer bench runs and the ultrasonic arm heal test in features.txt
+- `ccb95fb` Sat 22:28 · kgang · Romulus docs: M8 status after #24, #28, #38 (#45)
 - `625c345` Sat 22:28 · Kent Gang · Update Kent status in CLAUDE.md
 - `c8b58cb` Sat 22:20 · kgang · Romulus B1: real device code in the coder path (#38)
 - `dd40482` Sat 22:19 · jamesEmerson112 · Update team status and features.txt
@@ -101,8 +103,6 @@ _Last updated: Sat Nov 7, 10:29 PM PST_
 - `84c802e` Sat 22:12 · Oliravan Eswaramoorthy · Merge pull request #43 from jamesEmerson112/local-model-serve
 - `ff5627e` Sat 22:09 · jamesEmerson112 · Update team status and features.txt
 - `f510ec3` Sat 22:09 · kgang · Fleet Doctor F12 interop: the real cloud and the unmodified fake device, end to end (#42)
-- `24d965b` Sat 22:08 · Kent Gang · Update Kent status in CLAUDE.md
-- `be5cd12` Sat 22:08 · Kent Gang · Update Kent status in CLAUDE.md
 
-**Branches on GitHub:** `main`; open PR branches `doctor/evidence-real` (#44, Kent) and `cloud/docs-m8` (#45, Kent); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `cloud/b1-device-code` (#38), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PR branch `doctor/evidence-real` (#44, Kent); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `cloud/b1-device-code` (#38), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
