@@ -100,14 +100,14 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 4:28 PM PST_
+_Last updated: Sat Nov 7, 4:38 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is coding M0 (contracts v0.1, `make up` serving `/healthz`, one real Naïve card, one real LLM call), due 5:15 PM. Ishaan is tuning the device-side healer harness in `edge/` (local, uncommitted). James has claimed the bench Hermes install and its OpenAI key, is signed in to the Romulus org on the Naïve CLI, and is starting a Naïve hello world.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent is coding M0, due 5:15 PM; the adapters are merged, and contracts v0.1, `make up` serving `/healthz`, and the live Naïve card and LLM call remain. Ishaan is tuning the device-side healer harness in `edge/` (local, uncommitted). James has claimed the bench Hermes install and its OpenAI key, is signed in to the Romulus org on the Naïve CLI, and is starting a Naïve hello world.
 
 **Recently done:**
-- Kent merged PR #1 (`8eb532f`): a uv workspace skeleton with `packages/contracts` (`romulus-contracts`, shared with the device side), `cloud/` (`romulus-cloud`) and `tools/fake_device/`, pinned to Python 3.12. Kent's code now goes in through PRs from `cloud/*` branches (4:21 PM)
+- Kent merged PR #2 (`87d4e41`, from `cloud/m0-adapters`): M0 adapters in `cloud/src/romulus_cloud/adapters/`, each with a fake and unit tests. They are a sha256-checked blob store, `OpenAICompatLlm` (one client for the Naïve proxy and RunPod vLLM), `HttpNaive` (idempotent card posts, safe 409 retries) and `FakeCoder` (4:34 PM)
+- Kent merged PR #1 (`8eb532f`): the uv workspace skeleton with `packages/contracts`, `cloud/` and `tools/fake_device/`, pinned to Python 3.12 (4:21 PM)
 - James claimed "Hermes install on the bench" and "OpenAI key for bench Hermes" in `features.txt`, and signed in to the Romulus org on the Naïve CLI; the agent and model lists both return (4:26 PM)
-- James added `docs/naive-vs-runpod-setup.md`: Naïve hosts agents on its own fixed harnesses (`pi`, `vetta`, `claude_code`, `hermes`) with no custom image, so the bench Hermes calls Naïve over API or MCP; GPUs stay on RunPod (4:16 PM)
 - Ishaan's Mac test bed works: the oracle healer passes 6/6 tasks and a do-nothing healer 0/6; granite4.1:3b on Ollama ran end to end but failed S1 and D2 (4:12 PM)
 
 **Open questions:**
@@ -117,6 +117,9 @@ _Last updated: Sat Nov 7, 4:28 PM PST_
 - What does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `01da07e` Sat 16:36 · Kent Gang · Update Kent status in CLAUDE.md
+- `87d4e41` Sat 16:34 · kgang · Romulus M0: outside-world adapters (blob store, LLM, Naïve, coder) with fakes (#2)
+- `56f841d` Sat 16:29 · jamesEmerson112 · Update team status in CLAUDE.md
 - `a88ef75` Sat 16:27 · Kent Gang · Update Kent status in CLAUDE.md
 - `7576f53` Sat 16:26 · jamesEmerson112 · Claim the bench Hermes key and install lines in features.txt
 - `8eb532f` Sat 16:21 · kgang · Add uv workspace skeleton for the Romulus cloud platform (#1)
@@ -124,9 +127,6 @@ _Last updated: Sat Nov 7, 4:28 PM PST_
 - `6869c8d` Sat 16:16 · jamesEmerson112 · Add note on why Naive does not set up like RunPod
 - `33d4cf4` Sat 16:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `1a58412` Sat 16:10 · jamesEmerson112 · Hub: Features inside view read from features.txt; black boxes for not worked on
-- `f61d966` Sat 16:08 · jamesEmerson112 · Update team status in CLAUDE.md
-- `41dc22d` Sat 16:07 · Kent Gang · Update Kent status in CLAUDE.md
-- `0b459ee` Sat 16:06 · Kent Gang · cloud platform planning updates
 
 **Branches on GitHub:** `main`, `firmware` (Olir)
 <!-- team-status:end -->
