@@ -138,7 +138,8 @@ class LearningView(TypedDict):
     lane: Literal["rule", "skill"] | None
     touches_safety: bool
     numbers: Numbers | None
-    limits: list[str]
+    limits: list[str]  # all of the probe's limits, below the fold
+    limit_headline: str | None  # the first, up to its colon, above the fold
     routing: str | None  # "safety code → staged for Olir (D25)"
     failures: list[str]
     data: DataStrip
@@ -286,6 +287,7 @@ def _review_from_events(session: Session, fleet_id: str) -> dict[str, Any] | Non
         "recorded": bool(data.get("recorded")),
         "captured_at": data.get("captured_at"),
         "candidate_id": (event.refs or {}).get("candidate"),
+        "studio_url": data.get("studio_url"),
     }
 
 
@@ -300,8 +302,10 @@ def _review_from_fixture(settings: Settings) -> dict[str, Any] | None:
         return None
     if not isinstance(raw, dict):
         return None
-    proposal = _dict(raw.get("output"))
+    # review_spike.py writes `structured_output`; the brief's shape said `output`.
+    proposal = _dict(raw.get("structured_output") or raw.get("output"))
     rule = _dict(proposal.get("proposal"))
+    case_file = _dict(raw.get("case_file"))
     return {
         "origin": "fixture",
         "kind": None,
@@ -314,11 +318,15 @@ def _review_from_fixture(settings: Settings) -> dict[str, Any] | None:
         "duration_s": raw.get("duration_s"),
         "cost_usd": raw.get("cost_usd"),
         "probe_id": raw.get("probe_id") or rule.get("probe"),
-        "case_id": raw.get("case_id"),
-        "case_file": _dict(raw.get("case_file")),
+        "case_id": raw.get("case_id") or case_file.get("case"),
+        "case_file": case_file,
         "recorded": True,
         "captured_at": raw.get("captured_at"),
         "candidate_id": None,
+        "studio_url": raw.get("studio_url"),
+        # The spike's own checks in code (G1) and the schema check's errors, if any.
+        "checks": [c for c in _dict(raw.get("g1")).get("checks") or [] if isinstance(c, dict)],
+        "validation_errors": [str(e) for e in raw.get("validation_errors") or []],
     }
 
 
@@ -328,6 +336,15 @@ def _review(session: Session, settings: Settings) -> dict[str, Any] | None:
 
 def _names_safety(texts: list[str]) -> bool:
     return any(p in t for t in texts for p in FALLBACK_SAFETY_PATHS)
+
+
+def _checks_line(checks: list[dict[str, Any]]) -> str:
+    """`7 of 7 checks passed in code: ✓ the proposal validates · ✓ …`, from the spike's G1."""
+    if not checks:
+        return "routed on the page: a target on the safety list is staged"
+    ok = sum(1 for c in checks if c.get("ok"))
+    marks = " · ".join(f"{'✓' if c.get('ok') else '✕'} {c.get('check')}" for c in checks)
+    return f"{ok} of {len(checks)} checks passed in code: {marks}"
 
 
 def _route_fallback(review: dict[str, Any], probe: dict[str, Any] | None) -> dict[str, Any]:
@@ -344,17 +361,18 @@ def _route_fallback(review: dict[str, Any], probe: dict[str, Any] | None) -> dic
         targets = [str(t) for t in port.get("to") or []]
         safety = _names_safety(targets)
     owner = review["case_file"].get("owner") or FALLBACK_OWNER
+    errors = list(review.get("validation_errors") or [])
     patch = None
     if port.get("from") and targets:
         patch = f"Port {port['from']} into {' and '.join(targets)}."
     return {
-        "outcome": "staged" if safety else "proposed",
-        "failures": [],
+        "outcome": "rejected" if errors else ("staged" if safety else "proposed"),
+        "failures": errors,
         "touches_safety": safety,
         "targets": targets,
         "owner": owner if safety else None,
         "staged_patch": patch if safety else None,
-        "checks": "routed on the page: a target on the safety list is staged (review checks next)",
+        "checks": _checks_line(review.get("checks") or []),
     }
 
 
@@ -444,6 +462,8 @@ def _probe_view(probe: dict[str, Any] | None, tz: ZoneInfo, now: datetime) -> di
     return {
         "id": probe.get("probe"),
         "kind": probe.get("kind"),
+        "description": probe.get("description"),
+        "definitions": probe.get("definitions"),
         "command": probe.get("command"),
         "rev": probe.get("rev"),
         "generated_label": f"{at.astimezone(tz).strftime('%a %b %-d')} {_clock(at, tz)}"
@@ -629,7 +649,10 @@ def _state(review: dict[str, Any] | None, result: dict[str, Any], cand: Candidat
     if review["reviewing"]:
         return "reviewing"
     if review["origin"] == "fixture":
-        return "staged" if result.get("outcome") == "staged" else "proposed"
+        outcome = result.get("outcome")
+        return (
+            "staged" if outcome == "staged" else "rejected" if outcome == "rejected" else "proposed"
+        )
     kind = review["kind"]
     if kind == "review.staged":
         return "staged"
@@ -816,6 +839,7 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
         when = _clock(_parse_time(review.get("captured_at")) or review.get("at"), tz)
         badge = " · ".join(x for x in ("recorded Naïve session", session_id, when) if x)
 
+    limits = [t for t in (_limit_text(x) for x in (probe or {}).get("limits") or []) if t]
     staged_patch = result.get("staged_patch")
     if not staged_patch and state == "staged" and probe:
         port = _dict(probe.get("port"))
@@ -838,7 +862,7 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
             "recorded": recorded,
             "badge": badge,
             "session_id": session_id,
-            "studio_url": STUDIO_URL,
+            "studio_url": (review.get("studio_url") if review else None) or STUDIO_URL,
         },
         "stages": _stages(state, lane, bool(numbers and numbers["improved"])),
         "verdict": verdict,
@@ -847,7 +871,8 @@ def view(session: Session, settings: Settings, *, now: datetime) -> LearningView
         "lane": lane,
         "touches_safety": bool(result.get("touches_safety")),
         "numbers": numbers,
-        "limits": [t for t in (_limit_text(x) for x in (probe or {}).get("limits") or []) if t],
+        "limits": limits,
+        "limit_headline": limits[0].split(": ", 1)[0] if limits else None,
         "routing": _routing(state, lane, result),
         "failures": [str(f) for f in result.get("failures") or []],
         "data": _data_strip(session, settings.fleet_id, now),

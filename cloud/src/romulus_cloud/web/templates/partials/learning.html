@@ -63,8 +63,8 @@
     {% if n %}
     <p class="lr-number"><span class="lr-n-main">{{ n.line }}</span> <span class="lr-n-alarms">· {{ n.alarms_line }}</span></p>
     {% endif %}
-    {% if v.routing or v.limits %}
-    <p class="lr-route">{% if v.routing %}<b>{{ v.routing }}</b>{% endif %}{% for l in v.limits %}{% if v.routing or not loop.first %} · {% endif %}{{ l }}{% endfor %}</p>
+    {% if v.routing or v.limit_headline %}
+    <p class="lr-route">{% if v.routing %}<b>{{ v.routing }}</b>{% endif %}{% if v.limit_headline %}{% if v.routing %} · {% endif %}limit: {{ v.limit_headline }}{% endif %}</p>
     {% endif %}
     {% if v.failures %}
     <ul class="lr-fails">{% for f in v.failures %}<li><span aria-hidden="true">✕</span> {{ f }}</li>{% endfor %}</ul>
@@ -134,11 +134,17 @@
         <h3 class="tc-h3">The probe <span class="muted">we wrote it; the agent chose to cite it</span></h3>
         <dl class="tc-dl">
           <div><dt>Probe</dt><dd class="mono">{{ p.id }}{% if p.stale %} <span class="chip chip-warn">older than 24 h</span>{% endif %}</dd></div>
+          {% if p.description %}<div><dt>Measures</dt><dd>{{ p.description }}</dd></div>{% endif %}
           {% if p.port_from %}<div><dt>Port</dt><dd><span class="mono">{{ p.port_from }}</span> → {% for t in p.port_to %}<span class="mono">{{ t }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</dd></div>{% endif %}
           {% if p.command %}<div><dt>Command</dt><dd class="mono tc-wrap">{{ p.command }}</dd></div>{% endif %}
           {% if p.rev %}<div><dt>Rev</dt><dd class="mono">{{ p.rev }}</dd></div>{% endif %}
           {% if p.generated_label %}<div><dt>Run</dt><dd>{{ p.generated_label }}{% if p.seconds is not none %} · {{ p.seconds }} s{% endif %}</dd></div>{% endif %}
+          {% if p.definitions %}<div><dt>Counts</dt><dd>{{ p.definitions }}</dd></div>{% endif %}
         </dl>
+        {% if v.limits %}
+        <h3 class="tc-h3 lr-limits-h">Limits <span class="muted">what the port still misses</span></h3>
+        <ul class="lr-limits">{% for l in v.limits %}<li>{{ l }}</li>{% endfor %}</ul>
+        {% endif %}
       </div>
       {% endif %}
       {% if v.staged_patch %}
