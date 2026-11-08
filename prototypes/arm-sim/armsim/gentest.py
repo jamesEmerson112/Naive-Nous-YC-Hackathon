@@ -79,11 +79,22 @@ def planned_points(rec, pan):
 SQUEEZE = 1.0          # the gripper command while grasping: 99% closed (0 = shut, 100 = open), as wave already does
 
 
-def squeezed(frames):
+# recording_2 carries the bag over the box (pan about -41, dipping to ~7 cm at 10.1 s) but never opens its jaws: it
+# only held at ~31, loose enough to let the bag fall. With the 99% squeeze it would carry the bag home, so the
+# jaws open at the dip over the box (frame 500 = 10.0 s at 50 fps) and stay open.
+DROP_AT = {"recording_2": 500}
+DROP_OPEN = 60.0
+
+
+def squeezed(frames, rec=None):
     """Every grasp squeezes to 99% closed, from the moment the jaws start closing until they open for the drop.
-    recording_2 alone stops at ~31 (69% closed) and recording_3 at ~20 (80%), loose enough for the bag to slip."""
-    ev, out, grasping = GripEvents(), [], False
-    for f in frames:
+    recording_2 alone stops at ~31 (69% closed) and recording_3 at ~20 (80%), loose enough for the bag to slip.
+    A recording that never opens its jaws (DROP_AT) opens them over the box instead."""
+    ev, out, grasping, drop = GripEvents(), [], False, DROP_AT.get(rec)
+    for i, f in enumerate(frames):
+        if drop is not None and i >= drop:
+            out.append([*f[:5], max(f[5], DROP_OPEN)])
+            continue
         event = ev.step(f[5])
         if event == "close_at":
             grasping = True
@@ -141,7 +152,7 @@ def probe(rec, pan, speed=1.0):
 def trial(rec, pan, speed=1.0):
     from .real import RealArm
     prim = json.loads((LIB / f"{rec}.json").read_text())
-    prim = {**prim, "frames": squeezed([[f[0] + pan, *f[1:]] for f in prim["frames"]])}
+    prim = {**prim, "frames": squeezed([[f[0] + pan, *f[1:]] for f in prim["frames"]], rec)}
     arm = RealArm().connect()
     rest = arm.read()
     seen = {"holding_s": 0.0, "widest_hold": 0.0, "peak_grip_load_nm": 0.0, "last": time.monotonic(),
@@ -377,7 +388,8 @@ def plan(history, before, after, close=None):
          "bag's edge and one over it. So the closing point has to be AT the edge, at the edge's height, with the open "
          "jaws reaching just past it, not on top of the bag body. You cannot change the wrist or the height directly, "
          "only pan, speed and which recording, and the recordings close at different heights (gripper_closed_at z: "
-         "wave about 0.06 m, recording_2 and recording_3 about 0.02 m, near the table). Choose the one whose closing "
+         "wave about 0.06 m, recording_2 and recording_3 about 0.02 m, near the table). All three carry the bag over the "
+         "box and let go there (recording_2 opens its jaws at its dip over the box, 10 s in). Choose the one whose closing "
          "height matches the edge, and aim its closing point onto the edge line. "
          "The red bag has some white labels on it: they are part of the same bag, not a separate object, so measure "
          "the whole bag including them, and don't take a white label for a gap or for the bag's edge. "
