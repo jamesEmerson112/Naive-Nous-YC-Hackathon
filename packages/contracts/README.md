@@ -28,6 +28,7 @@ Pin a commit instead of `main` once v0.1 is agreed. From a checkout of this repo
 | `codepatch` | `summarize_code_patch()`, `validate_code_patch()`, `patch_paths()`, `touches_safety()` (fails closed) for the `code_patch` format |
 | `rules` | `evaluate(rules, signals)`, `validate_rules()`, `replay_passes()`, `replay_report()`, `skipped_samples()`: the reflex function shared by device and gate |
 | `version` | `CONTRACT_VERSION`, `SUPPORTED_VERSIONS`, `is_supported()` |
+| `tools` | **Draft, D27 deferred; not wired to any route.** Fleet Doctor L3 device-tool contract: `ToolSpec`, `ToolCall`, `ToolResult` (device-sent), `TOOL_CATALOG` (8 read tools, 5 act tools, no raw shell), `tool()`, `validate_args()`. Final only after Ishaan's h3 tool list |
 
 ```python
 from romulus_contracts import CheckIn, IncidentReport, evaluate

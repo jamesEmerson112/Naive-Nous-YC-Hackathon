@@ -45,12 +45,22 @@ from romulus_contracts.rules import (
     validate_rules,
 )
 from romulus_contracts.telemetry import Episode, RecordingAccepted, RecordingKind, RecordingMeta
+from romulus_contracts.tools import (
+    TOOL_CATALOG,
+    ToolCall,
+    ToolResult,
+    ToolSpec,
+    ToolTier,
+    tool,
+    validate_args,
+)
 from romulus_contracts.version import CONTRACT_VERSION, SUPPORTED_VERSIONS, is_supported
 
 __all__ = [
     "CONTRACT_VERSION",
     "SHA256_HEADER",
     "SUPPORTED_VERSIONS",
+    "TOOL_CATALOG",
     "Agent",
     "Assigned",
     "CheckIn",
@@ -83,6 +93,10 @@ __all__ = [
     "ReplayReport",
     "Running",
     "RulesError",
+    "ToolCall",
+    "ToolResult",
+    "ToolSpec",
+    "ToolTier",
     "evaluate",
     "firmware_response",
     "is_supported",
@@ -91,6 +105,8 @@ __all__ = [
     "replay_passes",
     "replay_report",
     "summarize_code_patch",
+    "tool",
     "touches_safety",
+    "validate_args",
     "validate_rules",
 ]
