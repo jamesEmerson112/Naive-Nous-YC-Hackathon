@@ -44,7 +44,23 @@ v0 plan for the data model, the flows doc for what each flow test proves.
 - **Routers:** fill `api/device.py`, `api/ops.py`, `api/web.py`; use `SessionDep` and
   `SettingsDep` from `api/deps.py`.
 - **Worker:** append a `worker.Step(name, fn(session, now), every_s=...)` to `worker.STEPS`.
-- **Tables:** all in `models.py`. After the overnight run starts, schema changes are additive only.
+- **Events:** use the standard `refs` keys listed in `events.py` (`device`, `incident`,
+  `overlay` + `device`, `candidate`, `work_order`, `recording`, ...) and always include
+  `incident` when known. Read them with `events.find(session, {"incident": id})`
+  (`refs @>`, GIN-indexed), never `refs["x"].astext == ...`.
+- **Overlay ids are per device:** the key is `(device_id, id)`; anything pointing at an
+  overlay carries both.
+- **Tables:** all in `models.py`. Until the overnight run starts (M7), `create_all` plus
+  `make reset` handles changes. **After M7, schema changes are additive only, and
+  `create_all` never adds columns or constraints to an existing table.** New tables are
+  fine (`create_all` creates them on restart). A new column on an existing table must be
+  nullable (or have a server default), added to `models.py` *and* applied by hand:
+  `docker compose exec db psql -U romulus -d romulus -c
+  "ALTER TABLE <table> ADD COLUMN IF NOT EXISTS <col> <type>;"`. Never `make reset` to
+  pick up a schema change after M7.
 - **Tests:** `make test` (starts the shared `romulus-testdb` container, one throwaway DB per
-  pytest session). Fixtures in `tests/conftest.py`: `db_session`, `app`, `client`, `settings`,
-  `make_settings`, `now`. Tests never read `.env`; adapter modes are forced to fake.
+  pytest session). Fixtures in `tests/conftest.py`: `db_session`, `sessions`, `app`,
+  `client`, `settings`, `make_settings`, `now`. Everything in a test (requests, worker
+  steps via `run_tick(steps, sessions, now, {})`, `db_session`) shares one rolled-back
+  transaction, so they see each other's writes and nothing leaks. Tests never read `.env`
+  or the shell environment; adapter modes are forced to fake.
