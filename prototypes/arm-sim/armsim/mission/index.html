@@ -27,7 +27,13 @@
   A wrong move (category 2, armsim/redo.py) is the worker's own incident, read from the event log: the
   beats become WRONG MOVE > REVERSED > CORRECTED > REDONE (or PERSON), and the twin draws where the block
   should be, where it is, the relocate scan and what it found.
-  Presenter keys: 1-8 (8 buttons), C clear, F freeze, W wrong move, L look. POSTs carry X-Mission-Token
+  Split view: the twin and a "Live camera" panel side by side (the toggle in the twin's header, or the V key;
+  remembered in localStorage as mc-view). The camera panel reads armsim/camserve.py on the Mac that has the
+  camera (default http://localhost:8790, ?cam=URL overrides): /latest.jpg about once a second, /eye.json for
+  the bag of chips in table cm and the frame's age, drawn over the image. No server, no frame or an
+  uncalibrated eye each say so in the panel; nothing else on the page depends on it. The bag also shows in
+  the twin as a ring on the table (the eye's frame is the model's: origin at the base, x forward, y left).
+  Presenter keys: 1-8 (8 buttons), C clear, F freeze, W wrong move, L look, V split view. POSTs carry X-Mission-Token
   from ?token= or the meta tag mission.py adds on loopback.
 -->
 <script>
@@ -153,6 +159,8 @@
   --tw-label: rgba(220, 235, 255, 0.92);
   --tw-pred: rgba(220, 235, 255, 0.6);
   --tw-blend: lighter;
+  --eye-rgb: 255, 138, 42;          /* the camera's bag marker, on the image and in the twin */
+  --cam-bg: rgba(0, 0, 0, 0.35);
 }
 
 /* ---- neon: cyberpunk. Deep purple-black, magenta + cyan glow, condensed display type ---- */
@@ -284,6 +292,8 @@ html[data-look="light"] {
   --off-rgb: 148, 163, 184;
   --ice: #0284c7;     --ice-rgb: 2, 132, 199;
   --on-ice: #ffffff;
+  --eye-rgb: 194, 65, 12;
+  --cam-bg: #e2e8f0;
 
   --fill-1: #f8fafc;
   --fill-2: #f8fafc;
@@ -514,6 +524,39 @@ main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); g
 .empty-state b { display: block; color: var(--text-2); font-weight: 600; font-size: 1.08rem; margin-bottom: 0.2rem; }
 .empty-state code { font-family: var(--mono); font-size: 0.85em; color: var(--text-2); background: var(--fill-3); padding: 0.1rem 0.4rem; border-radius: 6px; }
 
+/* ---------- split view: the twin and the live camera side by side ---------- */
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); min-height: 0; min-width: 0; }
+.stage[data-view="twin"] { grid-template-columns: minmax(0, 1fr); }
+.stage[data-view="twin"] .cam { display: none; }
+.viewtog { display: inline-flex; border: 1px solid var(--line-hi); border-radius: 8px; overflow: hidden; align-self: center; flex: none; }
+.viewtog button { font: inherit; font-size: var(--t-cap); letter-spacing: 0.12em; text-transform: uppercase; padding: 0.22rem 0.6rem; color: var(--muted); background: transparent; border: 0; cursor: pointer; }
+.viewtog button + button { border-left: 1px solid var(--line-hi); }
+.viewtog button.on { color: var(--text); background: rgba(var(--accent-rgb), 0.16); }
+.viewtog button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.stage[data-view="split"] .twin .hud-r { width: 10.5rem; padding: 0.6rem 0.7rem; }
+.stage[data-view="split"] .twin .hud-tl { left: 0.8rem; }
+.stage[data-view="split"] .twin .hud-bl { left: 0.8rem; gap: 1rem; }
+.stage[data-view="split"] .twin .sensor .v { font-size: 1.9rem; }
+.stage[data-view="split"] .twin .stat .v { font-size: 1.25rem; }
+.cam.stale .camfit img, .cam.stale .eyemark { opacity: 0.45; filter: grayscale(0.7); transition: opacity .6s, filter .6s; }
+.cambody { position: relative; flex: 1; min-height: 0; background: var(--cam-bg); border-top: 1px solid var(--edge-1); overflow: hidden; }
+.camfit { position: absolute; inset: 0; }
+.camfit img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.eyemark { position: absolute; width: 0; height: 0; pointer-events: none; display: none; }
+.eyemark i { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%; border: 2.5px solid rgb(var(--eye-rgb)); box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85), 0 0 calc(12px * var(--glow)) rgba(var(--eye-rgb), 0.9); }
+.eyemark i::before, .eyemark i::after { content: ""; position: absolute; background: rgb(var(--eye-rgb)); }
+.eyemark i::before { left: 50%; top: -7px; bottom: -7px; width: 2px; margin-left: -1px; }
+.eyemark i::after { top: 50%; left: -7px; right: -7px; height: 2px; margin-top: -1px; }
+.eyemark b { position: absolute; left: 22px; top: -14px; white-space: nowrap; font-size: var(--t-meta); font-weight: 700; color: #fff; background: rgba(var(--eye-rgb), 0.92); padding: 0.1rem 0.45rem; border-radius: 6px; }
+.eyebar { flex: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 1.3rem; padding: 0.55rem 1.1rem 0.7rem; border-top: 1px solid var(--edge-1); font-size: var(--t-meta); color: var(--text-2); }
+.eyebar b { color: var(--text); font-weight: 650; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.15rem; }
+.eyebar .k { font-size: var(--t-cap); letter-spacing: 0.16em; color: var(--muted); text-transform: uppercase; margin-right: 0.4rem; }
+.eyebar b.bad, .eyebar .bad { color: var(--bad); }
+.eyebar b.warn, .eyebar .warn { color: var(--warn); }
+.eyebar b.ok, .eyebar .ok { color: var(--ok); }
+.cam .camoff { position: absolute; inset: 0; display: none; }
+.cam.off .camoff { display: flex; }
+.cam.off .camfit, .cam.off .eyemark { visibility: hidden; }
 /* ---------- twin ---------- */
 .twin.alarm { border-color: rgba(var(--bad-rgb), 0.55); box-shadow: inset 0 0 0 1px rgba(var(--bad-rgb), 0.25), 0 0 calc(60px * var(--glow) + 16px) rgba(var(--bad-rgb), 0.18); }
 .twin.healing { border-color: rgba(var(--warn-rgb), 0.5); box-shadow: 0 0 calc(50px * var(--glow) + 14px) rgba(var(--warn-rgb), 0.14); }
@@ -903,8 +946,9 @@ html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
 
 <main>
   <section class="col left">
+    <div class="stage" id="stage" data-view="split">
     <article class="panel twin" id="twin">
-      <div class="phead"><h2>Digital twin</h2><span class="sub" id="twinSub">SO-101 arm</span><span class="spacer"></span><span class="live dead" id="live"><i></i><span>waiting</span></span></div>
+      <div class="phead"><h2>Digital twin</h2><span class="sub" id="twinSub">SO-101 arm</span><span class="spacer"></span><span class="viewtog" id="viewtog" role="group" aria-label="View (V toggles)"><button data-view="twin" title="Twin only (V toggles)">Twin</button><button data-view="split" title="Twin and live camera (V toggles)">Split</button></span><span class="live dead" id="live"><i></i><span>waiting</span></span></div>
       <div class="banner" id="banner"><div class="bwrap"><div class="bcard"><div class="bin" id="bannerIn"></div><div class="xchg" id="xchg"></div></div></div></div>
       <div class="twinbody">
         <canvas id="cv"></canvas>
@@ -916,6 +960,15 @@ html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
         <div class="hint">drag to orbit · scroll to zoom · double-click to reset</div>
       </div>
     </article>
+    <article class="panel cam off" id="cam">
+      <div class="phead"><h2>Live camera</h2><span class="sub" id="camSub">the bench, as the eye sees it</span><span class="spacer"></span><span class="live dead" id="camLive"><i></i><span>offline</span></span></div>
+      <div class="cambody">
+        <div class="camfit" id="camfit"><img id="camimg" alt="Live camera frame of the arm's bench" draggable="false"><div class="eyemark" id="eyemark"><i></i><b id="eyetag">bag</b></div></div>
+        <div class="camoff"><div class="empty-state" id="camMsg"><b>Camera offline</b></div></div>
+      </div>
+      <div class="eyebar" id="eyebar"></div>
+    </article>
+    </div>
     <article class="panel heal">
       <div class="phead"><h2>Heal timeline</h2><span class="sub" id="healSub">last 20 min</span></div>
       <div class="healbody"><div class="counters" id="counters"></div><div class="tl" id="timeline"></div></div>
@@ -991,7 +1044,7 @@ function readTheme() {
   const nm = (n, d) => { const v = parseFloat(g(n)); return isFinite(v) ? v : d; };
   TH = {
     look: document.documentElement.dataset.look,
-    accent: rgb("--accent-rgb"), idle: rgb("--idle-rgb"), ok: rgb("--ok-rgb"), warn: rgb("--warn-rgb"), bad: rgb("--bad-rgb"), onBad: g("--on-bad"),
+    accent: rgb("--accent-rgb"), eye: rgb("--eye-rgb"), idle: rgb("--idle-rgb"), ok: rgb("--ok-rgb"), warn: rgb("--warn-rgb"), bad: rgb("--bad-rgb"), onBad: g("--on-bad"),
     glow: nm("--glow", 1), mono: g("--mono"), tlFont: g("--tl-font"),
     tlGrid: g("--tl-grid"), tlAxis: g("--tl-axis"), tlTick: g("--tl-tick"), tlLane: g("--tl-lane"), tlKind: g("--tl-kind"),
     tlOk: g("--tl-ok-text"), tlBad: g("--tl-bad-text"), tlWarn: g("--tl-warn-text"),
@@ -2064,6 +2117,7 @@ document.addEventListener("keydown", (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === "l") { e.preventDefault(); cycleLook(); return; }
+  if (k === "v") { e.preventDefault(); setView(STAGE.dataset.view === "split" ? "twin" : "split"); return; }
   const b = k === "f" ? $("freezeBtn") : k === "c" ? document.querySelector('[data-act="clear"]') : k === "w" ? document.querySelector('[data-fault="block_shift"]')
     : /^[1-8]$/.test(k) ? document.querySelector(`[data-key="${k}"]`) : null;
   if (b && !b.disabled) { e.preventDefault(); act(b); }
@@ -2577,6 +2631,7 @@ function drawFrame(now) {
   const found = !arm.holding && WM && WM.phase === "correcting" && WM.locate && WM.locate.result && WM.locate.result.found ? WM.locate.result.offset_mm : null;
   if (found) drawFound(found, labels);
   if (off) drawBumped(m, off, scanning || found ? null : labels);
+  drawEyeBag(labels);
   // the base, always underneath
   drawBase(m, st);
   // links, servo housings, jaws and the block, far to near
@@ -2616,6 +2671,120 @@ function drawFrame(now) {
     stageText(text, end ? x - ctx.measureText(text).width : x, y);
   }
 }
+
+// =====================================================================================
+// SPLIT VIEW + LIVE CAMERA. camserve.py (on the Mac with the camera) serves /latest.jpg and /eye.json.
+// Everything here fails quietly into an "offline" panel; the twin and the rest of the page never wait on it.
+// =====================================================================================
+const STAGE = $("stage");
+function setView(v) {
+  if (v !== "twin") v = "split";
+  STAGE.dataset.view = v;
+  document.querySelectorAll("#viewtog [data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+  try { localStorage.setItem("mc-view", v); } catch (e) {}
+  if (v === "split") camKick();
+  else EYE = null;
+}
+document.querySelectorAll("#viewtog [data-view]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); setView(b.dataset.view); b.blur(); }));
+let CAM_URL = "http://localhost:8790";
+try { const c = new URLSearchParams(location.search).get("cam"); if (c) CAM_URL = c.replace(/\/+$/, ""); } catch (e) {}
+let EYE = null;                                  // the last good /eye.json with a bag (drawn in the twin), else null
+const CAMS = { okAt: 0, imgOk: false, eye: null, eyeAt: 0, eyeFail: false, imgBusy: false, eyeBusy: false };
+const camImg = $("camimg");
+function camFrame() {
+  if (STAGE.dataset.view !== "split" || CAMS.imgBusy) return;
+  CAMS.imgBusy = true;
+  const im = new Image();
+  im.onload = () => { CAMS.imgBusy = false; CAMS.imgOk = true; CAMS.okAt = Date.now(); camImg.src = im.src; placeMark(); renderCam(); };
+  im.onerror = () => { CAMS.imgBusy = false; CAMS.imgOk = false; renderCam(); };
+  im.src = `${CAM_URL}/latest.jpg?t=${Date.now()}`;
+}
+async function camEye() {
+  if (STAGE.dataset.view !== "split" || CAMS.eyeBusy) return;
+  CAMS.eyeBusy = true;
+  try {
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(`${CAM_URL}/eye.json?t=${Date.now()}`, { cache: "no-store", signal: ctl.signal });
+    clearTimeout(to);
+    CAMS.eye = await r.json(); CAMS.eyeAt = Date.now(); CAMS.eyeFail = false;
+  } catch (e) { CAMS.eyeFail = true; }
+  CAMS.eyeBusy = false;
+  EYE = CAMS.eye && !CAMS.eye.error && CAMS.eye.bag && !CAMS.eyeFail ? CAMS.eye : null;
+  placeMark(); renderCam();
+}
+function camKick() { camFrame(); camEye(); }
+// where the frame is drawn inside the (object-fit: contain) image box, in CSS px
+function imgRect() {
+  const box = $("camfit"), w = box.clientWidth, h = box.clientHeight, nw = camImg.naturalWidth, nh = camImg.naturalHeight;
+  if (!nw || !nh || !w || !h) return null;
+  const k = Math.min(w / nw, h / nh);
+  return { x: (w - nw * k) / 2, y: (h - nh * k) / 2, k, nw, nh };
+}
+function placeMark() {
+  const el = $("eyemark"), e = CAMS.eye, r = imgRect();
+  if (!el) return;
+  if (!r || !e || e.error || !e.bag || CAMS.eyeFail || !CAMS.imgOk) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  el.style.left = `${r.x + e.bag.pixel[0] * r.k}px`;       // the pixel is in the camera frame's own pixels
+  el.style.top = `${r.y + e.bag.pixel[1] * r.k}px`;
+  setText($("eyetag"), `${e.bag.x_cm.toFixed(1)}, ${e.bag.y_cm.toFixed(1)} cm`);
+}
+function fmtAge(s) { return s < 10 ? `${s.toFixed(1)} s` : s < 120 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`; }
+function renderCam() {
+  const now = Date.now(), cam = $("cam");
+  const e = CAMS.eye, imgAge = CAMS.imgOk ? (now - CAMS.okAt) / 1000 : null;
+  const live = CAMS.imgOk && imgAge < 5;
+  // the frame's own age: its file age at the server when /eye.json was read, plus the time since
+  const fileAge = e && typeof e.frame_age_s === "number" && !CAMS.eyeFail ? e.frame_age_s + (now - CAMS.eyeAt) / 1000 : null;
+  const stale = live && fileAge !== null && fileAge > 5;
+  cam.classList.toggle("off", !CAMS.imgOk);
+  cam.classList.toggle("stale", stale || (!live && CAMS.imgOk));
+  const lv = $("camLive");
+  lv.classList.toggle("dead", !live || stale);
+  setText(lv.lastElementChild, !CAMS.imgOk ? "offline" : stale ? "frozen" : live ? "live" : "lost");
+  if (!CAMS.imgOk) {
+    setHTML($("camMsg"), `<b>Camera offline</b>No frame from <code>${esc(CAM_URL)}</code><br>On the Mac with the camera: <code>python -m armsim.camserve</code>`);
+    setHTML($("eyebar"), `<span><span class="k">Eye</span>no camera</span>`);
+    return;
+  }
+  let h = "";
+  const ageCls = fileAge === null ? "" : fileAge > 5 ? "bad" : fileAge > 2.5 ? "warn" : "ok";
+  const ageTxt = fileAge === null ? "unknown" : fmtAge(fileAge);
+  if (CAMS.eyeFail || !e) h = `<span><span class="k">Eye</span><span class="warn">eye data unreachable</span></span>`;
+  else if (e.error) h = `<span><span class="k">Eye</span><span class="warn">${e.calibrated === false ? "eye not calibrated" : esc(e.error)}</span></span>`;
+  else if (!e.bag) h = `<span><span class="k">Bag of chips</span>not in view</span>`;
+  else {
+    const b = e.bag;
+    h = `<span><span class="k">Bag of chips</span><b>${b.x_cm.toFixed(1)}</b> cm fwd, <b>${b.y_cm.toFixed(1)}</b> cm left</span>` +
+        `<span><span class="k">From base</span><b>${b.distance_cm.toFixed(1)}</b> cm at <b>${b.bearing_deg.toFixed(0)}</b>°</span>`;
+    if (e.bag_to_box_cm !== undefined) h += `<span><span class="k">To box</span><b>${e.bag_to_box_cm.toFixed(1)}</b> cm</span>`;
+  }
+  h += `<span><span class="k">Frame age</span><b class="${ageCls}">${esc(ageTxt)}</b></span>`;
+  setHTML($("eyebar"), h);
+  setText($("camSub"), e && !e.error && e.bag ? "bag located by the eye" : "the bench, as the eye sees it");
+}
+// the bag in the twin: a ring on the table where the eye puts it, in the model's frame (metres)
+function drawEyeBag(labels) {
+  if (!EYE || !EYE.bag || STAGE.dataset.view !== "split" || Date.now() - CAMS.eyeAt > 5000) return;
+  const c = [EYE.bag.x_cm / 100, EYE.bag.y_cm / 100, 0], col = TH.eye;
+  ctx.save();
+  if (TH.tw.glow > 0) { ctx.shadowColor = rgba(col, 0.9); ctx.shadowBlur = 10; }
+  pathPts(tableRing(c, 0.032)); ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2.2; ctx.stroke();
+  for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const a = P([c[0] + ux * 0.02, c[1] + uy * 0.02, 0.0005]), b = P([c[0] + ux * 0.044, c[1] + uy * 0.044, 0.0005]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  ctx.restore();
+  const ring = tableRing(c, 0.044, 24), x1 = Math.max(...ring.map((q) => q[0])), yc = ring.reduce((a, q) => a + q[1], 0) / ring.length;
+  labels.push([`EYE · bag ${EYE.bag.x_cm.toFixed(0)}, ${EYE.bag.y_cm.toFixed(0)} cm`, rgba(col, 1), x1 + 8, yc + 5]);
+}
+(function initView() {
+  let v = null;
+  try { v = localStorage.getItem("mc-view"); } catch (e) {}
+  setView(v === "twin" ? "twin" : "split");
+  setInterval(camFrame, 1000); setInterval(camEye, 1000); setInterval(renderCam, 500);
+  new ResizeObserver(placeMark).observe($("camfit"));
+})();
 
 resize();
 // Setting the canvas size clears it, and a resize lands after this frame's draw and before the paint: redraw
