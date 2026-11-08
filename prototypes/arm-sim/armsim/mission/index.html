@@ -33,7 +33,7 @@
   the bag of chips in table cm and the frame's age, drawn over the image. No server, no frame or an
   uncalibrated eye each say so in the panel; nothing else on the page depends on it. The bag also shows in
   the twin as a ring on the table (the eye's frame is the model's: origin at the base, x forward, y left).
-  Presenter keys: 1-8 (8 buttons), C clear, F freeze, W wrong move, L look, V split view. POSTs carry X-Mission-Token
+  Presenter keys: 1-9 (9 buttons), C clear, F freeze, W wrong move, L look, V split view. POSTs carry X-Mission-Token
   from ?token= or the meta tag mission.py adds on loopback.
 -->
 <script>
@@ -833,7 +833,7 @@ html[data-look="neon"] .xn.now .xi, html[data-look="neon"] .xn.think .xi { box-s
 /* ---------- presenter bar ---------- */
 footer.bar { display: flex; align-items: center; gap: 0.8rem; min-width: 0; position: relative; }
 .barlabel { font-size: var(--t-cap); letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); writing-mode: horizontal-tb; white-space: nowrap; padding-right: 0.3rem; }
-.btns { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0.55rem; flex: 1; min-width: 0; }
+.btns { display: grid; grid-template-columns: repeat(9, minmax(0, auto)); gap: 0.55rem; flex: 1; min-width: 0; }   /* nine labels of different lengths: equal columns clip "Bad pod image 07" at 1920 */
 .pb {
   --c: var(--accent-rgb);
   position: relative; overflow: hidden;
@@ -997,7 +997,8 @@ html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
   <div class="barlabel">Presenter</div>
   <div class="btns" id="btns">
     <button class="pb" data-act="order" data-job="pick" data-key="1"><kbd>1</kbd><span class="l"><small>New order</small><span class="g">Pick up the block</span><span class="s">Pick block</span></span><span class="st8">sent</span></button>
-    <button class="pb" data-act="order" data-job="wave" data-key="2"><kbd>2</kbd><span class="l"><small>New order</small><span class="g">Pack chips</span><span class="s">Chips</span></span><span class="st8">sent</span></button>
+    <button class="pb" data-act="order" data-job="wave" data-key="2"><kbd>2</kbd><span class="l"><small>New order</small><span class="g">Pack red bag</span><span class="s">Red bag</span></span><span class="st8">sent</span></button>
+    <button class="pb" data-act="order" data-job="wave_any" data-key="9"><kbd>9</kbd><span class="l"><small>New order</small><span class="g">Pack any bag</span><span class="s">Any bag</span></span><span class="st8">sent</span></button>
     <button class="pb fault" data-act="fault" data-fault="us_frozen" data-key="3"><kbd>3</kbd><span class="l"><small>Plant fault</small><span class="g">Stuck sensor</span><span class="s">Stuck sensor</span></span><span class="st8">sent</span></button>
     <button class="pb fault" data-act="fault" data-fault="pod_image07" data-key="4"><kbd>4</kbd><span class="l"><small>Plant fault</small><span class="g">Bad pod image 07</span><span class="s">Pod image 07</span></span><span class="st8">sent</span></button>
     <button class="pb danger" data-act="fault" data-fault="joint_stuck" data-key="5"><kbd>5</kbd><span class="l"><small>Plant fault</small><span class="g">Dead elbow servo</span><span class="s">Dead elbow</span></span><span class="st8">sent</span></button>
@@ -1111,7 +1112,7 @@ function tidy(s, order) {
     .replace(/^presenter:\s*/i, "")
     .replace(/^order (ord-\S+) \(([^)]*)\) is card \S+$/, "new order $1: $2")
     .replace(/\s*\(ARM JOB [^)]*\)/g, "")
-    .replace(/\s*\((?:pick|wave), (?:ord-[^)]*|no order id)\)/g, "")
+    .replace(/\s*\((?:pick|wave|wave_any), (?:ord-[^)]*|no order id)\)/g, "")
     .replace(/\s*\((?:us|pod|joint|block)_[a-z0-9_]+\)/g, "")
     .replace(/\b(?:ARM JOB\s+)?ord-\d{8}-\d{6}-([0-9a-f]{4})\b/g, "#$1")
     .replace(/\bcard crd_[0-9a-z]+\b/g, oid ? "order " + oid : "the card")
@@ -1973,7 +1974,7 @@ function renderFeed() {
     const fresh = t - (feedShown.get(key) || -1e9) < FEED_NEW_MS;
     const src = SRC[it.src] || it.src || "", open = key === feedHover || key === feedSticky || key === feedFocus;
     if (open) anyOpen = true;
-    // data-fk, not data-key: the 1-8 hotkeys look up [data-key]
+    // data-fk, not data-key: the 1-9 hotkeys look up [data-key]
     html += `<div class="fi ${tone}${fresh ? " new" : ""}${open ? " open" : ""}" data-fk="${esc(key)}" tabindex="0" role="button" aria-expanded="${open}" aria-label="${esc(`${fullTs(it.ts)}, ${src}: ${it.words}`)}"><span class="ic">${svg(icon)}</span><span class="tm">${esc(hms(it.ts))}</span><span class="tx"><span class="src">${esc(src)}</span>${esc(it.words)}<span class="fmeta">${esc([fullTs(it.ts), src, it.kind].filter(Boolean).join(" · "))}</span></span></div>`;
   }
   seenFeed = new Set([...seenFeed].filter((k) => keys.has(k)));
@@ -2178,7 +2179,7 @@ document.addEventListener("keydown", (e) => {
   if (k === "l") { e.preventDefault(); cycleLook(); return; }
   if (k === "v") { e.preventDefault(); setView(STAGE.dataset.view === "split" ? "twin" : "split"); return; }
   const b = k === "f" ? $("freezeBtn") : k === "c" ? document.querySelector('[data-act="clear"]') : k === "w" ? document.querySelector('[data-fault="block_shift"]')
-    : /^[1-8]$/.test(k) ? document.querySelector(`[data-key="${k}"]`) : null;
+    : /^[1-9]$/.test(k) ? document.querySelector(`[data-key="${k}"]`) : null;
   if (b && !b.disabled) { e.preventDefault(); act(b); }
 });
 

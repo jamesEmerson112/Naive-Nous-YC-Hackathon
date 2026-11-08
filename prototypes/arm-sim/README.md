@@ -36,12 +36,12 @@ uv pip install --python .venv/bin/python -e ../../packages/contracts -e ../../to
 
 | Command | What it does |
 |---|---|
-| `armsim.orders add pick\|wave --board naive` | Places an order: an `ARM JOB ord-…` card on the Arm jobs board (`--board file` uses `runs/board.json`) |
+| `armsim.orders add pick\|wave\|wave_any --board naive` | Places an order: an `ARM JOB ord-…` card on the Arm jobs board (`--board file` uses `runs/board.json`); `wave` packs the red bag of chips, `wave_any` any one bag |
 | `armsim.dispatch --board naive --exec hermes` | Claims each order card, has Hermes do it, and closes or blocks the card. One dispatcher per arm (lock next to the arm host's socket) |
 | `armsim.dispatch --board file --exec scripted --manager fake\|hermes [--wrong-action redo]` | The scripted commander, healing through the worker → manager loop (`armsim/worker.py`, `manager.py`, `escalation.py`): plain code checks the manager's one-action plan against an allowlist, and reads the host again just before it runs it. `--manager hermes` won't start, and the manager isn't asked, unless its `/v1/toolsets` shows delegation on and nothing but memory and skills beside it, each with only its own tools (checked at startup and before every ask). A manager `park` or `handoff_human`, a refused unsafe plan and a redo that gives up hand the arm to a person, and that sticks: the host holds a handed-off incident, never moves the arm for it on its own (not even when the pod heals), and the next order waits until a person's check at home closes it; a `pod_rollback` plan runs as a wait for the pod's own healer (recorded `wait_for_pod`). `--worker-lm ollama --worker-model lfm3:1.7b` adds the small model (`workerbench/RESULTS.md`) |
 | `armsim.soak run --board naive --with-dispatcher hermes --every 600 --hours 4` | The soak: an order every 10 min, half with a planted fault, and a report (`SOAK.md`) |
 | `armsim.camserve` | On the Mac with the bench camera (`127.0.0.1:8790`): `/latest.jpg` and `/eye.json` for Mission Control's split view (twin + live camera, `V` toggles; `?cam=URL` points elsewhere) |
-| `armsim.mission --board naive` | Mission Control on `http://localhost:8765/?look=mission\|neon\|light`: the 3D twin, the story banner, jobs, the commander feed, the heal timeline, the pod and the fleet, plus presenter buttons (hotkeys 1–8) |
+| `armsim.mission --board naive` | Mission Control on `http://localhost:8765/?look=mission\|neon\|light`: the 3D twin, the story banner, jobs, the commander feed, the heal timeline, the pod and the fleet, plus presenter buttons (hotkeys 1–9) |
 | `armsim.level3 train` / `audit runs/<run>.jsonl` | Healer level 3: the run-audit classifier (`docs/healer-data-levels.md`) |
 
 The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The design is `docs/worker-manager-healer.md`.

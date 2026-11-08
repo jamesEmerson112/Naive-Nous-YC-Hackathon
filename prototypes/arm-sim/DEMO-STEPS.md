@@ -50,9 +50,10 @@ All commands below run on the Mac from `prototypes/arm-sim` unless they say "on 
 - **Say:** "Everything on this screen is live: the real arm, its sensor pod, and our cloud."
 
 ### Beat 2: an order runs itself
-1. **Place the order.** It becomes a Naïve card:
+1. **Place the order.** It becomes a Naïve card. `wave` is "pack the red bag" (the demo's order); `wave_any` is "pack any bag" (any one bag of chips). Both run the same steps and skill; only the brief Hermes reads differs.
    ```bash
-   PYTHONPATH=. .venv/bin/python -m armsim.orders add wave --board naive
+   PYTHONPATH=. .venv/bin/python -m armsim.orders add wave --board naive        # the red bag (default)
+   PYTHONPATH=. .venv/bin/python -m armsim.orders add wave_any --board naive    # any bag
    ```
 2. **Start the commander loop** (one job):
    ```bash
@@ -60,7 +61,7 @@ All commands below run on the Mac from `prototypes/arm-sim` unless they say "on 
    ```
 3. **What happens:**
    1. The dispatcher claims the card.
-   2. Hermes reads it, **looks at the camera**, and runs `go_home`, the chips pick-and-place ("pack the chips": pick up the bag, put it in the box) and `go_home`.
+   2. Hermes reads it, **looks at the camera**, and runs `go_home`, the chips pick-and-place ("pack the red bag": pick up the red bag, put it in the box) and `go_home`.
    3. It looks again, then posts `RESULT:` (what it did and what the camera saw) and closes the card.
 4. **Show the card:**
    ```bash
@@ -102,12 +103,13 @@ ssh pi@192.168.50.2 'cd ~/sage_hardware_healer/Naive-Nous-YC-Hackathon/prototype
    ```bash
    ssh pi@192.168.50.2 'cd ~/sage_hardware_healer/Naive-Nous-YC-Hackathon/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted --max-jobs 1'
    ```
-3. In Mission Control, press **2 · New order: Pack chips**. The card appears in **Jobs**, moves to Doing then Done, and the commander feed shows each step.
+3. In Mission Control, press **2 · New order: Pack red bag** (or **9 · New order: Pack any bag**). The card appears in **Jobs**, moves to Doing then Done, and the commander feed shows each step.
 
 ## 4. Mission Control's keys on the real arm
 | Key | What it does |
 |---|---|
-| **2** ("Pack chips") | Places a "pack the chips" order (it runs when a dispatcher runs) |
+| **2** ("Pack red bag") | Places a "pack the red bag" order, the demo's (`orders add wave`; it runs when a dispatcher runs) |
+| **9** ("Pack any bag") | Places a "pack any bag" order (`orders add wave_any`): same steps, any one bag counts |
 | **8** | Freezes the fleet |
 | **7** ("a person fixed it") | Runs the check at home, which **moves the arm** |
 | **1** (pick) | Its poses aren't taught, so the job would be refused |

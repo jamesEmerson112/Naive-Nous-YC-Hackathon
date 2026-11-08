@@ -180,6 +180,18 @@ def test_order_needs_an_explicit_job():
         assert s.board.show() == [] and presenter_events(s.events) == []
 
 
+def test_each_chips_button_places_its_own_job():
+    """Key 2 is "wave" (pack the red bag, the default); key 9 is "wave_any" (pack any bag)."""
+    with Server("chips") as s:
+        for job, title in (("wave", "pack the red bag"), ("wave_any", "pack any bag")):
+            code, r = http(s.url("/api/order"), {"job": job})
+            assert code == 202 and r["ticket"]["label"] == f"new order: {title}", (job, code, r)
+            s.presenter_idle()
+        cards = s.board.show()
+        assert sorted(orders.parse_card(c)["job"] for c in cards) == ["wave", "wave_any"], cards
+        assert sorted(c["title"].split(": ", 1)[1] for c in cards) == ["pack any bag", "pack the red bag"], cards
+
+
 def test_wildcard_bind_needs_the_token():
     with Server("token", host="0.0.0.0") as s:
         assert s.token, "a 0.0.0.0 bind must make up a token"
