@@ -72,23 +72,26 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 6:18 PM PST_
+_Last updated: Sat Nov 7, 6:28 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged M6 (#14) and opened PR #16 for M7, the overnight kit (chaos schedule, digest, disk budget, preflight, F10); #12 (M3b batch, gate, kill switch) is still open. Ishaan picked the healer model and is moving `edge/` into the repo as `device/`, `harness/` and `bench/`. James is sketching a "System 2 / System 1" arm agent: Whisper → Hermes picks scripted skills, SmolVLA as an upgrade *(James's session)*.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged M3b (#12, batch, gate, kill switch, worker), so only PR #16 (M7 overnight kit, F10) is open ahead of the 12:30 AM go/no-go. Ishaan is moving `edge/` into the repo as `device/`. James is picking the arm's motor layer: plan A is Whisper → Hermes picks scripted skills, with SmolVLA or Instant Policy as upgrades *(James's session)*.
 
 **Recently done:**
-- Ishaan picked the healer model (`835c4f0`, 6:18 PM): **qwen3.5:4b with thinking on, harness h3**, 10/12 trials and the only config to pass D1, the live demo fault (2/2); 3.3 GB, fits the Pi 5. Thinking off 7/10, qwen3:4b-instruct 3/6, granite4.1:3b 1/6. Its D2 miss passed the health check without lifting, so the health check doesn't test lifting (`docs/healer-benchmark-progress.md`)
-- Kent merged M6 datasets, snapshots, exports and the regression corpus (#14, `cc175f6`) and opened PR #16 (M7 overnight kit, `cloud/m7-overnight`)
-- James pushed `docs/pi-vs-hermes.md` and the console's conversation mode (`852032e`): with the same model, Hermes is 3–4× faster per step, carries ~7K base prompt vs pi's ~15.6K, and keeps memory across conversations. Reading: Hermes for the arm, pi for office agents *(inferred, in the doc)*
-- Kent pushed Fleet Doctor v2 after a red-team review (`5ad95e8`): P2, nothing built tonight, no proposals until the K17 path list exists
+- Kent merged M3b (#12, `f177c68`, 6:19 PM): batch service, gate, fleet kill switch and worker, with flow tests F3 lock-in, F4 rollback, F5 kill switch and gate invariants (~3K lines in `cloud/`)
+- Ishaan picked the healer model (`835c4f0`): **qwen3.5:4b with thinking on, harness h3**, 10/12 trials and the only config to pass D1, the live demo fault (2/2); 3.3 GB, fits the Pi 5 (`docs/healer-benchmark-progress.md`)
+- James researched Instant Policy for the motor layer: weights are released but the code ships compiled, there's no training code, the licence is PolyForm Noncommercial, and it needs depth cameras (2× RealSense in the paper) *(James's session, [repo](https://github.com/vv19/instant_policy))*. Fine for a research demo, not for the business *(inferred)*
+- Kent merged M6 datasets, snapshots, exports and the regression corpus (#14, `cc175f6`)
 
 **Open questions:**
 - Kent is blocked on: device code and tests in `device/` (B1, Ishaan's move in progress), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17, also gates Fleet Doctor), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which probably also holds up M0's live Naïve card and LLM call *(inferred, Kent's block)*. Olir's `firmware/toolkit/` may be the quickest fix for B8 *(inferred)*
 - The healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it (`docs/healer-benchmark-progress.md`). Worth adding a lift check before the demo *(inferred)*
-- Hermes compaction fails because its summarizer can't load the ChatGPT (`openai-codex`) login; Naïve returned `rate_limited` several times, so start `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`). Should pi drive the arm at all, and does the ultrasonic sensor go through the STM32 or Pi GPIO? Both still team calls
-- Ishaan still owes Kent a review of PR #3 formats (B2, B3) and a co-review of Fleet Doctor D23–D27. Kent owes James a Naïve key with Board scopes
+- Motor layer for the arm: scripted skills (doable tomorrow), SmolVLA (~50 demos per task + ~4 h A100 training) or Instant Policy (needs a depth camera, noncommercial). A flat sheet of paper is a hard grasp for a two-finger gripper *(James's session)*
+- Hermes compaction fails because its summarizer can't load the ChatGPT (`openai-codex`) login; start `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`). Should pi drive the arm at all, and does the ultrasonic sensor go through the STM32 or Pi GPIO? Both still team calls
 
 **Recent commits (all authors):**
+- `f177c68` Sat 18:19 · kgang · Romulus M3b: batch, gate, kill switch and worker (flows F3, F4, F5) (#12)
+- `0bf3fa7` Sat 18:19 · jamesEmerson112 · Update team status and features.txt
+- `ab1c379` Sat 18:18 · Kent Gang · Update Kent status in CLAUDE.md
 - `835c4f0` Sat 18:18 · Ishaan Ranjan · Update healer benchmark progress: final results, model pick, new layout
 - `b306df5` Sat 18:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `e4fd0b9` Sat 18:09 · jamesEmerson112 · Update team status and features.txt
@@ -96,9 +99,6 @@ _Last updated: Sat Nov 7, 6:18 PM PST_
 - `2330efe` Sat 18:08 · Kent Gang · Update Kent status in CLAUDE.md
 - `cc175f6` Sat 18:08 · kgang · Romulus M6: datasets, snapshots, exports, regression corpus + F8 (#14)
 - `852032e` Sat 18:07 · jamesEmerson112 · Naive console: conversation mode and memory panels for pi vs Hermes; add pi-vs-Hermes results
-- `5ad95e8` Sat 18:06 · Kent Gang · Revise Fleet Doctor docs after red-team review (v2)
-- `24a246a` Sat 17:59 · jamesEmerson112 · Update team status and features.txt
-- `0a479a2` Sat 17:58 · Kent Gang · Update Kent status in CLAUDE.md
 
-**Branches on GitHub:** `main`, `firmware` (Olir, not merged), `cloud/m3b-batch-gate` (Kent, PR #12 open), `cloud/m7-overnight` (Kent, PR #16 open). `cloud/m5-workorders` and `cloud/m6-datasets` were merged (#11, #14) and deleted
+**Branches on GitHub:** `main`, `firmware` (Olir, not merged), `cloud/m7-overnight` (Kent, PR #16 open), `cloud/m3b-batch-gate` (#12 merged, branch not yet deleted)
 <!-- team-status:end -->
