@@ -75,8 +75,17 @@ class Settings(BaseSettings):
 
     # Coding agent for code patches (D21, D22)
     coder_provider: Literal["fake", "local_agent", "naive_session"] = "fake"
-    coder_agent: str = ""
-    coder_image: str = ""
+    coder_agent: str = ""  # local_agent: "mini-swe-agent" (when empty) or "none" (no LLM)
+    coder_image: str = ""  # local_agent: the `coder` image (when empty: romulus-coder:0.1)
+    # local_agent (M8): what the sandbox runs and its caps. Paths are relative to device/.
+    coder_test_cmd: str = "python -m pytest -q"
+    coder_verify_glob: str = "tasks/*/verify*"  # the fault catalog's verify scripts
+    coder_command: str = ""  # run the runner with this instead of `docker run` (tests, no Docker)
+    coder_network: str = "bridge"  # docker network while drafting; tests always run offline
+    coder_timeout_s: int = 300
+    coder_max_steps: int = 15
+    coder_max_tokens: int = 2000  # per LLM call
+    coder_cost_limit_usd: float = 1.0  # only enforced when the model has a known price
 
     # Paths under device/ that count as the safety layer or visor (D5a, K17). A code_patch
     # touching any of them is flagged `touches_safety`. Placeholder until Ishaan's list.

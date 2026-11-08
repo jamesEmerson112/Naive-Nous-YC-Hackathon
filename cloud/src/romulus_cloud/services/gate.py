@@ -45,7 +45,7 @@ from romulus_cloud.models import (
     InstallReport,
     Overlay,
 )
-from romulus_cloud.services import fleet, registry
+from romulus_cloud.services import code_replay, fleet, registry
 from romulus_cloud.services.fleet import install_type
 from romulus_cloud.settings import Settings, get_settings
 
@@ -176,9 +176,9 @@ def _incidents(session: Session, c: Candidate) -> list[Incident]:
     return [i for i in rows if i is not None]
 
 
-def _replay(session: Session, c: Candidate) -> g.ReplayResult:
+def _replay(session: Session, c: Candidate, settings: Settings) -> g.ReplayResult:
     if c.type == "code":
-        return g.replay_code_stub()
+        return code_replay.replay(session, c, settings)
     if c.type == "harness":
         return g.replay_stub("a harness skill is prose; there are no rules to replay")
     fw = session.get(FirmwareVersion, (c.fleet_id, c.version))
@@ -287,7 +287,7 @@ def _inputs(
         kind=c.type,
         replay=replay,
         canary_available=available,
-        passthrough=True,  # FakeCoder only: the coding agent (M8) will set False
+        passthrough="draft_code" in (c.stub_stages or []),  # no coding agent drafted it (M8)
         real_code_canary=bool(canary and canary.kind == "real"),
         allow_passthrough_code_promotion=settings.allow_passthrough_code_promotion,
         candidate_version=c.version,
@@ -551,7 +551,7 @@ def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now)
             return True
     replay = g.ReplayResult.from_json(c.replay)
     if c.status == "replaying" and replay is None and not frozen:
-        replay = _replay(session, c)
+        replay = _replay(session, c, settings)
         c.replay = replay.to_json()
         if replay.stub and "replay" not in (c.stub_stages or []):
             c.stub_stages = [*(c.stub_stages or []), "replay"]

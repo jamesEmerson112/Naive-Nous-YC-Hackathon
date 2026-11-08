@@ -13,9 +13,12 @@
 """
 
 import os
+import shlex
+import sys
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
@@ -28,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from romulus_cloud import db
 from romulus_cloud.main import create_app
+from romulus_cloud.services.registry import build_tarball
 from romulus_cloud.settings import Settings
 
 ADMIN_URL = os.environ.get(
@@ -199,3 +203,33 @@ def device_http(client) -> Iterator[httpx.Client]:
 
     with httpx.Client(transport=httpx.MockTransport(forward), base_url="http://cloud") as http:
         yield http
+
+
+# --- M8: the toy device repo, and a coder sandbox that runs on the host --------------------
+
+TOY_DEVICE = Path(__file__).parent / "fixtures" / "toy_device"
+CODER_RUNNER = Path(__file__).resolve().parents[1] / "coder" / "runner.py"
+
+
+@pytest.fixture
+def toy_package() -> bytes:
+    """The toy device repo (fault D1 planted) as a code package: a `.tar.gz` of `device/`."""
+    skip = {"__pycache__", ".pytest_cache"}
+    files = {
+        f"device/{p.relative_to(TOY_DEVICE).as_posix()}": p.read_bytes()
+        for p in sorted(TOY_DEVICE.rglob("*"))
+        if p.is_file() and not skip & set(p.parts)
+    }
+    return build_tarball(files)
+
+
+@pytest.fixture
+def host_coder() -> dict[str, str]:
+    """Settings for a `local_agent` coder that runs `cloud/coder/runner.py` on the host with
+    no agent: it applies the patch and runs the toy tests for real, with no Docker and no LLM."""
+    return {
+        "coder_agent": "none",
+        "coder_command": shlex.join([sys.executable, str(CODER_RUNNER)]),
+        "coder_test_cmd": f"{shlex.quote(sys.executable)} -m pytest -q -p no:cacheprovider",
+        "coder_verify_glob": "tasks/*/verify*",
+    }

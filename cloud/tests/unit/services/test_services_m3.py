@@ -400,10 +400,10 @@ def test_one_bad_candidate_in_the_gate_does_not_stall_the_others(db, tools, sett
     made = {c.type: c for c in batch.run(db, T0, tools).candidates}
     real = gate._replay
 
-    def flaky(session, c):
+    def flaky(session, c, *rest):
         if c.type == "harness":
             raise RuntimeError("blob store unreachable")
-        return real(session, c)
+        return real(session, c, *rest)
 
     monkeypatch.setattr(gate, "_replay", flaky)
     gate.tick(db, T0, settings=settings)

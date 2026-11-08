@@ -10,14 +10,20 @@ harness=write_skill, code=draft_code)`):
   whose base disagrees with the *fleet's* manifest on what it touches is a lost update and
   is `dropped`; one that conflicts only with an overlay earlier in this run stays `held`
   for the next run; a diff that can't merge is `dropped`.
-- **code → one `code` candidate:** `draft_code_v0`, the FakeCoder pass-through: the
-  package is the base code plus each device patch as a file (not applied), and a new
-  firmware manifest names it. It waits at `awaiting_canary` (B7) unless the setting allows.
+- **code → one `code` candidate** (`draft_code`, M8, F11): the coder (`CODER_PROVIDER`)
+  gets each code overlay's patch, its incident and the class's code tree, in order, each on
+  top of the last; with `local_agent` it writes a clean change and runs the device tests in
+  the sandbox. The new tree becomes a code version and a new firmware manifest names it
+  (the coder never edits the manifest). An overlay whose draft fails (coder error, failing
+  tests) gets `lockin_error` with the coder's why and test output, and is not retried.
+  With FakeCoder (default) it is the labeled pass-through: the base code plus each device
+  patch as a file, not applied. Code candidates wait at `awaiting_canary` until a canary
+  runs real code (B7).
 - **harness → one `harness` candidate:** the LLM writes one skill per overlay (FakeLlm by
   default) into the current harness tarball under `knowledge_dir`, `harness.json` bumped.
 
 The LLM writes whys and skills, never merged config; on `LlmError` the text is templated
-and the event says so. The LLM calls happen first, with nothing written and no row locked;
+and the event says so. The LLM and coder calls happen first, with no row locked;
 the writes follow in one savepoint per class, so one bad class records `batch.error`,
 marks its overlays `lockin_error` (not retried, so the LLM isn't called again every tick)
 and the rest proceed. `fleet_state` is touched only at the very end, so the kill switch
@@ -36,7 +42,7 @@ from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import BlobStore, build_blobstore
-from romulus_cloud.adapters.coder import Coder, build_coder
+from romulus_cloud.adapters.coder import CodeDraft, Coder, build_coder
 from romulus_cloud.adapters.llm import FakeLlm, Llm, LlmError, build_llm
 from romulus_cloud.domain.merge import (
     MergeError,
@@ -66,6 +72,7 @@ ACTOR = "agent:batch"
 CONFIG_KINDS = frozenset({"rules", "params"})
 PASSTHROUGH_NOTE = "pass-through: coding agent not wired"
 LOCKIN_ERROR = "lockin_error"
+WHY_TAIL = 1500  # characters of coder test output kept in a why (the event data has it all)
 
 
 @dataclass
@@ -88,7 +95,7 @@ class Tools:
                 settings.llm_model,
                 settings.llm_api_key.get_secret_value(),
             ),
-            coder=build_coder(settings.coder_provider, settings.coder_agent, settings.coder_image),
+            coder=build_coder(settings),
             store=build_blobstore(settings.blob_dir),
         )
 
@@ -218,12 +225,17 @@ def run(session: Session, now: datetime, tools: Tools) -> RunResult:
             _mark_error(session, [overlay], f"preparing it failed: {exc!r}", now, result)
 
     classes = sorted({i.device_class for i in items})
+    plans = {c: _draft_class_code(session, items, c, now, tools, result) for c in classes}
+    failed = set(result.errors)
+    items = [i for i in items if i.key not in failed]
     for device_class in classes:
         group = [i for i in items if i.device_class == device_class]
+        if not group:
+            continue
         marks = (len(result.dropped), len(result.deferred))
         try:
             with session.begin_nested():
-                result.candidates += _fold(session, group, now, tools, result)
+                result.candidates += _fold(session, group, now, tools, result, plans[device_class])
         except Exception as exc:  # the savepoint rolled the class back; forget its notes
             del result.dropped[marks[0] :], result.deferred[marks[1] :]
             _mark_error(
@@ -281,7 +293,12 @@ def _overlay_refs(ov: Overlay, candidate: Candidate | None = None) -> dict[str, 
 
 
 def _mark_error(
-    session: Session, overlays: list[Overlay], why: str, now: datetime, result: RunResult
+    session: Session,
+    overlays: list[Overlay],
+    why: str,
+    now: datetime,
+    result: RunResult,
+    data: dict[str, Any] | None = None,
 ) -> None:
     """Mark overlays `lockin_error` with the reason, so the batch doesn't retry them (and
     call the LLM again) every tick. The device keeps its local fix."""
@@ -299,7 +316,7 @@ def _mark_error(
             _overlay_refs(ov),
             f"Overlay {ov.id} from {ov.device_id} could not be locked in: {why}. It is not "
             "retried; the device keeps its local fix.",
-            data={"error": why},
+            data={"error": why, **(data or {})},
             ts=now,
             fleet_id=ov.fleet_id,
         )
@@ -338,7 +355,12 @@ def _next(session: Session, model, fleet_id: str) -> int:
 
 
 def _fold(
-    session: Session, group: list[_Item], now: datetime, tools: Tools, result: RunResult
+    session: Session,
+    group: list[_Item],
+    now: datetime,
+    tools: Tools,
+    result: RunResult,
+    plan: "_CodePlan | None",
 ) -> list[Candidate]:
     group = _lock_still_held(session, group)
     if not group:
@@ -354,7 +376,7 @@ def _fold(
             made[i.key].append(config)
     code_items = [i for i in taken if "code" in i.kinds]
     if code_items:
-        code = _draft_code(session, code_items, current_fw, now, tools)
+        code = _draft_code(session, code_items, current_fw, now, tools, plan)
         for i in code_items:
             made[i.key].append(code)
     if taken:
@@ -645,21 +667,123 @@ def _write_skills(
     )
 
 
-def _draft_code(
-    session: Session, items: list[_Item], current: FirmwareVersion, now: datetime, tools: Tools
-) -> Candidate:
-    """code: `draft_code_v0`, the FakeCoder pass-through (BUILD §3). Never promotes by default."""
-    base_rev = current.manifest.get("code_rev")
-    base = session.get(CodeVersion, (current.fleet_id, base_rev))
-    files = _read_tarball(tools.store, base.sha256) if base else {}
-    notes = []
-    for item in items:
+# --- code (M8, F11) -----------------------------------------------------------------------
+
+
+@dataclass
+class _CodePlan:
+    """The coder's work for one class, done before any row is locked.
+
+    `keys` are the overlays drafted, in order, each on top of the last; `files` is the
+    final tree, or None when the coder built none (FakeCoder's pass-through).
+    """
+
+    base_rev: str | None
+    keys: list[tuple[str, str]] = field(default_factory=list)
+    drafts: list[CodeDraft] = field(default_factory=list)
+    files: dict[str, bytes] | None = None
+
+
+def _tail(text: str, cap: int = WHY_TAIL) -> str:
+    return text if len(text) <= cap else "…" + text[-cap:]
+
+
+def _draft_class_code(
+    session: Session,
+    items: list[_Item],
+    device_class: str,
+    now: datetime,
+    tools: Tools,
+    result: RunResult,
+) -> _CodePlan | None:
+    """Run the coder on the class's code overlays, oldest first, each on the tree the last
+    one left. A failed draft marks its overlay `lockin_error` (never retried) and the next
+    one goes on from the tree before it. No row is locked while the coder runs."""
+    code_items = [i for i in items if i.device_class == device_class and "code" in i.kinds]
+    if not code_items:
+        return None
+    fleet_id = code_items[0].overlay.fleet_id
+    firmware, _ = registry.default_assignment(session, device_class, fleet_id)
+    fw = session.get(FirmwareVersion, (fleet_id, firmware)) if firmware is not None else None
+    if fw is None:
+        return None  # _fold reports the missing assignment for the whole class
+    plan = _CodePlan(base_rev=fw.manifest.get("code_rev"))
+    base = session.get(CodeVersion, (fleet_id, plan.base_rev)) if plan.base_rev else None
+    tree = _read_tarball(tools.store, base.sha256) if base else {}
+    for item in code_items:
         ov = item.overlay
-        draft = tools.coder.draft(
-            ov.code_patch or "", {"id": item.incident.id}, ov.base_code_rev or base_rev
+        try:
+            draft = tools.coder.draft(
+                ov.code_patch or "",
+                _incident_doc(item.incident, ov),
+                plan.base_rev or ov.base_code_rev or "",
+                registry.build_tarball(tree),
+            )
+        except Exception as exc:  # CoderError or a bug: same outcome, the why says which
+            _mark_error(session, [ov], f"the coding agent failed: {exc}", now, result)
+            continue
+        if not draft.passed:
+            why = (
+                f"the coding agent's change did not pass the device tests ({draft.notes}). "
+                f"Test output:\n{_tail(draft.test_output) or '(none)'}"
+            )
+            data = {"coder": {"diff": draft.diff, "test_output": draft.test_output}}
+            _mark_error(session, [ov], why, now, result, data)
+            continue
+        plan.keys.append(item.key)
+        plan.drafts.append(draft)
+        if draft.files is not None:
+            tree = plan.files = draft.files
+    return plan
+
+
+def _draft_code(
+    session: Session,
+    items: list[_Item],
+    current: FirmwareVersion,
+    now: datetime,
+    tools: Tools,
+    plan: _CodePlan | None,
+) -> Candidate:
+    """code: store the coder's tree as a code version, name it in a new firmware manifest,
+    and make the candidate. Never promotes by default (B7)."""
+    base_rev = current.manifest.get("code_rev")
+    if plan is None or plan.keys != [i.key for i in items] or plan.base_rev != base_rev:
+        raise ValueError(
+            "the code drafted before locking no longer matches this lock-in (the class's code "
+            "or its overlays changed while the coder ran)"
         )
-        files[f"romulus/patches/{ov.id}.diff"] = draft.diff.encode()
-        notes.append(draft.notes)
+    drafts = plan.drafts
+    if plan.files is None:  # FakeCoder: the labeled pass-through (draft_code_v0)
+        base = session.get(CodeVersion, (current.fleet_id, base_rev))
+        files = _read_tarball(tools.store, base.sha256) if base else {}
+        for item, draft in zip(items, drafts, strict=True):
+            files[f"romulus/patches/{item.overlay.id}.diff"] = draft.diff.encode()
+        source, stub_stages = "passthrough", ["draft_code", "replay"]
+        how = PASSTHROUGH_NOTE
+        code_why = (
+            f"{PASSTHROUGH_NOTE}; the package is the base code plus each device patch as a "
+            "file, not applied."
+        )
+        cand_why = (
+            f"{PASSTHROUGH_NOTE}: the devices' own patches, unchanged "
+            f"({'; '.join(d.notes for d in drafts)})."
+        )
+    else:
+        files, source = plan.files, "coder"
+        agents = sorted({d.agent for d in drafts if d.agent})
+        drafted = all(d.agent for d in drafts)
+        # No agent drafted it: the device's own patch, tested. The gate treats that as a
+        # pass-through (`draft_code` stub) and holds it unless the setting allows.
+        stub_stages = [] if drafted else ["draft_code"]
+        how = f"drafted by {', '.join(agents)}" if drafted else "the device patch, no coding agent"
+        code_why = f"{how}; the device tests and verify scripts passed in the sandbox."
+        diff = "\n".join(d.diff for d in drafts)
+        diff = diff if len(diff) <= WHY_TAIL else diff[:WHY_TAIL] + "…"
+        cand_why = (
+            f"Coder ({how}): {'; '.join(d.notes for d in drafts)}. Device tests passed.\n"
+            f"Diff:\n{diff}\nTest output:\n{_tail(drafts[-1].test_output, 600)}\n"
+        )
     code, _ = registry.create_code(
         session,
         tools.store,
@@ -667,9 +791,8 @@ def _draft_code(
         rev=None,
         actor=ACTOR,
         actor_class="agent",
-        why=f"Code from {len(items)} overlay(s) on {base_rev}: {PASSTHROUGH_NOTE}; the package "
-        "is the base code plus each device patch as a file, not applied.",
-        source="passthrough",
+        why=f"Code from {len(items)} overlay(s) on {base_rev}: {code_why}",
+        source=source,
         parent_rev=base_rev,
         fleet_id=current.fleet_id,
     )
@@ -680,13 +803,16 @@ def _draft_code(
         manifest,
         actor=ACTOR,
         actor_class="agent",
-        why=f"Firmware v{version} = v{current.version} with code {code.rev} ({PASSTHROUGH_NOTE}).",
+        why=f"Firmware v{version} = v{current.version} with code {code.rev} ({how}).",
         source="batch",
         parent_version=current.version,
         fleet_id=current.fleet_id,
     )
+    paths = tools.settings.safety_paths
     safety = any(
-        code_touches_safety(i.overlay.code_patch, tools.settings.safety_paths) for i in items
+        code_touches_safety(i.overlay.code_patch, paths)
+        or (plan.files is not None and code_touches_safety(d.diff, paths))
+        for i, d in zip(items, drafts, strict=True)
     )
     return _new_candidate(
         session,
@@ -696,9 +822,21 @@ def _draft_code(
         type_="code",
         version=version,
         code_rev=code.rev,
-        why=f"{PASSTHROUGH_NOTE}: the devices' own patches, unchanged ({'; '.join(notes)}). "
-        + " ".join(i.explanation for i in items),
+        why=cand_why + " " + " ".join(i.explanation for i in items),
         touches_safety=safety,
-        stub_stages=["draft_code", "replay"],
-        data={"parent_version": current.version},
+        stub_stages=stub_stages,
+        data={
+            "parent_version": current.version,
+            "base_code_rev": base_rev,
+            "coder": [
+                {
+                    "overlay": i.overlay.id,
+                    "agent": d.agent,
+                    "notes": d.notes,
+                    "diff": d.diff,
+                    "test_output": d.test_output,
+                }
+                for i, d in zip(items, drafts, strict=True)
+            ],
+        },
     )
