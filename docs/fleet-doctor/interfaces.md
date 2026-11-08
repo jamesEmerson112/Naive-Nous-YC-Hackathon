@@ -265,7 +265,71 @@ These refine §5.1–§5.2 and §8; where they differ, this section wins.
   - The serve-time gate (§6.5) re-checks everything on each pointer and pull.
 - **`consult` shorthand:** `open_new` reads `incidents.raw.consult` with the contract's own leniency (`IncidentReport`), so `"consult": true` counts as wanted, not only `{"wanted": true}`.
 - **Extra event data:** `doctor.consult_opened` adds `retry_of` on retries; `doctor.consult_closed` adds `attempt`; `doctor.declined` adds `which`; `doctor.diagnosed` adds `removed_for_safety`, `usage_estimated` and `latency_ms`; `doctor.proposal_discarded` adds `paths`; `doctor.proposal_result` adds `overlay_id` and `late`. `overlay.applied` and `doctor.proposal_result` both carry refs `consult` and `proposal`.
-- **`doctor_consults.raw` keys:** `proposal_id`, `job_tries`, `job_error`, `retry_of`, `next`.
+- **`doctor_consults.raw` keys:** `proposal_id`, `job_tries`, `job_error`, `retry_of`, `next`; PR 7 adds `retry_at` and `coder_blips`.
+
+### 5.4 As built (PR 7): real draft, real check, traces
+
+Both stay behind settings whose defaults don't change behavior (`DOCTOR_DRAFT=fake`, `DOCTOR_CHECK=stub`). Where this differs from §5.1–§5.3, this section wins.
+
+- **Draft (`DOCTOR_DRAFT=coder`).** Job `draft:{id}` calls `coder.draft(patch="", incident=<case summary>, code_rev=<base>, files=<package minus verify/>, task=domain.doctor.draft_task(case, ledger, safety_paths=…, test_cmd=CODER_TEST_CMD))`.
+  - The task asks for a reproduction test under `tests/` (relative to `CODE_ROOT`) that fails on the base, then the minimal fix, and never touches the safety layer, the visor, existing tests or test config. The case file and the hypotheses go inside the untrusted evidence block; only settings are trusted text.
+  - From the `CodeDraft`: `consult.draft = {code_patch, repro_test, why, stub: False, coder_passed, flags, notes, coder_tests}`. `repro_test` is `domain.doctor.find_repro_test(diff)`: the first test file under `tests/` the patch **adds as a new file** (no pre-image). A modified, renamed, copied or deleted file never counts. A patch the contract refuses (mixed `device/` forms, `./device/`) has none.
+  - `doctor.drafted` is always recorded once the coder ran, with `cost_usd`: the coder's own counts (its notes' `tokens N in / M out`, else `CodeDraft.tokens`), else `DOCTOR_DRAFT_ESTIMATE_USD` with `usage_estimated: true`. Extra data: `repro_test`, `coder_passed`, `flags`, `prompt_tokens`, `completion_tokens`, `task_chars`, `base_code_rev`.
+  - Closes `failed_checks` (retried within the cap), in this order, when:
+    - the diff is empty;
+    - `coder_runs.patch_refusal` refuses it (format problems, or it touches `verify/`);
+    - `domain.doctor.screen_fix` refuses it ("the fix is refused before any run: …", below);
+    - the coder's own test run failed (a permanent failure);
+    - there is **no repro test**.
+
+    Otherwise → `check`.
+  - **`screen_fix`** decides from the patch's own paths (`patch_changes`, read by the contract's parser, never from a git status that a `.gitignore` can hide). It refuses:
+    - **tampering:** any change to a test file that exists before the patch, whether edited, deleted or renamed away. A test file is anything under a `tests/` directory, or a `test_*` / `*_test.py` file;
+    - **a planted test runner:** an added or changed `pytest.py`, `pytest/` or `_pytest/` directory, `sitecustomize.py`, `usercustomize.py` or `*.pth`, at any depth, in any case;
+    - **test config:** an added, changed or deleted `conftest.py`, `pytest.ini`, `.pytest.ini`, `pyproject.toml`, `setup.cfg` or `tox.ini`, reported as `test_harness: <path> (<status>)`;
+    - **no device code change** at all;
+    - **`flag_only_fix`:** the non-test hunks only add lines, and every added line is blank, a comment, or a module-level assignment or constant (`DOCTOR_FIXED = True`).
+
+    The check stage runs `screen_fix` again before any sandbox run.
+  - **No real coder, no burn.** With `CODER_PROVIDER=fake` (the pass-through `FakeCoder`) or a coder its settings can't build (`doctor_code.Unavailable`), the consult closes `advised` with the reason before any submit: no `coder.started`, no spend, no retry.
+  - **Provider blips back off (#38's `domain/coder_retry.py`).** A failed job or a failing draft is classified with `coder_retry.classify`. Transient means a rate limit, 429, "at capacity", 5xx, timeout or connection error, no sandbox result, or zero tokens or steps. A transient failure is not a failed job try and doesn't close the consult. It waits in `draft` until `raw.retry_at` (`coder_retry.retry_at`: 2 min, doubling, capped at 30 min), and `raw.coder_blips` lists each reason.
+    - Each blip records `doctor.declined` with `reason: coder_unavailable`, `which: coder_unavailable`, `job`, `attempt`, `label`, `no_tokens`, `retry_at`, and `cost_usd` ($0 for a known 0 tokens, else the tokens, else the failed-run prompt estimate).
+    - The 5th in a row gives up (`gave_up`, listing every attempt).
+    - A permanent failure keeps the old rules: an exception counts as a job try (3, then `gave_up`), and a bad draft closes `failed_checks`.
+  - Spend is checked before each submit with `DOCTOR_DRAFT_ESTIMATE_USD`, like diagnose.
+  - Without a registered package for the base rev, the consult closes `advised`.
+  - With `CODER_PROVIDER=local_agent` and no `docker` CLI in the worker (`code_lockin.coder_blocker`), the consult waits in `draft` and the worker logs why once; an injected coder (tests) is never blocked.
+- **The coder budget is shared with the batch.** `CODER_MAX_DRAFTS_PER_HOUR` counts `coder.started` events fleet-wide with `ts > now - 1h`. From that it subtracts job attempts known to have spent exactly 0 tokens, once per job attempt (`reason: coder_unavailable, no_tokens: true`), the refund rule of `batch._drafts_this_hour` (#38).
+  - **Copied, not imported:** `doctor_code.coder_budget` runs the same query, because `batch.py` belongs to another PR. It also refunds the Doctor's own zero-token blips (`doctor.declined`). The batch's query reads only `overlay.deferred` and `batch.error`, so it doesn't refund the Doctor's blips yet: stricter, never looser. Adding `doctor.declined` to its kinds is a one-line follow-up for the batch's owner.
+  - **Counted both ways:** every Doctor submit records `coder.started` (actor `fleet-doctor`, refs `device`, `incident`, `consult`; `data.source = "doctor"`, `job`, `attempt`, `base_code_rev`), so the batch's count sees the Doctor's drafts and the Doctor's sees the batch's.
+  - **Over budget, the consult waits; it doesn't fail.** It stays in `draft` (status `waiting`) with `raw.retry_at`, the time enough of the oldest starts leave the window (an hour from now for a budget of 0). It records `doctor.declined` with `which: coder_budget`, `stage: draft`, `drafts_started`, `budget`, `retry_at` and `cost_usd: 0`. Before `retry_at` the tick writes nothing; after it, the budget is read again. No job try is counted while held.
+- **Waiting consults take no slot.** `_working` fills the `DOCTOR_MAX_OPEN` slots only with consults that can act this tick. It leaves out consults with `raw.retry_at > now` (the coder budget, a coder backoff), `draft` consults while the coder is blocked, and `check` consults while the sandbox is blocked (no `docker`; logged once). So a waiting consult never starves a newer one.
+  - `raw.retry_at` is a fixed-width UTC ISO stamp (`doctor.stamp`), so SQL compares it as text and never casts.
+- **Check (`DOCTOR_CHECK=sandbox`).** The safety discard runs first, as before.
+  - **Screened again, from the patch alone:** `screen_fix` (above) refuses before any sandbox run and records `doctor.checked` with the reasons.
+  - **Then job `check:{id}`** (`doctor_code.check_job`) runs up to four `coder_runs.replay_code_patch` replays in the coder image with no network, each stopping the check as soon as it fails.
+    - The package is passed **minus `verify/`**.
+    - Every run gets `PYTHONSAFEPATH=1` (`replay_code_patch(extra_env=…)`), so Python never puts the work dir first on `sys.path` and a planted `pytest.py` can't shadow pytest. The commands themselves stay as configured.
+
+    1. **Fails before:** `domain.doctor.split_patch(patch, repro_test)` (only the repro file's sections) with the fixed `REPRO_CMD = python -I -m pytest -q -rA <repro file>`, never derived from `CODER_TEST_CMD`.
+       - It must exit **1** (not 0, 2 collection error, 4 no such file, or 5 no tests), with at least one `FAILED` test id in the repro file.
+       - It must fail on behaviour: a failure whose reason is only `ImportError`, `ModuleNotFoundError` or `AttributeError: module …` doesn't count, because a test that merely imports a name the "fix" adds proves nothing.
+       - Results come from `domain.doctor.pytest_results`. It reads only the block after the **last** `short test summary info` header, up to its first non-summary line, so `FAILED x` lines a test prints, or prints after the counts, are ignored.
+    2. **Passes after:** the full patch with the same `REPRO_CMD`: exit 0, and every one of those test ids listed `PASSED`.
+    3. **Device tests:** `CODER_TEST_CMD`, exactly as configured (a compound command like `pytest -q; ruff check .` is never appended to), on the base plus the patch's **non-test hunks only** (`domain.doctor.code_only`: every test-file section is stripped, the repro included, since it already proved itself in steps 1–2). So a repro that monkeypatches the code under test at import can't mask a regression. It must pass, with no `test_harness:`, `verify_scripts:` or `existing_test:` flag.
+    4. **Held-out verify** (architecture §6 item 7: once, at the end, pass/fail only). When the base package has `verify/` scripts (`domain.doctor.held_out_files`; #38's `make device-verify` writes them), one more replay runs them on the same code-only patch (`verify_files=…`, no test command).
+       - If they fail, the consult closes `failed_checks` with the reason exactly "held-out verify failed".
+       - Only the state and the counts (`tests`, `passed_count`, `skipped`, `timed_out`) are kept. The scripts' output never reaches the ledger, a prompt, the trace or event data.
+       - With no scripts: `checks.verify = "none available"`.
+       - `CODER_VERIFY_DIR` isn't read here.
+
+  `domain.doctor.check_verdict` decides. `consult.checks = {stub: False, fails_before, passes_after, device_tests, repro_test, repro_ids, verify, summary}`, which is what the proposal carries; `verify` is `passed`, `failed`, `none available` or `not run`. `doctor.checked` adds `reason`, `repro_test`, `repro_ids`, `flags`, `before` / `after_repro` / `after` (exit code, test counts, failed ids with reasons, passed ids, a 2,000-character output tail, all redacted), `verify` and `verify_counts`. A pass goes to `offer`; it needs no `DOCTOR_OFFER_STUB_CHECKED`, since the check is real. Anything else closes `failed_checks`.
+  - The check calls no model, so it skips the spend check, and a failed or lost run records `doctor.declined` at $0.
+  - No repro test inside the patch closes `failed_checks`. An empty `CODER_TEST_CMD` closes `advised`. A worker without `docker` waits (logged once); an injected sandbox is never blocked.
+  - **Hidden checks stay hidden.** The `verify/` scripts are in no replay but the last, and nothing from that one beyond pass/fail and counts is kept.
+- **Paths are read the contract's way** (#38, B3). `domain.doctor.patch_path` asks `summarize_code_patch` about a one-file header, so there is no private copy of the rules. Paths are relative to `device/`, with or without the prefix, and `./device/`, `..` and absolute paths are refused. `package_rel`, `split_patch`, `find_repro_test`, `tampered_tests` and the `verify/` holdout all use it, and a patch the contract finds any problem in (mixed forms included) yields nothing.
+- **Every close writes a trace.** `_close` calls `doctor_trace.write` before `doctor.consult_closed` (§9), and the event carries `refs.recording` and `data.trace_recording`. If the blob store can't take the bytes, the close still happens, with no recording.
+- **Jobs:** `services/doctor_jobs.py` is now a thin adapter over `services/jobs.py` (§6.2).
 
 ## 6. Seams
 
@@ -310,6 +374,28 @@ def estimate_tokens(chars: int) -> int                                      # le
 def diagnose_estimate_usd(max_completion_tokens: int, usd_per_1k_tokens: float) -> float  # largest prompt + budget
 def failed_run_cost_usd(prompt_chars: int, usd_per_1k_tokens: float) -> tuple[int, float]  # a failed run's prompt
 # admit(..., estimate_usd: float = 0.0) passes the estimate to check_spend
+# PR 7:
+def patch_path(path: str) -> str | None                  # the contract's reading of one code_patch path (summarize_code_patch); None if refused
+def split_patch(patch: str, path: str) -> str            # the file sections touching `path`, or "" (also for a patch the contract refuses)
+def find_repro_test(patch: str) -> str | None             # the first NEW file (no pre-image) under tests/ the patch adds
+def tampered_tests(patch: str) -> list[str]               # any change to an existing test file: edited, deleted, renamed away
+def screen_fix(patch: str) -> list[str]                   # tampering, a planted runner, test config, no code change, flag_only_fix
+def patch_changes(patch: str) -> list[tuple[str, str]]    # (A/M/D, path) from the patch itself, not git status
+def code_only(patch: str) -> str                          # the patch without any test-file section
+def flag_only_fix(patch: str) -> bool                     # code hunks only add module-level assignments or constants
+def held_out_files(files) -> dict[str, bytes]             # the package's verify/ scripts, for the final pass/fail run
+def is_test_path(path: str) -> bool                       # tests/**/test_*.py or tests/**/*_test.py
+def draft_task(case: dict, ledger, *, safety_paths=(), test_cmd="python -m pytest -q") -> str  # repro first, then the fix; evidence fenced
+def pytest_results(output: str) -> dict                   # -rA short summary: {passed: [id], failed: {id: reason}, errors: [id]}
+def repro_failures(run, repro_test) -> tuple[list[str], str]  # ids in the repro file that FAILED on behaviour with exit 1, or why not
+def repro_passes(run, ids) -> str                         # "" when exit 0 and every id is PASSED, else why not
+def check_verdict(before, after_repro, after, repro_test, screened=(), verify=None) -> dict  # {passed, fails_before, passes_after, device_tests, verify, reason, summary, flags, repro_ids}
+def package_rel(files: Mapping[str, bytes]) -> dict[str, bytes]   # relative to CODE_ROOT (patch_path), verify/ dropped
+def withhold_verify(lines) -> tuple[list, int]            # entries naming a verify/ path → VERIFY_WITHHELD; + withhold_verify_text
+def named_paths(texts, paths, *, limit=5) -> list[str]    # package files the logs/trace name, first mention first
+def code_excerpts(files, paths, *, file_bytes, total_bytes) -> list[dict]
+def tail_lines(data: bytes, *, max_lines, max_bytes, partial=False) -> list[str]
+def coder_usage(notes: str | None) -> tuple[int, int] | None      # "tokens N in / M out" from CodeDraft.notes
 ```
 
 **Prompt rule:** device text (logs, traces, files, the question) goes inside a fenced `<evidence untrusted="true">` block. The system prompt says to treat it as data and answer only in the JSON shape (§6 item 6 of the architecture doc).
@@ -340,6 +426,7 @@ def default_jobs(settings) -> Jobs                         # process-wide single
 
 - A job function gets plain inputs (the case-file dict and an adapter) and returns plain data. **It never opens a DB session.** The tick submits, polls, and applies results in its own transaction.
 - Diagnose and draft both use it. `Coder.draft(..., task=...)` (a from-scratch prompt) comes from M8b; the Doctor PRs don't add `task` themselves.
+- **As built (PR 7): the swap is done.** `doctor_jobs.py` re-exports `Pending`, `Done`, `Failed`, `Missing`, `Jobs`, `JobState` (= `Status`), `InlineJobs` and `ThreadPoolJobs` from `services/jobs.py`, and `default_jobs(settings)` returns `jobs.default_jobs(max(1, DOCTOR_JOB_WORKERS), "doctor")`. That is the Doctor's own named pool, so its drafts and checks never queue behind the batch's `"coder.draft"` or the gate's `"coder.replay"`, and the reverse. Tests count submitted keys with `InlineJobs.submitted` (the stand-in's `.calls` is gone). Pruning works as the shared module does it (TTLs, not `MAX_FINISHED`). Keys: `diagnose:{id}`, `draft:{id}`, `check:{id}`.
 
 ### 6.3 `adapters/llm.py` (PR 2)
 
@@ -368,6 +455,15 @@ def case_file(session, store, consult, incident, *, settings) -> dict
   - the trace tail from `agent_trace` recordings (`Recording.kind == "agent_trace"`, read through `BlobStore.get`), last N lines;
   - code at the base rev (`registry.get_code` → `open_package`), the files named in the log or trace, capped by bytes.
 - **MCAP stays a labeled "not wired"**, because `mcap` isn't a dependency.
+- **As built (PR 7):**
+  - **Shape:** `{"incident", "log_tail", "trace_tail": [str], "trace_recordings": [id], "code": {"rev", "files": [{path, excerpt, size_bytes, truncated}], "tree": [path]}, "tried", "untrusted": True, "notes"}`. `notes` says what's missing, e.g. `trace: no agent_trace recording stored for this incident`, `code: code X is not registered (POST /v1/code)`, `code: the log and trace name no file in the package`, and always ends with `mcap: not wired`.
+  - **Trace tail:** reads the newest 3 `agent_trace` recordings on the incident whose bytes are stored (a `blobs` row), oldest first. Each is read from its end (seek to `size - DOCTOR_TRACE_TAIL_BYTES`, the partial first line dropped; a store that can't seek is read whole). Then the last `DOCTOR_TRACE_TAIL_LINES` (40) non-blank lines, at most `DOCTOR_TRACE_TAIL_BYTES` (16,000), go over all of them together. A blob that vanished is a note, not an error.
+  - **Code:** `doctor_code.package` reads the base package and keys it relative to `CODE_ROOT` with `domain.doctor.package_rel`, which tolerates a `device/` prefix or none and **drops `verify/`** (case-insensitive) along with absolute and `..` names. `domain.doctor.named_paths` picks the files that the log tail, trace tail, healer actions, reasoning or summary name, in order of first mention, at most 5. A token names a file if it is the path, ends in `/<path>` (`/work/x.py`, `device/x.py`, JSON-escaped or Windows separators included), or is a bare file name. `code_excerpts` takes each one's first `DOCTOR_EVIDENCE_FILE_BYTES` (4,000), `DOCTOR_EVIDENCE_CODE_BYTES` (16,000) in all, and skips binaries. `tree` lists the first 40 paths.
+  - **Fencing:** everything stays inside the untrusted block of `diagnose_prompt` and `draft_task`, notes included.
+  - **Hidden checks:** no `verify/` file content, and no `verify/` path from the package (`tree`, `files`), ever enters the case file.
+    - Device text that names a `verify/` path is withheld before it reaches a prompt, the stored case file or the consult's trace (`domain.doctor.withhold_verify`): any log-tail line, trace-tail line, healer action, or line of the healer's reasoning or summary that matches `verify/` (case-insensitive, after a non-word character or at the start; e.g. `verify/x.py`, `device/verify/x.py`, `/work/verify/x.py`) is replaced whole by `[line withheld: it names a held-out verify/ path]`.
+    - A note says how many were withheld. The bare word ("verify d1_hand_trace: FAIL") isn't a path and is kept.
+    - The coder's `incident` summary comes from the redacted case file only.
 
 ### 6.5 `services/proposals.py` (PR 2 stub, PR 4)
 
@@ -452,6 +548,11 @@ Each setting also goes in `.env.example` (`test_settings_defaults.py:108` checks
 | `doctor_proposal_ttl_s` | `3600` | |
 | `doctor_lookback_s` | `21600` | 6 h; consults never backfill older incidents |
 | `doctor_tick_s` / `doctor_max_open` / `doctor_job_workers` | `5` / `5` / `2` | |
+| `doctor_draft_estimate_usd` | `0.10` | PR 7. What one coder draft is assumed to cost: checked against the daily cap before each draft, and recorded when the coder reports no tokens. Estimate *(inferred)* |
+| `doctor_trace_tail_lines` / `doctor_trace_tail_bytes` | `40` / `16000` | PR 7. The agent-trace tail in the case file |
+| `doctor_evidence_file_bytes` / `doctor_evidence_code_bytes` | `4000` / `16000` | PR 7. Code excerpts per file and in total |
+
+PR 7 also reads `coder_provider` (and the `llm_*` endpoint), `coder_image`, `coder_test_cmd`, `coder_replay_timeout_s`, `coder_scratch_dir` and `coder_max_drafts_per_hour`, the same settings the batch and gate use.
 
 ## 8. Events (PR 2 adds `LABELS` and the APIs §5 row; the emitters add the rest)
 
@@ -504,6 +605,11 @@ Each setting also goes in `.env.example` (`test_settings_defaults.py:108` checks
   - `api/web.py` `_story_view` passes the ledger, and `web/templates/partials/story.html` shows a "Fleet Doctor" block only when it isn't empty, labelling `stub` (from `data.stub`) and `fake model` (a model starting with `fake`, e.g. `fake-templated`).
 - **Digest (PR 6, as built):** `domain/digest.py` adds `COUNTED_KINDS` entries `doctor_asks` (`doctor.asked`), `doctor_consults` (`doctor.consult_opened`), `doctor_proposals_offered`, `doctor_gave_up`, and a small `COUNTED_OUTCOMES` table for counts that need a `data` match: `doctor_consults_held` (`doctor.consult_closed`, outcome `held`) and `doctor_proposals_applied` (`doctor.proposal_result`, result `applied`; architecture §10 item 4 asks for "applied and held"). `Digest.doctor_by_kind` breaks those six down per `data.incident_kind` (`unknown` when missing), with the `doctor_` prefix dropped in each row. `Digest.doctor_spend_usd` sums `data.cost_usd` over `doctor.*` events by `doctor_spend`'s rules: only numbers count, a negative counts as 0, and a value too big for a float counts as infinity. Where `doctor_spend`'s infinite total makes `check_spend` fail closed, the digest reports a non-finite total as `null` ("spend unknown" in the text), so `GET /v1/digest` never fails on infinity. `render_text` adds one "Fleet Doctor:" line only when a `doctor.*` event is in the window. All of it is in `GET /v1/digest`. Doctor kinds are **not** in `ACTION_KINDS`, so they don't move the no-human share (a follow-up if wanted).
 - **Traces (PR 7):** each closed consult writes one `Recording(kind="doctor_consult", format="jsonl")` blob holding the case file, ledger, draft, checks and outcome. `services/datasets._traces_files` (`datasets.py:531`) includes `doctor_consult` next to `agent_trace`.
+  - **As built:** `services/doctor_trace.write`, called from `doctor._close` for **every** close (refusals at admit included).
+  - **Lines:** one JSON message per line, in the shape `domain.datasets.sharegpt` already reads: `{"role": "system", "name": "consult", ...}` (ids, attempt, origin, trigger, base, times, cost, `retry_of`), `user`/`case_file`, `assistant`/`ledger`, then `assistant`/`draft` and `tool`/`checks` when the consult got that far, and `system`/`outcome` (`outcome`, `why`, `proposal_id`).
+  - **No secrets:** the LLM and Naïve keys are scrubbed from the text before it is stored; the export's own redaction runs on top.
+  - **Storage:** the bytes go into the blob store under their sha256, with a `blobs` row (`media_type: application/jsonl`, insert-or-nothing), so snapshots include them. The `recordings` row has a fresh UUID, the consult's device and incident, `started_at` = opened, `ended_at` = `received_at` = closed, firmware and harness from `incident.running`, `schema_version: doctor_consult/1`, and `raw = {source: "fleet-doctor", consult, outcome}`. `doctor.consult_closed` names it (`refs.recording`, `data.trace_recording`) in the same transaction.
+  - **Export:** `datasets.TRACE_KINDS = ("agent_trace", "doctor_consult")`, and every `traces.jsonl` line now carries `kind`, an additive field.
 - **Skills:** nothing new. `batch._write_skills` already runs on every held overlay with an incident, Doctor overlays included.
 
 ## 10. Device side (reference code in `tools/fake_device`, PR 5)
@@ -616,3 +722,12 @@ There's no raw shell, ever (architecture §9). The catalog is a draft until Isha
 | `cloud/tests/unit/domain/test_digest_doctor.py` (+ `test_services_digest.py` case) | 6 | digest counts in total and per incident kind, spend ignoring bad values, unchanged text with no Doctor events |
 | `cloud/tests/flows/test_f2_timeline_page.py` (+case) | 6 | the incident page shows the "Fleet Doctor" block with stub and fake labels; the story JSON has `ledger` |
 | `cloud/tests/flows/test_f3_lock_in.py` (+case) | 9 | a held Doctor overlay becomes a candidate without a Coder call → `awaiting_canary` |
+| `cloud/tests/unit/domain/test_domain_doctor_real.py` | 7 | `split_patch` (sections, prefixes, renames, header look-alikes in hunks, no-newline markers, mixed forms refused), `find_repro_test` (new files only; modified, renamed, copied never), `tampered_tests` (any edit to an existing test), `screen_fix` (planted runners at any depth, test config, flag-only, no code change), `flag_only_fix`, `code_only`, `patch_changes`, `held_out_files`, `patch_path`, `draft_task` (order, safety paths, fencing, bounds), `check_verdict` / `repro_failures` / `repro_passes` (exit 1 only, ids in the repro file, missing-name failures, same ids pass, verify states), `pytest_results` (only after the last summary header, stops at the counts), `withhold_verify`, `package_rel`, `named_paths`, `code_excerpts`, `tail_lines`, `coder_usage` |
+| `cloud/tests/unit/services/test_services_doctor_evidence.py` | 7 | case file with an in-memory blob store and a seeded code package: trace tail (this incident's stored traces only, newest last, byte caps, read from the end, no-seek store, vanished blob), code excerpts and caps, `verify/` never present, unregistered or missing rev, a package without `device/` |
+| `cloud/tests/unit/services/test_services_doctor_jobs.py` (reworked) | 7 | the adapter re-exports the shared types; `default_jobs` is the `"doctor"` pool, apart from the coder pools |
+| `cloud/tests/flows/test_f12c_doctor_real.py` | 7 | scripted coder + real `Sandbox` on `FakeDocker` (host pytest on the toy device): repro fails then passes, device tests pass on the code change, held-out verify passes → offered with the stub opt-in off (`PYTHONSAFEPATH=1` on every run; `verify/` only in the last replay; no verify output kept); no verify scripts → `verify: none available`. These close `failed_checks`:
+- in the sandbox: repro passes on the base; the fix fails; the reviewer's `DOCTOR_FIXED` probes (module-level import → exit 2; import or attribute in the body); a printed fake `FAILED` line (item 5); a repro that monkeypatches `step` at import to mask a broken `release_requested` (item 3); a partial fix that passes everything but verify → exactly "held-out verify failed" (item 4);
+- before any sandbox run (`screen_fix`): edits or deletes an existing test; weakening `test_gripper.py` plus breaking release (item 1); a planted `pytest.py` / `tests/pytest.py` / `sitecustomize.py` / `*.pth` / `_pytest/` (item 2); a `.gitignore`-hidden `conftest.py` (item 6); a flag-only fix, in place or as a new file (item 7);
+- at draft: no repro, empty, own tests failed, touches `verify/`.
+
+Also: a compound `CODER_TEST_CMD` is passed verbatim; the shared coder budget makes the consult wait, then draft; a waiting consult never starves a new one (`max_open=1`, budget 0); no real coder → `advised`, nothing spent; a 429 blip backs off, is refunded and retries; 5 transient errors → `gave_up`; a closed consult's `doctor_consult` recording is scrubbed and appears in `traces_jsonl` |

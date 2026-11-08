@@ -50,12 +50,12 @@ class ManualJobs:
     def __init__(self) -> None:
         self.pending: dict[str, Callable[[], Any]] = {}
         self.done: dict[str, Any] = {}
-        self.calls: list[str] = []
+        self.submitted: list[str] = []
 
     def submit(self, key, fn):
         if key in self.pending or key in self.done:
             return
-        self.calls.append(key)
+        self.submitted.append(key)
         self.pending[key] = fn
 
     def poll(self, key):
@@ -208,12 +208,14 @@ def test_a_consult_offers_a_fix_the_device_pulls_applies_and_holds(
     (consult,) = _consults(db_session, incident_id)
     assert (consult.stage, consult.status, consult.outcome) == ("applied", "waiting", None)
     case = consult.case_file
-    assert case["untrusted"] is True and case["notes"] == ["trace, code, mcap: not wired"]
+    assert case["untrusted"] is True and case["notes"][-1] == "mcap: not wired"
     assert case["log_tail"] == example("incident_consult_wanted")["log_tail"]
-    assert case["code"]["rev"] == "c0de001"
+    # The seeded c0de001 is a README only, and the incident uploaded no agent trace.
+    assert case["code"] == {"rev": "c0de001", "files": [], "tree": ["README.md"]}
+    assert case["trace_tail"] == [] and case["trace_recordings"] == []
     assert consult.ledger and consult.cost_usd > 0
     # One LLM call, off the tick, and its result is dropped once applied and committed.
-    assert doc.jobs.calls == [f"diagnose:{consult.id}"]
+    assert doc.jobs.submitted == [f"diagnose:{consult.id}"]
     assert isinstance(doc.jobs.poll(f"diagnose:{consult.id}"), Missing)
 
     # The check-in points at the fix and still writes no event (routine).
@@ -524,7 +526,7 @@ def test_the_daily_spend_cap_blocks_at_admit(
     incident_id = _report(client, example)
     doc.tick(T0 + timedelta(seconds=2))
     (consult,) = _consults(db_session, incident_id)
-    assert consult.outcome == "blocked_over_cap" and doc.jobs.calls == []
+    assert consult.outcome == "blocked_over_cap" and doc.jobs.submitted == []
     (blocked,) = [
         e for e in _doctor_events(db_session, incident_id) if e.kind == "doctor.blocked_over_cap"
     ]
@@ -547,7 +549,7 @@ def test_spend_adds_up_and_a_tiny_cap_blocks_the_next_consult(
     doc.tick(t)
     (consult,) = _consults(db_session, second)
     assert consult.outcome == "blocked_over_cap"
-    assert len(doc.jobs.calls) == 1
+    assert len(doc.jobs.submitted) == 1
 
 
 def test_a_frozen_fleet_holds_consults_hides_the_pointer_and_refuses_the_pull(
@@ -736,7 +738,7 @@ def test_a_pending_job_waits_a_lost_one_is_resubmitted(
 
     jobs.lose()  # the worker restarted
     t = doc.tick(t)
-    assert jobs.calls == [key, key]
+    assert jobs.submitted == [key, key]
     assert _consults(db_session, incident_id)[0].raw["job_tries"] == {key: 2}
     jobs.release()
     doc.tick(t)
@@ -757,7 +759,7 @@ def test_a_job_that_fails_three_times_gives_up(client, example, make_doctor, db_
     doc.run(T0 + timedelta(seconds=2), 8)
     (consult,) = _consults(db_session, incident_id)
     assert consult.outcome == "gave_up"
-    assert doc.jobs.calls == [f"diagnose:{consult.id}"] * 3
+    assert doc.jobs.submitted == [f"diagnose:{consult.id}"] * 3
     (gave_up,) = [e for e in _doctor_events(db_session, incident_id) if e.kind == "doctor.gave_up"]
     assert gave_up.data["reason"].startswith("job failed") and "provider down" in gave_up.why
     # Each failed run sent its prompt, so each counts toward today's spend (an estimate).
@@ -782,7 +784,7 @@ def test_spend_is_checked_again_before_a_retry(
     doc.run(T0 + timedelta(seconds=2), 5)
     (consult,) = _consults(db_session, incident_id)
     assert consult.outcome == "blocked_over_cap"
-    assert doc.jobs.calls == [f"diagnose:{consult.id}"]
+    assert doc.jobs.submitted == [f"diagnose:{consult.id}"]
     kinds = [e.kind for e in _doctor_events(db_session, incident_id)]
     assert kinds[-3:] == ["doctor.declined", "doctor.blocked_over_cap", "doctor.consult_closed"]
     (blocked,) = [

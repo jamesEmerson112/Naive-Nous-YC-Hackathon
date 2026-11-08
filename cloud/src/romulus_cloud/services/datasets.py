@@ -528,11 +528,16 @@ def _regression_files(manifest: dict[str, Any]) -> tuple[dict, dict]:
     return files, {"cases": len(rows), "incidents_skipped": skipped}
 
 
+# Recordings that are conversations: the healer's own traces, and the Fleet Doctor's closed
+# consults (`services/doctor_trace.py`, interfaces.md §9). Each line says which (`kind`).
+TRACE_KINDS = ("agent_trace", "doctor_consult")
+
+
 def _traces_files(manifest: dict[str, Any], store: BlobStore, redact: bool) -> tuple[dict, dict]:
     context = manifest["context"]
     lines = []
     for rec in manifest["recordings"]:
-        if rec.get("kind") != "agent_trace":
+        if rec.get("kind") not in TRACE_KINDS:
             continue
         text = _read_blob(store, rec).decode("utf-8", errors="replace")
         inc = context.get(rec.get("incident_id") or "")
@@ -540,6 +545,7 @@ def _traces_files(manifest: dict[str, Any], store: BlobStore, redact: bool) -> t
         state = ("overlay_diff", "overlay_outcome", "locked_into", "work_order")
         line = {
             "recording_id": rec["id"],
+            "kind": rec.get("kind"),
             "device_id": rec.get("device_id"),
             "incident_id": rec.get("incident_id"),
             "conversations": dd.sharegpt(text),

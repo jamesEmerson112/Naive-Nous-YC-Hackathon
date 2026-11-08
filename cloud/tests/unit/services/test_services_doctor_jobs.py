@@ -1,9 +1,12 @@
-"""services/doctor_jobs.py: inline and thread-pool jobs, idempotent submit, poll, missing;
-and services/doctor_spend.py: the day's Doctor spend summed from events."""
+"""services/doctor_jobs.py: a thin adapter over M8b's `services/jobs.py` (the same types, the
+Doctor's own named pool); and services/doctor_spend.py: the day's Doctor spend from events.
+
+The generic runner's own behavior (TTL pruning, cancellation, log redaction) is tested in
+`test_services_jobs.py`; here, what the Doctor's tick relies on."""
 
 import math
 import threading
-from concurrent import futures
+import time
 from datetime import timedelta
 
 import pytest
@@ -11,7 +14,7 @@ from sqlalchemy import text
 
 from romulus_cloud import events
 from romulus_cloud.domain.doctor import Spend, check_spend
-from romulus_cloud.services import doctor_jobs
+from romulus_cloud.services import doctor_jobs, jobs
 from romulus_cloud.services.doctor_jobs import (
     Done,
     Failed,
@@ -28,123 +31,63 @@ def _boom():
     raise RuntimeError("model said no")
 
 
-# --- InlineJobs -------------------------------------------------------------------------
+def _wait(pool, key, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while isinstance(state := pool.poll(key), Pending):
+        assert time.monotonic() < deadline, f"{key} still pending"
+        time.sleep(0.01)
+    return state
 
 
-def test_inline_runs_at_submit_and_is_idempotent():
-    jobs, runs = InlineJobs(), []
-    assert jobs.poll("diagnose:cons_1") == Missing()
-    jobs.submit("diagnose:cons_1", lambda: runs.append(1) or {"text": "hi"})
-    assert jobs.poll("diagnose:cons_1") == Done({"text": "hi"})
-    jobs.submit("diagnose:cons_1", lambda: runs.append(2))  # done: a no-op
-    assert runs == [1] and jobs.calls == ["diagnose:cons_1"]
+def test_the_types_are_the_shared_modules_own():
+    """A one-line swap: no second implementation to drift from M8b's."""
+    for name in ("Done", "Failed", "Missing", "Pending", "InlineJobs", "ThreadPoolJobs", "Jobs"):
+        assert getattr(doctor_jobs, name) is getattr(jobs, name), name
+    assert doctor_jobs.JobState is jobs.Status
 
 
-def test_inline_failure_is_reported_and_reruns_on_submit():
-    jobs = InlineJobs()
-    jobs.submit("k", _boom)
-    assert jobs.poll("k") == Failed("RuntimeError: model said no")
-    jobs.submit("k", lambda: 42)
-    assert jobs.poll("k") == Done(42) and jobs.calls == ["k", "k"]
+def test_inline_runs_at_submit_is_idempotent_and_a_failure_reruns():
+    inline, runs = InlineJobs(), []
+    assert inline.poll("diagnose:cons_1") == Missing()
+    inline.submit("diagnose:cons_1", lambda: runs.append(1) or {"text": "hi"})
+    inline.submit("diagnose:cons_1", lambda: runs.append(2))  # done: a no-op
+    assert inline.poll("diagnose:cons_1") == Done({"text": "hi"}) and runs == [1]
+    inline.submit("draft:cons_1", _boom)
+    assert inline.poll("draft:cons_1") == Failed("RuntimeError: model said no")
+    inline.submit("draft:cons_1", lambda: "patch")  # failed: runs again
+    assert inline.poll("draft:cons_1") == Done("patch")
+    assert inline.submitted == ["diagnose:cons_1", "draft:cons_1", "draft:cons_1"]
+    inline.forget("draft:cons_1")
+    assert inline.poll("draft:cons_1") == Missing()
 
 
-def test_finished_results_are_bounded():
-    jobs = InlineJobs(max_finished=2)
-    for k in ("a", "b", "c"):
-        jobs.submit(k, lambda k=k: k)
-    assert jobs.poll("a") == Missing()  # evicted: the tick resubmits
-    assert (jobs.poll("b"), jobs.poll("c")) == (Done("b"), Done("c"))
-
-
-# --- ThreadPoolJobs ---------------------------------------------------------------------
-
-
-@pytest.fixture
-def pool():
-    jobs = ThreadPoolJobs(max_workers=2)
-    yield jobs
-    jobs.shutdown(wait=False)
-
-
-def _wait(jobs, key, timeout=5.0):
-    done = threading.Event()
-    for _ in range(int(timeout / 0.01)):
-        state = jobs.poll(key)
-        if not isinstance(state, Pending):
-            return state
-        done.wait(0.01)
-    raise AssertionError(f"{key} still pending")
-
-
-def test_thread_pool_pending_then_done(pool):
-    gate, runs = threading.Event(), []
-
-    def job():
-        gate.wait(5)
-        runs.append(1)
-        return "hypotheses"
-
-    pool.submit("diagnose:cons_1", job)
-    assert pool.poll("diagnose:cons_1") == Pending()
-    pool.submit("diagnose:cons_1", job)  # pending: a no-op
-    gate.set()
-    assert _wait(pool, "diagnose:cons_1") == Done("hypotheses")
-    pool.submit("diagnose:cons_1", job)  # done: a no-op
-    assert pool.poll("diagnose:cons_1") == Done("hypotheses")
-    assert runs == [1]
-
-
-def test_thread_pool_failure_then_resubmit(pool):
-    pool.submit("draft:cons_1", _boom)
-    assert _wait(pool, "draft:cons_1") == Failed("RuntimeError: model said no")
-    pool.submit("draft:cons_1", lambda: "patch")
-    assert _wait(pool, "draft:cons_1") == Done("patch")
-
-
-def test_thread_pool_unknown_key_is_missing(pool):
-    assert pool.poll("check:cons_9") == Missing()
-
-
-def test_forget_drops_a_key_so_it_reads_missing_and_can_run_again(pool):
-    inline = InlineJobs()
-    inline.submit("k", lambda: 1)
-    inline.forget("k")
-    assert inline.poll("k") == Missing()
-    inline.forget("never-seen")  # harmless
-    pool.submit("k", lambda: 1)
-    assert _wait(pool, "k") == Done(1)
-    pool.forget("k")
-    assert pool.poll("k") == Missing()
-    pool.submit("k", lambda: 2)  # a forgotten key is new again
-    assert _wait(pool, "k") == Done(2)
-
-
-def test_forget_a_running_job_discards_its_result(pool):
-    gate = threading.Event()
-    pool.submit("slow", lambda: gate.wait(5) and "late")
-    pool.forget("slow")
-    gate.set()
-    pool.poll("other")  # sweeps
-    assert pool.poll("slow") == Missing()
-
-
-def test_finished_futures_never_pile_up_in_the_running_set(pool):
-    for i in range(5):
-        pool.submit(f"job:{i}", lambda i=i: i)
-    futures.wait(list(pool._running.values()), timeout=5)  # without polling any of them
-    pool.poll("unrelated")
-    assert pool._running == {}  # one poll of any key moved every finished one out
-    assert [pool.poll(f"job:{i}") for i in range(5)] == [Done(i) for i in range(5)]
-
-
-def test_default_jobs_is_one_pool_per_process(make_settings, monkeypatch):
-    monkeypatch.setattr(doctor_jobs, "_default", None)
-    a = default_jobs(make_settings(doctor_job_workers=3))
+def test_default_jobs_is_the_doctors_own_named_pool(make_settings, monkeypatch):
+    monkeypatch.setattr(jobs, "_pools", {})
+    pool = default_jobs(make_settings(doctor_job_workers=3))
     try:
-        assert isinstance(a, ThreadPoolJobs) and a._pool._max_workers == 3
-        assert default_jobs(make_settings(doctor_job_workers=9)) is a
+        assert isinstance(pool, ThreadPoolJobs) and pool.max_workers == 3
+        assert default_jobs(make_settings(doctor_job_workers=9)) is pool  # one per process
+        assert jobs._pools == {doctor_jobs.POOL: pool}
+        # The batch's drafts and the gate's replays never share it.
+        assert jobs.default_jobs(2, "coder.draft") is not pool
+        assert jobs.default_jobs(2, "coder.replay") is not pool
+        gate = threading.Event()
+        pool.submit("check:cons_1", lambda: gate.wait(5) and "replayed")
+        assert pool.poll("check:cons_1") == Pending()
+        gate.set()
+        assert _wait(pool, "check:cons_1") == Done("replayed")
     finally:
-        a.shutdown(wait=False)
+        for p in jobs._pools.values():
+            p.shutdown()
+
+
+def test_zero_workers_still_gets_one_thread(make_settings, monkeypatch):
+    monkeypatch.setattr(jobs, "_pools", {})
+    pool = default_jobs(make_settings(doctor_job_workers=0))
+    try:
+        assert pool.max_workers == 1
+    finally:
+        pool.shutdown()
 
 
 # --- spent_today ------------------------------------------------------------------------
