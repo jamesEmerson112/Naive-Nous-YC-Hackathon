@@ -20,7 +20,7 @@ _From James's cloud session, Sun Nov 8, ~9 AM PST. For a Claude Code session on 
 ### Files: yours vs the cloud session's
 | Yours (edit freely) | The cloud session's (don't edit until it says it's done) |
 |---|---|
-| `armsim/real.py`, `armsim/real_calibration.json`, `arm/` (with Andre), `demo/up.sh`, `samples/`, this file | `armsim/dispatch.py`, `worker.py`, `manager.py`, `escalation.py`, `redo.py`, `mission.py`, `mission/index.html`, `tests/`, `hermes-manager/`, `README.md` |
+| `armsim/real.py`, `armsim/real_calibration.json`, `arm/` (with Andre), `demo/up.sh`, `samples/`, this file | `armsim/dispatch.py`, `worker.py`, `manager.py`, `escalation.py`, `redo.py`, `host.py`, `stories.py`, `mission.py`, `mission/index.html`, `tests/`, `hermes-manager/`, `README.md` |
 
 **A bug in one of the cloud session's files:** write down the problem (what you ran, what happened, the log lines) for James to paste into the cloud session. Don't patch it here.
 
