@@ -11,6 +11,17 @@
 
 <div class="tc lr lr-{{ v.state }}">
 
+  {% if v.recent | length > 1 %}
+  <nav class="lr-reviews" aria-label="Recent reviews">
+    <span class="lr-reviews-h">Recent reviews</span>
+    <ul class="lr-reviews-list">
+      {% for r in v.recent %}
+      <li><a class="lr-review is-{{ r.state }}{% if r.current %} is-current{% endif %}" href="{{ r.url }}"{% if r.current %} aria-current="true"{% endif %}><b>{{ r.kind }}</b> · {{ r.outcome }}{% if r.duration_label %} · {{ r.duration_label }}{% endif %}{% if r.cost_label %} · {{ r.cost_label }}{% endif %}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+
   <section class="tc-head{% if h.recorded %} is-recorded{% endif %}">
     <div class="tc-head-l">
       <p class="tc-agent"><span class="tc-naive">Naïve agent</span> <span class="tc-seg"><span class="tc-dot-sep">·</span>{{ h.agent }}</span> <span class="tc-seg"><span class="tc-dot-sep">·</span>{{ h.mode }}</span></p>
@@ -49,6 +60,7 @@
       {% if v.state == 'rolled_back' %}<span class="chip chip-bad">✕ rolled back</span>{% endif %}
       {% if v.touches_safety %}<span class="safety">touches safety</span>{% endif %}
       {% if v.lane %}<span class="chip">{{ v.lane }}</span>{% endif %}
+      {% if v.published %}<span class="chip chip-good lr-published" title="{{ v.published.slug }} v{{ v.published.version }}">✓ mirrored to Naïve Skills · v{{ v.published.version }}</span>{% endif %}
     </p>
     {% if v.state == 'reviewing' %}
     <h1 class="tc-verdict-text tc-verdict-wait"><span class="tc-shimmer">Reviewing the failure cluster</span><span class="tc-dots" aria-hidden="true"><i></i><i></i><i></i></span></h1>
@@ -123,7 +135,7 @@
         {% if v.evidence %}
         <ul class="tc-sources">
           {% for e in v.evidence %}
-          <li>{% if e.url %}<a class="mono" href="{{ e.url }}">{{ e.id }}</a>{% else %}<span class="mono">{{ e.id }}</span>{% endif %}{% if e.verdict %} <span class="chip">{{ e.verdict }}</span>{% endif %}</li>
+          <li>{% if e.url %}<a class="mono" href="{{ e.url }}">{{ e.id }}</a>{% else %}<span class="mono">{{ e.id }}</span>{% endif %}{% if e.verdict %} <span class="chip">{{ e.verdict }}</span>{% endif %}{% if e.sim %} <span class="lr-sim">SIM</span>{% endif %}{% if e.verifier %}<span class="lr-verifier">{{ e.verifier }}{% if not e.here %} (from the case file){% endif %}</span>{% endif %}</li>
           {% endfor %}
         </ul>
         {% else %}<p class="muted">No evidence ids in the proposal.</p>{% endif %}

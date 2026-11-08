@@ -600,13 +600,15 @@ def _technician_css() -> Markup:
 
 
 @router.get("/learning", response_class=HTMLResponse)
-def learning_page(request: Request, session: SessionDep, settings: SettingsDep):
-    """Fleet learning (docs/recursive-self-improvement/demo.md §4): the newest cluster
-    review, the probe's numbers and the fleet's own labelled data."""
+def learning_page(
+    request: Request, session: SessionDep, settings: SettingsDep, case: str | None = None
+):
+    """Fleet learning (docs/recursive-self-improvement/demo.md §4): one cluster review (the
+    newest, or `?case=review:<kind>:<n>`), the probe's numbers and the fleet's own data."""
     return _page(
         request,
         "learning.html",
-        v=learning.view(session, settings, now=utcnow()),
+        v=learning.view(session, settings, now=utcnow(), case=case),
         tc_css=_technician_css(),
         fleet=_fleet(session, settings.fleet_id),
         tz=settings.display_tz,
@@ -614,7 +616,8 @@ def learning_page(request: Request, session: SessionDep, settings: SettingsDep):
 
 
 @router.get("/partials/learning", response_class=HTMLResponse)
-def learning_partial(request: Request, session: SessionDep, settings: SettingsDep):
-    return _page(
-        request, "partials/learning.html", v=learning.view(session, settings, now=utcnow())
-    )
+def learning_partial(
+    request: Request, session: SessionDep, settings: SettingsDep, case: str | None = None
+):
+    v = learning.view(session, settings, now=utcnow(), case=case)
+    return _page(request, "partials/learning.html", v=v)
