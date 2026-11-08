@@ -11,6 +11,7 @@ for help, the firmware it flashed, its write-up and every step), then the story'
 where bookkeeping steps (`story.BOOKKEEPING`) are one quiet line each.
 """
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,12 @@ from fastapi.templating import Jinja2Templates
 
 from romulus_cloud import events
 from romulus_cloud.api.deps import SessionDep, SettingsDep
-from romulus_cloud.domain.story import AGENT_OUTCOME_STATUS, recording_name
+from romulus_cloud.domain.story import (
+    AGENT_OUTCOME_STATUS,
+    STATUS,
+    WORK_ORDER_STATUS,
+    recording_name,
+)
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
 from romulus_cloud.models import AgentRun, Event
@@ -36,6 +42,51 @@ router = APIRouter(tags=["web"], include_in_schema=False)
 
 # How many incidents the timeline shows (newest first).
 TIMELINE_LIMIT = 50
+
+# Statuses that wait on a person read in the `you` tone (sun) on the page. A presentation
+# mapping only: the domain keeps "bad" for them, and its tests pin that
+# (docs/impeccable-redesign/BUILD.md, "Tones").
+YOU_STATUSES: frozenset[tuple[str, str]] = frozenset(
+    {
+        STATUS["technician.diagnosed"],
+        WORK_ORDER_STATUS["needs_human"],
+        WORK_ORDER_STATUS["blocked_over_cap"],
+    }
+)
+
+
+def page_tone(status: tuple[str, str]) -> str:
+    """The tone a story status shows in: `you` when it waits on a person, else its own."""
+    words, tone = status
+    return "you" if (words, tone) in YOU_STATUSES else tone
+
+
+_ID = re.compile(r"^([a-z]{2,5}_)([A-Za-z0-9]+)$")
+
+
+def shortid(value: Any) -> str:
+    """`wo_3d7cd6464e2e4980a69acd0a3e031264` -> `wo_3d7cd6…`: a prefixed id with a tail over
+    10 characters keeps the prefix and 6 characters. Anything else passes through. Put the
+    full id in a `title` wherever this is shown."""
+    if value is None:
+        return ""
+    text = str(value)
+    m = _ID.match(text)
+    if m and len(m.group(2)) > 10:
+        return f"{m.group(1)}{m.group(2)[:6]}…"
+    return text
+
+
+def kindword(value: Any) -> str:
+    """`joint_stall` -> `Joint stall`, `technician.diagnosed` -> `Technician diagnosed`."""
+    if not value:
+        return ""
+    text = " ".join(str(value).replace(".", " ").replace("_", " ").split())
+    return text[:1].upper() + text[1:]
+
+
+templates.env.filters["shortid"] = shortid
+templates.env.filters["kindword"] = kindword
 
 
 def _tz(settings) -> ZoneInfo:
@@ -296,7 +347,7 @@ def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
     now = utcnow()
     for incident in incidents.list_incidents(session, limit=TIMELINE_LIMIT, fleet_id=fleet_id):
         _, story = incidents.story(session, incident.id)
-        status, tone = story.status
+        status, tone = story.status[0], page_tone(story.status)
         runs = [_run_view(r, tz, now) for r in agent_runs.for_incident(session, incident.id)]
         rows.append(
             {
@@ -329,6 +380,7 @@ def _overview(rows: list[dict[str, Any]], fleet: dict[str, Any]) -> dict[str, in
         "broken": sum(1 for a in agents if a["status"] == "broken"),
         "working": sum(1 for a in agents if a["status"] == "working"),
         "help": sum(r["help"] for r in rows),
+        "you": sum(1 for r in rows if r["tone"] == "you"),
     }
 
 
@@ -375,7 +427,7 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
         }
         for h in story.ledger
     ]
-    status, tone = story.status
+    status, tone = story.status[0], page_tone(story.status)
     return {
         "incident": incidents.view(incident),
         "day": day(incident.occurred_at, tz),
