@@ -464,9 +464,10 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
         reporter = ArmReporter(romulus, device_id, kind=kind, state_dir=ROOT.parents[1] / "data" / "armsim",
                                arm=arm, dog=dog).start()
         print(f"reporting to Romulus at {romulus} as {device_id} ({kind})", flush=True)
-    if gif:
+    if gif and arm_kind == "sim":
         from .render import Gif
-        gif = Gif(arm, RUNS / f"{rec.run_id}.gif")
+        gif = Gif(arm, RUNS / f"{rec.run_id}.gif", every=10,
+                  caption=lambda a: ("PARKED: " + dog.open()[0]["summary"]) if dog.open() else "")
     viewer = None
     if view and arm_kind == "sim":
         import mujoco.viewer

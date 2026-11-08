@@ -22,7 +22,7 @@ class Gif:
             return
         self.r.update_scene(arm.d, self.cam, self.opt)
         img = Image.fromarray(self.r.render())
-        d = arm._last_d or {}
+        d = (arm.d_rows[-1] if arm.d_rows else {}) if arm.pod_mode else (arm._last_d or {})
         text = f"t={arm.t:5.2f}s  d={d.get('mm')} mm  us={d.get('us')}  {d.get('st', '')}  {self.caption(arm)}"
         ImageDraw.Draw(img).text((8, 8), text, fill=(255, 255, 0))
         self.frames.append(img)
