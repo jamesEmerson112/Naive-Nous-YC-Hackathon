@@ -4,6 +4,15 @@ Absorbs which model provider is behind it: one OpenAI-compatible client serves b
 model proxy and the team's RunPod vLLM endpoint; FakeLlm is the offline default. The LLM writes
 prose and harness skills only, never merged config (PRD principle 7), so the methods return
 plain strings that callers store as text.
+
+Notes from the live spike (Sat Nov 7):
+- The Naïve proxy's `/chat/completions` works with a plain bearer key; no `Vetta-Version`.
+- `GET <proxy>/models` returns 404, so never list models through the proxy; pick model ids
+  from Naïve's catalogue instead.
+- `openai/gpt-oss-120b` answers well in about 2 s. `zai-org/GLM-5.2-FP8` reasons until the
+  token limit and returns empty content, which is why an empty answer raises LlmError.
+- `max_tokens` is always sent: without it the proxy holds the model's full output limit
+  against the org balance for the call.
 """
 
 from __future__ import annotations
@@ -15,7 +24,10 @@ import httpx
 import openai
 
 NAIVE_PROXY_BASE_URL = "https://api.vetta.sh/v1/proxy/openai/v1"
-DEFAULT_TIMEOUT_S = 60.0
+DEFAULT_TIMEOUT_S = 30.0
+DEFAULT_MAX_RETRIES = 1
+DEFAULT_MAX_TOKENS = 800
+FAKE_MODEL = "fake-templated"
 
 FAKE_BANNER = "[templated by FakeLlm: no model was called]"
 
@@ -24,7 +36,13 @@ class LlmError(Exception):
     """A live LLM call failed; the caller should fall back (e.g. to FakeLlm text)."""
 
 
+class LlmConfigError(ValueError):
+    """The LLM settings don't describe a usable provider."""
+
+
 class Llm(Protocol):
+    model: str  # recorded on events so the timeline says which model wrote the prose
+
     def explain(self, incident: dict[str, Any]) -> str:
         """A plain-English explanation of an incident and its fix."""
         ...
@@ -44,6 +62,8 @@ def _summary(incident: dict[str, Any]) -> tuple[str, str, str]:
 
 class FakeLlm:
     """Deterministic templated text that says it's templated."""
+
+    model = FAKE_MODEL
 
     def explain(self, incident: dict[str, Any]) -> str:
         iid, device, fault = _summary(incident)
@@ -78,14 +98,17 @@ class OpenAICompatLlm:
         model: str,
         api_key: str,
         timeout_s: float = DEFAULT_TIMEOUT_S,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         http_client: httpx.Client | None = None,
     ) -> None:
         self.model = model
+        self.max_tokens = max_tokens
         self._client = openai.OpenAI(
             base_url=base_url,
             api_key=api_key or "unset",
             timeout=timeout_s,
-            max_retries=1,
+            max_retries=max_retries,
             http_client=http_client,
         )
 
@@ -94,6 +117,7 @@ class OpenAICompatLlm:
         try:
             resp = self._client.chat.completions.create(
                 model=self.model,
+                max_tokens=self.max_tokens,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -120,19 +144,33 @@ def build_llm(
     model: str | None,
     api_key: str | None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> Llm:
     """Factory called with LLM_MODE, LLM_PROVIDER, LLM_BASE_URL, LLM_MODEL, LLM_API_KEY."""
-    if mode == "fake" or provider == "fake":
+    if mode == "fake":
         return FakeLlm()
     if mode != "live":
-        raise ValueError(f"unknown LLM_MODE {mode!r} (expected fake or live)")
+        raise LlmConfigError(f"unknown LLM_MODE {mode!r} (expected fake or live)")
+    if provider == "fake":
+        raise LlmConfigError(
+            "LLM_MODE=live with LLM_PROVIDER=fake: set LLM_PROVIDER to naive_proxy or runpod, "
+            "or set LLM_MODE=fake"
+        )
     if provider == "naive_proxy":
         base_url = base_url or NAIVE_PROXY_BASE_URL
     elif provider == "runpod":
         if not base_url:
-            raise ValueError("LLM_PROVIDER=runpod needs LLM_BASE_URL (the vLLM endpoint)")
+            raise LlmConfigError("LLM_PROVIDER=runpod needs LLM_BASE_URL (the vLLM endpoint)")
     else:
-        raise ValueError(f"unknown LLM_PROVIDER {provider!r}")
+        raise LlmConfigError(f"unknown LLM_PROVIDER {provider!r}")
     if not model:
-        raise ValueError("live LLM needs LLM_MODEL")
-    return OpenAICompatLlm(base_url, model, api_key or "", timeout_s)
+        raise LlmConfigError("live LLM needs LLM_MODEL")
+    return OpenAICompatLlm(
+        base_url,
+        model,
+        api_key or "",
+        timeout_s=timeout_s,
+        max_retries=max_retries,
+        max_tokens=max_tokens,
+    )

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 
 CHUNK_SIZE = 1024 * 1024
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 class BlobError(Exception):
@@ -61,7 +61,7 @@ class BlobStore(Protocol):
 
 
 def _check_hash(sha256: str) -> str:
-    if not isinstance(sha256, str) or not _SHA256_RE.match(sha256):
+    if not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256):
         raise InvalidHash(f"not a lowercase hex sha256: {sha256!r}")
     return sha256
 

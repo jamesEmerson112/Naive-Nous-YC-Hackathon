@@ -20,10 +20,16 @@ TITLE_MAX = 200
 BODY_MAX = 20_000
 
 Card = dict[str, Any]
+RETRYABLE_409_CODES = frozenset({"idempotency_conflict", "job_not_ready"})
 
 
 class NaiveError(Exception):
-    """A Naïve API call failed. `retryable` is true for 429, 5xx and transport errors."""
+    """A Naïve API call failed.
+
+    `retryable` is true for 429, 5xx, transport errors, and the 409 codes Naïve documents as
+    worth retrying with the same Idempotency-Key: `idempotency_conflict` (the first request is
+    still in flight, e.g. after a client timeout) and `job_not_ready` (api/errors).
+    """
 
     def __init__(
         self,
@@ -39,7 +45,9 @@ class NaiveError(Exception):
 
     @property
     def retryable(self) -> bool:
-        return self.status is None or self.status == 429 or self.status >= 500
+        if self.status is None or self.status == 429 or self.status >= 500:
+            return True
+        return self.status == 409 and self.code in RETRYABLE_409_CODES
 
 
 class NaiveClient(Protocol):
@@ -109,7 +117,22 @@ class HttpNaive:
             raise NaiveError(f"Naïve {method} {path} failed: {exc}") from exc
         if resp.status_code >= 400:
             raise _error_from(resp, method, path)
-        return resp.json()
+        try:
+            data = resp.json()
+        except ValueError:
+            raise NaiveError(
+                f"Naïve {method} {path} answered {resp.status_code} with non-JSON: "
+                f"{resp.text[:200]!r}",
+                status=resp.status_code,
+                code="invalid_response",
+            ) from None
+        if not isinstance(data, dict):
+            raise NaiveError(
+                f"Naïve {method} {path} answered {resp.status_code} with a non-object body",
+                status=resp.status_code,
+                code="invalid_response",
+            )
+        return data
 
     def create_card(
         self, title: str, body: str, assignee: str | None, idempotency_key: str
@@ -146,9 +169,13 @@ def _error_from(resp: httpx.Response, method: str, path: str) -> NaiveError:
     # the edge can also answer HTML (e.g. a 403 for SQL-looking bodies).
     code = message = request_id = None
     try:
-        err = resp.json().get("error") or {}
-        code, message, request_id = err.get("code"), err.get("message"), err.get("request_id")
+        body = resp.json()
     except ValueError:
+        body = None
+    err = body.get("error") if isinstance(body, dict) else None
+    if isinstance(err, dict):
+        code, message, request_id = err.get("code"), err.get("message"), err.get("request_id")
+    else:
         message = resp.text[:200]
     return NaiveError(
         f"Naïve {method} {path} answered {resp.status_code}: {code or ''} {message or ''}".strip(),
@@ -185,6 +212,7 @@ class FakeNaive:
         self.cards: dict[str, Card] = {}
         self.comments: dict[str, list[dict[str, Any]]] = {}
         self._by_key: dict[str, str] = {}
+        self._requests: dict[str, tuple[str, str, str | None]] = {}
         self._polls: dict[str, int] = {}
         self._outcomes: dict[str, str] = {}
         self._tick = 0
@@ -197,7 +225,15 @@ class FakeNaive:
         self, title: str, body: str, assignee: str | None, idempotency_key: str
     ) -> Card:
         _check_card(title, body)
+        request = (title, body, assignee)
         if idempotency_key in self._by_key:
+            if self._requests[idempotency_key] != request:
+                # Same as the live API: a key reused with a different body is a 409.
+                raise NaiveError(
+                    f"fake Naïve: Idempotency-Key {idempotency_key} reused with a different body",
+                    status=409,
+                    code="idempotency_conflict",
+                )
             return dict(self.cards[self._by_key[idempotency_key]])
         n = len(self.cards) + 1
         card_id = f"crd_fake{n:04d}"
@@ -219,6 +255,7 @@ class FakeNaive:
         }
         self.comments[card_id] = []
         self._by_key[idempotency_key] = card_id
+        self._requests[idempotency_key] = request
         self._polls[card_id] = 0
         self._outcomes[card_id] = self.outcome
         return dict(self.cards[card_id])

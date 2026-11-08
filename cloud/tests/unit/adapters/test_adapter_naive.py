@@ -160,7 +160,7 @@ def test_fake_progresses_to_result_after_n_polls():
 def test_fake_can_stop_and_is_idempotent():
     fake = FakeNaive(polls_to_done=1, outcome="stopped", stop_reason="over MAX_USD")
     a = fake.create_card("WO-2", "body", "fleet-ops", "wo_2")
-    assert fake.create_card("WO-2 again", "other", None, "wo_2")["id"] == a["id"]
+    assert fake.create_card("WO-2", "body", "fleet-ops", "wo_2")["id"] == a["id"]
     assert len(fake.cards) == 1
     done = fake.get_card(a["id"])
     assert done["note"].startswith("STOPPED: over MAX_USD")
@@ -194,3 +194,42 @@ def test_factory():
         build_naive("bogus")
     with pytest.raises(ValueError):
         FakeNaive(outcome="maybe")
+
+
+@pytest.mark.parametrize("code", ["idempotency_conflict", "job_not_ready"])
+def test_retryable_409_codes(code):
+    naive = _http(lambda r: httpx.Response(409, json={"error": {"code": code, "message": "retry"}}))
+    with pytest.raises(NaiveError) as exc:
+        naive.create_card("t", "b", "fleet-ops", "wo_1")
+    assert exc.value.status == 409 and exc.value.code == code
+    assert exc.value.retryable
+
+
+def test_other_409_is_not_retryable():
+    naive = _http(lambda r: httpx.Response(409, json={"error": {"code": "state_conflict"}}))
+    with pytest.raises(NaiveError) as exc:
+        naive.get_card("crd_1")
+    assert not exc.value.retryable
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="<html>ok?</html>"),
+        httpx.Response(200, json=["not", "an", "object"]),
+        httpx.Response(400, json=["not", "an", "object"]),
+        httpx.Response(400, json={"error": "a string, not an object"}),
+    ],
+)
+def test_malformed_bodies_raise_naive_error(response):
+    with pytest.raises(NaiveError):
+        _http(lambda r: response).get_card("crd_1")
+
+
+def test_fake_key_reused_with_different_body_is_409():
+    fake = FakeNaive()
+    fake.create_card("WO-2", "body", "fleet-ops", "wo_2")
+    with pytest.raises(NaiveError) as exc:
+        fake.create_card("WO-2 again", "other", None, "wo_2")
+    assert exc.value.status == 409 and exc.value.code == "idempotency_conflict"
+    assert len(fake.cards) == 1
