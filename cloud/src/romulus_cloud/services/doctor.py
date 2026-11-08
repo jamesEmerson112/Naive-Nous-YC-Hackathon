@@ -36,11 +36,16 @@ defaults stay fake and stub):**
   Each submit records `coder.started` (`data.source = "doctor"`) and counts against
   CODER_MAX_DRAFTS_PER_HOUR with the batch's drafts; with the budget used up the consult
   waits in `draft` until `raw.retry_at` (one `doctor.declined`, `which: coder_budget`),
-  it doesn't fail. A draft with no test file, an empty or refused diff, or a failing own
-  test run closes `failed_checks`.
-- `check` replays the repro test alone on the base (must fail), then the full patch (must
-  pass the device tests), in the coder image with no network (`doctor_code.check_job`).
-  Anything else closes `failed_checks`, which retries within the consult cap.
+  it doesn't fail. A provider blip (`domain.coder_retry`) backs off the same way and a
+  zero-token one is refunded to the budget; the 5th in a row gives up. No real coder
+  (`FakeCoder`, `Unavailable`) closes `advised` before anything is spent. A draft with no
+  test file, an empty or refused diff, or a failing own test run closes `failed_checks`.
+- `check` fails a patch that tampers with existing tests, then proves in the coder image
+  with no network that the repro tests fail on behaviour on the base (exit 1, ids in the
+  repro file), that the same ids pass with the fix, and that the device tests pass
+  (`doctor_code.check_job`). Anything else closes `failed_checks` (retried within the cap).
+- Waiting consults (`raw.retry_at` ahead, or blocked on `docker`) take no
+  DOCTOR_MAX_OPEN slot.
 - Every close writes the consult's trace as a `doctor_consult` recording
   (`doctor_trace.write`) and names it in `doctor.consult_closed` (`refs.recording`).
 
@@ -64,8 +69,9 @@ from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.adapters.blobstore import BlobStore, build_blobstore
-from romulus_cloud.adapters.coder import DEFAULT_IMAGE, CodeDraft, Coder, Sandbox, redact
+from romulus_cloud.adapters.coder import DEFAULT_IMAGE, CodeDraft, Coder, FakeCoder, Sandbox, redact
 from romulus_cloud.adapters.llm import FAKE_MODEL, Llm, LlmConfigError
+from romulus_cloud.domain import coder_retry
 from romulus_cloud.domain import doctor as rules
 from romulus_cloud.ids import ensure_utc, new_id
 from romulus_cloud.models import DoctorConsult, DoctorProposal, Incident, Overlay
@@ -92,7 +98,15 @@ ACTOR = "fleet-doctor"
 OPEN, WAITING, CLOSED = "open", "waiting", "closed"
 APPLIED = "applied"  # the stage that waits on the device
 MAX_JOB_TRIES = 3
-OUTPUT_KEYS = ("patch_error", "exit_code", "timed_out", "tests_summary", "failing", "output_tail")
+OUTPUT_KEYS = (
+    "patch_error",
+    "exit_code",
+    "timed_out",
+    "tests_summary",
+    "failed",
+    "passed_ids",
+    "output_tail",
+)
 REFUSAL_KINDS = {
     rules.DECLINED: "doctor.declined",
     rules.BLOCKED_OVER_CAP: "doctor.blocked_over_cap",
@@ -507,17 +521,39 @@ def open_new(session: Session, now: datetime, *, settings: Settings) -> int:
 # --- 3. advance -----------------------------------------------------------------------------
 
 
+def stamp(when: datetime) -> str:
+    """A fixed-width UTC ISO timestamp for `consult.raw` (`retry_at`), so SQL can compare it
+    as text against `stamp(now)` (`_working`) and nothing has to be cast."""
+    return ensure_utc(when).isoformat(timespec="microseconds")
+
+
 def _working(t: _Tick) -> list[DoctorConsult]:
+    """Up to DOCTOR_MAX_OPEN consults that can do something this tick, oldest first. A
+    consult waiting out `raw.retry_at` (the coder budget, a coder backoff) or parked behind
+    a blocker only an operator can fix (no `docker` for the coder or the sandbox) takes no
+    slot, so it can never starve newer consults."""
+    s = t.settings
+    retry_at = DoctorConsult.raw["retry_at"].astext
+    conditions = [
+        DoctorConsult.fleet_id == s.fleet_id,
+        DoctorConsult.status != CLOSED,
+        DoctorConsult.stage != APPLIED,
+        or_(retry_at.is_(None), retry_at <= stamp(t.now)),
+    ]
+    for stage, mode, blocked in (
+        ("draft", s.doctor_draft == "coder", t.coder_blocked),
+        ("check", s.doctor_check == "sandbox", t.sandbox_blocked),
+    ):
+        why = blocked() if mode else None
+        if why:
+            _warn_once(why)
+            conditions.append(DoctorConsult.stage != stage)
     return list(
         t.session.scalars(
             select(DoctorConsult)
-            .where(
-                DoctorConsult.fleet_id == t.settings.fleet_id,
-                DoctorConsult.status != CLOSED,
-                DoctorConsult.stage != APPLIED,
-            )
+            .where(*conditions)
             .order_by(DoctorConsult.created_at, DoctorConsult.id)
-            .limit(max(t.settings.doctor_max_open, 0))
+            .limit(max(s.doctor_max_open, 0))
             .with_for_update(skip_locked=True)
         )
     )
@@ -874,15 +910,105 @@ def _when(value: Any) -> datetime | None:
 
 
 def _case_summary(case: dict[str, Any], incident: Incident) -> dict[str, Any]:
-    """What the coder gets as `incident` (its notes name the id; the task carries the rest)."""
+    """What the coder gets as `incident` (its notes name the id; the task carries the rest).
+    Text comes from the case file only, where lines naming `verify/` paths are withheld."""
     facts = case.get("incident") if isinstance(case.get("incident"), dict) else {}
     return {
         "id": incident.id,
         "device_id": incident.device_id,
         "kind": facts.get("kind") or incident.kind,
-        "summary": facts.get("summary") or incident.summary,
-        "explanation": facts.get("agent_reasoning") or incident.agent_reasoning,
+        "summary": facts.get("summary") or "",
+        "explanation": facts.get("agent_reasoning") or "",
     }
+
+
+def _no_real_coder(t: _Tick) -> str | None:
+    """Why the configured coder can't write a fix at all, or None: the pass-through
+    `FakeCoder` (CODER_PROVIDER=fake) returns the empty patch it's given, and an
+    `Unavailable` coder (settings it can't be built from) fails every run."""
+    coder = t.get_coder()
+    if isinstance(coder, FakeCoder):
+        return (
+            "CODER_PROVIDER=fake: the pass-through coder returns the patch it is given and "
+            "can't write a reproduction test or a fix"
+        )
+    if isinstance(coder, doctor_code.Unavailable):
+        return f"the coder can't be built ({coder.why})"
+    return None
+
+
+def _blip_cost(t: _Tick, tokens: int | None, prompt_chars: int) -> float:
+    """What a transient coder failure cost: $0 when it is known to have spent no tokens, its
+    tokens when known, else its prompt at the failed-run estimate."""
+    price = t.settings.doctor_usd_per_1k_tokens
+    if tokens == 0:
+        return 0.0
+    if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens > 0:
+        return rules.cost_usd(tokens, 0, price)
+    return rules.failed_run_cost_usd(prompt_chars, price)[1]
+
+
+def _coder_blip(
+    t: _Tick,
+    consult: DoctorConsult,
+    key: str,
+    outcome: coder_retry.CoderOutcome,
+    why: str,
+    cost: float,
+) -> None:
+    """A transient coder failure (`domain.coder_retry`: a rate limit, 429, at capacity, 5xx,
+    timeout, no sandbox result, zero tokens or steps). It is not a failed job try and
+    doesn't close the consult: it waits in `draft` until `raw.retry_at` (2 min doubling to
+    30 min), and the 5th in a row gives up, listing each one. Each records `doctor.declined`
+    (`reason: coder_unavailable`, `job`, `attempt`, `no_tokens`): an attempt known to have
+    spent 0 tokens is refunded to the hourly coder budget (`doctor_code.coder_budget`)."""
+    s = t.settings
+    verdict = coder_retry.classify(outcome)
+    raw = dict(consult.raw or {})
+    blips = [*list(raw.get("coder_blips") or []), _clip(why, 300)]
+    attempt = len(blips)
+    tries = dict(raw.get("job_tries") or {})
+    tries.pop(key, None)  # the next submit is a fresh try, not a failed one
+    raw["job_tries"], raw["coder_blips"] = tries, blips
+    when = coder_retry.retry_at(attempt, t.now)
+    if when is not None:
+        raw["retry_at"] = stamp(when)
+    consult.raw, consult.job_key = raw, None
+    consult.cost_usd = (consult.cost_usd or 0.0) + cost
+    later = (
+        f"the draft is retried after {when.isoformat()} (attempt {attempt} of "
+        f"{coder_retry.MAX_TRANSIENT}); nothing failed"
+        if when is not None
+        else "that was the last try"
+    )
+    _record(
+        t.session,
+        s,
+        consult,
+        "doctor.declined",
+        f"The coding agent was unavailable ({verdict.label}); {later}. {_clip(why, 300)}.",
+        {
+            "reason": doctor_code.CODER_UNAVAILABLE,
+            "stage": "draft",
+            "which": "coder_unavailable",
+            "job": key,
+            "attempt": attempt,
+            "label": verdict.label,
+            "detail": _clip(why, 500),
+            "no_tokens": outcome.tokens == 0,  # a known zero only: None may have spent some
+            "retry_at": stamp(when) if when is not None else None,
+            "cost_usd": cost,
+        },
+        now=t.now,
+    )
+    _forget_after_commit(t, key)
+    if when is None:
+        listed = "; ".join(f"attempt {i}: {r}" for i, r in enumerate(blips, 1))
+        reason = f"the coding agent was unavailable {attempt} times in a row ({listed})"
+        _give_up(t, consult, reason)
+    else:
+        consult.status = WAITING
+        t.session.flush()
 
 
 def _coder_budget_hold(t: _Tick, consult: DoctorConsult) -> bool:
@@ -895,14 +1021,14 @@ def _coder_budget_hold(t: _Tick, consult: DoctorConsult) -> bool:
     started, frees_at = doctor_code.coder_budget(t.session, s.fleet_id, t.now, budget)
     if frees_at is None:
         return False
-    consult.raw = {**(consult.raw or {}), "retry_at": frees_at.isoformat()}
+    consult.raw = {**(consult.raw or {}), "retry_at": stamp(frees_at)}
     consult.status = WAITING
     _record(
         t.session,
         s,
         consult,
         "doctor.declined",
-        f"The coder budget is used up: {started} drafts started in the last hour, fleet-wide "
+        f"The coder budget is used up: {started} drafts counted in the last hour, fleet-wide "
         f"(CODER_MAX_DRAFTS_PER_HOUR={budget}, shared with the batch). The consult waits in "
         f"draft and tries again at {frees_at.isoformat()}; nothing failed.",
         {
@@ -911,7 +1037,7 @@ def _coder_budget_hold(t: _Tick, consult: DoctorConsult) -> bool:
             "which": "coder_budget",
             "drafts_started": started,
             "budget": budget,
-            "retry_at": frees_at.isoformat(),
+            "retry_at": stamp(frees_at),
             "cost_usd": 0.0,
         },
         now=t.now,
@@ -926,12 +1052,23 @@ def _draft_coder(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
     s = t.settings
     retry_at = _when((consult.raw or {}).get("retry_at"))
     if retry_at is not None and t.now < retry_at:
-        return  # waiting on the coder budget; it was said when the wait began
+        return  # waiting on the coder budget or a backoff; it was said when the wait began
+    missing = _no_real_coder(t)
+    if missing:
+        _close(
+            t,
+            consult,
+            rules.ADVISED,
+            f"DOCTOR_DRAFT=coder, but {missing}. No draft is started and nothing is spent; "
+            "the hypotheses stand as advice.",
+        )
+        return
     blocked = t.coder_blocked()
     if blocked:
         _warn_once(blocked)
         return
     key = f"draft:{consult.id}"
+    secrets = doctor_trace.secrets(s)
     case = consult.case_file or {}
     base = (incident.running or {}).get("code_rev")
     task = rules.draft_task(
@@ -941,6 +1078,13 @@ def _draft_coder(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
         test_cmd=s.coder_test_cmd or rules.DEFAULT_TEST_CMD,
     )
     summary = _case_summary(case, incident)
+    state = t.jobs.poll(key)
+    if isinstance(state, Failed):  # a provider blip is a backoff, not a failed try
+        failed = coder_retry.CoderOutcome(False, error=redact(state.error, secrets))
+        if coder_retry.classify(failed).transient:
+            why = f"the coding agent could not run ({failed.error})"
+            _coder_blip(t, consult, key, failed, why, _blip_cost(t, None, len(task)))
+            return
 
     def make() -> Callable[[], Any]:
         files = doctor_code.coder_files(
@@ -961,6 +1105,7 @@ def _draft_coder(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
             "off the tick); it counts against CODER_MAX_DRAFTS_PER_HOUR with the batch's.",
             data={
                 "job": key,
+                "attempt": len((consult.raw or {}).get("coder_blips") or []) + 1,
                 "base_code_rev": base,
                 "source": "doctor",
                 "incident_kind": incident.kind,
@@ -991,15 +1136,26 @@ def _draft_coder(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
         return
     if done is None:
         return
-    _apply_draft(t, consult, incident, done.result, len(task))
+    draft = done.result
+    if isinstance(draft, CodeDraft) and not draft.passed:
+        outcome = doctor_code.outcome(draft, secrets)
+        if coder_retry.classify(outcome).transient:
+            why = f"the coding agent stopped ({outcome.exit_status or 'no exit status'}"
+            why += f": {outcome.error})" if outcome.error else ")"
+            _coder_blip(t, consult, key, outcome, why, _blip_cost(t, draft.tokens, len(task)))
+            return
+    _apply_draft(t, consult, incident, draft, len(task))
     _forget_after_commit(t, key)
 
 
 def _draft_cost(t: _Tick, draft: CodeDraft) -> tuple[int | None, int | None, float, bool]:
     """(prompt tokens, completion tokens, cost, estimated): the coder's own token counts
-    when its notes report them, else DOCTOR_DRAFT_ESTIMATE_USD (never $0 by accident)."""
+    (its notes' `tokens N in / M out`, else `CodeDraft.tokens`, the total), else
+    DOCTOR_DRAFT_ESTIMATE_USD (never $0 by accident)."""
     s = t.settings
     usage = rules.coder_usage(draft.notes)
+    if usage is None and isinstance(draft.tokens, int) and not isinstance(draft.tokens, bool):
+        usage = (draft.tokens, 0)
     if usage is not None:
         try:
             return usage[0], usage[1], rules.cost_usd(*usage, s.doctor_usd_per_1k_tokens), False
@@ -1166,14 +1322,65 @@ def _run_view(run: Any) -> dict[str, Any] | None:
     return {k: run.get(k) for k in OUTPUT_KEYS} if isinstance(run, dict) else None
 
 
+def _apply_verdict(
+    t: _Tick, consult: DoctorConsult, repro: str, verdict: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """`consult.checks` and `doctor.checked` from a verdict; then `offer` or `failed_checks`."""
+    consult.checks = {
+        "stub": False,
+        "fails_before": verdict["fails_before"],
+        "passes_after": verdict["passes_after"],
+        "device_tests": verdict["device_tests"],
+        "repro_test": repro,
+        "repro_ids": verdict["repro_ids"],
+        "summary": verdict["summary"],
+    }
+    consult.job_key = None
+    _record(
+        t.session,
+        t.settings,
+        consult,
+        "doctor.checked",
+        f"check: {'passed' if verdict['passed'] else 'failed'} in the sandbox. "
+        f"{verdict['reason'] or verdict['summary']}.",
+        {
+            "passed": verdict["passed"],
+            "stub": False,
+            "fails_before": verdict["fails_before"],
+            "passes_after": verdict["passes_after"],
+            "device_tests": verdict["device_tests"],
+            "touches_safety": False,
+            "summary": verdict["summary"],
+            "reason": verdict["reason"],
+            "repro_test": repro,
+            "repro_ids": verdict["repro_ids"],
+            "flags": verdict["flags"],
+            "before": _run_view(result.get("before")),
+            "after_repro": _run_view(result.get("after_repro")),
+            "after": _run_view(result.get("after")),
+        },
+        now=t.now,
+    )
+    if verdict["passed"]:
+        _move(t, consult, "offer")
+    else:
+        _close(t, consult, rules.FAILED_CHECKS, f"The fix failed its checks: {verdict['reason']}.")
+
+
 def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: str) -> None:
-    """DOCTOR_CHECK=sandbox: job `check:{id}` replays the repro test alone on the base (it
-    must fail), then the full patch (it must pass), in the coder image with no network
-    (`doctor_code.check_job`, `domain.doctor.check_verdict`). Pass → `offer`; anything
-    else → `failed_checks` (retried within the consult cap)."""
+    """DOCTOR_CHECK=sandbox: the patch may not tamper with existing tests
+    (`domain.doctor.tampered_tests`, before any sandbox run); then job `check:{id}`
+    (`doctor_code.check_job`) proves in the coder image, with no network, that the repro
+    tests fail on behaviour on the base, that the same test ids pass with the fix, and that
+    the device tests pass (`domain.doctor.check_verdict`). Pass → `offer`; anything else →
+    `failed_checks` (retried within the consult cap)."""
     s = t.settings
     repro = (consult.draft or {}).get("repro_test")
-    if not isinstance(repro, str) or not rules.split_patch(patch, repro).strip():
+    if (
+        not isinstance(repro, str)
+        or not rules.is_test_path(repro)
+        or not rules.split_patch(patch, repro).strip()
+    ):
         _close(
             t,
             consult,
@@ -1190,6 +1397,11 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
             "CODER_TEST_CMD is empty, so the sandbox can't run the repro test or the device "
             "tests; nothing is offered, and the hypotheses stand as advice.",
         )
+        return
+    tampering = rules.tampered_tests(patch, repro)
+    if tampering:  # decided from the patch alone: no sandbox run needed
+        verdict = rules.check_verdict(None, None, None, repro, tampering)
+        _apply_verdict(t, consult, repro, verdict, {})
         return
     blocked = t.sandbox_blocked()
     if blocked:
@@ -1230,43 +1442,10 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
     if done is None:
         return
     result = done.result if isinstance(done.result, dict) else {}
-    verdict = rules.check_verdict(result.get("before"), result.get("after"), repro)
-    consult.checks = {
-        "stub": False,
-        "fails_before": verdict["fails_before"],
-        "passes_after": verdict["passes_after"],
-        "device_tests": verdict["device_tests"],
-        "repro_test": repro,
-        "summary": verdict["summary"],
-    }
-    consult.job_key = None
-    _record(
-        t.session,
-        s,
-        consult,
-        "doctor.checked",
-        f"check: {'passed' if verdict['passed'] else 'failed'} in the sandbox. "
-        f"{verdict['summary']}.",
-        {
-            "passed": verdict["passed"],
-            "stub": False,
-            "fails_before": verdict["fails_before"],
-            "passes_after": verdict["passes_after"],
-            "device_tests": verdict["device_tests"],
-            "touches_safety": False,
-            "summary": verdict["summary"],
-            "reason": verdict["reason"],
-            "repro_test": repro,
-            "flags": verdict["flags"],
-            "before": _run_view(result.get("before")),
-            "after": _run_view(result.get("after")),
-        },
-        now=t.now,
+    verdict = rules.check_verdict(
+        result.get("before"), result.get("after_repro"), result.get("after"), repro
     )
-    if verdict["passed"]:
-        _move(t, consult, "offer")
-    else:
-        _close(t, consult, rules.FAILED_CHECKS, f"The fix failed its checks: {verdict['reason']}.")
+    _apply_verdict(t, consult, repro, verdict, result)
     _forget_after_commit(t, key)
 
 

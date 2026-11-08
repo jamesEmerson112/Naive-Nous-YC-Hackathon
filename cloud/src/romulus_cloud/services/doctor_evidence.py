@@ -153,7 +153,11 @@ def case_file(
         )
         .order_by(DoctorConsult.attempt)
     ).all()
-    actions = _list(incident.actions)
+    # Held-out checks stay hidden: any log, trace or action line naming a verify/ path is
+    # withheld before it reaches a prompt, the stored case file or the consult's trace.
+    actions, hidden_actions = rules.withhold_verify(_list(incident.actions))
+    reasoning, hidden_reasoning = rules.withhold_verify_text(incident.agent_reasoning)
+    summary, hidden_summary = rules.withhold_verify_text(incident.summary)
     tried: list[Any] = [{"by": "healer", "action": a} for a in actions]
     tried += [
         {
@@ -164,22 +168,29 @@ def case_file(
         }
         for c in earlier
     ]
-    log_tail = _list(raw.get("log_tail"))
+    log_tail, hidden_log = rules.withhold_verify(_list(raw.get("log_tail")))
     traces, trace_ids, trace_notes = trace_tail(session, store, incident, settings=settings)
-    texts = [*log_tail, *traces, *actions, incident.agent_reasoning or "", incident.summary or ""]
+    traces, hidden_trace = rules.withhold_verify(traces)
+    texts = [*log_tail, *traces, *actions, reasoning or "", summary or ""]
     code, code_notes = code_evidence(
         session, store, running.get("code_rev"), texts, settings=settings
+    )
+    hidden = hidden_log + hidden_trace + hidden_actions + hidden_reasoning + hidden_summary
+    verify_notes = (
+        [f"verify: {hidden} log, trace or healer lines withheld (they name held-out verify/ paths)"]
+        if hidden
+        else []
     )
     return {
         "incident": {
             "id": incident.id,
             "kind": incident.kind,
-            "summary": incident.summary,
+            "summary": summary,
             "tier": raw.get("tier"),
             "signals": incident.signals or {},
             "outcome": raw.get("outcome"),
             "running": running,
-            "agent_reasoning": incident.agent_reasoning,
+            "agent_reasoning": reasoning,
             "consult": raw.get("consult"),
         },
         "log_tail": log_tail,
@@ -188,5 +199,5 @@ def case_file(
         "code": code,
         "tried": tried,
         "untrusted": True,
-        "notes": [*trace_notes, *code_notes, MCAP_NOTE],
+        "notes": [*trace_notes, *code_notes, *verify_notes, MCAP_NOTE],
     }

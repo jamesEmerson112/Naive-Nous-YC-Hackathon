@@ -154,11 +154,33 @@ def test_verify_files_never_reach_the_case_file_even_when_a_log_names_them(
     incident = _incident(
         fleet,
         now,
-        raw={"log_tail": ["verify/test_verify_d1.py failed", "device/verify/test_verify_d1.py"]},
+        raw={
+            "log_tail": [
+                "verify/test_verify_d1.py failed",
+                "S HOLDING->RELEASE reason=dist_lt_threshold",
+                "device/verify/test_verify_d1.py",
+            ]
+        },
+        actions=["park", "ran /work/verify/test_verify_d1.py: FAIL", "verify d1_hand_trace: FAIL"],
+        agent_reasoning="Tier 3.\nverify/test_verify_d1.py still fails.\nParked.",
     )
+    trace = b'{"content": "pytest verify/test_verify_d1.py"}\n{"content": "patched hold.py"}\n'
+    _trace(fleet, store, incident, trace, at=now)
     case = _case(fleet, store, incident, settings)
     text = json.dumps(case)
     assert HIDDEN.decode() not in text
+    # No line naming a verify/ path survives anywhere: log, trace, actions, reasoning.
+    hidden = doctor_evidence.rules.VERIFY_WITHHELD
+    evidence = json.dumps({k: v for k, v in case.items() if k != "notes"})
+    assert "verify/" not in evidence.replace(hidden, "")
+    assert case["log_tail"] == [hidden, "S HOLDING->RELEASE reason=dist_lt_threshold", hidden]
+    assert case["trace_tail"] == [hidden, '{"content": "patched hold.py"}']
+    assert [t["action"] for t in case["tried"]] == ["park", hidden, "verify d1_hand_trace: FAIL"]
+    assert case["incident"]["agent_reasoning"] == f"Tier 3.\n{hidden}\nParked."
+    assert (
+        "verify: 5 log, trace or healer lines withheld (they name held-out verify/ paths)"
+        in case["notes"]
+    )
     assert all(not p.startswith("verify") for p in case["code"]["tree"])
     assert "verify/test_verify_d1.py" not in [f["path"] for f in case["code"]["files"]]
     # The coder's and the check's files leave it out too.

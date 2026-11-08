@@ -131,6 +131,26 @@ def test_split_patch_of_nothing_is_nothing():
     assert rules.split_patch("just prose\n", "tests/test_x.py") == ""
 
 
+def _prefixed(patch: str) -> str:
+    return patch.replace(" a/", " a/device/").replace(" b/", " b/device/")
+
+
+def test_split_patch_reads_a_device_prefixed_patch_the_contracts_way():
+    full = _prefixed(FIX + REPRO)
+    part = rules.split_patch(full, "tests/test_regression_d1.py")
+    assert part == _prefixed(REPRO)
+    assert rules.find_repro_test(full) == "tests/test_regression_d1.py"
+
+
+def test_a_patch_that_mixes_path_forms_is_refused_whole():
+    """The contract refuses mixed `device/` forms (B3): nothing is split or found."""
+    mixed = FIX + _prefixed(REPRO)
+    assert rules.split_patch(mixed, "tests/test_regression_d1.py") == ""
+    assert rules.find_repro_test(mixed) is None
+    dot = REPRO.replace("b/tests/", "b/./device/tests/").replace("a/tests/", "a/./device/tests/")
+    assert rules.split_patch(dot, "tests/test_regression_d1.py") == ""
+
+
 # --- find_repro_test ---------------------------------------------------------------------
 
 
@@ -151,6 +171,27 @@ def test_find_repro_test_ignores_deleted_and_non_test_files():
     outside = REPRO.replace("tests/test_regression_d1.py", "control/test_inline.py")
     assert rules.find_repro_test(FIX + deleted + helper + outside) is None
     assert rules.find_repro_test("") is None
+
+
+def test_find_repro_test_takes_the_path_that_exists_after_a_rename():
+    rename = (
+        "diff --git a/tests/test_old.py b/tests/test_new.py\n"
+        "similarity index 90%\nrename from tests/test_old.py\nrename to tests/test_new.py\n"
+        "--- a/tests/test_old.py\n+++ b/tests/test_new.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+    )
+    pure = (
+        "diff --git a/tests/test_a.py b/tests/test_b.py\n"
+        "similarity index 100%\nrename from tests/test_a.py\nrename to tests/test_b.py\n"
+    )
+    assert rules.find_repro_test(FIX + rename) == "tests/test_new.py"
+    assert rules.find_repro_test(FIX + pure) == "tests/test_b.py"
+    # renamed away from tests/: nothing under tests/ exists after it
+    away = pure.replace("b/tests/test_b.py", "b/control/test_b.py").replace(
+        "rename to tests/test_b.py", "rename to control/test_b.py"
+    )
+    assert rules.find_repro_test(FIX + away) is None
+    # a new file under tests/ still wins over a renamed one
+    assert rules.find_repro_test(FIX + rename + REPRO) == "tests/test_regression_d1.py"
 
 
 @pytest.mark.parametrize(
@@ -233,6 +274,11 @@ def test_draft_task_skips_hypotheses_that_arent_objects():
 # --- check_verdict -----------------------------------------------------------------------
 
 
+REPRO_PATH = "tests/test_regression_d1.py"
+REPRO_ID = f"{REPRO_PATH}::test_close_reading_does_not_release"
+OTHER_ID = "tests/test_gripper.py::test_idle_stays_open"
+
+
 def _run(exit_code=1, **changes):
     run = {
         "patch_error": None,
@@ -242,51 +288,97 @@ def _run(exit_code=1, **changes):
         "tests_passed": exit_code == 0,
         "passed": exit_code == 0,
         "tests_summary": "1 failed in 0.1s" if exit_code else "5 passed in 0.2s",
+        "failed": {REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')"}
+        if exit_code
+        else {},
+        "passed_ids": [] if exit_code else [REPRO_ID],
         "flags": [],
     }
     return run | changes
 
 
-REPRO_PATH = "tests/test_regression_d1.py"
-
-
-def test_a_repro_that_fails_before_and_a_fix_that_passes_after_passes():
-    v = rules.check_verdict(_run(1), _run(0), REPRO_PATH)
+def test_a_repro_that_fails_on_behaviour_then_passes_with_a_clean_fix_passes():
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH)
     assert v["passed"] is True and v["reason"] is None
     assert (v["fails_before"], v["passes_after"], v["device_tests"]) == (True, True, True)
+    assert v["repro_ids"] == [REPRO_ID]
     assert "fails on the base (exit 1, 1 failed in 0.1s)" in v["summary"]
-    assert "with the fix: exit 0, 5 passed" in v["summary"]
+    assert "device tests with the fix: exit 0, 5 passed" in v["summary"]
 
 
-def test_a_collection_error_on_the_base_counts_as_failing():
-    """The repro imports something the fix adds: pytest exits 2 on the base."""
-    assert rules.check_verdict(_run(2), _run(0), REPRO_PATH)["passed"] is True
+def test_a_collection_error_on_the_base_proves_nothing():
+    """The reviewer's probe: the repro imports a name only the fix adds, so pytest exits 2
+    (a collection error) on the base. That is not a failing test."""
+    v = rules.check_verdict(_run(2, failed={}), _run(0), _run(0), REPRO_PATH)
+    assert v["passed"] is False and v["fails_before"] is False
+    assert "pytest exited 2, not 1" in v["reason"]
 
 
 @pytest.mark.parametrize(
     ("before", "why"),
     [
-        (_run(0), "doesn't fail on the base code (exit 0"),
-        (_run(5), "doesn't fail on the base code (exit 5"),  # no tests collected
-        (_run(4), "doesn't fail on the base code (exit 4"),  # no such file
-        (_run(None), "(no result)"),
-        (_run(1, timed_out=True), "(timed out)"),
-        (_run(1, configured=False), "(no test command)"),
-        (_run(1, patch_error="does not apply"), "could not be replayed on the base"),
-        (_run(True), "doesn't fail on the base code"),  # a bool is not an exit code
-        (None, "(not run)"),
+        (_run(0), "pytest exited 0, not 1"),
+        (_run(5, failed={}), "pytest exited 5, not 1"),  # no tests collected
+        (_run(4, failed={}), "pytest exited 4, not 1"),  # no such file
+        (_run(None), "pytest exited None, not 1 (no result)"),
+        (_run(1, timed_out=True), "didn't run to a result (timed out)"),
+        (_run(1, configured=False), "didn't run to a result (no test command)"),
+        (_run(1, patch_error="does not apply"), "could not be replayed (refused: does not apply"),
+        (_run(True), "pytest exited True, not 1"),  # a bool is not an exit code
+        (None, "never run"),
+        # exit 1, but the failing test is elsewhere (the base suite was already red)
+        (_run(1, failed={OTHER_ID: "assert 1 == 2"}), f"no test in {REPRO_PATH} failed"),
+        (_run(1, failed={}), f"no test in {REPRO_PATH} failed"),
+        # fails only because a name the "fix" adds is missing
+        (
+            _run(1, failed={REPRO_ID: "ImportError: cannot import name 'DOCTOR_FIXED'"}),
+            "fail only because a name is missing (ImportError",
+        ),
+        (
+            _run(1, failed={REPRO_ID: "AttributeError: module 'contr..."}),
+            "fail only because a name is missing",
+        ),
+        (_run(1, failed={REPRO_ID: "ModuleNotFoundError: No module named 'x'"}), "a name is"),
     ],
 )
-def test_a_repro_that_doesnt_really_fail_on_the_base_fails_the_check(before, why):
-    v = rules.check_verdict(before, _run(0), REPRO_PATH)
-    assert v["passed"] is False and v["fails_before"] is False
+def test_a_repro_that_doesnt_prove_the_fault_fails_the_check(before, why):
+    v = rules.check_verdict(before, _run(0), _run(0), REPRO_PATH)
+    assert v["passed"] is False and v["fails_before"] is False and v["passes_after"] is False
+    assert why in v["reason"]
+
+
+def test_only_behavioural_failures_in_the_repro_file_count():
+    failed = {
+        REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')",
+        f"{REPRO_PATH}::test_import": "ImportError: cannot import name 'X'",
+        OTHER_ID: "assert 1 == 2",
+        f"device/{REPRO_PATH}::test_prefixed": "AttributeError: 'NoneType' object has no attr",
+    }
+    ids, why = rules.repro_failures(_run(1, failed=failed), REPRO_PATH)
+    assert why == "" and ids == [REPRO_ID, f"device/{REPRO_PATH}::test_prefixed"]
+
+
+@pytest.mark.parametrize(
+    ("after_repro", "why"),
+    [
+        (None, "never run with the fix"),
+        (_run(1), "the repro test doesn't pass with the fix (exit 1"),
+        (_run(0, passed_ids=[]), f"these repro tests didn't pass: {REPRO_ID}"),
+        (_run(0, passed_ids=[OTHER_ID]), f"these repro tests didn't pass: {REPRO_ID}"),
+        (_run(0, patch_error="no"), "doesn't pass with the fix (refused: no"),
+        (_run(0, timed_out=True), "doesn't pass with the fix"),
+    ],
+)
+def test_the_same_repro_ids_must_pass_with_the_fix(after_repro, why):
+    v = rules.check_verdict(_run(1), after_repro, _run(0), REPRO_PATH)
+    assert v["passed"] is False and v["fails_before"] is True and v["passes_after"] is False
     assert why in v["reason"]
 
 
 @pytest.mark.parametrize(
     ("after", "why"),
     [
-        (None, "never replayed"),
+        (None, "never run with the fix"),
         (_run(1), "the device tests don't pass with the fix (exit 1"),
         (_run(0, passed=False), "the device tests don't pass"),  # e.g. nothing was checked
         (_run(0, patch_error="patch does not apply"), "the fix could not be replayed"),
@@ -295,24 +387,93 @@ def test_a_repro_that_doesnt_really_fail_on_the_base_fails_the_check(before, why
             "changes how its tests are judged: test_harness: conftest.py",
         ),
         (_run(0, flags=["verify_scripts: verify/x.py (modified)"]), "verify_scripts"),
+        (
+            _run(0, flags=["existing_test: tests/test_gripper.py (modified)"]),
+            "existing_test: tests/test_gripper.py",
+        ),
     ],
 )
-def test_a_fix_that_doesnt_pass_cleanly_fails_the_check(after, why):
-    v = rules.check_verdict(_run(1), after, REPRO_PATH)
-    assert v["passed"] is False and v["fails_before"] is True
+def test_a_fix_that_doesnt_pass_the_device_tests_cleanly_fails_the_check(after, why):
+    v = rules.check_verdict(_run(1), _run(0), after, REPRO_PATH)
+    assert v["passed"] is False and v["fails_before"] is True and v["passes_after"] is True
     assert why in v["reason"]
 
 
-def test_an_existing_test_flag_is_recorded_but_doesnt_fail_the_check():
-    flag = "existing_test: tests/test_gripper.py (modified)"
-    v = rules.check_verdict(_run(1), _run(0, flags=[flag]), REPRO_PATH)
+def test_editing_the_repro_file_itself_is_allowed():
+    flag = f"existing_test: {REPRO_PATH} (modified)"
+    v = rules.check_verdict(_run(1), _run(0), _run(0, flags=[flag]), REPRO_PATH)
     assert v["passed"] is True and v["flags"] == [flag]
 
 
-def test_repro_failed_reads_only_real_failures():
-    assert rules.repro_failed(_run(1)) and rules.repro_failed(_run(-9))
-    for bad in (_run(0), _run(4), _run(5), _run(None), _run("1"), {}, None, "x"):
-        assert not rules.repro_failed(bad), bad
+def test_tampering_fails_the_check_before_anything_else():
+    v = rules.check_verdict(None, None, None, REPRO_PATH, ["removes the existing test file x"])
+    assert v["passed"] is False and v["fails_before"] is False
+    assert (
+        v["reason"] == "the patch tampers with the existing tests: removes the existing test file x"
+    )
+
+
+# --- tampered_tests and pytest_results ---------------------------------------------------
+
+
+DELETE_TEST = (
+    "diff --git a/tests/test_gripper.py b/tests/test_gripper.py\ndeleted file mode 100644\n"
+    "--- a/tests/test_gripper.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-import pytest\n"
+)
+RENAME_TEST = (
+    "diff --git a/tests/test_gripper.py b/tests/test_moved.py\n"
+    "similarity index 100%\nrename from tests/test_gripper.py\nrename to tests/test_moved.py\n"
+)
+CONFTEST = (
+    "--- a/tests/conftest.py\n+++ b/tests/conftest.py\n@@ -1 +1 @@\n-import sys\n+import os\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("patch", "found"),
+    [
+        (FIX + REPRO, []),
+        (FIX + REPRO + EXISTING_TEST, ["edits the existing test file tests/test_gripper.py"]),
+        (FIX + EXISTING_TEST, []),  # the repro file is the existing test itself
+        (FIX + REPRO + DELETE_TEST, ["removes the existing test file tests/test_gripper.py"]),
+        (FIX + REPRO + RENAME_TEST, ["removes the existing test file tests/test_gripper.py"]),
+        (FIX + REPRO + CONFTEST, ["edits the existing test file tests/conftest.py"]),
+    ],
+    ids=["clean", "edits", "repro-is-existing", "deletes", "renames", "conftest"],
+)
+def test_tampered_tests(patch, found):
+    repro = rules.find_repro_test(patch)
+    assert rules.tampered_tests(patch, repro) == found
+
+
+def test_an_unreadable_patch_counts_as_tampering():
+    mixed = FIX + REPRO.replace("b/tests/", "b/device/tests/").replace(
+        "a/tests/", "a/device/tests/"
+    )
+    assert rules.tampered_tests(mixed, REPRO_PATH) == [
+        "the patch can't be read, so its test changes can't be checked"
+    ]
+
+
+def test_pytest_results_reads_the_short_summary():
+    output = (
+        "....F\n=== short test summary info ===\n"
+        f"PASSED {OTHER_ID}\n"
+        f"FAILED {REPRO_ID} - assert ('RELEASE', 'open') == ('HOLDING', 'close')\n"
+        "FAILED tests/test_x.py::test_y\n"
+        "ERROR tests/test_z.py::test_w - fixture 'nope' not found\n"
+        f"PASSED {OTHER_ID}\n"
+        "1 failed, 1 passed in 0.1s\n"
+    )
+    assert rules.pytest_results(output) == {
+        "passed": [OTHER_ID],
+        "failed": {
+            REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')",
+            "tests/test_x.py::test_y": "",
+        },
+        "errors": ["tests/test_z.py::test_w"],
+    }
+    assert rules.pytest_results("") == {"passed": [], "failed": {}, "errors": []}
 
 
 # --- evidence helpers --------------------------------------------------------------------
@@ -321,7 +482,7 @@ def test_repro_failed_reads_only_real_failures():
 def test_package_rel_strips_device_and_never_keeps_verify():
     files = {
         "device/control/hold.py": b"a",
-        "./device/tests/test_hold.py": b"b",
+        "device/tests/test_hold.py": b"b",
         "device/verify/test_verify_d1.py": b"hidden",
         "device/Verify/other.py": b"hidden too",  # case-insensitive, like the coder
         "README.md": b"outside device/",
@@ -335,18 +496,53 @@ def test_package_rel_accepts_a_package_without_the_device_prefix():
     assert rules.package_rel(files) == {"control/hold.py": b"a"}
 
 
+def test_package_rel_drops_what_the_contract_refuses():
+    """`./device/x` is refused by the contract (git would apply it at device/device/x)."""
+    files = {"control/hold.py": b"a", "./device/control/x.py": b"no", "a/../../b.py": b"no"}
+    assert rules.package_rel(files) == {"control/hold.py": b"a"}
+
+
 @pytest.mark.parametrize(
     ("name", "rel"),
     [
         ("device/control/hold.py", "control/hold.py"),
-        ("./device/control/hold.py", "control/hold.py"),
+        ("control/hold.py", "control/hold.py"),
         ("control//hold.py", "control/hold.py"),
-        ("device", ""),
-        (".", ""),
+        ("./control/hold.py", "control/hold.py"),
+        ("./device/control/hold.py", None),  # the contract refuses `./device/`
+        ("../escape.py", None),
+        ("/etc/passwd", None),
+        ("device", None),
+        ("", None),
+        ("a\nb", None),
     ],
 )
-def test_code_rel(name, rel):
-    assert rules.code_rel(name) == rel
+def test_patch_path_is_the_contracts_reading(name, rel):
+    assert rules.patch_path(name) == rel
+
+
+def test_withhold_verify_hides_lines_that_name_verify_paths():
+    lines = [
+        "S HOLDING->RELEASE reason=dist_lt_threshold",
+        "verify/test_verify_d1.py::test_hand_near FAILED",
+        "running /work/verify/test_verify_d1.py",
+        {"cmd": "pytest device/Verify/x.py"},
+        "verify d1_hand_trace: FAIL",  # the word, not a path: kept
+        "preverify/x is fine",
+    ]
+    out, withheld = rules.withhold_verify(lines)
+    assert withheld == 3
+    assert out == [
+        lines[0],
+        rules.VERIFY_WITHHELD,
+        rules.VERIFY_WITHHELD,
+        rules.VERIFY_WITHHELD,
+        lines[4],
+        lines[5],
+    ]
+    text, n = rules.withhold_verify_text("line one\nsaw verify/x.py fail\nline three")
+    assert n == 1 and text == f"line one\n{rules.VERIFY_WITHHELD}\nline three"
+    assert rules.withhold_verify_text(None) == (None, 0)
 
 
 PATHS = ["control/hold.py", "control/gripper.py", "SPEC.md", "tests/test_hold.py", "util/hold.py"]

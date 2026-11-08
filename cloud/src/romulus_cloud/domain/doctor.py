@@ -620,50 +620,81 @@ REPRO_DIR = "tests"  # the reproduction test goes here, relative to CODE_ROOT
 DEFAULT_TEST_CMD = "python -m pytest -q"
 # Flags (`adapters.coder.harness_flags`) that mean a fix changed how its own tests are judged.
 GAMING_FLAGS = ("test_harness:", "verify_scripts:")
-# pytest exit codes that are not "the test failed": 0 passed, 4 usage error (e.g. no such
-# file), 5 no tests collected. Anything else (1 failed, 2 collection error) is a failure.
-_NOT_A_FAILURE = frozenset({0, 4, 5})
+# A failure that only says a name is missing: what a repro test that imports something the
+# "fix" merely adds looks like (`DOCTOR_FIXED = True`). It doesn't exercise the bug.
+# pytest cuts summary reasons to the terminal width (`AttributeError: module 'contr...`), so
+# only the start of the reason is matched.
+_MISSING_NAME = re.compile(r"^(?:ImportError|ModuleNotFoundError)\b|^AttributeError: module\b")
+_RESULT_LINE = re.compile(r"^(PASSED|FAILED|ERROR) (\S+)(?: - (.*))?$")
 _PATH_TOKEN = re.compile(r"[A-Za-z0-9_./\\-]+")
 _CODER_TOKENS = re.compile(r"tokens (\d+) in / (\d+) out")
+# A held-out verify path in log or trace text (`verify/x.py`, `device/verify/`, `/work/verify/`).
+_VERIFY_PATH = re.compile(r"(?i)(?<![A-Za-z0-9_])verify[/\\]")
+VERIFY_WITHHELD = "[line withheld: it names a held-out verify/ path]"
 
 
-def _parts(path: str) -> tuple[str, ...]:
-    """A POSIX path's parts with `//` and `.` collapsed and `..` kept, like
-    `PurePosixPath.parts` without a root (`pathlib` is off limits in the domain)."""
-    return tuple(p for p in path.split("/") if p not in ("", "."))
-
-
-def code_rel(name: str) -> str:
-    """A path relative to CODE_ROOT, whether or not it was written with a leading `device/`
-    (`./device/control/hold.py` and `control/hold.py` both give `control/hold.py`)."""
-    parts = _parts(str(name).strip().replace("\\", "/"))
-    if parts[:1] == (CODE_ROOT,):
-        parts = parts[1:]
-    return "/".join(parts)
+def patch_path(path: str) -> str | None:
+    """`path` read exactly the way the contract reads a `code_patch` path
+    (`romulus_contracts.summarize_code_patch`, B3): relative to `device/`, with or without a
+    leading `device/`. None for anything the contract refuses (`./device/x`, `..`, an
+    absolute path, an empty one). There is no private copy of the rules here: this asks the
+    contract's parser about a one-file header."""
+    raw = str(path).strip()
+    if not raw or "\n" in raw or "\t" in raw:
+        return None
+    summary = summarize_code_patch(f"--- a/{raw}\n+++ b/{raw}\n")
+    if summary.problems or summary.rejected_paths or len(summary.paths) != 1:
+        return None
+    return summary.paths[0]
 
 
 def package_rel(files: Mapping[str, bytes]) -> dict[str, bytes]:
     """A code package's files keyed by path relative to CODE_ROOT, **without `verify/`**.
 
     Tolerates either layout: when any name starts with `device/`, only those count (as the
-    coder does); otherwise every name is already relative to CODE_ROOT. Absolute names and
-    names with `..` are dropped, and so is anything under `verify/` (case-insensitive).
+    coder does); otherwise every name is already relative to CODE_ROOT. Each name is read by
+    `patch_path`, so anything the contract refuses (`./device/x`, `..`, absolute) is dropped,
+    and so is anything under `verify/`.
     """
     names = {str(n): d for n, d in files.items()}
-    rooted = any(_parts(n)[:1] == (CODE_ROOT,) for n in names)
+    rooted = any(n.split("/", 1)[0] == CODE_ROOT for n in names)
     out: dict[str, bytes] = {}
     for name, data in names.items():
-        parts = _parts(name)
-        if rooted:
-            if parts[:1] != (CODE_ROOT,):
-                continue
-            parts = parts[1:]
-        if not parts or name.startswith("/") or ".." in parts:
+        if rooted and name.split("/", 1)[0] != CODE_ROOT:
             continue
-        rel = "/".join(parts)
-        if not is_under(rel, HOLDOUT_DIR):
+        rel = patch_path(name)
+        if rel is not None and not is_under(rel, HOLDOUT_DIR):
             out[rel] = data
     return out
+
+
+def names_verify(value: Any) -> bool:
+    """Does this log or trace entry name a held-out `verify/` path?"""
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return bool(_VERIFY_PATH.search(text))
+
+
+def withhold_verify(lines: Iterable[Any]) -> tuple[list[Any], int]:
+    """(log or trace entries with every one that names a `verify/` path replaced by
+    `VERIFY_WITHHELD`, how many were replaced). The held-out checks stay hidden from the
+    Doctor's prompts and its stored trace (architecture §6 item 7)."""
+    out: list[Any] = []
+    withheld = 0
+    for line in lines:
+        if names_verify(line):
+            out.append(VERIFY_WITHHELD)
+            withheld += 1
+        else:
+            out.append(line)
+    return out, withheld
+
+
+def withhold_verify_text(text: str | None) -> tuple[str | None, int]:
+    """`withhold_verify` line by line over one multi-line string (the healer's reasoning)."""
+    if not isinstance(text, str):
+        return text, 0
+    lines, withheld = withhold_verify(text.split("\n"))
+    return "\n".join(lines), withheld
 
 
 def named_paths(
@@ -761,9 +792,18 @@ def coder_usage(notes: str | None) -> tuple[int, int] | None:
 _HUNK_HEADER = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 
 
+def _one_path(text: str) -> str | None:
+    """The single path the contract reads from a header fragment, or None."""
+    summary = summarize_code_patch(text)
+    if summary.problems or summary.rejected_paths or len(summary.paths) != 1:
+        return None
+    return summary.paths[0]
+
+
 @dataclass(frozen=True)
 class _Section:
-    """One file's part of a unified diff: its header lines and every hunk."""
+    """One file's part of a unified diff: its header lines and every hunk. Every path is
+    read by the contract's parser (`summarize_code_patch`), never by string tricks here."""
 
     lines: tuple[str, ...]
 
@@ -775,16 +815,42 @@ class _Section:
     def paths(self) -> tuple[str, ...]:
         return summarize_code_patch(self.text).paths
 
-    def _has(self, starts: tuple[str, ...], exact: str) -> bool:
-        return any(ln.startswith(starts) or ln.rstrip("\r") == exact for ln in self.lines)
+    @property
+    def header(self) -> list[str]:
+        """The lines before the first hunk (so a removed body line `--- x` isn't read)."""
+        out = []
+        for line in self.lines:
+            if _HUNK_HEADER.match(line.rstrip("\r")):
+                break
+            out.append(line.rstrip("\r"))
+        return out
+
+    def _first(self, *starts: str) -> str | None:
+        return next((ln for ln in self.header if ln.startswith(starts)), None)
 
     @property
-    def added(self) -> bool:
-        return self._has(("new file mode",), "--- /dev/null")
+    def sides(self) -> tuple[str | None, str | None]:
+        """(the path before the patch, the path after it), relative to `device/`; None for
+        "doesn't exist" (an added file before, a deleted file after) or unreadable."""
+        minus, plus = self._first("--- "), self._first("+++ ")
+        if minus is not None and plus is not None:
+            pre = None if minus == "--- /dev/null" else _one_path(f"{minus}\n+++ /dev/null\n")
+            post = None if plus == "+++ /dev/null" else _one_path(f"--- /dev/null\n{plus}\n")
+            return pre, post
+        source = self._first("rename from ", "copy from ")
+        target = self._first("rename to ", "copy to ")
+        if target is not None:
+            return (_one_path(source + "\n") if source else None), _one_path(target + "\n")
+        if self._first("deleted file mode"):
+            return (self.paths[0] if len(self.paths) == 1 else None), None
+        if self._first("new file mode"):
+            return None, (self.paths[0] if len(self.paths) == 1 else None)
+        only = self.paths[0] if len(self.paths) == 1 else None  # e.g. a mode change
+        return only, only
 
     @property
-    def deleted(self) -> bool:
-        return self._has(("deleted file mode",), "+++ /dev/null")
+    def copied(self) -> bool:
+        return self._first("copy from ") is not None
 
 
 def _sections(patch: str) -> list[_Section]:
@@ -840,43 +906,81 @@ def _sections(patch: str) -> list[_Section]:
     return [_Section(tuple(s)) for s in sections]
 
 
+def _readable_sections(patch: str) -> list[_Section]:
+    """The patch's file sections, or [] when the contract finds any problem with the whole
+    patch (mixed `device/` forms, `./device/`, escapes, links): fail closed."""
+    if summarize_code_patch(patch).problems:
+        return []
+    return _sections(patch)
+
+
 def split_patch(patch: str, path: str) -> str:
     """The part of `patch` that touches `path`: every file section (header and hunks) whose
-    old or new path is `path`, in order, as a patch of its own; "" if none does.
+    old or new path is `path`, in order, as a patch of its own; "" if none does, or if the
+    contract refuses the patch.
 
-    Paths compare relative to CODE_ROOT, so `device/tests/test_x.py` matches
-    `tests/test_x.py`. Used to replay the reproduction test alone, without the fix.
+    Paths are read the contract's way (`patch_path`), so `device/tests/test_x.py` and
+    `tests/test_x.py` are the same file. Used to replay the reproduction test alone.
     """
-    target = code_rel(path)
-    if not target:
+    target = patch_path(path)
+    if target is None:
         return ""
-    kept = [s for s in _sections(patch) if target in {code_rel(p) for p in s.paths}]
+    kept = [s for s in _readable_sections(patch) if target in s.paths]
     return "".join(s.text for s in kept)
 
 
 def is_test_path(path: str) -> bool:
     """A Python test file under `tests/` (relative to CODE_ROOT): `tests/.../test_*.py` or
     `tests/.../*_test.py`."""
-    parts = _parts(code_rel(path))
+    rel = patch_path(path)
+    parts = rel.split("/") if rel else []
     if len(parts) < 2 or parts[0] != REPRO_DIR:
         return False
     name = parts[-1]
     return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
 
 
+def _is_testish(rel: str) -> bool:
+    """A file the device's tests are made of: anything under a `tests/` directory, or a
+    `test_*` / `*_test.py` file anywhere (the same rule as `adapters.coder.harness_flags`)."""
+    parts = rel.casefold().split("/")
+    name = parts[-1]
+    return "tests" in parts[:-1] or name.startswith("test_") or name.endswith("_test.py")
+
+
 def find_repro_test(patch: str) -> str | None:
-    """The reproduction test inside a draft's patch: the first test file it **adds** under
-    `tests/`, else the first one it modifies; never one it deletes. None if there is none."""
+    """The reproduction test inside a draft's patch: a test file under `tests/` that
+    **exists after the patch**, preferring one the patch adds, else one it modifies; never a
+    deleted or renamed-away path. None if there is none, or if the contract refuses the
+    patch."""
     added: list[str] = []
     changed: list[str] = []
-    for section in _sections(patch):
-        if section.deleted:
+    for section in _readable_sections(patch):
+        pre, post = section.sides
+        if post is None or not is_test_path(post):
             continue
-        for p in section.paths:
-            if is_test_path(p):
-                (added if section.added else changed).append(code_rel(p))
+        (added if pre is None else changed).append(post)
     found = added or changed
     return found[0] if found else None
+
+
+def tampered_tests(patch: str, repro_test: str | None) -> list[str]:
+    """What the patch does to the device's existing tests, besides its repro file: deleting
+    or renaming away any test file, or editing any test file other than the repro file. Each
+    entry is one sentence; [] means none. An unreadable patch is tampering (fail closed)."""
+    if summarize_code_patch(patch).problems:
+        return ["the patch can't be read, so its test changes can't be checked"]
+    repro = patch_path(repro_test) if repro_test else None
+    found: list[str] = []
+    for section in _sections(patch):
+        pre, post = section.sides
+        if pre is None or not _is_testish(pre):
+            continue
+        if post != pre and not section.copied:
+            found.append(f"removes the existing test file {pre}")
+        elif post == pre and pre != repro:
+            found.append(f"edits the existing test file {pre}")
+    return found
 
 
 # --- the coder's task ---------------------------------------------------------------------
@@ -932,16 +1036,82 @@ def draft_task(
 # --- the sandbox check --------------------------------------------------------------------
 
 
-def repro_failed(run: Mapping[str, Any] | None) -> bool:
-    """Did the reproduction test fail on the base? Only a real failure counts: the patch
-    applied, a test command ran to an exit code, and that code isn't a pass, "no such file"
-    or "no tests collected" (`_NOT_A_FAILURE`). A timeout or a missing result isn't one."""
-    if not isinstance(run, Mapping) or run.get("patch_error") or run.get("timed_out"):
-        return False
-    if run.get("configured") is False:
-        return False
+def pytest_results(output: str) -> dict[str, Any]:
+    """The short test summary of a `pytest -rA` run: `{"passed": [id], "failed": {id:
+    reason}, "errors": [id]}`. Lines that aren't summary lines are ignored."""
+    passed: list[str] = []
+    failed: dict[str, str] = {}
+    errors: list[str] = []
+    for line in (output or "").splitlines():
+        match = _RESULT_LINE.match(line.rstrip("\r"))
+        if not match:
+            continue
+        kind, test_id, reason = match.group(1), match.group(2), match.group(3) or ""
+        if kind == "PASSED":
+            passed.append(test_id)
+        elif kind == "FAILED":
+            failed.setdefault(test_id, reason)
+        else:
+            errors.append(test_id)
+    return {"passed": list(dict.fromkeys(passed)), "failed": failed, "errors": errors}
+
+
+def _in_file(test_id: str, path: str | None) -> bool:
+    """Is pytest node id `tests/x.py::test_a` a test in `path` (the contract's reading)?"""
+    return path is not None and patch_path(str(test_id).split("::", 1)[0]) == path
+
+
+def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list[str], str]:
+    """(the ids of the repro file's tests that failed on behaviour on the base, why not when
+    there are none). Proof the repro test exercises the bug:
+
+    - pytest ran and exited **1** (tests failed). 0 passed, 2 is a collection error (e.g. it
+      imports a name only the fix adds), 4 no such file, 5 no tests; none of those count;
+    - at least one `FAILED` test id lies in the repro file;
+    - and failed on behaviour, not only because a name the fix adds is missing (an
+      `ImportError` / `ModuleNotFoundError`, or `AttributeError: module ... has no
+      attribute`): a test that only imports a new flag proves nothing.
+    """
+    if not isinstance(run, Mapping):
+        return [], "it was never run"
+    if run.get("patch_error"):
+        return [], f"it could not be replayed ({_describe(run)})"
+    if run.get("timed_out") or run.get("configured") is False:
+        return [], f"it didn't run to a result ({_describe(run)})"
     code = run.get("exit_code")
-    return isinstance(code, int) and not isinstance(code, bool) and code not in _NOT_A_FAILURE
+    if isinstance(code, bool) or code != 1:
+        return [], (
+            f"pytest exited {code}, not 1 ({_describe(run)}); only failing tests count, not a "
+            "pass, a collection error, a missing file or no tests"
+        )
+    target = patch_path(repro_test)
+    failed = run.get("failed") if isinstance(run.get("failed"), Mapping) else {}
+    mine = {str(i): str(r or "") for i, r in failed.items() if _in_file(str(i), target)}
+    if not mine:
+        return [], f"no test in {repro_test} failed ({_describe(run)})"
+    behaviour = [i for i, r in mine.items() if not _MISSING_NAME.search(r)]
+    if not behaviour:
+        first = next(iter(mine.values()))
+        return [], (
+            f"its tests fail only because a name is missing ({_clip(first, 160)}), so they "
+            "don't exercise the bug"
+        )
+    return behaviour, ""
+
+
+def repro_passes(run: Mapping[str, Any] | None, ids: Iterable[str]) -> str:
+    """Why the repro tests that failed before don't all pass with the full patch, or "" when
+    they do: pytest exited 0 and every one of `ids` is listed `PASSED`."""
+    ids = list(ids)
+    if not isinstance(run, Mapping):
+        return "the repro test was never run with the fix"
+    if run.get("patch_error") or run.get("timed_out") or run.get("exit_code") != 0:
+        return f"the repro test doesn't pass with the fix ({_describe(run)})"
+    passed = set(run.get("passed_ids") or [])
+    missing = [i for i in ids if i not in passed]
+    if missing:
+        return f"with the fix, these repro tests didn't pass: {', '.join(missing)}"
+    return ""
 
 
 def _describe(run: Mapping[str, Any] | None) -> str:
@@ -961,45 +1131,64 @@ def _describe(run: Mapping[str, Any] | None) -> str:
 
 
 def check_verdict(
-    before: Mapping[str, Any] | None, after: Mapping[str, Any] | None, repro_test: str
+    before: Mapping[str, Any] | None,
+    after_repro: Mapping[str, Any] | None,
+    after: Mapping[str, Any] | None,
+    repro_test: str,
+    tampering: Iterable[str] = (),
 ) -> dict[str, Any]:
-    """The sandbox check's answer from its two replays (`services.doctor_code.check_job`):
-    the repro test alone on the base must **fail**, and the full patch must **pass** the
-    device tests without changing how they are judged (`GAMING_FLAGS`). Fails closed.
+    """The sandbox check's answer (`services.doctor_code.check_job`). Fails closed. In order:
+
+    1. the patch leaves the existing tests alone (`tampered_tests`: no test file removed,
+       none edited but the repro file);
+    2. **fails before:** the repro test alone on the base fails on behaviour
+       (`repro_failures`);
+    3. **passes after:** those same test ids pass with the full patch (`repro_passes`);
+    4. the device tests (CODER_TEST_CMD) pass with the full patch, without changing how they
+       are judged (`GAMING_FLAGS`) or touching another existing test (`existing_test:`).
 
     → `{passed, fails_before, passes_after, device_tests, reason (None when passed),
-    summary, flags}`.
+    summary, flags, repro_ids}`.
     """
+    tampering = list(tampering)
     after = after if isinstance(after, Mapping) else None
-    fails_before = repro_failed(before)
+    ids, why_not_failing = repro_failures(before, repro_test) if not tampering else ([], "")
+    fails_before = bool(ids)
+    why_not_passing = repro_passes(after_repro, ids) if fails_before else "not run"
+    passes_after = fails_before and not why_not_passing
     applied = after is not None and not after.get("patch_error")
-    passes_after = bool(applied and after and after.get("passed"))
     device_tests = bool(applied and after and after.get("tests_passed")) if after else None
     flags = [str(f) for f in (after or {}).get("flags") or []]
+    repro = patch_path(repro_test)
     gaming = [f for f in flags if f.startswith(GAMING_FLAGS)]
-    if isinstance(before, Mapping) and before.get("patch_error"):
-        reason = (
-            f"the repro test {repro_test} could not be replayed on the base code "
-            f"({_describe(before)})"
-        )
+    gaming += [
+        f
+        for f in flags
+        if f.startswith("existing_test:") and not f.startswith(f"existing_test: {repro} (")
+    ]
+    if tampering:
+        reason = f"the patch tampers with the existing tests: {'; '.join(tampering)}"
     elif not fails_before:
         reason = (
-            f"the repro test {repro_test} doesn't fail on the base code "
-            f"({_describe(before)}), so it doesn't reproduce the fault"
+            f"the repro test {repro_test} doesn't prove the fault on the base code: "
+            f"{why_not_failing}"
         )
+    elif not passes_after:
+        reason = why_not_passing
     elif after is None:
-        reason = "the full patch was never replayed"
+        reason = "the device tests were never run with the fix"
     elif not applied:
         reason = f"the fix could not be replayed ({_describe(after)})"
     elif gaming:
         reason = f"the fix changes how its tests are judged: {'; '.join(gaming)}"
-    elif not passes_after:
+    elif not after.get("passed"):
         reason = f"the device tests don't pass with the fix ({_describe(after)})"
     else:
         reason = None
     summary = (
         f"repro {repro_test}: {'fails' if fails_before else 'does not fail'} on the base "
-        f"({_describe(before)}); with the fix: {_describe(after)}"
+        f"({_describe(before)}); {'passes' if passes_after else 'does not pass'} with the fix "
+        f"({_describe(after_repro)}); device tests with the fix: {_describe(after)}"
     )
     return {
         "passed": reason is None,
@@ -1009,4 +1198,5 @@ def check_verdict(
         "reason": reason,
         "summary": summary,
         "flags": flags,
+        "repro_ids": ids,
     }

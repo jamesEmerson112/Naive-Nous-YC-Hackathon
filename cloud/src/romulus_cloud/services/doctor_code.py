@@ -8,17 +8,24 @@ and the coder budget it shares with the batch.
   puts the `device/` prefix back for the coder and the replay.
 - **Draft job** (`draft_job`): `coder.draft(patch="", ..., task=...)`, plain data in, a
   `CodeDraft` out.
-- **Check job** (`check_job`): two `coder_runs.replay_code_patch` runs in fresh containers
-  with no network: the repro test's part of the patch alone (`domain.doctor.split_patch`),
-  with the test command narrowed to that file, must FAIL; then the full patch with
-  CODER_TEST_CMD must PASS (skipped when the first already failed the check). The package's
-  verify scripts are not in `files`, so neither run sees them; the one pass/fail verify run
-  at the end that architecture §6 item 7 allows is skipped in v0.
+- **Check job** (`check_job`): up to three `coder_runs.replay_code_patch` runs in fresh
+  containers with no network, each stopping the check as soon as it fails:
+  1. the repro test's part of the patch alone (`domain.doctor.split_patch`) with the fixed
+     `REPRO_CMD` on the repro file: its tests must FAIL on behaviour (`repro_failures`);
+  2. the full patch with the same `REPRO_CMD`: those same test ids must PASS;
+  3. the full patch with CODER_TEST_CMD, unchanged (never appended to, so a compound
+     command like `pytest -q; ruff check .` stays what it says): the device tests pass.
+  The package's verify scripts are not in `files`, so no run sees them; the one pass/fail
+  verify run at the end that architecture §6 item 7 allows is skipped in v0.
 - **Coder budget:** CODER_MAX_DRAFTS_PER_HOUR counts `coder.started` events fleet-wide in
-  the last hour. The batch counts them in `batch._drafts_this_hour`; `coder_budget` runs the
-  same query (copied rather than imported: `batch.py` is private to another PR right now),
-  and the Doctor records its own `coder.started` (`data.source = "doctor"`) for every draft
-  it submits, so one budget covers both.
+  the last hour, minus job attempts the provider turned away having spent exactly 0 tokens
+  (the refund rule of `batch._drafts_this_hour`, #38). `coder_budget` runs the same query
+  (copied rather than imported: `batch.py` belongs to another PR) and also refunds the
+  Doctor's own zero-token attempts (`doctor.declined`, reason `coder_unavailable`). Every
+  Doctor submit records `coder.started` (`data.source = "doctor"`), so one budget covers
+  both. The batch's query doesn't see the Doctor's refunds yet (it reads only
+  `overlay.deferred` / `batch.error`), so it counts those attempts as spent: stricter, never
+  looser.
 
 Job functions never touch the database. Nothing here writes or commits.
 """
@@ -29,7 +36,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from romulus_cloud.adapters.blobstore import BlobStore
@@ -41,6 +48,7 @@ from romulus_cloud.adapters.coder import (
     build_coder,
     redact,
 )
+from romulus_cloud.domain import coder_retry
 from romulus_cloud.domain import doctor as rules
 from romulus_cloud.errors import ApiError
 from romulus_cloud.models import CodeVersion, Event
@@ -50,7 +58,11 @@ from romulus_cloud.settings import Settings
 from romulus_contracts.codepatch import CODE_ROOT
 
 CODER_STARTED = "coder.started"  # the batch's event; its count is the hourly budget
+CODER_UNAVAILABLE = "coder_unavailable"  # the batch's reason for a provider blip (#38)
 OUTPUT_TAIL = 2000  # characters of each replay's test output kept in the event
+# The repro step's fixed command: isolated Python (a planted `pytest.py` can't shadow
+# pytest), `-rA` so passing ids are listed too. The device's conftest still applies.
+REPRO_CMD = "python -I -m pytest -q -rA"
 
 
 class NoPackage(Exception):
@@ -114,33 +126,51 @@ def build_doctor_coder(settings: Settings) -> Coder:
 def coder_budget(
     session: Session, fleet_id: str, now: datetime, budget: int
 ) -> tuple[int, datetime | None]:
-    """(coder drafts started in the last hour, fleet-wide, batch and Doctor alike; when the
-    budget next has room, or None if it has room now).
+    """(coder drafts counted against the last hour, fleet-wide, batch and Doctor alike; when
+    the budget next has room, or None if it has room now).
 
-    Same window as the batch: `coder.started` events with `ts > now - 1h`. Over budget, room
-    comes back when enough of the oldest starts leave the window; with a budget of 0 it never
-    does, so the answer is an hour from now (check again then).
+    The batch's rule (`batch._drafts_this_hour`): `coder.started` events with
+    `ts > now - 1h`, minus job attempts known to have spent exactly 0 tokens, counted once
+    per job attempt (`reason: coder_unavailable, no_tokens: true` on the batch's
+    `overlay.deferred` / `batch.error` and on the Doctor's `doctor.declined`). Over budget,
+    room comes back when enough of the oldest starts leave the window (checked again then);
+    with a budget of 0 it never does, so the answer is an hour from now.
     """
+    recent = (Event.fleet_id == fleet_id, Event.ts > now - timedelta(hours=1))
     stamps = list(
         session.scalars(
-            select(Event.ts)
-            .where(
-                Event.fleet_id == fleet_id,
-                Event.kind == CODER_STARTED,
-                Event.ts > now - timedelta(hours=1),
-            )
-            .order_by(Event.ts)
+            select(Event.ts).where(*recent, Event.kind == CODER_STARTED).order_by(Event.ts)
         )
     )
-    started = len(stamps)
-    if started < budget:
-        return started, None
-    if budget <= 0:
-        return started, now + timedelta(hours=1)
-    return started, stamps[started - budget] + timedelta(hours=1)
+    job_attempt = Event.data["job"].astext.concat(":").concat(Event.data["attempt"].astext)
+    free = session.scalar(
+        select(func.count(distinct(job_attempt))).where(
+            *recent,
+            Event.kind.in_(["overlay.deferred", "batch.error", "doctor.declined"]),
+            Event.data.contains({"reason": CODER_UNAVAILABLE, "no_tokens": True}),
+        )
+    )
+    counted = max(len(stamps) - (free or 0), 0)
+    if counted < budget:
+        return counted, None
+    if budget <= 0 or not stamps:
+        return counted, now + timedelta(hours=1)
+    return counted, stamps[min(counted - budget, len(stamps) - 1)] + timedelta(hours=1)
 
 
 # --- jobs (plain data in and out; never the database) -------------------------------------
+
+
+def outcome(draft: CodeDraft, secrets: Iterable[str] = ()) -> coder_retry.CoderOutcome:
+    """A draft as `domain.coder_retry` reads it (the batch's `_outcome`, error redacted)."""
+    return coder_retry.CoderOutcome(
+        passed=draft.passed,
+        exit_status=draft.exit_status,
+        error=redact(draft.error, list(secrets)),
+        steps=draft.steps,
+        tokens=draft.tokens,
+        no_result=draft.no_result,
+    )
 
 
 def draft_job(
@@ -154,19 +184,21 @@ def draft_job(
     return coder.draft("", incident, base_rev, files, task=task)
 
 
-def repro_command(test_cmd: str, repro_test: str) -> str:
-    """The test command narrowed to the repro test, when it is a pytest command (the file is
-    shell-quoted; the image runs the command through a shell in CODE_ROOT). Otherwise the
-    whole command."""
-    if "pytest" not in test_cmd:
-        return test_cmd
-    return f"{test_cmd} {shlex.quote(rules.code_rel(repro_test))}"
+def repro_command(repro_test: str) -> str:
+    """`REPRO_CMD` on the repro file, shell-quoted (the image runs commands through a shell
+    in CODE_ROOT). Never derived from CODER_TEST_CMD. Raises ValueError for a path that isn't
+    a test file under `tests/` (the contract's reading)."""
+    rel = rules.patch_path(repro_test)
+    if rel is None or not rules.is_test_path(rel):
+        raise ValueError(f"{repro_test!r} is not a test file under {rules.REPRO_DIR}/")
+    return f"{REPRO_CMD} {shlex.quote(rel)}"
 
 
 def _run(replay: CodeReplay, secrets: Iterable[str]) -> dict[str, Any]:
     """The plain-data view of one replay that `domain.doctor.check_verdict` reads."""
     patched = replay.patched
     output = redact(patched.output if patched else "", secrets)
+    results = rules.pytest_results(output)
     return {
         "patch_error": redact(replay.patch_error, secrets) if replay.patch_error else None,
         "configured": patched.configured if patched else True,
@@ -176,6 +208,8 @@ def _run(replay: CodeReplay, secrets: Iterable[str]) -> dict[str, Any]:
         "passed": replay.passed,
         "tests_summary": test_summary(output) if patched else "",
         "failing": failing_tests(output),
+        "failed": results["failed"],
+        "passed_ids": results["passed"],
         "flags": [redact(f, secrets) for f in replay.flags],
         "summary": redact(replay.summary(), secrets),
         "output_tail": output[-OUTPUT_TAIL:],
@@ -193,16 +227,21 @@ def check_job(
     scratch_dir: str | None,
     secrets: Iterable[str] = (),
 ) -> dict[str, Any]:
-    """Off the tick: the repro test alone on the base (must fail), then the full patch (must
-    pass). → `{"before": run, "after": run | None}`; `after` is None when `before` already
-    failed the check (the repro test passed on the base, or didn't apply)."""
+    """Off the tick: the repro tests alone on the base (must fail on behaviour), the same
+    tests with the full patch (must pass), then the device tests with the full patch.
+    → `{"before": run, "after_repro": run | None, "after": run | None}`; a later run is None
+    when an earlier one already failed the check."""
     secrets = list(secrets)
     kw = {"sandbox": sandbox, "timeout_s": timeout_s, "scratch_dir": scratch_dir}
+    repro_cmd = repro_command(repro_test)
     repro_only = rules.split_patch(patch, repro_test)
-    before = replay_code_patch(
-        files, repro_only, test_cmd=repro_command(test_cmd, repro_test), **kw
-    )
-    result: dict[str, Any] = {"before": _run(before, secrets), "after": None}
-    if rules.repro_failed(result["before"]):
-        result["after"] = _run(replay_code_patch(files, patch, test_cmd=test_cmd, **kw), secrets)
+    before = _run(replay_code_patch(files, repro_only, test_cmd=repro_cmd, **kw), secrets)
+    result: dict[str, Any] = {"before": before, "after_repro": None, "after": None}
+    ids, _ = rules.repro_failures(before, repro_test)
+    if not ids:
+        return result
+    result["after_repro"] = _run(replay_code_patch(files, patch, test_cmd=repro_cmd, **kw), secrets)
+    if rules.repro_passes(result["after_repro"], ids):
+        return result
+    result["after"] = _run(replay_code_patch(files, patch, test_cmd=test_cmd, **kw), secrets)
     return result
