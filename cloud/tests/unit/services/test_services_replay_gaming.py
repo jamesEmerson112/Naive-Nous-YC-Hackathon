@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from romulus_cloud.adapters.coder import CoderError, ProcResult, Sandbox, SandboxRun
 from romulus_cloud.services import code_lockin, coder_runs
@@ -418,3 +419,23 @@ def test_outside_python_env_never_reaches_the_tests(tmp_path, monkeypatch):
     assert "-k nothing" not in out["output"]
     assert "junitxml" not in out["output"]  # no result location in the env
     assert out["results"] is None  # `env` is not pytest
+
+
+# --- 6. only sealable test commands are accepted ---------------------------------------------
+
+SEALABLE = ["python -m pytest -q", "python3 -I -m pytest", "python -m pytest -q; true", " "]
+UNSEALABLE = ["pytest -q", "uv run pytest", "make test", "python -m pytest_cov", "python t.py"]
+
+
+@pytest.mark.parametrize("cmd", SEALABLE + UNSEALABLE)
+def test_coder_test_cmd_must_be_a_form_the_image_seals(cmd, make_settings):
+    """CODER_TEST_CMD fails at startup unless the image would run it through the seal (the
+    settings pattern and the image's `pin_pytest` agree)."""
+    sealed_by_image = fakes.run_agent.pin_pytest(cmd, "/s/l.py") != cmd
+    if cmd in UNSEALABLE:
+        assert not sealed_by_image
+        with pytest.raises(ValidationError, match="can't be sealed"):
+            make_settings(coder_test_cmd=cmd)
+    else:
+        assert sealed_by_image or not cmd.strip()
+        assert make_settings(coder_test_cmd=cmd).coder_test_cmd == cmd

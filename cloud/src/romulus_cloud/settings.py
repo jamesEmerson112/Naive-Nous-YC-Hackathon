@@ -4,12 +4,18 @@ Fake modes are the defaults so `make up` works offline with no keys. Going live 
 changing one variable per adapter.
 """
 
+import re
 from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# `python[3[.x]] [flags] -m pytest` anywhere in a shell command: what the coder image's
+# `pin_pytest` (cloud/coder/run_agent.py) rewrites to its sealed launcher. Keep them equal.
+SEALABLE_PYTEST = r"(?<![^\s;&|(])((?:\S*/)?python3?(?:\.\d+)?)((?:\s+-[A-Za-z]+)*?)\s+-m\s+pytest"
+SEALABLE_PYTEST += r"(?=$|[\s;&|)])"
 
 
 class Settings(BaseSettings):
@@ -81,6 +87,23 @@ class Settings(BaseSettings):
     coder_test_cmd: str = "python -m pytest -q"
     coder_step_limit: int = 30
     coder_time_limit_s: int = 600
+
+    @field_validator("coder_test_cmd")
+    @classmethod
+    def _sealable_test_cmd(cls, value: str) -> str:
+        """Empty, or a command that runs `python [flags] -m pytest ...` somewhere: the one form
+        the coder image runs through its result seal (`cloud/coder/run_agent.py`,
+        `pin_pytest`; the same pattern). Any other way of starting the tests (bare `pytest`,
+        `uv run pytest`, `make test`) would be judged by its exit code alone, so it fails at
+        startup instead."""
+        if value.strip() and not re.search(SEALABLE_PYTEST, value):
+            raise ValueError(
+                f"CODER_TEST_CMD {value!r} can't be sealed: the coder image only seals the "
+                "results of `python -m pytest ...` (e.g. `python -m pytest -q`); use that form, "
+                "or leave it empty to rely on the held-out verify scripts alone"
+            )
+        return value
+
     # The gate's code replay (M8b): the device tests (CODER_TEST_CMD, empty = no replay, the
     # stub) and the held-out verify scripts, in fresh containers with no network. The
     # package's own `device/verify/` always runs; CODER_VERIFY_DIR adds a host directory of
