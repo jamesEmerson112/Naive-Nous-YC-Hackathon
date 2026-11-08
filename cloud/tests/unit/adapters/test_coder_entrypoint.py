@@ -101,3 +101,15 @@ def test_the_seal_ignores_everything_after_its_end_marker():
         "exitstatus": None,
         "incomplete": True,
     }
+
+
+def test_wait_for_endpoint_waits_for_the_proxy_then_gives_up():
+    import socket
+
+    with socket.socket() as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen()
+        port = srv.getsockname()[1]
+        assert run_agent.wait_for_endpoint(f"http://127.0.0.1:{port}/v1", timeout_s=2)
+    assert not run_agent.wait_for_endpoint(f"http://127.0.0.1:{port}/v1", timeout_s=0.3)
+    assert not run_agent.wait_for_endpoint("not a url", timeout_s=0.1)

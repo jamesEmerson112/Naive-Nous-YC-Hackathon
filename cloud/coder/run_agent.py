@@ -15,7 +15,9 @@ Three modes:
 
 Every mode ends stdout with one line, `ROMULUS_RESULT <json>`. Agent logs go to stderr.
 
-Env: LLM_BASE_URL, LLM_MODEL, LLM_API_KEY (OpenAI-compatible endpoint), CODER_TEST_CMD
+Env: LLM_BASE_URL, LLM_MODEL, LLM_API_KEY (OpenAI-compatible endpoint; for agent runs the
+worker sets the base URL to the egress proxy, `llm_proxy.py`, and the key to a per-job token,
+so the real key never enters this container: B5), CODER_TEST_CMD
 (default `python -m pytest -q`), CODER_STEP_LIMIT, CODER_TIME_LIMIT_S, CODER_TEST_TIMEOUT_S,
 CODER_MAX_TOKENS, CODER_LLM_TIMEOUT_S.
 
@@ -28,11 +30,13 @@ key from everything it gets back and fails the draft if the key shows up at all.
 import ctypes
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 WORK = "/work"
 VERIFY_DIR = "verify"
@@ -42,6 +46,23 @@ PR_SET_DUMPABLE = 4
 # mini-swe-agent v2 asks for ```mswea_bash_command fences; models trained on v1 (and gpt-oss
 # in our first dry run: RepeatedFormatError) write ```bash. Accept the usual shell fences.
 ACTION_REGEX = r"```(?:mswea_bash_command|bash|sh|shell)[ \t]*\n(.*?)\n```"
+
+
+def wait_for_endpoint(base_url: str, timeout_s: float = 15.0) -> bool:
+    """Wait until the LLM endpoint (the egress proxy, started just before us) accepts TCP."""
+    parts = urlsplit(base_url)
+    if not parts.hostname:
+        return False
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            socket.create_connection((parts.hostname, port), timeout=2).close()
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.2)
 
 
 def make_undumpable() -> bool:
@@ -322,6 +343,7 @@ def run_agent(task: str) -> dict:
     info = {"agent": "mini-swe-agent", "version": __version__, "model": model}
     if not (base_url and model):
         return {**info, "exit_status": "ConfigError", "error": "LLM_BASE_URL and LLM_MODEL"}
+    wait_for_endpoint(base_url)  # if it never comes up, the first call fails and says so
 
     # The stock text-based config: one fenced command per turn, which works with any chat
     # model behind an OpenAI-compatible proxy (no tool-call support needed).

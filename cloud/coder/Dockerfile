@@ -62,7 +62,9 @@ RUN uv pip install --system --no-cache pytest==8.4.2 \
 # versions.env comes along, so firmware_check.py can tell when firmware/ pins a newer toolchain.
 COPY --from=stm32 /opt/fw-toolkit /opt/fw-toolkit
 
-COPY run_agent.py firmware_check.py /opt/romulus/
+# llm_proxy.py is the agent run's egress proxy (B5): the worker starts it from this same image
+# as a sidecar with the real LLM key; the agent's container gets only a per-job token.
+COPY run_agent.py firmware_check.py llm_proxy.py /opt/romulus/
 
 WORKDIR /work
 ENTRYPOINT ["/opt/agent/bin/python", "/opt/romulus/run_agent.py"]
