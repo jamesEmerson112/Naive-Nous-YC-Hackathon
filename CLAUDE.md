@@ -76,7 +76,7 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sat Nov 7, 11:58 PM PST_
+_Last updated: Sun Nov 8, 12:08 AM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P1 minimum by 12:30 AM (a typed command moves the sim arm; a planted fault gives a spoken sentence), then P2 overnight to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), and P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). Kent's next steps: the live Naïve card and the overnight launch by 12:30 AM; #46 (B5) is his only open PR. Olir has the pod healer bench runs, the bad-ultrasonic arm heal test, and a review of the new firmware doc.
 
@@ -93,6 +93,8 @@ _Last updated: Sat Nov 7, 11:58 PM PST_
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email)
 
 **Recent commits (all authors):**
+- `b66d6fd` Sun 00:01 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `e8fcd2c` Sat 23:59 · jamesEmerson112 · Update team status and features.txt
 - `235e30d` Sat 23:50 · jamesEmerson112 · Firmware APIs and data: one cited reference for wiring the pod into Romulus, the harness and the arm
 - `e1e6561` Sat 23:49 · jamesEmerson112 · Update team status in CLAUDE.md
 - `a42ef74` Sat 23:49 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -101,8 +103,6 @@ _Last updated: Sat Nov 7, 11:58 PM PST_
 - `2f56e2d` Sat 23:31 · jamesEmerson112 · Hub: our build plan and James's features.txt lines in the Sim + control lane
 - `0240aee` Sat 23:29 · jamesEmerson112 · Update team status in CLAUDE.md
 - `43c707a` Sat 23:28 · Kent Gang · Update Kent status in CLAUDE.md
-- `ff25437` Sat 23:25 · kgang · Fleet Doctor: final tracker (all PRs merged), open follow-ups, features.txt (#52)
-- `2e71f56` Sat 23:23 · kgang · Fleet Doctor PR 7: real evidence, coder draft, sandbox check, consult traces (#44)
 
-**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `doctor/evidence-real` (#44), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
