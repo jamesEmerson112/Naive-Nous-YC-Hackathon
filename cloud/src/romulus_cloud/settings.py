@@ -231,6 +231,13 @@ class Settings(BaseSettings):
     technician_replay_file: str = ""
     technician_replay_seconds: float = 20
 
+    # Fleet learning (docs/recursive-self-improvement/design.md §3, §9). Off by default.
+    # data: the `learning.tick` step keeps the standing `fleet-runs` dataset (plain code, no
+    # model); fixture/live add cluster review later. A snapshot plus a `trajectories` export
+    # is taken whenever labelled pass/fail runs grew by LEARNING_MIN_NEW since the last one.
+    learning_mode: Literal["off", "data", "fixture", "live"] = "off"
+    learning_min_new: int = 1
+
 
 @lru_cache
 def get_settings() -> Settings:
