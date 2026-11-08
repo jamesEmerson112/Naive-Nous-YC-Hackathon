@@ -80,7 +80,7 @@ def test_waiting_shows_verdict_part_ticks_email_and_both_buttons():
     assert 'data-cart="https://shop.wowrobo.com/cart/48037575033049:1?storefront=true"' in html
     assert 'data-url="/v1/work-orders/wo_01jcx9e1ka/resolve"' in html
     assert "Approve &amp; open cart" in html
-    assert "Technician emailed" in html and "tech@naivenous.dev" in html and "sent 07:44" in html
+    assert "Technician emailed · 07:44" in html and "tech@naivenous.dev" in html
     assert "arm-1 down: clear elbow jam, spare servo ready" in html
     assert "Romulus Technician (Naïve agent)" in html
     assert v["email"]["via"].replace("'", "&#39;") in html
