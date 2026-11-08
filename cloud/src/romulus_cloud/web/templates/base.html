@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Romulus{% endblock %}</title>
+  <link rel="stylesheet" href="/static/romulus.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Romulus <span>incident timeline</span></a>
+    {% include "partials/killswitch.html" %}
+  </header>
+  <p id="killswitch-result" class="switch-result" role="status" aria-live="polite"></p>
+  <p id="stale" class="stale" role="alert" hidden></p>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="foot">Times in {{ tz }}. The page updates every 3 s. Every step says who acted and why.</footer>
+  <script>
+  // Kill switch (D11): POST JSON to the ops route and show what it answered.
+  document.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-switch]");
+    if (!btn) return;
+    const freezing = btn.dataset.switch === "freeze";
+    const ask = freezing
+      ? "Freeze the fleet? Rollouts stop and every arm is pinned to its last good version."
+      : "Unfreeze the fleet? Frozen candidates restart from replay.";
+    // The ops route records the press as actor human:<by> (APIs §4, F5).
+    const name = prompt(ask + "\n\nYour name (recorded as human:<name>):", "operator");
+    if (name === null) return;
+    const by = name.trim() || "operator";
+    const out = document.getElementById("killswitch-result");
+    out.className = "switch-result";
+    out.textContent = freezing ? "Freezing…" : "Unfreezing…";
+    try {
+      const resp = await fetch(btn.dataset.url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({by: by, reason: "human:" + by + " pressed " + btn.textContent.trim() + " on the dashboard"}),
+      });
+      const body = await resp.json().catch(() => ({}));
+      out.classList.add(resp.ok ? "ok" : "err");
+      // Show the server's own sentence: its `why` on success, its `detail` on an error.
+      out.textContent = resp.ok
+        ? (body.why || (freezing ? "Fleet frozen." : "Fleet unfrozen."))
+        : (body.why || body.detail || ("Request failed: HTTP " + resp.status));
+    } catch (e) {
+      out.classList.add("err");
+      out.textContent = "Could not reach the server: " + e;
+    }
+    if (window.htmx) htmx.ajax("GET", "/partials/killswitch", {target: "#killswitch", swap: "outerHTML"});
+  });
+
+  // A failed poll keeps the old content, so say how old it is; the next success clears it.
+  let staleSince = null;
+  const stale = document.getElementById("stale");
+  const markStale = () => {
+    if (!staleSince) staleSince = new Date();
+    stale.textContent = "Stale since " + staleSince.toLocaleTimeString("en-US") + ": the server is not answering; showing the last good update.";
+    stale.hidden = false;
+  };
+  document.body.addEventListener("htmx:sendError", markStale);
+  document.body.addEventListener("htmx:responseError", markStale);
+  document.body.addEventListener("htmx:afterRequest", (ev) => {
+    if (ev.detail.successful) { staleSince = null; stale.hidden = true; }
+  });
+  </script>
+</body>
+</html>

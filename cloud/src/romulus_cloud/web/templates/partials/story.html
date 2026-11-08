@@ -1,0 +1,42 @@
+{% set inc = story.incident %}
+<header class="story-head">
+  <h1>{{ inc.device_id }} · {{ inc.kind }} <span class="status tone-{{ story.tone }}">{{ story.status }}</span></h1>
+  <p class="summary">{{ inc.summary or 'No summary given.' }}</p>
+  <p class="meta">Happened {{ story.day }} at {{ story.clock }}
+    · suspected cause: {{ inc.suspected_cause or 'unknown' }}
+    · {{ 'resolved on the device' if inc.resolved else 'not resolved on the device' }}{% if inc.resolving_action %} ({{ inc.resolving_action }}){% endif %}</p>
+  <p class="chain">{{ story.chain }}</p>
+  {% if story.touches_safety %}
+  <p class="safety-banner">⚠ Touches safety: this incident's patch changes the safety layer or visor. Any candidate made from it goes to a simulated canary first and stays under the kill switch (K17).</p>
+  {% endif %}
+</header>
+
+<ol class="steps">
+  {% for s in story.steps %}
+  <li class="step actor-{{ s.actor_class }}{% if s.touches_safety %} step-safety{% endif %}">
+    <div class="step-when">
+      <time datetime="{{ s.iso }}">{{ s.clock }}</time>
+      <span class="gap">{{ s.gap or s.day }}</span>
+    </div>
+    <div class="step-body">
+      <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="badge actor-badge">{{ s.actor_class }}</span>
+        <span class="actor">{{ s.who }}</span> · <span class="kind">{{ s.what }}</span>
+        {% if s.touches_safety %}<span class="safety">touches safety</span>{% endif %}</p>
+      <p class="step-line">{{ s.line }}</p>
+      <p class="step-why"><span class="why-label">Why</span> {{ s.why }}</p>
+      {% if s.recording %}
+      <p class="evidence">Evidence: <a href="/v1/recordings/{{ s.recording }}">recording {{ s.recording }}</a></p>
+      {% endif %}
+    </div>
+  </li>
+  {% else %}
+  <li class="muted">No steps recorded yet.</li>
+  {% endfor %}
+</ol>
+
+{% if story.recordings %}
+<section class="evidence-list">
+  <h2>Evidence</h2>
+  <ul>{% for r in story.recordings %}<li><a href="/v1/recordings/{{ r }}">recording {{ r }}</a></li>{% endfor %}</ul>
+</section>
+{% endif %}

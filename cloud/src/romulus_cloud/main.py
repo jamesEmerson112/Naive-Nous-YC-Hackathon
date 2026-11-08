@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -63,4 +64,5 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     app.include_router(device.router)
     app.include_router(ops.router)
     app.include_router(web.router)
+    app.mount("/static", StaticFiles(directory=web.STATIC_DIR), name="static")
     return app

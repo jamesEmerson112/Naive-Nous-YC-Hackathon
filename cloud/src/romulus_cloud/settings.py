@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # A pass-through code candidate stops at awaiting_canary unless this is true (BUILD §3).
     allow_passthrough_code_promotion: bool = False
 
+    # Time zone the pages show times in (the venue's; D10 "times are local and readable")
+    display_tz: str = "America/Los_Angeles"
+
     # Worker loop period (architecture §5)
     worker_tick_s: float = 2.0
 

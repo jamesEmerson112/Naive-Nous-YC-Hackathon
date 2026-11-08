@@ -1,0 +1,20 @@
+{% if incidents %}
+<ol class="incidents">
+  {% for i in incidents %}
+  <li class="incident">
+    <a href="/incidents/{{ i.id }}">
+      <span class="when"><span class="day">{{ i.day }}</span> {{ i.clock }}</span>
+      <span class="what">
+        <span class="headline"><strong>{{ i.device }}</strong> · {{ i.kind }}
+          {% if i.touches_safety %}<span class="safety">touches safety</span>{% endif %}</span>
+        {% if i.summary %}<span class="summary">{{ i.summary }}</span>{% endif %}
+        <span class="chain">{{ i.chain }}</span>
+      </span>
+      <span class="status tone-{{ i.tone }}">{{ i.status }}</span>
+    </a>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="muted">No incidents yet. When a device reports one, it appears here within a few seconds.</p>
+{% endif %}
