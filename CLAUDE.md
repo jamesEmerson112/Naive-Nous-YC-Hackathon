@@ -73,15 +73,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 9:50 PM PST_
+_Last updated: Sat Nov 7, 10:00 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged Fleet Doctor L2 (#35) and a ruff include-list (#40); three Kent PRs stay open: #38 (real `device/` code in the coder path, B1), #39 (lock-in) and #32 (device reference). Ishaan's pod healer loop (`ishaan/pod-agent-loop`) and Andre's `arm/teleop-recording` still have no PR.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged Fleet Doctor device reference code (#32); two Kent PRs stay open: #38 (real `device/` code in the coder path, B1) and #39 (lock-in, D24). Ishaan's pod healer loop (`ishaan/pod-agent-loop`) and Andre's `arm/teleop-recording` still have no PR.
 
 **Recently done:**
-- Kent merged #35 (`f07e811`, 9:43 PM): Fleet Doctor L2, the consult state machine, proposals and their routes (`services/doctor.py`, `services/proposals.py`, new `services/doctor_evidence.py`, flow test `test_f12_doctor_consult.py`), with `interfaces.md` and the cloud flows/APIs docs updated. Off by default, not on the demo path
+- Kent merged #32 (`67d9c3a`, 9:49 PM): Fleet Doctor PR 5, device reference code in `tools/fake_device` (new `doctor.py` with the trigger hook, proposal applier and mark-good, plus `test_doctor.py`; `interfaces.md` updated). Off by default, not on the demo path
+- Kent merged #35 (`f07e811`, 9:43 PM): Fleet Doctor L2, the consult state machine, proposals and their routes (`services/doctor.py`, `services/proposals.py`, `services/doctor_evidence.py`, flow test `test_f12_doctor_consult.py`). Off by default
 - Kent merged #40 (`f0ea311`, 9:42 PM): ruff now lints only our Python packages through an include-list in `pyproject.toml`
 - Olir merged #36 (`d43683e`, 9:26 PM): `arm/safe_replay.py` starts a recorded SO-101 motion only if the pod's HC-SR04 sees nothing within 200 mm, plus Andre's recorded motions. It also committed `arm/__pycache__/*.pyc`
-- Kent merged #37 (`d23711e`, 9:30 PM): Fleet Doctor tracker and `ToolSpec.grant` in `interfaces.md`; opened #38 (B1 device code) and #39 (lock-in, D24)
 
 **Open questions:**
 - Kent's only blocker is still the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor, D25), plus his own go-ahead for the live Naïve card. Ishaan's block (9:12 PM) still owes Kent K17 and the contracts review (B2, B3); his pod-loop bench runs need SSH to the pod, Olir's OK and an API key, and the Jetson link is paused (no USB data or LAN path)
@@ -90,6 +90,9 @@ _Last updated: Sat Nov 7, 9:50 PM PST_
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email). The overnight launch is due by 12:30 AM (Kent's plan). Should pi drive the arm at all?
 
 **Recent commits (all authors):**
+- `c1aec2c` Sat 21:58 · Kent Gang · Update Kent status in CLAUDE.md
+- `67d9c3a` Sat 21:49 · kgang · Fleet Doctor PR 5: device reference code in fake_device (trigger hook, proposal applier, mark-good) (#32)
+- `eb839ac` Sat 21:49 · jamesEmerson112 · Update team status and features.txt
 - `6d3bd65` Sat 21:48 · Kent Gang · Update Kent status in CLAUDE.md
 - `f07e811` Sat 21:43 · kgang · Fleet Doctor L2: consult state machine, proposals and their routes (PR 4) (#35)
 - `f0ea311` Sat 21:42 · kgang · Lint only our Python packages via a ruff include-list (#40)
@@ -97,9 +100,6 @@ _Last updated: Sat Nov 7, 9:50 PM PST_
 - `24e5605` Sat 21:38 · Kent Gang · Update Kent status in CLAUDE.md
 - `d23711e` Sat 21:30 · kgang · Fleet Doctor: tracker update (7 PRs merged) and ToolSpec.grant in interfaces (#37)
 - `d43683e` Sat 21:26 · Oliravan Eswaramoorthy · Merge pull request #36 from jamesEmerson112/demo
-- `b4f1d08` Sat 21:20 · jamesEmerson112 · Update team status and features.txt
-- `c97b937` Sat 21:17 · Olir Eswar · demo work
-- `85ba262` Sat 21:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 
-**Branches on GitHub:** `main`; open PR branches `cloud/b1-device-code` (#38), `doctor/lock-in` (#39) and `doctor/device-ref` (#32) (all Kent); `ishaan/pod-agent-loop` (Ishaan, no PR); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `ishaan/device-healer` (merged as #31); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `doctor/l2-consult` was deleted after #35 merged
+**Branches on GitHub:** `main`; open PR branches `cloud/b1-device-code` (#38) and `doctor/lock-in` (#39) (both Kent); `ishaan/pod-agent-loop` (Ishaan, no PR); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `ishaan/device-healer` (merged as #31); `cloud/m8-coder-wip` (1 commit, "not for merge"); `firmware` and `demo` (Olir, both fully on `main`). `doctor/device-ref` was deleted after #32 merged
 <!-- team-status:end -->
