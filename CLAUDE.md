@@ -49,7 +49,7 @@ The real pod now sends each heal-agent run to the cloud as an **agent run report
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 3:00 AM PST · write notes outside the markers_
+_Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 7:32 AM PST · write notes outside the markers_
 
 - **Pitch:** we sell uptime: one heal loop at arm, fleet and company scale. Rivals only diagnose ([Alloy](https://theaiinsider.tech/2026/08/13/alloy-robotics-raises-8m-in-new-funding-to-help-engineers-debug-robot-fleets-with-ai-agents/)) or recommend fixes ([Formant F3](https://www.businesswire.com/news/home/20250630008190/en/Formant-F3-Brings-Generative-AI-and-Agentic-Reasoning-to-Robot-Ops)). We close the loop: "PagerDuty with hands" *(inferred)*.
 - **Rule:** no LLM in the real-time control loop. Models propose reversible fixes, and the gate checks them: replay → simulated canary → automatic promote or rollback. People only touch the kill switch (D6, D11).
@@ -59,10 +59,10 @@ _Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 3:00 AM P
 - **Research:** pin LeRobot v0.7.0, since it breaks the API ([release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
 - **Research:** the SO-101 sim twin is `robotstudio_so101` in MuJoCo Menagerie, and it runs on a Mac ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
 - **Research:** bring a router, Ethernet and a backup video, because venue Wi-Fi sinks demos ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)). Everything else is in [`docs/cloud-platform-planning/README.md`](docs/cloud-platform-planning/README.md).
-- **Now:** no open PRs. #58 merged, so the gate requires a held-out verify for code candidates, and B5 (#46) is in. Still pending: the live Naïve card and the real-arm run with the team at 9–10 AM (James's [`MORNING.md`](prototypes/arm-sim/MORNING.md)). The overnight run is the fake fleet.
-- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3 #7, #12, #18 · M4 #10 · M5 #11, #15 · M6 #14 · M7 #16 · M8a #19 · M8b #28 · real device code #38 · replay hardening #53 · B5 sandbox #46 · held-out verify #58 · B8 toolchain #24 · edge bridge #25 · docs #21, #45 · Fleet Doctor plan #22, decisions #23, contracts #26, foundation #27, LLM helper #29, L1 ask #34, L2 consult #35, device reference #32, held-overlay lock-in #39, F12 interop #42, PR 7 evidence #44, tracker #52, #59–#61, repro seal #57, ledger #33, L3 contract draft #30, tracker #37 · triage #6 · lint #13, #40 · device kinds #17 · decisions D0–D28 locked (D27 deferred).
-- **Blocked:** only on the K17 safety and visor path list, which also gates the Fleet Doctor. B4 is clear (the live card waits only on Kent's go-ahead, #21), and B1 cleared when Ishaan's device code merged as #31 (`device/`, `harness/`, `bench/`).
-- **Asks:** Ishaan: review the contracts (I0: B2, B3) and send the K17 safety and visor paths. James now reaches the Naïve board through a board-only MCP entry, and his sim run logged a `us_frozen` incident in Romulus *(team status)*.
+- **Now:** sprint proposal **Naïve Technician** ([`docs/naive-technician/`](docs/naive-technician/README.md)): when the healer gives up on a hardware fault, a Naïve agent returns a typed report and Romulus's gate emails the technician and builds a cart link a person approves. Nothing built yet; G1 is at 8:30 (one live session, valid report in ≤ 5 min and ≤ $3). The real-arm run with the team is 7–10 AM.
+- **Done:** Naïve Technician plan `eafc667`, `8f25900`, `c5a1fa1` · M0 #1–#4 · M1 #5, #8 · M2 #9 · M3 #7, #12, #18 · M4 #10 · M5 #11, #15 · M6 #14 · M7 #16 · M8a #19 · M8b #28 · real device code #38 · replay hardening #53 · B5 sandbox #46 · held-out verify #58 · B8 toolchain #24 · edge bridge #25 · docs #21, #45 · Fleet Doctor #22, #23, #26, #27, #29, #30, #32–#35, #37, #39, #42, #44, #52, #57, #59–#61 · triage #6 · lint #13, #40 · device kinds #17 · decisions D0–D29 locked (D27 deferred; D30 drafted).
+- **Blocked:** Naïve Technician waits on Kent's four calls (D30 purchase approval, servo variant, technician teammate, OK for live Naïve writes; README). Fleet Doctor still waits on the K17 safety and visor path list. B1 and B4 are clear.
+- **Asks:** Andre: is our STS3215 the C001 7.4 V or the C018 12 V? Team: who'll play the technician (email, plus phone for T1)? Ishaan: K17 safety and visor paths and the contracts review (B2, B3).
 <!-- romulus-sync:end -->
 
 ### Device-side healer (Ishaan)
