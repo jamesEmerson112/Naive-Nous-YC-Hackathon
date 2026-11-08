@@ -1,0 +1,8 @@
+# Installed tools and caches (setup.sh recreates them)
+toolkit/opt/
+toolkit/downloads/
+toolkit/dist/
+
+# Build output and flash dumps
+*/build/
+*/backups/

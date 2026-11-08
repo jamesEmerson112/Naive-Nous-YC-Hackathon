@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""fwtool: serial console and "is my build running?" check for the firmware toolkit.
+
+Uses only the Python standard library (Linux and macOS).
+
+  fwtool ports                 list likely debug-probe serial ports
+  fwtool monitor [--port P]    serial console; exit with Ctrl-]
+  fwtool check --elf E ...     confirm the chip runs the build in E (`make check` passes the arguments)
+"""
+import argparse
+import glob
+import os
+import re
+import select
+import shlex
+import subprocess
+import sys
+import tempfile
+import termios
+import time
+import tty
+
+FW_INFO_MAGIC = 0x31495746          # "FWI1", little-endian; must match src/fw_info.h
+FW_INFO_SIZE = 64                   # magic (4 bytes) + build id (60 bytes)
+PROBE_PATTERNS = ("SEGGER", "J-Link", "STMicro", "STLINK", "ST-LINK", "DAPLink", "CMSIS-DAP", "Debug_Probe")
+
+
+# --------------------------------------------------------------------------- serial
+
+def find_ports():
+    """Serial ports that look like a debug probe's virtual COM port, best first."""
+    found = []
+    for link in sorted(glob.glob("/dev/serial/by-id/*")):            # Linux
+        if any(p.lower() in link.lower() for p in PROBE_PATTERNS):
+            found.append(os.path.realpath(link))
+    found += sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/cu.usbmodem*"))
+    seen, out = set(), []
+    for p in found:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def resolve_port(port):
+    if port and port != "auto":
+        return port
+    ports = find_ports()
+    return ports[0] if ports else None
+
+
+def open_serial(port, baud):
+    speed = getattr(termios, "B%d" % baud, None)
+    if speed is None:
+        sys.exit("unsupported baud rate: %d" % baud)
+    fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    tty.setraw(fd)
+    attrs = termios.tcgetattr(fd)
+    attrs[4] = attrs[5] = speed                      # ispeed, ospeed
+    attrs[2] |= termios.CLOCAL | termios.CREAD
+    attrs[2] &= ~termios.CRTSCTS if hasattr(termios, "CRTSCTS") else ~0
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    termios.tcflush(fd, termios.TCIOFLUSH)
+    return fd
+
+
+def read_for(fd, seconds, until=None):
+    """Read from fd for up to `seconds`, stopping early once `until` (bytes) has arrived."""
+    buf = b""
+    end = time.time() + seconds
+    while time.time() < end:
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if r:
+            try:
+                buf += os.read(fd, 4096)
+            except BlockingIOError:
+                pass
+            if until is not None and until in buf:
+                # grab the rest of the line too
+                time.sleep(0.1)
+                try:
+                    buf += os.read(fd, 4096)
+                except BlockingIOError:
+                    pass
+                break
+    return buf
+
+
+def cmd_ports(_args):
+    ports = find_ports()
+    if not ports:
+        print("no probe serial ports found")
+        return 1
+    for p in ports:
+        print(p)
+    return 0
+
+
+def cmd_monitor(args):
+    port = resolve_port(args.port)
+    if not port:
+        sys.exit("no serial port found; pass --port (see 'fwtool ports')")
+    fd = open_serial(port, args.baud)
+    print("--- %s @ %d baud. Ctrl-] to exit ---" % (port, args.baud), file=sys.stderr)
+    stdin = sys.stdin.fileno()
+    interactive = os.isatty(stdin)
+    old = termios.tcgetattr(stdin) if interactive else None
+    try:
+        if interactive:
+            tty.setraw(stdin)
+        while True:
+            r, _, _ = select.select([fd, stdin], [], [])
+            if fd in r:
+                try:
+                    data = os.read(fd, 4096)
+                except BlockingIOError:
+                    data = b""
+                os.write(sys.stdout.fileno(), data)
+            if stdin in r:
+                data = os.read(stdin, 1024)
+                if not data or b"\x1d" in data:          # EOF or Ctrl-]
+                    break
+                os.write(fd, data)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if old is not None:
+            termios.tcsetattr(stdin, termios.TCSADRAIN, old)
+        os.close(fd)
+        print("\r\n--- exit ---", file=sys.stderr)
+    return 0
+
+
+# --------------------------------------------------------------------------- check
+
+class Checker:
+    def __init__(self):
+        self.failed = False
+
+    def result(self, status, msg, detail=None):
+        colors = {"PASS": "32", "FAIL": "31", "SKIP": "33"}
+        tag = "\033[1;%sm%s\033[0m" % (colors[status], status) if sys.stdout.isatty() else status
+        print("[%s] %s" % (tag, msg))
+        if detail:
+            for line in detail.rstrip().splitlines():
+                print("       " + line)
+        if status == "FAIL":
+            self.failed = True
+
+
+def symbols(nm, elf):
+    out = subprocess.run([nm, elf], capture_output=True, text=True, check=True).stdout
+    syms = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 3:
+            syms[parts[2]] = int(parts[0], 16)
+    return syms
+
+
+def section_bytes(objcopy, elf, section, tmp):
+    path = os.path.join(tmp, "section.bin")
+    subprocess.run([objcopy, "-O", "binary", "--only-section=" + section, elf, path], check=True)
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def parse_fw_info(blob):
+    if len(blob) < FW_INFO_SIZE:
+        return None, None
+    magic = int.from_bytes(blob[0:4], "little")
+    build_id = blob[4:FW_INFO_SIZE].split(b"\0", 1)[0].decode("ascii", "replace")
+    return magic, build_id
+
+
+def run_openocd(openocd, commands, timeout=20):
+    cmd = shlex.split(openocd) + ["-c", commands]
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return p.returncode, p.stdout + p.stderr
+
+
+def cmd_check(args):
+    c = Checker()
+    with tempfile.TemporaryDirectory() as tmp:
+        # 1) what the ELF says
+        syms = symbols(args.nm, args.elf)
+        if "g_fw_info" not in syms or "g_uptime_ms" not in syms:
+            sys.exit("%s lacks g_fw_info / g_uptime_ms; include fw_info.h and define them" % args.elf)
+        magic, want_id = parse_fw_info(section_bytes(args.objcopy, args.elf, ".fw_info", tmp))
+        if magic != FW_INFO_MAGIC:
+            sys.exit("%s: the .fw_info section is missing or malformed" % args.elf)
+        info_addr, uptime_addr = syms["g_fw_info"], syms["g_uptime_ms"]
+
+        # 2) what the chip says, read over SWD without halting the CPU
+        chip_info = os.path.join(tmp, "chip_info.bin")
+        rc, log = run_openocd(args.openocd,
+                              "init; dump_image {%s} 0x%08x %d; "
+                              "echo \"UPTIME0 [read_memory 0x%08x 32 1]\"; sleep 300; "
+                              "echo \"UPTIME1 [read_memory 0x%08x 32 1]\"; shutdown"
+                              % (chip_info, info_addr, FW_INFO_SIZE, uptime_addr, uptime_addr))
+        if rc != 0 or not os.path.exists(chip_info):
+            c.result("FAIL", "couldn't read the chip over SWD (is the probe plugged in and the board powered?)",
+                     "\n".join(l for l in log.splitlines() if re.search(r"Error|error|fail", l))[-1500:])
+            return 1
+        c.result("PASS", "probe connected; SWD reads work")
+
+        with open(chip_info, "rb") as f:
+            chip_magic, chip_id = parse_fw_info(f.read())
+        if chip_magic == FW_INFO_MAGIC and chip_id == want_id:
+            c.result("PASS", "build ID on the chip matches %s" % args.elf, '"%s"' % want_id)
+        elif chip_magic == FW_INFO_MAGIC:
+            c.result("FAIL", "the chip runs a different build: run 'make flash'",
+                     'chip: "%s"\nelf:  "%s"' % (chip_id, want_id))
+        else:
+            c.result("FAIL", "no build ID on the chip (it's running some other firmware): run 'make flash'")
+
+        ticks = [int(v, 0) for v in re.findall(r"^UPTIME[01] (\S+)", log, re.M)]
+        if len(ticks) == 2 and ticks[1] > ticks[0]:
+            c.result("PASS", "firmware is running: uptime went %d ms -> %d ms in 300 ms" % tuple(ticks))
+        elif len(ticks) == 2:
+            c.result("FAIL", "uptime counter isn't moving (%d -> %d): CPU halted, faulted or stuck" % tuple(ticks))
+        else:
+            c.result("FAIL", "couldn't read the uptime counter", log[-800:])
+
+        # 3) the boot banner on the probe's virtual COM port, after a reset
+        port = resolve_port(args.port)
+        if not port:
+            c.result("SKIP", "serial banner: no serial port found (pass PORT=/dev/ttyXXX)")
+        else:
+            try:
+                fd = open_serial(port, args.baud)
+            except OSError as e:
+                c.result("FAIL", "serial banner: can't open %s: %s" % (port, e))
+                fd = None
+            if fd is not None:
+                try:
+                    run_openocd(args.openocd, "init; reset run; shutdown")
+                    text = read_for(fd, 4.0, until=want_id.encode()).decode("ascii", "replace")
+                finally:
+                    os.close(fd)
+                line = next((l.strip() for l in text.splitlines() if want_id in l), None)
+                if line:
+                    c.result("PASS", "boot banner on %s shows the same build ID (after a reset)" % port, line)
+                elif text.strip():
+                    c.result("FAIL", "%s printed something, but not this build ID" % port, text[-600:])
+                else:
+                    c.result("FAIL", "nothing on %s within 4 s of a reset (wrong port, baud or wiring?)" % port)
+
+    print("\nRESULT: %s" % ("FAIL" if c.failed else "PASS: the code built here is what's running on the board"))
+    return 1 if c.failed else 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("ports", help="list probe serial ports")
+
+    m = sub.add_parser("monitor", help="serial console")
+    m.add_argument("--port", default="auto")
+    m.add_argument("--baud", type=int, default=115200)
+
+    k = sub.add_parser("check", help="confirm the chip runs this build")
+    k.add_argument("--elf", required=True)
+    k.add_argument("--openocd", required=True, help="openocd command line incl. -f probe/target configs")
+    k.add_argument("--nm", default="arm-none-eabi-nm")
+    k.add_argument("--objcopy", default="arm-none-eabi-objcopy")
+    k.add_argument("--port", default="auto")
+    k.add_argument("--baud", type=int, default=115200)
+
+    args = ap.parse_args()
+    return {"ports": cmd_ports, "monitor": cmd_monitor, "check": cmd_check}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
