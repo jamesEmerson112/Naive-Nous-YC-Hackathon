@@ -563,8 +563,8 @@ def next_state(state: str, inputs: GateInputs, now: datetime) -> Transition:
     replaying -> canary | awaiting_canary | rolled_back; awaiting_canary -> canary;
     canary -> promoted | rolled_back | awaiting_canary; any live state -> frozen while the
     kill switch is on; frozen -> replaying on unfreeze (F5), or rolled_back if the canary
-    repeated a folded incident's kind on this version since its run started. promoted and rolled_back are
-    final. Every move into canary has `start_canary=True`.
+    repeated a folded incident's kind on this version since its run started. promoted and
+    rolled_back are final. Every move into canary has `start_canary=True`.
     """
     if state == "canary":
         check_window(inputs.canary_window_s)
