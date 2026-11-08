@@ -2,7 +2,7 @@
 
 Each `tick(now)`:
 
-0. The first tick finishes any install a crash interrupted (see below) before anything else.
+0. If an install is unfinished (see below), finish it before anything else.
 1. Check in with what the device runs (APIs §3.1). If the cloud can't be reached, keep
    running the current version and stop here; reports stay queued in the outbox (D8).
 2. If the response says `drop_overlay`, drop the active overlay.
@@ -10,14 +10,14 @@ Each `tick(now)`:
    that firmware runs), then the harness (always, whatever happened to the firmware): if
    the assigned version differs from the running one, pull it, check the hash, install it,
    run the health check, and keep it or roll back to the last good version (D7). The check
-   passes when health is no worse than just before the install, so a device that was
-   already `degraded` can still take updates. Each attempt queues an `InstallResult`:
-   `installed`, `rolled_back`, `hash_mismatch`, or `invalid` (hash fine, content failed
-   validation; nothing installed). A version that failed is not retried until the cloud
+   passes when health is not `failing` and no worse than just before the install, so a
+   device that was already `degraded` can still take updates. Each attempt queues an
+   `InstallResult`: `installed`, `rolled_back`, `hash_mismatch`, or `invalid` (hash fine,
+   content failed validation; nothing installed). A version that failed is not retried until the cloud
    changes the firmware assignment.
 4. A new firmware or code version replaces the active overlay (D7), but only once it has
-   passed its health check; the drop is reported as an overlay status. On rollback the
-   overlay stays.
+   passed its health check; the drop is reported as overlay status `superseded`. On
+   rollback the overlay stays.
 5. While `frozen` (kill switch), only a move back to the last good version is installed.
 6. Drain the outbox.
 
@@ -25,7 +25,8 @@ Each `tick(now)`:
 health before it) live in a small JSON state file, written atomically. If the process or
 the power dies between `install` and the health check, the next start sees the marker and
 health-checks the new version or rolls back to `last_good` before trusting anything. An
-exception inside `install` or the health check also rolls back.
+exception inside `install` or the health check also rolls back, and a rollback that fails
+keeps the marker so it is retried (next tick, or next start) before any other install.
 
 The visor only needs the small `Device` interface below. `sim.SimDevice` fakes it; on the
 Pi, implement it over the real app (keep versions on disk, switch a `current` symlink,
@@ -99,8 +100,13 @@ def _running_versions(checkin: CheckIn) -> dict[str, Any]:
     }
 
 
-def no_worse(after: str, before: str) -> bool:
-    return HEALTH_RANK.get(after, 2) <= HEALTH_RANK.get(before, 2)
+def passes(after: str, before: str) -> bool:
+    """The post-install check: never `failing`, and no worse than just before the install.
+
+    So a device already `degraded` (an overlay under watch) can still take updates, but a
+    device that is `failing` can't turn a new version into its last good one.
+    """
+    return after != "failing" and HEALTH_RANK.get(after, 2) <= HEALTH_RANK.get(before, 2)
 
 
 class Visor:
@@ -114,7 +120,6 @@ class Visor:
         self.rejected: dict[str, Any] = {}  # kind -> the version that failed here
         self._rejected_under: Any = _FIRST  # the firmware assignment those failures were under
         self._manifests: dict[int, FirmwareManifest] = {}
-        self.recovered = False
 
         state = self._load()
         # Very first start (no state file): whatever runs now is the last good version.
@@ -143,23 +148,30 @@ class Visor:
     # -- the loop ---------------------------------------------------------------------
 
     def recover(self, now: datetime) -> InstallResult | None:
-        """Finish an install a crash interrupted: keep it if healthy, else roll back."""
-        self.recovered = True
+        """Finish an unfinished install: one a crash interrupted, or a failed rollback.
+
+        A crash mid-install: keep the new version if it passes the health check, else roll
+        back. A rollback that failed: try it again. Returns the result once resolved.
+        """
         if self.pending is None:
             return None
         kind, version, before = (self.pending[k] for k in ("kind", "version", "health_before"))
-        health = self._health()
-        if self._running()[kind] == version and no_worse(health, before):
-            result = self._keep(kind, version, now, f"health {health} after a restart")
+        if self.pending.get("rolling_back"):
+            result = self._roll_back(kind, version, now, self.pending.get("why", "rollback"))
         else:
-            why = f"install interrupted by a restart; health {health} (was {before})"
-            result = self._roll_back(kind, version, now, why)
-        self.outbox.add_install(result)
+            health = self._health()
+            if self._running()[kind] == version and passes(health, before):
+                result = self._keep(kind, version, now, f"health {health} after a restart")
+            else:
+                why = f"install interrupted by a restart; health {health} (was {before})"
+                result = self._roll_back(kind, version, now, why)
+        if result is not None:
+            self.outbox.add_install(result)
         return result
 
     def tick(self, now: datetime) -> TickResult:
-        if not self.recovered:
-            self.recover(now)
+        if self.pending is not None:
+            self.recover(now)  # first thing after a start, and until a failed rollback works
         try:
             resp = self.client.checkin(self.device.checkin_payload())
         except (httpx.TransportError, httpx.HTTPStatusError) as exc:
@@ -234,6 +246,8 @@ class Visor:
     # -- one install ------------------------------------------------------------------
 
     def _install(self, kind: str, version: Any, frozen: bool, now: datetime):
+        if self.pending is not None:
+            return None  # an unfinished install or rollback comes first (see `recover`)
         if self.rejected.get(kind) == version:
             return None
         if frozen and version != self.last_good[kind]:
@@ -260,7 +274,7 @@ class Visor:
         except Exception as exc:
             log.exception("%s: installing %s %s failed", self.id, kind, version)
             return self._roll_back(kind, version, now, f"install failed: {exc}")
-        if no_worse(health, before):
+        if passes(health, before):
             return self._keep(kind, version, now, f"health {health} after install")
         why = f"health {health} after install (was {before})"
         return self._roll_back(kind, version, now, why)
@@ -275,15 +289,23 @@ class Visor:
             type=kind, version=version, result="installed", detail=detail, occurred_at=now
         )
 
-    def _roll_back(self, kind: str, version: Any, now: datetime, why: str) -> InstallResult:
+    def _roll_back(self, kind: str, version: Any, now: datetime, why: str) -> InstallResult | None:
+        """Switch back to last good; report `rolled_back` once that worked.
+
+        If the rollback itself fails, the pending marker stays (flagged `rolling_back`), so
+        the next tick, or the next start, tries again before installing anything else.
+        """
         good = self.last_good[kind]
+        self.rejected[kind] = version
         try:
             self.device.rollback(kind, good)
         except Exception:
-            log.exception("%s: rollback of %s to %s failed", self.id, kind, good)
+            log.exception("%s: rollback of %s to %s failed; will retry", self.id, kind, good)
+            self.pending = {**(self.pending or {}), "rolling_back": True, "why": why}
+            self._save()
+            return None
         self.pending = None
         self._save()
-        self.rejected[kind] = version
         return InstallResult(
             type=kind,
             version=version,
@@ -298,12 +320,7 @@ class Visor:
         if overlay_id is None:
             return
         self.device.drop_overlay()
-        # The contract has only held/reverted; `cause` (an extra field) says this one
-        # wasn't a failure: the overlay was superseded by a new version.
         status = OverlayStatus(
-            status="reverted",
-            reason=f"replaced by {kind} {version} (D7)",
-            occurred_at=now,
-            cause="superseded",
+            status="superseded", reason=f"replaced by {kind} {version} (D7)", occurred_at=now
         )
         self.outbox.add_overlay_status(overlay_id, status)

@@ -291,7 +291,7 @@ def test_overlay_dropped_only_after_a_healthy_install_and_reported(cloud, arm):
     arm.tick(T0 + timedelta(seconds=10))
     assert arm.device.overlay is None
     device, overlay_id, status = cloud.overlays[-1]
-    assert (overlay_id, status["status"], status["cause"]) == ("ov-1", "reverted", "superseded")
+    assert (overlay_id, status["status"]) == ("ov-1", "superseded")
     assert "firmware 2" in status["reason"]
 
 
@@ -305,3 +305,37 @@ def test_overlay_kept_when_the_install_rolls_back(cloud, arm):
     assert installs(cloud)[-1] == ("firmware", 2, "rolled_back")
     assert arm.device.overlay is not None and arm.device.overlay.overlay_id == "ov-1"
     assert cloud.overlays == []
+
+
+def test_already_failing_device_never_trusts_a_new_version(cloud, arm):
+    arm.tick(T0)
+    arm.device.parked = True  # failing before the install
+    cloud.add_harness(2, tarball({"harness.json": b'{"version": 2, "framework": "pi"}'}))
+    cloud.assign("sim-1", firmware=1, harness=2)
+    arm.tick(T0 + timedelta(seconds=10))
+    assert installs(cloud)[-1] == ("harness", 2, "rolled_back")  # failing -> failing fails
+    assert arm.device.harness == 1 and arm.visor.last_good["harness"] == 1
+
+
+def test_failed_rollback_is_retried_on_the_next_start(cloud, arm, monkeypatch):
+    arm.tick(T0)
+    cloud.add_firmware(v2_manifest())
+    cloud.assign("sim-1", firmware=2, harness=1)
+    arm.device.bad_versions[2] = "install"
+
+    def stuck(kind, version):
+        raise OSError("symlink busy")
+
+    monkeypatch.setattr(arm.device, "rollback", stuck)
+    arm.tick(T0 + timedelta(seconds=10))
+    assert arm.device.firmware == 2  # still on the bad version
+    assert arm.visor.pending["rolling_back"] is True
+    assert ("firmware", 2, "rolled_back") not in installs(cloud)  # not until it worked
+
+    monkeypatch.undo()
+    restarted = FakeArm(cloud.http(), "sim-1", arm_dir(arm), device=arm.device)
+    assert restarted.visor.pending["rolling_back"] is True  # the marker was on disk
+    restarted.tick(T0 + timedelta(seconds=20))
+    assert restarted.device.firmware == 1
+    assert installs(cloud)[-1] == ("firmware", 2, "rolled_back")
+    assert restarted.visor.pending is None
