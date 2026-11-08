@@ -12,7 +12,7 @@ and runs the one action. The design is `docs/worker-manager-healer.md` §1-2. `H
 | `skills/arm-incident-manager/SKILL.md` | The skill: a triage parent, 1-3 `delegate_task` analysts with `output_schema`, one critic, one `arm-fixplan/v1` answer |
 | `check.sh` | The no-model checks: `/health`, a wrong key gets 401, `/v1/capabilities`, `/v1/toolsets` has no terminal, file or `so101_arm`, the skill is listed |
 | `ask.sh <packet>` | One escalation by hand (the §2.3 curl), with its latency |
-| `samples/esc-*.json` | Real packets from the sim (story b's `us_stuck` and `us_frozen`, image 07's `us_offset`, the stall's `joint_stall`) |
+| `samples/esc-*.json` | Real packets from the sim (story b's `us_stuck` and `us_frozen`, image 07's `us_offset`, the stall's `joint_stall`, story redo's `grasp_missed`) |
 | `arm-escalation.v1.schema.json`, `arm-fixplan.v1.schema.json` | The two schemas (`python -m armsim.escalation schemas hermes-manager` regenerates them) |
 
 ## Set it up (about 20 min)

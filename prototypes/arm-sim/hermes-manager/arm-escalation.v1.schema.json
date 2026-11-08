@@ -133,6 +133,17 @@
       }
      }
     },
+    "corrections": {
+     "type": "array",
+     "uniqueItems": true,
+     "items": {
+      "enum": [
+       "none",
+       "relocate",
+       "offset"
+      ]
+     }
+    },
     "tried": {
      "type": "array",
      "items": {

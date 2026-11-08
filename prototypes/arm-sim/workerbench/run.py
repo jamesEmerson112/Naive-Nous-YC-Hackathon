@@ -28,6 +28,7 @@ import collections
 import concurrent.futures as cf
 import glob
 import hashlib
+import http.client
 import json
 import os
 import socket
@@ -180,8 +181,12 @@ def call(endpoint, model, messages, *, max_tokens=512, temperature=None, json_mo
     except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as e:
         reason = getattr(e, "reason", e)
         out["error"] = f"{type(reason).__name__}: {reason}"
+    except http.client.HTTPException as e:          # IncompleteRead, BadStatusLine: a cut transfer
+        out["error"] = f"{type(e).__name__}: {e}"
     except ValueError as e:
         out["error"] = f"bad response body: {e}"
+    except Exception as e:                          # a harness: record it, never kill a paid run
+        out["error"] = f"unexpected {type(e).__name__}: {e}"
     out["latency_s"] = round(time.monotonic() - t0, 3)
     return out
 
@@ -225,7 +230,8 @@ def _read_stream(resp, out, t0, timeout):
 def call_with_retries(retries, *a, **kw):
     for attempt in range(retries + 1):
         r = call(*a, **kw)
-        transient = r["error"] and (r.get("http_status") in (429, 502, 503, 504) or "Connection" in r["error"])
+        transient = r["error"] and (r.get("http_status") in (429, 502, 503, 504) or "Connection" in r["error"]
+                                    or "IncompleteRead" in r["error"])
         if not transient or attempt == retries:
             return r
         time.sleep(2.0 * (attempt + 1))

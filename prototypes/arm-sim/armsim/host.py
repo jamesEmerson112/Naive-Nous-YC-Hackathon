@@ -10,6 +10,9 @@ also wants exactly one long-lived owner of the servo bus (note, "Traps").
     {"op": "repair", "action": "restart_sensor"}  the healer's tool: fix the cause, then verify
     {"op": "window", "seconds": 6, "until": ts}   the distance rows before `until` (the worker's packet)
     {"op": "handoff", "id": "inc-1", "reason": ...}  a person takes an open incident (the arm stays parked)
+    {"op": "skill", "name": "locate"} / {"op": "skill", "name": "approach", "offset_mm": [dx, dy]}
+        the wrong-action redo's scan for the block, and the approach over it (sim only, armsim/redo.py)
+    {"op": "inject", "fault": "block_shift", "params": {"dx_mm": 30}}  the block moves (sim only; clear restores)
 
 The watchdog is plain code (level 1, `level1.py`): on each distance row it checks the last few
 seconds. The first critical finding opens an incident: the sentence is spoken, motion halts, the
@@ -126,7 +129,7 @@ def _median_reading(arm, n=3, timeout=1.0):
     return None, []
 
 
-def approach(arm, poses, *, step_m=0.005, max_steps=20):
+def approach(arm, poses, *, step_m=0.005, max_steps=20, xy=None):
     """Step down 5 mm at a time over the block, settling on 3 readings each step, until the
     median distance is inside the switch distance; then a fixed final move to the grasp pose."""
     from .model import BLOCK_POS
@@ -157,7 +160,7 @@ def approach(arm, poses, *, step_m=0.005, max_steps=20):
                 return {**r, "steps": step, "readings": readings, "switched_at_mm": d}
         tip[2] -= step_m
         try:
-            pose = arm.solve((BLOCK_POS[0], BLOCK_POS[1], tip[2]), seed=list(arm.read().values()))
+            pose = arm.solve((*(xy or BLOCK_POS[:2]), tip[2]), seed=list(arm.read().values()))
         except ValueError as exc:
             return {"arrived": False, "aborted": str(exc), "readings": readings}
         r = arm.goto(pose, duration=0.3)
@@ -658,15 +661,22 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
             return {"ok": True, "t": arm.t}
         if op == "skill":
             name = req.get("name")
-            if name not in Skills.MENU:
+            redo_op = name == "locate" or req.get("offset_mm") is not None     # armsim/redo.py, sim only
+            if name not in Skills.MENU and name != "locate":
                 return {"ok": False, "error": f"unknown skill {name!r}; the menu is {list(Skills.MENU)}"}
             if dog.open() and name != "park":
                 return {"ok": False, "error": "incident open; the arm stays parked until a repair is verified",
                         "incidents": dog.open()}
+            if redo_op:
+                from . import redo
+                why = redo.check_request(arm, name, req)
+                if why:
+                    return {"ok": False, "error": f"{name}: {why}"}
             state["parked"] = False
             state["skill"] = {"name": name, "started": round(time.time(), 2), "running": True}
             try:
-                result = getattr(skills, name)()
+                result = (redo.run_skill(arm, skills, name, req, approach=approach, read=_median_reading) if redo_op
+                          else getattr(skills, name)())
             finally:
                 state["skill"].update(running=False, ended=round(time.time(), 2))
             state["skill"].update({k: result.get(k) for k in ("arrived", "halted", "aborted") if result.get(k) is not None})
@@ -724,8 +734,17 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
             if vpod and fault in ("pod_image02", "pod_image07"):
                 vpod.flash(fault[-2:])                 # a bad pod image goes out (an OTA, say)
                 return {"ok": True, "fault": fault, "where": "pod", "build": vpod.build}
+            if fault == "block_shift":                 # a wrong action's cause (category 2, armsim/redo.py)
+                from . import redo
+                why = redo.sim_only(arm, kinematics=False)
+                if why:
+                    return {"ok": False, "error": f"block_shift: {why}"}
+                return {"ok": True, "fault": fault, "where": "scene", **redo.shift_block(arm, **req.get("params", {}))}
             return {"ok": True, "fault": arm.inject(fault, **req.get("params", {})), "where": "arm"}
         if op == "clear":
+            if req.get("fault") == "block_shift" and getattr(arm, "kind", "sim") == "sim":
+                from . import redo
+                return {"ok": True, **redo.shift_block(arm, 0, 0)}
             arm.clear(req.get("fault"))
             if vpod:
                 for f in list(vpod.faults):

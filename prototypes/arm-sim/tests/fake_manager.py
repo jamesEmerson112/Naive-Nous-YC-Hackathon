@@ -13,8 +13,8 @@ thread, so the dispatcher's ManagerClient talks to it over real HTTP.
 
 Modes (what the "manager" answers):
   good      after `delay` s (default 0.3), one arm-fixplan/v1 JSON built from the packet: the first
-            entry of its allowed_actions (redo_step from the failed step), like a manager that follows
-            the allowlist
+            entry of its allowed_actions, like a manager that follows the allowlist; a redo_step goes
+            from the approach with the packet's first correction (relocate), else from the failed step
   bad_json  prose with a broken JSON object
   off_list  a schema-valid plan whose action is NOT in the packet's allowed_actions
   unsafe    a valid plan with touches_safety: true
@@ -23,6 +23,8 @@ Modes (what the "manager" answers):
   500       every POST gets HTTP 500
   failed    the run ends with status "failed"
   refused   no server at all: start() returns the URL of a port nothing listens on
+  redo_offset  like good, but a redo_step carries the bounded offset correction dx_mm=30, dy_mm=0 (a
+            manager's own guess at where the block went; category 2, armsim/redo.py)
 Like the real server: a Bearer key when `key` is set (else 401), and Idempotency-Key replay (the same
 key and body answer the same run_id with 202 and Idempotency-Replayed: true; a different body 409).
 """
@@ -34,7 +36,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MODES = ("good", "bad_json", "off_list", "unsafe", "slow", "429", "500", "failed", "refused")
+MODES = ("good", "bad_json", "off_list", "unsafe", "slow", "429", "500", "failed", "refused", "redo_offset")
 ACTIONS = ("restart_sensor", "verify", "pod_rollback", "redo_step", "park", "handoff_human", "no_action")
 
 
@@ -44,12 +46,18 @@ def good_plan(esc):
     action = allowed[0]
     args = {}
     if action == "redo_step":
-        args = {"from_step": ((esc.get("state") or {}).get("job") or {}).get("failed_step") or "reach"}
+        state = esc.get("state") or {}
+        steps, failed = (state.get("job") or {}).get("steps") or [], (state.get("job") or {}).get("failed_step")
+        corrections = [c for c in state.get("corrections") or [] if c != "none"]
+        if corrections and "approach" in steps and failed in steps and steps.index("approach") <= steps.index(failed):
+            args = {"from_step": "approach", "correction": corrections[0]}      # relocate, as plain code offers it
+        else:
+            args = {"from_step": failed or "reach"}
     kind = (esc.get("findings") or [{}])[0].get("kind") or "other"
     return {"schema": "arm-fixplan/v1", "incident_id": esc.get("incident_id"), "action": action, "args": args,
             "kind": kind[:40], "confidence": 0.8, "touches_safety": False,
             "why": f"fake manager: {kind} maps to {action}, the first action plain code allows",
-            "expect": "the check at home passes"}
+            "expect": "the redone grip holds the block" if action == "redo_step" else "the check at home passes"}
 
 
 def answer(mode, esc):
@@ -59,6 +67,9 @@ def answer(mode, esc):
     if mode == "off_list":
         plan["action"] = next(a for a in ACTIONS if a not in (esc.get("allowed_actions") or []) and a != "redo_step")
         plan["why"] = "fake manager (off_list): an action this incident does not allow"
+    if mode == "redo_offset" and plan["action"] == "redo_step":
+        plan["args"] = {"from_step": "approach", "correction": "offset", "dx_mm": 30, "dy_mm": 0}
+        plan["why"] = "fake manager (redo_offset): the block likely slid 30 mm away from the base; shift the approach"
     if mode == "unsafe":
         plan["touches_safety"] = True
         plan["why"] = "fake manager (unsafe): a plan that says it touches the safety layer"

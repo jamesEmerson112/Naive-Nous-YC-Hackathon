@@ -235,6 +235,12 @@ def test_model_path_http_errors_are_recorded_and_429_is_retried():
     assert len(SRV.requests) == 2 and ans[0]["error"].startswith("HTTP 429"), (len(SRV.requests), ans[0]["error"])
 
 
+def test_model_path_cut_transfer_is_recorded_and_the_run_goes_on():
+    rep, ans = model("cut", "--retries", "0", limit="3")
+    assert rep["errors"] == 3 and all("IncompleteRead" in a["error"] for a in ans), [a["error"] for a in ans]
+    assert rep["schema_ok"] == 0
+
+
 def test_model_path_refused_connection_is_recorded():
     out = TMP / "refused"
     rc = run.main(["--items", str(ITEMS_FILE), "--out", str(out), "--endpoint", "http://127.0.0.1:9/v1",

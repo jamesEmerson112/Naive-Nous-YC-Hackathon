@@ -6,6 +6,11 @@ pod image, or a servo unplugged) instead of injecting it.
     python -m armsim.stories b            # job -> work -> break -> heal: stuck sensor -> restart -> retry
     python -m armsim.stories b --hermes   # the job comes from a Naïve board card and Hermes does it
     python -m armsim.stories stall        # a dead joint -> handed to a person -> Romulus work order
+    python -m armsim.stories redo --manager fake   # a wrong action (sim only): the block was bumped, the grasp
+                                          # misses -> reversed -> the manager corrects the approach -> redone
+      --shift-mm 30 (how far the block moves away from the base; 60 is past the scan: 2 redos, then a person),
+      --fake-mode good|redo_offset, --manager off (today: the card is blocked). Runs the dispatcher once on
+      the file board ($ARMSIM_FILE_BOARD), then prints the run's event lines and puts the block back.
 """
 import argparse
 import json
@@ -152,20 +157,68 @@ def story_stall(real):
         say(f"  after the repair by hand: verified={r.get('verified')}")
 
 
+def story_redo(real, manager, shift_mm, fake_mode):
+    """Category 2 (armsim/redo.py), through the dispatcher: an order, a bumped block, a missed grasp."""
+    from . import events
+    from .board import open_board
+    from .dispatch import main as dispatch_main
+    from .orders import is_arm_job, place
+    if real:
+        raise SystemExit("story redo is sim only tonight: it moves the simulated block, and the relocate scan needs "
+                         "the arm's kinematics, which are off on the real arm")
+    board = open_board("file")
+    waiting = [c["id"] for c in board.show("todo") if is_arm_job(c)]
+    if waiting:
+        raise SystemExit(f"the file board {getattr(board, 'path', '')} has ARM JOB cards waiting ({', '.join(waiting)}): "
+                         "the dispatcher would work those first. Use a fresh ARMSIM_FILE_BOARD.")
+    say("STORY REDO: the arm does the wrong thing -> it is told -> it reverses -> the manager corrects the command "
+        "-> the arm redoes it")
+    skill("go_home")
+    say(f"someone bumps the block {shift_mm:g} mm away from the base (sim only)")
+    r = call("inject", fault="block_shift", params={"dx_mm": shift_mm, "dy_mm": 0})
+    if not r.get("ok"):
+        raise SystemExit(f"couldn't move the block: {r.get('error')}")
+    order, card = place(board, "pick", source="story")
+    say(f"order {order['id']} is card {card['id']}; the dispatcher takes it"
+        + (f" (manager {manager}, wrong actions redone)" if manager != "off" else " (manager off: today's behaviour)"))
+    since = time.time() - 0.5
+    argv = ["--board", "file", "--exec", "scripted", "--once"]
+    if manager != "off":
+        argv += ["--manager", manager, "--wrong-action", "redo", "--fake-mode", fake_mode]
+    dispatch_main(argv)
+    say("the run's event lines:")
+    for e in events.read(since=since):
+        if e.get("card") in (None, card["id"]) and e.get("src") != "order":
+            print(f"{time.strftime('%H:%M:%S', time.localtime(e['ts']))} {e['src']:9s} {e['kind']:12s} {e['text']}",
+                  flush=True)
+    final = board.card(card["id"]) or {}
+    say(f"card {card['id']} is {final.get('status')}: {final.get('note') or ''}")
+    call("clear", fault="block_shift")
+    say("a person puts the block back where the poses expect it")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Run a demo story against the arm host.")
-    ap.add_argument("story", choices=["a", "b", "stall"])
+    ap.add_argument("story", choices=["a", "b", "stall", "redo"])
     ap.add_argument("--hermes", action="store_true", help="story b: the job comes from a Naïve card, Hermes runs it")
     ap.add_argument("--real", action="store_true", help="the real bench: plant faults by hand, don't inject")
     ap.add_argument("--image", choices=sorted(IMAGES), default="07",
                     help="story a: which bad pod image (07 is the bench demo's, #54; 02 the clock bug)")
     ap.add_argument("--romulus", default=os.environ.get("ARMSIM_ROMULUS", "http://localhost:8000"))
+    ap.add_argument("--manager", choices=["off", "fake", "hermes"], default="fake",
+                    help="story redo: who corrects the command (off: today's behaviour, the card is blocked)")
+    ap.add_argument("--fake-mode", choices=["good", "redo_offset"], default="good",
+                    help="story redo with --manager fake: relocate (good) or a bounded offset (redo_offset)")
+    ap.add_argument("--shift-mm", type=float, default=30.0, help="story redo: how far the block moves (mm, +x)")
     a = ap.parse_args()
     st = call("status")
     if st.get("incidents"):
         raise SystemExit(f"the arm has open incidents; clear them first: {st['incidents']}")
     {"a": lambda: story_a(a.real, a.image), "b": lambda: story_b(a.real, a.hermes),
-     "stall": lambda: story_stall(a.real)}[a.story]()
+     "stall": lambda: story_stall(a.real),
+     "redo": lambda: story_redo(a.real, a.manager, a.shift_mm, a.fake_mode)}[a.story]()
+    if a.story == "redo":                                    # a dispatcher incident: nothing goes to Romulus
+        return
     time.sleep(12)                                           # the next check-in and the outbox drain
     romulus(a.romulus, {st.get("romulus", {}).get("device", "arm-twin-1"), "pod-1"})
 

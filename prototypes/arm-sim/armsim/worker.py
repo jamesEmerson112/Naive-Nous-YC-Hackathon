@@ -144,7 +144,7 @@ def _sev(s):
 def findings_for(full, status):
     """The level-1 finding behind the incident, then podd's open incidents (at most 8)."""
     kind = full.get("kind") or "other"
-    out = [{"src": "podd" if kind.startswith("pod_") else "watchdog", "kind": kind[:40],
+    out = [{"src": full.get("src") or ("podd" if kind.startswith("pod_") else "watchdog"), "kind": kind[:40],
             "severity": _sev(full.get("severity") or "critical"), "summary": short(full.get("summary") or kind, 300)}]
     for p in ((status or {}).get("pod") or {}).get("incidents") or []:
         out.append({"src": "podd", "kind": str(p.get("kind") or "pod")[:40], "severity": _sev(p.get("severity")),
@@ -474,8 +474,8 @@ class Worker:
             ex.host("handoff", id=inc.get("id"), reason=f"the manager handed it to a person: {why}")
             return False, "handoff_human", f"the manager handed it to a person ({why})"
         if a == "redo_step":
-            # Category 2: reverse the step (open the jaws, go home), then redo from from_step once. The
-            # dispatcher doesn't open wrong_action incidents yet (design step 9), so nothing reaches this.
+            # Never reached: redo_step is allowed for wrong_action incidents only, and those run in
+            # armsim/redo.py (--wrong-action redo), with the reversal, the correction and the check.
             for name in ("release", "go_home"):
                 ex.host("skill", name=name)
             card = ex.ctx.get("card")

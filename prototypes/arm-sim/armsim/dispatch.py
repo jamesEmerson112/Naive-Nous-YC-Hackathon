@@ -15,6 +15,8 @@ The worker/manager healer (armsim/worker.py, docs/worker-manager-healer.md), scr
 the key is $ARMSIM_MANAGER_KEY), --manager-deadline 90, --fake-mode good|bad_json|off_list|unsafe|slow|429|
 500|failed|refused (--manager fake), --worker-lm off|ollama, --ollama URL, --worker-model qwen3.5:4b,
 --exec-via code|lm (lm: the worker's model issues the checked action, gated to that exact call).
+--wrong-action off|redo (default off; redo needs --manager): a missed grasp is a wrong action (category 2,
+armsim/redo.py): reverse it, the manager corrects the command, the arm redoes it, at most twice.
 
 How it works, one card at a time (there is one arm):
 1. At startup it takes the board's dispatcher lock (one dispatcher per board: a second one exits), then
@@ -161,9 +163,11 @@ class ScriptedExecutor:
     name = "scripted"
 
     def __init__(self, board, *, call=None, emit=None, max_heals=MAX_HEALS, pod_wait_s=90.0, pod_clear_s=10.0,
-                 hold_s=6.0, poll_s=1.0, sleep=time.sleep, worker=None):
+                 hold_s=6.0, poll_s=1.0, sleep=time.sleep, worker=None, redo=None):
         self.board, self.host = board, Host(call)
         self.worker = worker                  # armsim.worker.Worker: heal through the manager first (None: off)
+        self.redo = redo                      # armsim.redo.Redo: redo a missed grasp (None: block, as before)
+        self.replies = {}                     # step -> its last skill reply (the redo's evidence)
         self.job_steps = []
         self.emit = emit or events.emit
         self.max_heals, self.pod_wait_s, self.pod_clear_s = max_heals, pod_wait_s, pod_clear_s
@@ -178,7 +182,7 @@ class ScriptedExecutor:
     def run(self, card, timeout=None):
         job = parse_card(card)
         self.ctx = {"card": card["id"], "order": job["order"], "job": job["job"], "exec": self.name}
-        self.healed = []
+        self.healed, self.replies = [], {}
         t0 = time.time()
         steps = self.job_steps = job["steps"]
         self._ev("job_started", f"the scripted commander starts {JOBS[job['job']]['title']}: {', '.join(steps)}",
@@ -200,7 +204,7 @@ class ScriptedExecutor:
             if not ok:
                 return False, why
             t = time.time()
-            reply = self.host("skill", name=step)
+            reply = self.replies[step] = self.host("skill", name=step)
             if reply.get("unreachable"):
                 return False, f"the arm host stopped answering during {step}: {reply['error']}"
             self._ev("skill", skill_text(step, reply), step=step, ok=bool(reply.get("ok")) and not reply.get("incident"),
@@ -220,6 +224,8 @@ class ScriptedExecutor:
             if res.get("arrived") is False:
                 return False, f"{step} didn't arrive ({res.get('aborted') or 'no reason given'})"
             if step in ("grip", "lift") and res.get("grasp") and not res["grasp"].get("holding"):
+                if self.redo:                       # a wrong action: reverse, correct, redo (armsim/redo.py)
+                    return self.redo.wrong_action(self, step, reply)
                 return False, f"{step}: the gripper isn't holding the block"
             return True, None
         return False, f"{step} didn't finish"
@@ -697,14 +703,20 @@ def main(argv=None):
                     help="the manager's Hermes API server, with /p/manager when the gateway multiplexes profiles")
     ap.add_argument("--manager-deadline", type=float, default=90.0, help="seconds the manager gets (3-120)")
     ap.add_argument("--fake-mode", default="good", choices=["good", "bad_json", "off_list", "unsafe", "slow", "429",
-                                                           "500", "failed", "refused"], help="--manager fake only")
+                                                           "500", "failed", "refused", "redo_offset"],
+                    help="--manager fake only")
     ap.add_argument("--worker-lm", choices=["off", "ollama"], default="off", help="the worker's model writes its answer")
     ap.add_argument("--ollama", default=os.environ.get("ARMSIM_OLLAMA", "http://127.0.0.1:11434/v1"),
                     help="the worker model's OpenAI-compatible endpoint")
     ap.add_argument("--worker-model", default="qwen3.5:4b")
     ap.add_argument("--exec-via", choices=["code", "lm"], default="code",
                     help="lm: the worker's model issues the checked action, gated to that exact call (needs --worker-lm)")
+    ap.add_argument("--wrong-action", choices=["off", "redo"], default="off",
+                    help="redo: a missed grasp is reversed and redone with the manager's bounded correction "
+                         "(armsim/redo.py; needs --manager); off = the card is blocked, as before")
     a = ap.parse_args(argv)
+    if a.wrong_action == "redo" and a.manager == "off":
+        raise SystemExit("--wrong-action redo needs --manager fake|hermes: the manager corrects the command")
     if a.exec_via == "lm" and a.worker_lm == "off":
         raise SystemExit("--exec-via lm needs --worker-lm ollama: the worker's model issues the call")
     if a.manager != "off" and a.exec != "scripted":
@@ -731,8 +743,10 @@ def main(argv=None):
     if a.exec == "hermes":
         executor = HermesExecutor(board)
     else:
+        from .redo import make as make_redo
         from .worker import make as make_worker
-        executor = ScriptedExecutor(board, worker=make_worker(a))
+        worker = make_worker(a)
+        executor = ScriptedExecutor(board, worker=worker, redo=make_redo(a, worker))
     try:
         Dispatcher(board, executor, every=a.every, job_timeout=a.job_timeout, stop=stop).run(
             once=a.once, max_jobs=a.max_jobs)

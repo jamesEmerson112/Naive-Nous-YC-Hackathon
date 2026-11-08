@@ -31,6 +31,7 @@ WRONG = {**ESC, "category": "wrong_action", "allowed_actions": ["redo_step", "pa
          "findings": [{"src": "dispatcher", "kind": "grasp_missed", "severity": "warn",
                        "summary": "grip: the gripper isn't holding the block"}],
          "state": {**ESC["state"], "job": {**ESC["state"]["job"], "failed_step": "grip"}}}
+WRONG_K = {**WRONG, "state": {**WRONG["state"], "corrections": ["relocate", "offset", "none"]}}
 STATE = {"incident_open": True, "halted": True, "now": NOW + 5, "asked_at": NOW, "heals_this_job": 0,
          "redos_this_job": 0, "tried": []}
 
@@ -41,6 +42,10 @@ def plan(**over):
          "why": "us is identical across the window while pred moved 29 mm", "expect": "fresh rows with jitter"}
     p.update(over)
     return p
+
+
+def redo(from_step="approach", **args):
+    return plan(action="redo_step", kind="grasp_missed", args={"from_step": from_step, **args})
 
 
 J = json.dumps
@@ -74,8 +79,35 @@ CASES = [
      True, "ok"),
     ("redo past the failed step", J(plan(action="redo_step", args={"from_step": "lift"})), WRONG, {}, False,
      "after the failed step"),
-    ("redo a second time", J(plan(action="redo_step", args={"from_step": "grip"})), WRONG, {"redos_this_job": 1},
+    ("a third redo", J(plan(action="redo_step", args={"from_step": "grip"})), WRONG, {"redos_this_job": 2},
      False, "redo_step already ran"),
+    # category 2's bounded corrections (armsim/redo.py): only from state.corrections, never an angle
+    ("redo with relocate", J(redo(correction="relocate")), WRONG_K, {}, True, "ok"),
+    ("redo with a bounded offset", J(redo(correction="offset", dx_mm=30, dy_mm=-5)), WRONG_K, {}, True, "ok"),
+    ("an offset past 40 mm on one axis", J(redo(correction="offset", dx_mm=60, dy_mm=0)), WRONG_K, {}, False,
+     "60 is above 40"),
+    ("an offset past 40 mm in all", J(redo(correction="offset", dx_mm=35, dy_mm=35)), WRONG_K, {}, False,
+     "more than 40 mm in all"),
+    ("an offset in fractions", J(redo(correction="offset", dx_mm=30.5, dy_mm=0)), WRONG_K, {}, False, "expected integer"),
+    ("an offset with no dy", J(redo(correction="offset", dx_mm=30)), WRONG_K, {}, False, "needs both dx_mm and dy_mm"),
+    ("dx with relocate", J(redo(correction="relocate", dx_mm=10)), WRONG_K, {}, False, "only with the offset"),
+    ("a correction from grip", J(redo(correction="relocate", from_step="grip")), WRONG_K, {}, False,
+     "redo from reach or approach"),
+    ("a correction not offered", J(redo(correction="relocate")),
+     {**WRONG_K, "state": {**WRONG_K["state"], "corrections": ["none"]}}, {}, False, "not offered"),
+    ("a correction without kinematics", J(redo(correction="relocate")),
+     {**WRONG_K, "state": {**WRONG_K["state"], "kinematics": False}}, {}, False, "kinematics"),
+    ("a joint angle as a correction", J(redo(correction="offset", dx_mm=0, dy_mm=0, elbow_flex=30)), WRONG_K, {},
+     False, "unexpected key 'elbow_flex'"),
+    ("relocate again after a failed relocate", J(redo(correction="relocate")), WRONG_K,
+     {"redos_this_job": 1, "tried": [{"action": "redo_step", "verified": False, "args": redo(correction="relocate")["args"]}]},
+     True, "ok"),
+    ("the same offset after it failed", J(redo(correction="offset", dx_mm=30, dy_mm=0)), WRONG_K,
+     {"tried": [{"action": "redo_step", "verified": False,
+                 "args": {"from_step": "approach", "correction": "offset", "dx_mm": 30, "dy_mm": 0}}]},
+     False, "not tried again"),
+    ("a plain redo again after it failed", J(redo()), WRONG_K,
+     {"tried": [{"action": "redo_step", "verified": False, "args": {"from_step": "approach"}}]}, False, "not tried again"),
     ("a second pod_rollback", J(plan(action="pod_rollback", kind="us_mismatch")),
      {**ESC, "allowed_actions": ["pod_rollback", "verify", "park", "handoff_human", "no_action"]},
      {"tried": [{"action": "pod_rollback", "verified": True}]}, False, "pod_rollback already ran"),
@@ -94,7 +126,9 @@ def test_the_table():
 
 def test_the_packet_validates_and_bad_packets_dont():
     assert validate(ESC, ESCALATION_SCHEMA) == [], validate(ESC, ESCALATION_SCHEMA)
-    assert validate(WRONG, ESCALATION_SCHEMA) == []
+    assert validate(WRONG, ESCALATION_SCHEMA) == [] and validate(WRONG_K, ESCALATION_SCHEMA) == []
+    assert "'teleport' is not one of" in " ".join(validate(
+        {**WRONG_K, "state": {**WRONG_K["state"], "corrections": ["teleport"]}}, ESCALATION_SCHEMA))
     bad = copy.deepcopy(ESC)
     bad.update(incident_id="inc-1", deadline_s=1, opened_at="11:00", allowed_actions=["restart_sensor", "fly"])
     bad["findings"][0]["src"] = "me"

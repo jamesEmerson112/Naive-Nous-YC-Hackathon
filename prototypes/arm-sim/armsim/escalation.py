@@ -12,16 +12,22 @@ The two messages:
   answer (or null), a lite render of the last 6 s, the arm's state, and the actions plain code allows
   for this incident (`allowed_actions`). Built by `armsim.worker.build_escalation`.
 - `arm-fixplan/v1`, manager -> worker: one action from that list. It can carry no angles and no
-  free-form commands; only `redo_step` takes an argument, and that argument is a skill name.
+  free-form commands; only `redo_step` takes arguments: the skill to redo from, and for a wrong action
+  (category 2, armsim/redo.py) one bounded correction from the packet's `state.corrections`:
+  `none` (redo as before), `relocate` (plain code scans for the block and re-approaches over it) or
+  `offset` with `dx_mm`/`dy_mm`, each within +-40 mm and at most 40 mm in all, applied to the approach.
 
 `check_plan(plan, esc, state)` runs the design's checks in order, and the first failure stops the plan:
   1 exactly one JSON object (one code fence tolerated) that passes the schema;
   2 the right incident, and that incident is still open on the host;
   3 an action from esc.allowed_actions;
-  4 valid arguments (only redo_step has any: from_step in the job's steps, at or before the failed one);
+  4 valid arguments (only redo_step has any: from_step in the job's steps, at or before the failed one;
+    a correction must be offered in state.corrections, needs the arm's kinematics and a from_step of
+    reach or approach, and dx_mm/dy_mm come only with `offset`, within MAX_OFFSET_MM);
   5 no safety changes (touches_safety: true is refused; the worker parks and hands off, K17);
-  6 within budget: 2 heals a job, 1 pod_rollback an incident, 1 redo_step a job, never an action again
-    after its check failed;
+  6 within budget: 2 heals a job, 1 pod_rollback an incident, 2 redo_steps a job, never an action again
+    after its check failed (a redo_step counts as the same only with the same from_step and correction,
+    and `relocate` may run again: it measures the block afresh each time (inferred));
   7 still current: before the deadline, and the arm still halted.
 `state` is plain data the worker reads from the host just before the check (keys under check_plan).
 """
@@ -33,7 +39,10 @@ ACTIONS = ("restart_sensor", "verify", "pod_rollback", "redo_step", "park", "han
 STEPS = ("reach", "approach", "grip", "lift", "release")      # the skills redo_step may restart from
 MAX_HEALS = 2               # a job's heal budget: the same as armsim/dispatch.py MAX_HEALS
 MAX_POD_ROLLBACKS = 1       # per incident, inside the pod gate's FLASH_CAP = 3 (firmware/harness/agent.py:38)
-MAX_REDOS = 1               # per job (inferred)
+MAX_REDOS = 2               # per job: a wrong action is redone at most twice, then a person (armsim/redo.py)
+CORRECTIONS = ("none", "relocate", "offset")    # what a redo_step may change about the approach (category 2)
+MAX_OFFSET_MM = 40          # the bound on a correction's shift of the approach, per axis and in all (inferred)
+CORRECT_FROM = ("reach", "approach")            # a correction moves the approach, so the redo starts there or earlier
 SAFETY = "touches_safety"   # a reason that starts with this: park and hand off, no fallback
 MAYBE_POD_KINDS = ("us_offset", "us_scale", "us_residual")   # the same as dispatch.py: podd may explain them
 
@@ -64,6 +73,7 @@ ESCALATION_SCHEMA = {
                               "properties": {"card_id": {"type": "string"},
                                              "steps": {"type": "array", "items": {"type": "string"}},
                                              "failed_step": {"type": "string"}}},
+                      "corrections": {"type": "array", "uniqueItems": True, "items": {"enum": list(CORRECTIONS)}},
                       "tried": {"type": "array", "items": {"type": "object", "required": ["action", "verified"],
                                                            "properties": {"action": {"type": "string"},
                                                                           "verified": {"type": "boolean"}}}}}},
@@ -78,7 +88,10 @@ FIXPLAN_SCHEMA = {
         "incident_id": {"type": "string"},
         "action": {"enum": list(ACTIONS)},
         "args": {"type": "object", "additionalProperties": False,
-                 "properties": {"from_step": {"enum": list(STEPS)}}},
+                 "properties": {"from_step": {"enum": list(STEPS)},
+                                "correction": {"enum": list(CORRECTIONS)},
+                                "dx_mm": {"type": "integer", "minimum": -MAX_OFFSET_MM, "maximum": MAX_OFFSET_MM},
+                                "dy_mm": {"type": "integer", "minimum": -MAX_OFFSET_MM, "maximum": MAX_OFFSET_MM}}},
         "kind": {"type": "string", "maxLength": 40},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "touches_safety": {"type": "boolean"},
@@ -204,6 +217,21 @@ def _same(action):
     return "verify" if action == "no_action" else action       # no_action runs as verify
 
 
+def _redo_key(args):
+    args = args or {}
+    return (args.get("from_step"), args.get("correction") or "none", args.get("dx_mm"), args.get("dy_mm"))
+
+
+def _repeats(t, action, args):
+    """Is the tried entry `t` the same fix as (action, args)? A redo_step is the same only with the same
+    from_step and correction; a relocate never is, since it measures the block afresh (inferred)."""
+    if _same(t.get("action")) != _same(action):
+        return False
+    if action != "redo_step":
+        return True
+    return (args or {}).get("correction") != "relocate" and _redo_key(t.get("args")) == _redo_key(args)
+
+
 def check_plan(plan, esc, state):
     """(True, "ok") or (False, reason); the checks in the design's order, the first failure stops the plan.
 
@@ -248,6 +276,22 @@ def check_plan(plan, esc, state):
             return False, f"from_step {start!r} is not a step of this job ({', '.join(steps)})"
         if failed not in steps or steps.index(start) > steps.index(failed):
             return False, f"from_step {start!r} comes after the failed step {failed!r}"
+        corr = args.get("correction") or "none"
+        offered = (esc.get("state") or {}).get("corrections")
+        if corr != "none" and offered is not None and corr not in offered:
+            return False, f"the correction {corr!r} is not offered for this incident ({', '.join(offered) or 'none'})"
+        if corr != "none" and not (esc.get("state") or {}).get("kinematics"):
+            return False, f"the correction {corr!r} needs the arm's kinematics, and they are off"
+        if corr != "none" and start not in CORRECT_FROM:
+            return False, f"a correction moves the approach, so redo from {' or '.join(CORRECT_FROM)}, not {start!r}"
+        has_xy = "dx_mm" in args or "dy_mm" in args
+        if corr == "offset":
+            if "dx_mm" not in args or "dy_mm" not in args:
+                return False, "the offset correction needs both dx_mm and dy_mm"
+            if (args["dx_mm"] ** 2 + args["dy_mm"] ** 2) ** 0.5 > MAX_OFFSET_MM:
+                return False, f"the offset ({args['dx_mm']}, {args['dy_mm']}) mm is more than {MAX_OFFSET_MM} mm in all"
+        elif has_xy:
+            return False, f"dx_mm and dy_mm come only with the offset correction, not {corr!r}"
     # 5 no safety changes
     if obj.get("touches_safety"):
         return False, (f"{SAFETY}: the plan says it touches the safety layer; that goes through the Fleet "
@@ -259,8 +303,8 @@ def check_plan(plan, esc, state):
     if action == "pod_rollback" and sum(t.get("action") == "pod_rollback" for t in tried) >= MAX_POD_ROLLBACKS:
         return False, f"pod_rollback already ran {MAX_POD_ROLLBACKS} time for this incident"
     if action == "redo_step" and state.get("redos_this_job", 0) >= MAX_REDOS:
-        return False, f"redo_step already ran {MAX_REDOS} time in this job"
-    if any(_same(t.get("action")) == _same(action) and t.get("verified") is False for t in tried):
+        return False, f"redo_step already ran {MAX_REDOS} time{'s' if MAX_REDOS > 1 else ''} in this job"
+    if any(_repeats(t, action, args) and t.get("verified") is False for t in tried):
         return False, f"{_same(action)} already ran for this incident and its check failed; it is not tried again"
     # 7 still current
     now, asked = state.get("now"), state.get("asked_at")

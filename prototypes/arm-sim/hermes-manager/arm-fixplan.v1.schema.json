@@ -42,6 +42,23 @@
       "lift",
       "release"
      ]
+    },
+    "correction": {
+     "enum": [
+      "none",
+      "relocate",
+      "offset"
+     ]
+    },
+    "dx_mm": {
+     "type": "integer",
+     "minimum": -40,
+     "maximum": 40
+    },
+    "dy_mm": {
+     "type": "integer",
+     "minimum": -40,
+     "maximum": 40
     }
    }
   },

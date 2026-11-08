@@ -2,8 +2,11 @@
 
 The prompt body is the data report's (docs/research/worker-benchmark-data.md §1.4). Its healthy facts come
 from firmware/ultrasonic-sample.json (echo jitter 0.4 us, mm constant for long stretches), armsim/arm.py
-(the jaw in the beam at home) and armsim/level1.py (held block, one odd reading at an edge). Keep it
-frozen during a model comparison; change PROMPT_VERSION when it changes.
+(the jaw in the beam at home) and armsim/level1.py (held block, one odd reading at an edge). Added here,
+not in the report (inferred): what pred=- means, that no_echo is normal when the sensor points at nothing
+(podd's us_intermittent fires on every wave in sim, see RESULTS.md), that a deliberate reflash reboots once
+with rst=pin new_build=1, what JS lines are, and that an INC line may name the wrong kind. Keep it frozen
+during a model comparison; change PROMPT_VERSION when it changes.
 
     from workerbench import prompt
     msgs = prompt.messages(text)            # [{"role": "system", ...}, {"role": "user", ...}]

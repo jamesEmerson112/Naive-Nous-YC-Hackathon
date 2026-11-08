@@ -11,6 +11,7 @@ The reply depends on the request's `model`, so one server covers every case:
   slow            waits `slow_s` seconds, then a good answer
   native-usage    a good answer with Ollama's prompt_eval_count/eval_count instead of `usage`
   http500 / http429   that HTTP status
+  cut             declares a longer Content-Length than it sends, then closes (a dropped proxy transfer)
 With "stream": true every mode streams server-sent events, ending with a usage chunk and [DONE].
 
     srv = FakeOpenAI(slow_s=3).start(); srv.url  -> "http://127.0.0.1:<port>/v1"; srv.stop()
@@ -72,6 +73,16 @@ class FakeOpenAI:
             return h._send(500, {"error": {"message": "boom"}})
         if mode == "http429":
             return h._send(429, {"error": {"message": "slow down"}})
+        if mode == "cut":
+            data = json.dumps({"choices": [{"message": {"content": json.dumps(HEALTHY)}}]}).encode()
+            h.send_response(200)
+            h.send_header("Content-Type", "application/json")
+            h.send_header("Content-Length", str(len(data) + 500))
+            h.end_headers()
+            h.wfile.write(data[:30])
+            h.wfile.flush()
+            h.close_connection = True
+            return
         if mode == "slow":
             time.sleep(self.slow_s)
         content, reasoning, finish = json.dumps(HEALTHY), "", "stop"
