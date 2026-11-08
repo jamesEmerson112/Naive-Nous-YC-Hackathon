@@ -28,7 +28,7 @@ The last command runs three fake arms (`sim-1`…`sim-3`; `sim-2` is the canary)
 
 ```bash
 make test     # every test; each pytest session gets its own throwaway database in romulus-testdb (:55432)
-make flows    # only the flow tests, cloud/tests/flows/: F1–F8 and F10 (F9 is covered only inside F10)
+make flows    # only the flow tests, cloud/tests/flows/: F1–F8, F10 and F11 (F9 is covered only inside F10)
 make lint
 ```
 
@@ -44,7 +44,27 @@ Settings come from `.env` (copy [`.env.example`](../.env.example)); overnight va
 |---|---|---|
 | `NAIVE_MODE` | `fake`: work-order cards are logged locally | `live`: posts cards to the Naïve board. Also needs `NAIVE_API_KEY`, `NAIVE_BOARD_ID`, and `WORK_ORDER_PHONE` set to a teammate's phone; live mode refuses to post while it's the placeholder. Never live overnight (build plan K13) |
 | `LLM_MODE`, `LLM_PROVIDER` | `fake`, `fake`: templated explanations | `live`, `naive_proxy` (or `runpod`), with `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL=openai/gpt-oss-120b` (the model the M0 spike picked) |
-| `CODER_PROVIDER` | `fake` | `local_agent` once M8b wires it |
+| `CODER_PROVIDER` | `fake` | `local_agent`: the real coding agent (below). Never overnight |
+
+## Real bench and coding agent
+
+The real `device/` code (#31) goes through the coding-agent path (M8, F11). In order:
+
+```bash
+make code-register         # store device/ at its last commit as a code version (DEVICE_REV overrides) (#38)
+make seed-bench            # arm-1 (real) + sim-1, the one canary, on that code; CODE_REV=… to pick one (#38)
+make device-check          # device/'s own tests in the coder image, --network none (18 pass) (#38)
+make device-verify         # held-out SPEC checks from bench/tasks.py into data/verify/device (#38)
+make coder-image           # build the romulus-coder sandbox image (#19, #24)
+make coder-firmware-check  # build a copy of firmware/ in the image, offline (B8, #24)
+make worker-host           # run the worker on the host so it can `docker run` the coder (#28)
+```
+
+`make seed-bench` refuses (409) if another canary exists, e.g. after `make seed`. Rerun `make device-verify` after `device/` changes: a replay on code that isn't the generating commit or a descendant fails as "stale verify" (#38).
+
+To turn the real coder on, set in `.env`: `CODER_PROVIDER=local_agent`; the LLM it uses, `LLM_BASE_URL`, `LLM_MODEL` (`openai/gpt-oss-120b`) and `LLM_API_KEY` (Naïve proxy, or James's RunPod endpoint when the proxy is at capacity); and `CODER_VERIFY_DIR=data/verify/device`. `CODER_TEST_CMD`, `CODER_MAX_DRAFTS_PER_HOUR` and the rest are explained in [`.env.example`](../.env.example). A code candidate stops at `awaiting_canary`: no canary runs real code yet (B7).
+
+**Never use `make worker-host` overnight.** It refuses once the overnight run has started (unless `FORCE=1`), and `make up`/`dev`/`sim` refuse while it runs (#28). The overnight setting is `CODER_PROVIDER=fake`.
 
 ## Planning docs
 
