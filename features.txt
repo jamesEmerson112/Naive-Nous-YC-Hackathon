@@ -2,7 +2,7 @@ FEATURES: who is on what
 Claim a line by adding "<--- Name" (several names: "<--- Olir, Andre").
 Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
-Updated Sat Nov 7, 8:10 PM PST from CLAUDE.md, commits and docs/.
+Updated Sat Nov 7, 8:18 PM PST from CLAUDE.md, commits and docs/.
 
 NAIVE
 Naive API key for Romulus (by 5:15 PM)
@@ -75,7 +75,6 @@ STM32 to Pi link (pod telemetry + podd daemon, firmware 69fc292) <--- Olir
 Accelerometer (LIS3DH) on the STM32 pod   <--- Olir
 Pod healer tools: podd, triage rules, 38 heal tools <--- Olir
 Pod healer agent loop + blind eval (HARNESS.md)
-STM32 toolchain in healer sandbox (B8)   <--- Kent
 Frozen-ultrasonic triage rule (gap found)
 
 DEMO AND FAULTS
@@ -133,3 +132,4 @@ Romulus: Gate follow-ups, corpus replay (#18) <--- Kent
 Romulus: Scaffold, contracts, adapters (M0, #1-#4) <--- Kent
 Naive: Parts catalogue (parts.yaml, #6) <--- Kent
 Models: Naive model proxy works (gpt-oss-120b, D22) <--- Kent
+SO-101: STM32 toolchain in healer sandbox (B8, #24) <--- Kent
