@@ -86,6 +86,17 @@ services:
       api:
         condition: service_healthy
 
+  # The coding-agent sandbox (D21, M8). Never started by `make up`: Compose only builds and
+  # tags the image (`make coder-image`); the worker starts one `docker run --rm` per code
+  # patch with a scratch copy of the device code at /work (adapters/coder.py). Known gap:
+  # its network is not yet limited to the LLM endpoint (see adapters/coder.py).
+  coder:
+    profiles: ["coder"]
+    image: romulus-coder
+    build:
+      context: cloud/coder
+    network_mode: none
+
   # Off by default. Only if Naïve agents must call us (open question N3); needs a bearer
   # token on the exposed routes first (architecture §10).
   tunnel:
