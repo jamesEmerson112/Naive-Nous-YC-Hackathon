@@ -219,24 +219,26 @@ def test_late_held_never_undoes_a_cloud_status(fleet, now):
     incidents.report(fleet, "arm-1", *_incident(), now, safety_paths=[])
     fleet.get(Overlay, ("arm-1", "ov-1")).status = "locked_in"
     held = OverlayStatus(status="held", reason="quiet")
-    assert incidents.set_overlay_status(fleet, "arm-1", "ov-1", "held", held, {}, now) is False
+    assert incidents.set_overlay_status(fleet, "arm-1", "ov-1", held, {}, now) is False
     assert fleet.get(Overlay, ("arm-1", "ov-1")).status == "locked_in"
     reverted = OverlayStatus(status="reverted", reason="recurred")
-    assert (
-        incidents.set_overlay_status(fleet, "arm-1", "ov-1", "reverted", reverted, {}, now) is True
-    )
+    assert incidents.set_overlay_status(fleet, "arm-1", "ov-1", reverted, {}, now) is True
     (ev,) = events.find(fleet, {"device": "arm-1", "overlay": "ov-1"}, kinds=["overlay.reverted"])
     assert ev.refs["incident"] == "11111111-2222-4333-8444-555555555555"
-    assert ev.why == "arm-1 reverted overlay ov-1: recurred. It was locked_in before."
+    assert ev.why == (
+        "arm-1 reverted overlay ov-1: recurred. "
+        "The overlay stays locked_in: the cloud already decided its fate."
+    )
+    assert fleet.get(Overlay, ("arm-1", "ov-1")).status == "locked_in"
 
 
 def test_superseded_is_terminal(fleet, now):
     incidents.report(fleet, "arm-1", *_incident(), now, safety_paths=[])
-    gone = OverlayStatus(status="reverted", reason="replaced by firmware 2")
-    assert incidents.set_overlay_status(fleet, "arm-1", "ov-1", "superseded", gone, {}, now)
+    gone = OverlayStatus(status="superseded", reason="replaced by firmware 2")
+    assert incidents.set_overlay_status(fleet, "arm-1", "ov-1", gone, {}, now)
     for status in ("held", "reverted", "superseded"):
-        body = OverlayStatus(status="held" if status == "held" else "reverted")
-        assert not incidents.set_overlay_status(fleet, "arm-1", "ov-1", status, body, {}, now)
+        body = OverlayStatus(status=status)
+        assert not incidents.set_overlay_status(fleet, "arm-1", "ov-1", body, {}, now)
     assert fleet.get(Overlay, ("arm-1", "ov-1")).status == "superseded"
     kinds = [e.kind for e in events.find(fleet, {"device": "arm-1", "overlay": "ov-1"})]
     assert kinds.count("overlay.superseded") == 1 and "overlay.reverted" not in kinds

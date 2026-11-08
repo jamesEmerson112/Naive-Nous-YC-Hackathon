@@ -120,16 +120,7 @@ def overlay_status(
     device_id: str, overlay_id: str, session: SessionDep, raw: dict[str, Any] = RawBody
 ):
     check_contract(raw, required=False)
-    status = raw.get("status")
-    if status == incidents.SUPERSEDED:
-        # Contracts v0.1 knows only held/reverted (PR #5 adds superseded): validate the
-        # other fields with a status the installed contract accepts, keep the real one.
-        body = parse(OverlayStatus, raw | {"status": "reverted"})
-    else:
-        body = parse(OverlayStatus, raw)
-        status = body.status
-    changed = incidents.set_overlay_status(
-        session, device_id, overlay_id, status, body, raw, utcnow()
-    )
+    body = parse(OverlayStatus, raw)
+    changed = incidents.set_overlay_status(session, device_id, overlay_id, body, raw, utcnow())
     session.commit()
     return Response(status_code=204) if changed else JSONResponse(DUPLICATE, status_code=200)

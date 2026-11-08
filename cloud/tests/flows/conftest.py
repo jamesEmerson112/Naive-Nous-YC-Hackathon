@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.models import Event
-from romulus_cloud.services.seed import seed
+from romulus_cloud.services import registry
+from romulus_cloud.services.seed import FIRMWARE_V1, seed
 
 EXAMPLES = Path(__file__).resolve().parents[3] / "packages" / "contracts" / "examples"
 
@@ -34,6 +35,20 @@ def seeded(db_session: Session, settings) -> Session:
     seed(db_session, build_blobstore(settings.blob_dir))
     db_session.commit()
     return db_session
+
+
+@pytest.fixture
+def v2(seeded: Session, settings) -> Session:
+    """On top of the seed: firmware v2, harness v2 and code c0de002 exist (nothing assigned)."""
+    store = build_blobstore(settings.blob_dir)
+    kw = {"actor": "human:test", "actor_class": "human"}
+    registry.create_firmware(seeded, FIRMWARE_V1 | {"version": 2}, **kw)
+    meta = b'{"version": 2, "framework": "mini-swe-agent"}'
+    registry.create_harness(seeded, store, registry.build_tarball({"harness.json": meta}), **kw)
+    code = registry.build_tarball({"device/README.md": b"c0de002"})
+    registry.create_code(seeded, store, code, rev="c0de002", **kw)
+    seeded.commit()
+    return seeded
 
 
 @pytest.fixture

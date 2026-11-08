@@ -8,12 +8,21 @@ are a retry of a report already stored. Nothing here commits.
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.errors import ApiError
-from romulus_cloud.models import Device, FleetState, InstallReport, Overlay
+from romulus_cloud.models import (
+    CodeVersion,
+    Device,
+    FirmwareVersion,
+    FleetState,
+    HarnessVersion,
+    InstallReport,
+    Overlay,
+)
 from romulus_cloud.services import registry
 from romulus_contracts import Assigned, CheckIn, CheckInResponse, InstallResult
 
@@ -155,10 +164,22 @@ def check_in(
     """Record what the device runs and answer with what it should run (APIs §2.3)."""
     actor = f"device:{device_id}"
     device = session.get(Device, device_id)
-    registered_now = device is None
+    registered_now = False
     if device is None:
-        device = Device(id=device_id)
-        session.add(device)
+        # ON CONFLICT DO NOTHING: two first check-ins racing in never raise; the loser
+        # waits for the winner's commit and then reads its row.
+        firmware, harness = registry.default_assignment(session, "so101")
+        registered_now = (
+            session.execute(
+                pg_insert(Device)
+                .values(id=device_id, assigned_firmware=firmware, assigned_harness=harness)
+                .on_conflict_do_nothing(index_elements=[Device.id])
+                .returning(Device.id)
+            ).scalar()
+            is not None
+        )
+        device = session.get(Device, device_id, populate_existing=True)
+        assert device is not None
     first = registered_now or device.last_seen_at is None
     _fill_assignment(session, device, now, quiet=registered_now)
     session.flush()
@@ -265,15 +286,60 @@ def _install_why(device: Device, body: InstallResult) -> str:
     return f"{device.id} rejected {what} as invalid; nothing was installed{detail}."
 
 
+def _version_exists(session: Session, device: Device, body: InstallResult) -> bool:
+    if body.type == "firmware":
+        return session.get(FirmwareVersion, (device.fleet_id, int(body.version))) is not None
+    if body.type == "harness":
+        return session.get(HarnessVersion, (device.fleet_id, int(body.version))) is not None
+    return session.get(CodeVersion, (device.fleet_id, str(body.version))) is not None
+
+
+def _newer_report_at(session: Session, device_id: str, type_: str, at: datetime) -> datetime | None:
+    """When the newest stored report of this type happened, if it is later than `at`."""
+    when = func.coalesce(InstallReport.occurred_at, InstallReport.received_at)
+    latest = session.scalar(
+        select(func.max(when)).where(
+            InstallReport.device_id == device_id, InstallReport.type == type_
+        )
+    )
+    return latest if latest is not None and latest > at else None
+
+
+def _apply_installed(device: Device, body: InstallResult) -> str:
+    """Move `running` (and `last_good` when it is the assigned version); say what moved."""
+    if body.type == "code":
+        device.running_code_rev = str(body.version)
+        return ""
+    version = int(body.version)
+    setattr(device, f"running_{body.type}", version)
+    assigned = getattr(device, f"assigned_{body.type}")
+    if version == assigned:
+        setattr(device, f"last_good_{body.type}", version)
+        return ""
+    last_good = getattr(device, f"last_good_{body.type}")
+    return f" It is not the assigned {body.type} ({assigned}), so last good stays {last_good}."
+
+
 def report_install(
     session: Session, device_id: str, body: InstallResult, raw: dict[str, Any], now: datetime
 ) -> bool:
-    """Store an install result and move `running`/`last_good` on success. Returns created.
+    """Store an install result; on `installed`, move `running` and maybe `last_good`.
+    Returns created.
 
-    A resend of a report with the same (type, version, result, occurred_at) is a no-op.
-    `last_good` moves only on `installed`; the other results change nothing but the log.
+    - A version the registry doesn't have is refused (`422 unknown_version`).
+    - A resend with the same (type, version, result, occurred_at) is a no-op.
+    - A report older than the newest stored report of its type is kept as history but
+      moves nothing (it arrived late, e.g. from the outbox after a reconnect).
+    - `installed` moves `running`; `last_good` moves only when the version is the one
+      assigned. The other results change nothing but the log.
     """
     device = get_device(session, device_id)
+    if not _version_exists(session, device, body):
+        raise ApiError(
+            422,
+            "unknown_version",
+            f"{body.type} {body.version} is not in the registry, so it can't be installed.",
+        )
     version = str(body.version)
     if body.occurred_at is not None:
         dupe = session.scalar(
@@ -287,7 +353,16 @@ def report_install(
         )
         if dupe is not None:
             return False
+    at = body.occurred_at or now
+    newer = _newer_report_at(session, device_id, body.type, at)
     why = _install_why(device, body)
+    if newer is not None:
+        why += (
+            f" Ignored for running and last good: a newer {body.type} report "
+            f"(from {newer.isoformat()}) is already stored."
+        )
+    elif body.result == "installed":
+        why += _apply_installed(device, body)
     session.add(
         InstallReport(
             fleet_id=device.fleet_id,
@@ -301,13 +376,6 @@ def report_install(
             raw=raw,
         )
     )
-    if body.result == "installed":
-        if body.type == "firmware":
-            device.running_firmware = device.last_good_firmware = int(body.version)
-        elif body.type == "harness":
-            device.running_harness = device.last_good_harness = int(body.version)
-        else:
-            device.running_code_rev = version
     version_ref = "code_rev" if body.type == "code" else body.type
     events.record(
         session,
@@ -321,8 +389,9 @@ def report_install(
             "version": body.version,
             "result": body.result,
             "detail": body.detail,
+            "stale": newer is not None,
         },
-        ts=body.occurred_at or now,
+        ts=at,
         fleet_id=device.fleet_id,
     )
     return True

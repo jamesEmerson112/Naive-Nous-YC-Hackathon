@@ -102,13 +102,11 @@ def test_f1_check_in_stores_raw_payload(client, seeded, example, db_session):
     assert db_session.get(Device, "arm-1").raw == body
 
 
-def test_f1_rolled_back_keeps_last_good(client, seeded, example, count_events):
+def test_f1_rolled_back_keeps_last_good(client, v2, example, count_events):
     t0 = "2026-11-07T22:01:00Z"
     _install(client, "arm-1", "firmware", 1, "installed", t0)
     _install(client, "arm-1", "code", "c0de001", "installed", t0)
     # The operator assigns firmware v2; the device installs it, fails health, rolls back.
-    v2 = example("firmware_response")["manifest"] | {"version": 2}
-    assert client.post("/v1/firmware", json={"manifest": v2, "by": "kent"}).status_code == 201
     resp = client.patch("/v1/devices/arm-1", json={"assigned": {"firmware": 2}, "by": "kent"})
     assert resp.json()["assigned"]["firmware"] == 2
     checkin = client.post("/v1/devices/arm-1/checkin", json=example("checkin")).json()
@@ -131,7 +129,7 @@ def test_f1_rolled_back_keeps_last_good(client, seeded, example, count_events):
     assert count_events("install.reported", {"device": "arm-1", "code_rev": "c0de002"}) == 1
 
 
-def test_f1_rolled_back_why_is_plain_english(client, seeded, db_session):
+def test_f1_rolled_back_why_is_plain_english(client, v2, db_session):
     _install(client, "arm-1", "firmware", 1, "installed", "2026-11-07T22:01:00Z")
     _install(client, "arm-1", "firmware", 2, "rolled_back", "2026-11-07T22:05:00Z", "tier 1")
     (event,) = events.find(db_session, {"device": "arm-1", "firmware": 2})
@@ -142,7 +140,7 @@ def test_f1_rolled_back_why_is_plain_english(client, seeded, db_session):
     assert event.actor == "device:arm-1" and event.actor_class == "automation"
 
 
-def test_f1_hash_mismatch_changes_nothing_but_is_recorded(client, seeded, db_session):
+def test_f1_hash_mismatch_changes_nothing_but_is_recorded(client, v2, db_session):
     _install(client, "arm-1", "harness", 1, "installed", "2026-11-07T22:01:00Z")
     resp = _install(client, "arm-1", "harness", 2, "hash_mismatch", "2026-11-07T22:06:00Z")
     assert resp.status_code == 204
@@ -153,7 +151,7 @@ def test_f1_hash_mismatch_changes_nothing_but_is_recorded(client, seeded, db_ses
     assert event.data["result"] == "hash_mismatch"
 
 
-def test_f1_install_resend_is_deduplicated(client, seeded, example, db_session, count_events):
+def test_f1_install_resend_is_deduplicated(client, v2, example, db_session, count_events):
     body = example("install_result_firmware")
     assert client.post("/v1/devices/arm-1/installs", json=body).status_code == 204
     resend = client.post("/v1/devices/arm-1/installs", json=body)
@@ -172,7 +170,7 @@ def test_f1_install_without_occurred_at_is_always_recorded(client, seeded, count
     assert count_events("install.reported", {"device": "arm-1"}) == 2
 
 
-def test_f1_contract_skew_is_rejected_clearly(client, seeded, example):
+def test_f1_contract_skew_is_rejected_clearly(client, v2, example):
     body = example("checkin") | {"contract_version": "9.9"}
     resp = client.post("/v1/devices/arm-7/checkin", json=body)
     assert resp.status_code == 400
@@ -239,3 +237,39 @@ def test_f1_operator_uploads_and_assigns(client, seeded, count_events):
     assert listing["sim-2"]["role"] == "canary"
     assert listing["arm-1"]["kind"] == "real" and listing["sim-1"]["kind"] == "sim"
     assert client.patch("/v1/devices/sim-1", json={"assigned": {"firmware": 42}}).status_code == 404
+
+
+def test_f1_unknown_version_is_refused(client, seeded, count_events):
+    t = "2026-11-07T22:01:00Z"
+    resp = _install(client, "arm-1", "firmware", 99, "installed", t)
+    assert resp.status_code == 422 and resp.json()["error"] == "unknown_version"
+    assert _install(client, "arm-1", "code", "nope", "installed", t).status_code == 422
+    dev = _device(client, "arm-1")
+    assert dev["running"]["firmware"] is None and dev["last_good"]["firmware"] is None
+    assert count_events("install.reported", {"device": "arm-1"}) == 0
+
+
+def test_f1_late_older_report_moves_nothing(client, v2, db_session):
+    """The reviewer's reproduction: installed v2 at T+10, then a late installed v1 at T0."""
+    client.patch("/v1/devices/arm-1", json={"assigned": {"firmware": 2}})
+    assert (
+        _install(client, "arm-1", "firmware", 2, "installed", "2026-11-07T22:10:00Z").status_code
+        == 204
+    )
+    late = _install(client, "arm-1", "firmware", 1, "installed", "2026-11-07T22:00:00Z")
+    assert late.status_code == 204
+    dev = _device(client, "arm-1")
+    assert dev["running"]["firmware"] == 2 and dev["last_good"]["firmware"] == 2
+    assert dev["assigned"]["firmware"] == 2
+    (event,) = events.find(db_session, {"device": "arm-1", "firmware": 1})
+    assert "Ignored for running and last good: a newer firmware report" in event.why
+    assert event.data["stale"] is True
+
+
+def test_f1_installed_but_not_assigned_moves_running_not_last_good(client, v2, db_session):
+    _install(client, "arm-1", "firmware", 1, "installed", "2026-11-07T22:00:00Z")
+    _install(client, "arm-1", "firmware", 2, "installed", "2026-11-07T22:05:00Z")
+    dev = _device(client, "arm-1")
+    assert dev["running"]["firmware"] == 2 and dev["last_good"]["firmware"] == 1
+    (event,) = events.find(db_session, {"device": "arm-1", "firmware": 2})
+    assert event.why.endswith("It is not the assigned firmware (1), so last good stays 1.")

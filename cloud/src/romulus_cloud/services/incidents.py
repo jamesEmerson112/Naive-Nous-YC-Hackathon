@@ -11,17 +11,17 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
 from romulus_cloud.domain.story import Story, build_story
 from romulus_cloud.errors import ApiError
-from romulus_cloud.models import Device, Incident, Overlay
+from romulus_cloud.models import Incident, Overlay
 from romulus_cloud.services.devices import get_device
 from romulus_contracts import IncidentReport, OverlayStatus, summarize_code_patch, touches_safety
 
-# A new version replaced the overlay (D7). Terminal. Not in contracts v0.1 yet (PR #5 adds
-# it); the device route accepts it already.
+# A new version replaced the overlay (D7). Terminal.
 SUPERSEDED = "superseded"
 # Statuses the cloud sets (M3). A late `held` from the device never moves an overlay back.
 CLOUD_STATUSES = ("locked_in", "dropped")
@@ -73,39 +73,47 @@ def report(
     """Store an incident (and its overlay). Returns (incident, created); a retry is a no-op."""
     device = get_device(session, device_id)
     incident_id = str(body.incident_id)
-    existing = session.get(Incident, incident_id)
-    if existing is not None:
-        if existing.device_id != device_id:
+    agent, outcome, overlay = body.agent, body.outcome, body.overlay
+    # ON CONFLICT DO NOTHING: two copies of one report racing in never raise; the loser
+    # waits for the winner's commit and then reads its row as a duplicate.
+    inserted = (
+        session.execute(
+            pg_insert(Incident)
+            .values(
+                id=incident_id,
+                fleet_id=device.fleet_id,
+                device_id=device_id,
+                occurred_at=body.occurred_at,
+                received_at=now,
+                kind=body.kind,
+                summary=body.summary,
+                running=body.running.model_dump(mode="json") if body.running else None,
+                agent_reasoning=agent.reasoning if agent else None,
+                actions=list(agent.actions) if agent else None,
+                overlay_id=overlay.overlay_id if overlay else None,
+                resolved=outcome.resolved if outcome else False,
+                resolving_action=outcome.resolving_action if outcome else None,
+                suspected_cause=outcome.suspected_cause if outcome else "unknown",
+                signals=body.signals,
+                recording_ids=[str(r) for r in body.recordings],
+                raw=raw,
+            )
+            .on_conflict_do_nothing(index_elements=[Incident.id])
+            .returning(Incident.id)
+        ).scalar()
+        is not None
+    )
+    incident = session.get(Incident, incident_id, populate_existing=True)
+    assert incident is not None
+    if not inserted:
+        if incident.device_id != device_id:
             raise ApiError(
                 409,
                 "incident_id_conflict",
                 f"Incident {incident_id} was already reported "
-                f"by {existing.device_id}; incident ids must be unique UUIDs.",
+                f"by {incident.device_id}; incident ids must be unique UUIDs.",
             )
-        return existing, False
-
-    agent, outcome, overlay = body.agent, body.outcome, body.overlay
-    incident = Incident(
-        id=incident_id,
-        fleet_id=device.fleet_id,
-        device_id=device_id,
-        occurred_at=body.occurred_at,
-        received_at=now,
-        kind=body.kind,
-        summary=body.summary,
-        running=body.running.model_dump(mode="json") if body.running else None,
-        agent_reasoning=agent.reasoning if agent else None,
-        actions=list(agent.actions) if agent else None,
-        overlay_id=overlay.overlay_id if overlay else None,
-        resolved=outcome.resolved if outcome else False,
-        resolving_action=outcome.resolving_action if outcome else None,
-        suspected_cause=outcome.suspected_cause if outcome else "unknown",
-        signals=body.signals,
-        recording_ids=[str(r) for r in body.recordings],
-        raw=raw,
-    )
-    session.add(incident)
-    session.flush()
+        return incident, False
 
     actor, ts, fleet = f"device:{device_id}", body.occurred_at, device.fleet_id
     refs = {"incident": incident_id, "device": device_id}
@@ -154,29 +162,29 @@ def _apply_overlay(
 ) -> None:
     overlay = body.overlay
     assert overlay is not None
-    if session.get(Overlay, (device_id, overlay.overlay_id)) is not None:
+    row = session.get(Overlay, (device_id, overlay.overlay_id))
+    if row is not None and row.incident_id is not None:
         return  # Already known from an earlier incident; the first report owns it.
+    if row is None:
+        row = Overlay(
+            device_id=device_id, id=overlay.overlay_id, fleet_id=fleet_id, status="active"
+        )
+        session.add(row)
+    # else: a placeholder made by a status that arrived first; fill it in, keep its status.
     running = body.running
     safety = touches_safety(overlay.code_patch, safety_paths)
     summary = summarize_code_patch(overlay.code_patch) if overlay.code_patch else None
-    session.add(
-        Overlay(
-            device_id=device_id,
-            id=overlay.overlay_id,
-            fleet_id=fleet_id,
-            incident_id=incident.id,
-            base_firmware=running.firmware if running else None,
-            base_harness=running.harness if running else None,
-            base_code_rev=running.code_rev if running else None,
-            diff=overlay.diff,
-            code_patch=overlay.code_patch,
-            touches_safety=safety,
-            status="active",
-            occurred_at=body.occurred_at,
-            received_at=now,
-            raw=overlay.model_dump(mode="json"),
-        )
-    )
+    row.incident_id = incident.id
+    row.base_firmware = running.firmware if running else None
+    row.base_harness = running.harness if running else None
+    row.base_code_rev = running.code_rev if running else None
+    row.diff = overlay.diff
+    row.code_patch = overlay.code_patch
+    row.touches_safety = safety
+    row.occurred_at = body.occurred_at
+    row.received_at = row.received_at or now
+    row.raw = {**overlay.model_dump(mode="json"), **_last_status(row)}
+    session.flush()
     refs: dict[str, Any] = {
         "incident": incident.id,
         "device": device_id,
@@ -212,29 +220,33 @@ def _apply_overlay(
     )
 
 
-def _superseded_by(device: Device) -> str:
-    return f"now running firmware v{device.running_firmware}, code {device.running_code_rev}"
+def _last_status(row: Overlay) -> dict[str, Any]:
+    """The `last_status` entry kept in an overlay's raw (the last status body the device sent)."""
+    return {"last_status": row.raw["last_status"]} if row.raw and "last_status" in row.raw else {}
 
 
 def set_overlay_status(
     session: Session,
     device_id: str,
     overlay_id: str,
-    status: str,
     body: OverlayStatus,
     raw: dict[str, Any],
     now: datetime,
 ) -> bool:
     """Record `held`, `reverted` or `superseded` for one device's overlay. Returns whether
-    anything changed.
+    anything was recorded (False: a retry, or nothing to say).
 
-    `superseded` means a new healthy version replaced the overlay (D7). It gets its own
-    event kind, so nothing counts it as a failed fix or locks it in, and it is terminal.
-    The same status again is a no-op (a retry). Otherwise latest wins, except that a
-    superseded overlay never changes again and a cloud status (locked in, dropped) is never
-    moved back to `held`.
+    - The same status the device last sent is a no-op (a retry).
+    - `superseded` (a new healthy version replaced the overlay, D7) has its own event kind,
+      so nothing counts it as a failed fix or locks it in. It is terminal.
+    - A cloud status (`locked_in`, `dropped`) is sticky: a later `superseded` or `reverted`
+      is recorded as an event but leaves the status alone (in F3 the origin device sends
+      `superseded` when it installs the promoted version); a late `held` is ignored.
+    - A status for an overlay the cloud hasn't seen yet makes a placeholder row; the
+      incident fills it in when it arrives.
     """
     device = get_device(session, device_id)
+    status = body.status
     overlay = session.get(Overlay, (device_id, overlay_id))
     unknown = overlay is None
     if overlay is None:
@@ -242,14 +254,21 @@ def set_overlay_status(
             device_id=device_id, id=overlay_id, fleet_id=device.fleet_id, received_at=now
         )
         session.add(overlay)
-    elif overlay.status in (status, SUPERSEDED) or (
-        overlay.status in CLOUD_STATUSES and status == "held"
-    ):
-        return False
+    else:
+        last_sent = _last_status(overlay).get("last_status", {}).get("status")
+        sticky = overlay.status in CLOUD_STATUSES
+        if (
+            status in (overlay.status, last_sent)
+            or overlay.status == SUPERSEDED
+            or (sticky and status == "held")
+        ):
+            return False
 
     before = overlay.status
-    overlay.status = status
-    overlay.status_reason = body.reason
+    sticky = before in CLOUD_STATUSES
+    if not sticky:
+        overlay.status = status
+        overlay.status_reason = body.reason
     overlay.updated_at = now
     overlay.raw = {**(overlay.raw or {}), "last_status": raw}
     session.flush()
@@ -262,14 +281,16 @@ def set_overlay_status(
     reason = body.reason or "no reason given"
     if status == SUPERSEDED:
         why = (
-            f"Overlay {overlay_id} on {device_id} was superseded by a new version "
-            f"({_superseded_by(device)}): {reason}. Not a failed fix; nothing to lock in."
+            f"Overlay {overlay_id} on {device_id} was superseded by a new version: {reason}. "
+            "Not a failed fix; nothing to lock in."
         )
     else:
         verb = "kept" if status == "held" else "reverted"
         why = f"{device_id} {verb} overlay {overlay_id}: {reason}."
     if unknown:
-        why += " The cloud had not seen this overlay in an incident report."
+        why += " The cloud has not seen this overlay's incident yet."
+    elif sticky:
+        why += f" The overlay stays {before}: the cloud already decided its fate."
     elif before not in (None, "active"):
         why += f" It was {before} before."
     events.record(
@@ -290,4 +311,10 @@ def story(session: Session, incident_id: str) -> tuple[Incident, Story]:
     incident = session.get(Incident, incident_id)
     if incident is None:
         raise ApiError(404, "unknown_incident", f"Incident {incident_id} does not exist.")
-    return incident, build_story(events.find(session, {"incident": incident_id}), incident_id)
+    found = {e.id: e for e in events.find(session, {"incident": incident_id})}
+    if incident.overlay_id:
+        # A status that arrived before its incident carries no incident ref; include it.
+        overlay_refs = {"device": incident.device_id, "overlay": incident.overlay_id}
+        found.update({e.id: e for e in events.find(session, overlay_refs)})
+    ordered = sorted(found.values(), key=lambda e: (e.ts, e.recorded_at))
+    return incident, build_story(ordered, incident_id)

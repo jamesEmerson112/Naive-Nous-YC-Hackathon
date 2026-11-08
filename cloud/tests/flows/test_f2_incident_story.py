@@ -194,7 +194,7 @@ def test_f2_overlay_superseded_by_a_new_version_is_not_a_failed_fix(
     assert story["chain"] == "camera_occluded → agent acted → overlay ov-12 → held → superseded"
     why = story["steps"][-1]["why"]
     assert why.startswith(
-        "Overlay ov-12 on arm-1 was superseded by a new version (now running firmware v2"
+        "Overlay ov-12 on arm-1 was superseded by a new version: replaced by firmware 2"
     )
     assert "Not a failed fix" in why
     db_session.expire_all()
@@ -205,3 +205,59 @@ def test_f2_overlay_superseded_by_a_new_version_is_not_a_failed_fix(
     assert client.post(url, json=example("overlay_status_held")).status_code == 200
     assert client.post(url, json=example("overlay_status_reverted")).status_code == 200
     assert count_events("overlay.reverted", {"incident": RULES}) == 0
+
+
+def test_f2_cloud_status_is_sticky(client, arm, example, count_events, db_session):
+    """F3: the origin device sends `superseded` when it installs the promoted version."""
+    client.post("/v1/devices/arm-1/incidents", json=example("incident_rules_patch"))
+    url = "/v1/devices/arm-1/overlays/ov-12"
+    client.post(url, json=example("overlay_status_held"))
+    db_session.get(Overlay, ("arm-1", "ov-12")).status = "locked_in"  # what M3's gate does
+    db_session.commit()
+    gone = {"status": "superseded", "reason": "replaced by firmware 2 (D7)"}
+    assert client.post(url, json=gone).status_code == 204
+    assert client.post(url, json=gone).status_code == 200  # resend
+    assert client.post(url, json=example("overlay_status_held")).status_code == 200
+    assert client.post(url, json=example("overlay_status_reverted")).status_code == 204
+    db_session.expire_all()
+    assert db_session.get(Overlay, ("arm-1", "ov-12")).status == "locked_in"
+    assert count_events("overlay.superseded", {"incident": RULES}) == 1
+    story = _story(client, RULES)
+    (superseded,) = [st for st in story["steps"] if st["kind"] == "overlay.superseded"]
+    assert superseded["why"].endswith(
+        "The overlay stays locked_in: the cloud already decided its fate."
+    )
+
+
+def test_f2_status_before_incident_is_filled_in(client, arm, example, count_events, db_session):
+    """Outbox order can put the overlay status first; the incident then fills the overlay."""
+    body = example("incident_d1_code_patch")
+    body["overlay"]["code_patch"] = (
+        "--- a/safety/limits.py\n+++ b/safety/limits.py\n@@ -1 +1 @@\n-MAX = 1\n+MAX = 2\n"
+    )
+    url = "/v1/devices/arm-1/overlays/ov-d1-0001"
+    assert client.post(url, json=example("overlay_status_held")).status_code == 204
+    assert client.post("/v1/devices/arm-1/incidents", json=body).status_code == 201
+    db_session.expire_all()
+    overlay = db_session.get(Overlay, ("arm-1", "ov-d1-0001"))
+    assert overlay.incident_id == D1 and overlay.status == "held"
+    assert overlay.touches_safety is True and overlay.code_patch.startswith("--- a/safety")
+    assert overlay.raw["last_status"] == example("overlay_status_held")
+    assert count_events("overlay.applied", {"incident": D1, "touches_safety": True}) == 1
+    story = _story(client, D1)
+    assert story["chain"] == "unexpected_release → agent acted → overlay ov-d1-0001 → held"
+
+
+def test_f2_incident_before_status_same_result(client, arm, example, db_session):
+    body = example("incident_d1_code_patch")
+    body["overlay"]["code_patch"] = (
+        "--- a/safety/limits.py\n+++ b/safety/limits.py\n@@ -1 +1 @@\n-MAX = 1\n+MAX = 2\n"
+    )
+    client.post("/v1/devices/arm-1/incidents", json=body)
+    client.post("/v1/devices/arm-1/overlays/ov-d1-0001", json=example("overlay_status_held"))
+    db_session.expire_all()
+    overlay = db_session.get(Overlay, ("arm-1", "ov-d1-0001"))
+    assert overlay.touches_safety is True and overlay.status == "held"
+    story = _story(client, D1)
+    assert story["chain"] == "unexpected_release → agent acted → overlay ov-d1-0001 → held"
+    assert story["steps"][-1]["refs"]["touches_safety"] is True
