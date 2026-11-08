@@ -108,33 +108,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 4:48 PM PST_
+_Last updated: Sat Nov 7, 4:58 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has M0 contracts v0.1 (PR #3) and the cloud scaffold with `/healthz` (PR #4) open for review, due 5:15 PM; the live Naïve card and LLM call remain. Ishaan is screening healer harnesses h1–h3 in `edge/` (local, uncommitted). James built a local Naïve console prototype and is planning a comparison of Naïve's built-in harness against Naïve driven from Hermes over MCP.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged M0 contracts v0.1 and the cloud scaffold, and opened PR #5 (`cloud/fake-device`, M1); M0's live Naïve card and LLM call remain, due 5:15 PM. Ishaan is screening healer harnesses h1–h3 in `edge/` (local, uncommitted). James is signing bench Hermes in to a model (ChatGPT/Codex login) to run a hello world for the Naïve-harness vs Hermes-over-MCP comparison.
 
 **Recently done:**
-- Kent opened PR #3 (`cloud/m0-contracts`: `romulus-contracts` v0.1 with models, shared `rules.evaluate`, `code_patch` checks, schema printer, example payloads, device README) and PR #4 (`cloud/m0-scaffold`: settings, data model, event log, FastAPI app with `/healthz`, worker, Compose stack, Makefile) (4:37 PM)
-- James added `prototypes/naive-console/` (`80979ee`): a local page plus `server.mjs` that runs a Naïve agent through the `naive` CLI, with a `.claude/launch.json` entry (4:43 PM)
-- James added a SPONSORS AND CREDITS section to `features.txt`, with each hacker's credits and the prize tracks; the hub skips non-box sections (`a014059`, 4:41 PM)
-- Ishaan's h3 harness passed the oracle and do-nothing checks; a granite4.1:3b run (config a) has been going since 4:38 PM (4:42 PM)
+- Kent merged PR #3 (`84b4a93`, 4:52 PM): `romulus-contracts` v0.1 with models, shared `rules.evaluate`, `code_patch` checks and example payloads under `packages/contracts/examples/`
+- Kent merged PR #4 (`b76b332`, 4:54 PM): the cloud scaffold (settings, data model, event log, FastAPI app with `/healthz`, worker, CLI, `compose.yaml`, Makefile, `.env.example`, `cloud/CLAUDE.md`)
+- Kent opened PR #5 (`cloud/fake-device`, M1): a fake fleet against the device API whose client doubles as the reference visor and outbox for the Pi, with `rules`, `code`, `bad` and `park` scenarios (Kent's block, 4:58 PM)
+- James added `prototypes/naive-console/` (`80979ee`): a local page plus `server.mjs` that runs a Naïve agent through the `naive` CLI (4:43 PM)
 
 **Open questions:**
-- Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4). PR #3 now proposes the code-package and `code_patch` formats (B2, B3) for Ishaan to review *(inferred)*
+- Kent is blocked on: device code and tests in `device/` (B1), the STM32 toolchain in the sandbox (B8), the list of safety and visor paths from Ishaan (K17), and either a Naïve key with `proxy:write` or James's RunPod endpoint (B4). Ishaan should review the code-package and `code_patch` formats now merged in PR #3 (B2, B3) and the Pi adoption notes in PR #5
 - Ishaan's test bed is in `edge/` but Kent's contracts expect `device/`; the two need to pick one folder *(inferred)*
 - The current Naïve key covers agents and sessions only; Hermes picking up and closing Board cards needs a key with Board scopes (from Kent, or `naive mcp create`)
 - Which small model and harness run on the Pi 5, and what does the STM32 do in the robot loop?
 
 **Recent commits (all authors):**
+- `8c9df7d` Sat 16:56 · Kent Gang · Update Kent status in CLAUDE.md
+- `b76b332` Sat 16:54 · kgang · Romulus M0: cloud scaffold (settings, models, events, app, worker, compose, test DB) (#4)
+- `84b4a93` Sat 16:52 · kgang · Romulus M0: romulus-contracts v0.1 (models, rules.evaluate, examples) (#3)
+- `0f02b21` Sat 16:48 · jamesEmerson112 · Update team status in CLAUDE.md
 - `b8d0f75` Sat 16:46 · Kent Gang · Update Kent status in CLAUDE.md
 - `80979ee` Sat 16:43 · jamesEmerson112 · Add Naive console prototype: local page that runs an agent via the naive CLI
 - `627d250` Sat 16:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `a014059` Sat 16:41 · jamesEmerson112 · Add sponsors and credits to features.txt; hub skips non-box sections
 - `86058af` Sat 16:38 · jamesEmerson112 · Update team status in CLAUDE.md
 - `01da07e` Sat 16:36 · Kent Gang · Update Kent status in CLAUDE.md
-- `87d4e41` Sat 16:34 · kgang · Romulus M0: outside-world adapters (blob store, LLM, Naïve, coder) with fakes (#2)
-- `56f841d` Sat 16:29 · jamesEmerson112 · Update team status in CLAUDE.md
-- `a88ef75` Sat 16:27 · Kent Gang · Update Kent status in CLAUDE.md
-- `7576f53` Sat 16:26 · jamesEmerson112 · Claim the bench Hermes key and install lines in features.txt
 
-**Branches on GitHub:** `main`, `firmware` (Olir), `cloud/m0-contracts` and `cloud/m0-scaffold` (Kent, PRs #3 and #4)
+**Branches on GitHub:** `main`, `firmware` (Olir), `cloud/fake-device` (Kent, PR #5). `cloud/m0-contracts` and `cloud/m0-scaffold` were deleted after merging
 <!-- team-status:end -->
