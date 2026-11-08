@@ -39,10 +39,12 @@ class FakeHost:
       pod_image02   healer rolls back after pod_polls status calls, and the host's own check closes it
       joint_stuck   the skill doesn't arrive (joint_stall); a check fails, handing it to a person, until cleared
     notice=False: planted faults trip nothing (the soak must still clear them). fixable=False: no check ever
-    passes."""
+    passes. resettable=True: it has the reset_scene op (a newer host); otherwise "unknown op". block_gone=True:
+    the block isn't where the pick expects it (the jaws close on nothing)."""
 
-    def __init__(self, *, skill_s=0.04, pod_polls=5, notice=True, fixable=True):
+    def __init__(self, *, skill_s=0.04, pod_polls=5, notice=True, fixable=True, resettable=False, block_gone=False):
         self.lock = threading.RLock()
+        self.resettable, self.block_gone = resettable, block_gone
         self.skill_s, self.pod_polls, self.notice, self.fixable = skill_s, pod_polls, notice, fixable
         self.faults, self.incidents, self.pod_crit, self.image = set(), [], [], "good"
         self.calls, self.since_flash = [], 0
@@ -101,6 +103,8 @@ class FakeHost:
                 if fault == "joint_stuck":
                     assert f.get("params") == {"joint": 2}, f
                 return {"ok": True, "fault": fault, "where": "pod" if fault.startswith(("pod_", "us_")) else "arm"}
+            if op == "reset_scene" and self.resettable:
+                return {"ok": True}
             if op == "clear":
                 self.faults.discard(f.get("fault"))
                 return {"ok": True}
@@ -127,7 +131,7 @@ class FakeHost:
             if inc and inc["kind"] != "joint_stall":
                 result["halted"] = inc["kind"]
             if name in ("grip", "lift") and not inc:
-                result["grasp"] = {"holding": True}
+                result["grasp"] = {"holding": not self.block_gone}
             return {"ok": True, "skill": name, "result": result, **({"incident": self._short(inc)} if inc else {})}
 
 
@@ -243,7 +247,8 @@ def test_a_bad_pod_image_waits_for_the_pod_healer_and_counts_podd_s_kind():
 def test_a_dead_elbow_is_handed_off_and_the_soak_plays_the_person():
     b = Bench("elbow")
     try:
-        rec = b.soak(faults=["joint_stuck"], rate=1.0).tick(plan_with("joint_stuck", faults=("joint_stuck",)))
+        s = b.soak(faults=["joint_stuck"], rate=1.0)
+        rec = s.tick(plan_with("joint_stuck", "pick", faults=("joint_stuck",)))
         time.sleep(0.2)
         ready = dispatch.Host(b.host)("status")
     finally:
@@ -254,6 +259,33 @@ def test_a_dead_elbow_is_handed_off_and_the_soak_plays_the_person():
     assert "joint_stall" in rec["incidents"], rec
     assert not ready["incidents"] and not ready["handed_off"], ready                # the next order can run
     assert not soak.is_failure(rec)
+    assert ("reset_scene", None) in b.host.calls and "scene_reset" not in rec, rec   # this host has no such op
+    assert s.can_reset is False                                                     # so it isn't asked again
+
+
+def test_a_failed_pick_puts_the_block_back_when_the_host_can():
+    b = Bench("reset", FakeHost(resettable=True))
+    try:
+        rec = b.soak(faults=["joint_stuck"], rate=1.0).tick(plan_with("joint_stuck", "pick", faults=("joint_stuck",)))
+    finally:
+        b.close()
+    assert rec["outcome"] == "needs_human" and rec["scene_reset"] is True, rec
+    assert [c for c in b.host.calls if c[0] == "reset_scene"] == [("reset_scene", None)], b.host.calls
+    assert any(e["kind"] == "fault_cleared" and "put the block back" in e["text"] for e in events.read(b.log))
+
+
+def test_two_clean_orders_in_a_row_that_fail_are_said_loudly():
+    b = Bench("streak", FakeHost(block_gone=True))
+    try:
+        s = b.soak(rate=0.0)
+        first = s.tick(0)
+        assert not any(e["kind"] == "error" for e in events.read(b.log)), "warned after one"
+        s.tick(1)
+    finally:
+        b.close()
+    assert first["outcome"] == "blocked" and "isn't holding the block" in first["comment"], first
+    warned = [e["text"] for e in events.read(b.log) if e["kind"] == "error"]
+    assert any("two orders in a row with no fault planted" in w for w in warned), warned
 
 
 def test_an_unnoticed_fault_is_still_cleared_and_a_bad_image_left_over_is_residue():
@@ -327,6 +359,23 @@ def test_orders_go_every_n_seconds_from_the_start_and_a_long_job_skips_slots():
     assert 1.5 - 0.05 <= time.time() - t0 < 2.5
 
 
+def test_a_job_past_the_timeout_is_recorded_and_its_bad_image_left_for_the_next_check():
+    b = Bench("timeout", FakeHost(skill_s=2.0, pod_polls=1000))
+    try:
+        rec = b.soak(job_timeout=0.5, rate=1.0, faults=["pod_image07"]).tick(0)
+    finally:
+        b.close()
+    assert rec["outcome"] == "timeout" and rec["final_status"] == "doing" and rec["planted_at"], rec
+    assert rec["residue"] and rec["residue_cleared"] is None, rec                 # no check while a job may run
+    assert rec["residue_detail"] == ["the pod runs bad image 07", "podd has a critical us_mismatch open"], rec
+    assert not [c for c in b.host.calls if c[0] == "repair"], b.host.calls
+    assert ("clear", "pod_image07") in b.host.calls
+    assert any(e["kind"] == "error" and "0.5" not in e["text"] and "after its claim" in e["text"]
+               for e in events.read(b.log)), "no loud warning"
+    md = soak.report([rec])
+    assert "**1 not cleaned up**" in md and "**timeout**" in md, md
+
+
 def test_a_stop_ends_the_soak_and_records_the_order_in_flight():
     b = Bench("stop", dispatcher=False)
     s = b.soak(claim_timeout=30, max_orders=5)
@@ -391,14 +440,15 @@ def test_the_report_counts_outcomes_heals_and_lists_every_failure():
             rec(5, "needs_human", fault="joint_stuck", person_fix={"handed_off": True, "verified": True}),
             rec(6, "done", fault="pod_image02", after=55, residue=True, residue_detail=["the pod runs bad image 02"],
                 residue_cleared=True),
-            rec(7, "done", after=30, ago=90000)]                       # yesterday: outside --since
+            rec(7, "done", after=30, ago=90000),                       # yesterday: outside --since
+            rec(8, "stopped", fault="us_frozen", final_status="doing")]
     path = TMP / f"report-{time.time_ns()}.jsonl"
     path.write_text("".join(json.dumps(r) + "\n" for r in recs))
     md = soak.report(soak.load(path, soak.parse_since("2h")))
     print(md)
-    assert "- **Orders:** 6: **3 done**, 1 blocked, 1 not claimed, 1 needs human." in md, md
+    assert "- **Orders:** 7: **3 done**, 1 blocked, 1 not claimed, 1 needs human, 1 stopped." in md, md
     assert "median 55 s, worst 70 s (order `ord-20261108-020000-aaaa`" in md, md
-    assert "| `us_frozen` | 1 | 1 | 100% | 70 s | 1 planned but not planted |" in md, md
+    assert "| `us_frozen` | 2 | 1 | 50% | 70 s | 1 stopped, 1 planned but not planted |" in md, md
     assert "| `pod_image02` | 2 | 1 | 50% | 55 s | 1 blocked |" in md, md
     assert "| `joint_stuck` | 1 | 0 | – (needs a person) | – | 1 needs human, 1 fixed by hand |" in md, md
     assert "- **No fault planted:** 1 order, 1 done." in md, md
@@ -408,7 +458,7 @@ def test_the_report_counts_outcomes_heals_and_lists_every_failure():
     assert "Saw: pod_clock_skew, podd:clock_skew." in fails and "ord-20261108-040000-aaaa" in fails, fails
     assert "ord-20261108-050000-aaaa" not in fails, fails              # a dead elbow fixed by hand is no failure
     everything = soak.report(soak.load(path))
-    assert "- **Orders:** 7:" in everything
+    assert "- **Orders:** 8:" in everything
     assert soak.report([]).startswith("### Soak report\n- **Orders:** none")
     t = soak.parse_since("2026-11-08T02:00")
     assert abs(t - soak.datetime(2026, 11, 8, 2, 0).timestamp()) < 1

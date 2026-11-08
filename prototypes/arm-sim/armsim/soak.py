@@ -24,12 +24,14 @@ Each order, one at a time (there is one arm):
    turns in an order reshuffled every round, so 48 orders at 0.5 plant each of 3 faults 8 times.
 4. Wait for a dispatcher to claim the card (it moves to doing; up to 120 s). Nobody does: not_claimed, a loud
    warning, and the card moves to blocked, so a dispatcher can't run it late, on top of a later order.
-5. A planted fault goes in 1-4 s after the claim (the arm is moving by then) through the host's `inject`,
-   with a fault_planted event. joint_stuck can't heal by itself: once the card is blocked, the soak plays the
+5. A planted fault goes in 1-4 s after the claim through the host's `inject`, with a fault_planted event.
+   The host does one thing at a time, so it lands at the next skill boundary (after go_home or reach). joint_stuck can't heal by itself: once the card is blocked, the soak plays the
    person (clear the fault, `repair verify`) and the order counts as needs_human.
 6. Wait for done or blocked (--job-timeout). Then the planted fault is cleared, and an incident or a bad pod
    image left over is cleaned up (the pod's own healer gets 90 s, then `repair verify`), so nothing piles up
-   for the next order: the line says residue: true and what was left.
+   for the next order: the line says residue: true and what was left. A pick that didn't finish may have
+   dropped the block (a park turns the torque off): the soak asks the host to `reset_scene` (sim; a host
+   without that op just answers "unknown op"), and two clean orders blocked in a row are said loudly.
 7. One line in runs/soak.jsonl and a soak_outcome event (armsim/events.py).
 
 Orders are --every apart from the start, not from the end of the last job; a job that runs past the next
@@ -171,6 +173,7 @@ class Soak:
         self.events_path = events_path               # None: events.PATH, the shared log the dispatcher writes
         self.settings = {"every": self.every, "rate": self.rate, "faults": self.faults, "seed": seed}
         self.run_id = None
+        self.can_reset = True                        # until the host answers that it has no reset_scene op
         self.records = []
 
     def _ev(self, kind, text, **fields):
@@ -285,14 +288,19 @@ class Soak:
                 self.warn(f"order {rec['n']} ({rec['order']}, card {cid}) is still {self._card_status(cid)} "
                           f"{self.job_timeout:.0f} s after its claim", order=rec["order"], card=cid)
             self._clear_fault(rec)                   # but no check at home: a dispatcher may still hold the card
-            rec["residue_detail"] = leftovers(self.host("status"))
-            rec["residue"] = bool(rec["residue_detail"])
+            left = leftovers(self.host("status"))
+            if final == "timeout" and left:          # the next order's check cleans it up (residue_before)
+                rec.update(residue=True, residue_detail=left, residue_cleared=None)
+            elif left:                               # a stop by hand: final_cleanup() runs after the dispatcher stops
+                rec["left_at_stop"] = left
             self._finish(rec, t0, before, seen)
             return
         if final == "blocked" and rec["fault"] in NEEDS_PERSON and rec["planted_at"]:
             self._play_the_person(rec)
         self._clear_fault(rec)
         self._cleanup(rec)
+        if final != "done" and rec["job"] == "pick":
+            self._reset_scene(rec)
         self._finish(rec, t0, before, seen)
 
     def _card(self, cid):
@@ -481,21 +489,53 @@ class Soak:
         with open(self.out, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, default=str) + "\n")
         self.records.append(rec)
+        clean = [r for r in self.records if not r.get("fault") and r.get("card")]
+        if len(clean) >= 2 and all(r["outcome"] == "blocked" for r in clean[-2:]) and clean[-1] is rec:
+            self.warn("two orders in a row with no fault planted didn't end done: the loop itself is broken. In sim "
+                      "that is often the block knocked out of place by an earlier failed pick; restart the arm host "
+                      f"between orders (demo/down.sh && demo/up.sh). Last: {rec.get('comment') or rec['outcome']}",
+                      order=rec.get("order"), card=rec.get("card"))
         what = rec["fault"] if rec.get("planted_at") else "no fault"
         tail = {"done": f"done in {secs(rec['finished_after_s'])}" + (f", healed {rec['fault']}" if rec["healed"] else ""),
                 "needs_human": "handed to a person, as a dead elbow should be"
                                + ("; fixed by hand" if (rec.get("person_fix") or {}).get("verified") else
                                   "; the check after the fix by hand FAILED"),
-                "not_claimed": f"NOT CLAIMED in {self.claim_timeout:.0f} s"}.get(
-            rec["outcome"], f"{rec['outcome'].upper()}: {rec.get('comment') or rec.get('reason') or rec.get('error')}")
+                "not_claimed": f"NOT CLAIMED in {self.claim_timeout:.0f} s",
+                "stopped": f"stopped by hand while the card was {rec['final_status'] or 'unknown'}"}.get(
+            rec["outcome"], f"{rec['outcome'].upper()}: " + re.sub(r"^BLOCKED:\s*", "", str(
+                rec.get("comment") or rec.get("reason") or rec.get("error"))))
         self._ev("soak_outcome", f"order {rec['n']} ({rec['order'] or 'not placed'}, {rec['job']}, {what}): {tail}"
                                  + (" (cleaned up after it)" if rec["residue"] else ""),
                  **{k: rec.get(k) for k in ("order", "card", "job", "fault", "outcome", "healed", "final_status",
                                            "claimed_after_s", "finished_after_s", "incidents", "residue")})
 
+    def _reset_scene(self, rec):
+        """A pick that didn't finish can leave the block out of place: a park while holding it opens the jaws
+        (torque off) and drops it, and a job stopped after `lift` leaves it in the gripper. Every later pick then
+        fails ("the gripper isn't holding the block"). In sim the person puts the block back: the host's
+        `reset_scene` op, when it has one (a newer host); otherwise rec["scene_reset"] stays None."""
+        if not self.can_reset:
+            return
+        r = self.host("reset_scene")
+        if r.get("ok"):
+            rec["scene_reset"] = True
+            self._ev("fault_cleared", f"put the block back after order {rec.get('order')} (reset_scene)",
+                     order=rec.get("order"), card=rec.get("card"))
+        elif "unknown op" in str(r.get("error")):
+            self.can_reset = False
+            self._ev("soak_tick", "this arm host has no reset_scene op: a pick that fails can leave the block out of "
+                                  "place for the next ones (restart the host to put it back)")
+        else:
+            rec["scene_reset"] = False
+
     def final_cleanup(self):
-        """After a stop, once no dispatcher of ours holds the arm: nothing planted or open is left behind."""
-        return self._cleanup({}, what="stop")
+        """After a stop, once no dispatcher of ours holds the arm: nothing planted or open is left behind (and in
+        sim the block goes back, in case the stop came between grip and release)."""
+        clean = self._cleanup({}, what="stop")
+        last = self.records[-1] if self.records else {}
+        if last.get("outcome") == "stopped" and last.get("job") == "pick":
+            self._reset_scene({"order": last.get("order")})
+        return clean
 
 
 # ---- the dispatcher, as a child -------------------------------------------------------------------
@@ -638,11 +678,14 @@ def report(recs):
                      f"{secs(worst['finished_after_s'])} (order `{worst['order']}`, card `{worst['card']}`).")
     clean = [r for r in recs if not r.get("fault")]
     if clean:
+        tripped = sum(1 for r in clean if r.get("incidents"))
         lines.append(f"- **No fault planted:** {len(clean)} order{'' if len(clean) == 1 else 's'}, "
-                     f"{sum(r.get('outcome') == 'done' for r in clean)} done.")
+                     f"{sum(r.get('outcome') == 'done' for r in clean)} done"
+                     + (f"; **{tripped} tripped an incident anyway** (a false alarm, or the sim drifting)" if tripped
+                        else "") + ".")
     residue = [r for r in recs if r.get("residue")]
     if residue:
-        stuck = [r for r in residue if r.get("residue_cleared") is False]
+        stuck = [r for r in residue if r.get("residue_cleared") is not True]
         lines.append(f"- **Residue:** {len(residue)} order{'' if len(residue) == 1 else 's'} left something for the "
                      f"next one ({'; '.join(sorted({d for r in residue for d in r.get('residue_detail') or []}))}); "
                      + (f"**{len(stuck)} not cleaned up**." if stuck else "all cleaned up."))
@@ -748,7 +791,11 @@ def cmd_run(a):
     finally:
         if child:
             child.stop()
-        if not hard:
+        last = soak.records[-1] if soak.records else {}
+        if not child and last.get("outcome") == "stopped" and last.get("final_status") == "doing":
+            print(f"[soak] an outside dispatcher still holds card {last.get('card')}: not touching the arm",
+                  flush=True)
+        elif not hard:
             soak.final_cleanup()
         if soak.records:
             print("\n" + report(soak.records), flush=True)
