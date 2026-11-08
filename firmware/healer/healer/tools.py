@@ -616,7 +616,12 @@ def fw_flash(image, watch_seconds=15, auto_rollback=True, reason=None, _allow_ba
     if not ok and result == "failed":
         images.set_status(meta["crc"], "bad", "failed post-flash verification")
         if auto_rollback:
-            target = prev if prev and prev["status"] != "bad" and prev["crc"] != meta["crc"] else None
+            # Only go back to the previous image if it was proven: known-good, or passed fw_flash
+            # verification before. An unverified release (e.g. the one that caused the incident) is not a
+            # safe target; fall back to known-good instead.
+            verified = {d["crc"] for d in images.deployments(500) if d["result"] == "ok"}
+            target = prev if (prev and prev["crc"] != meta["crc"] and prev["status"] != "bad"
+                              and (prev["status"] == "known-good" or prev["crc"] in verified)) else None
             if target is None:
                 try:
                     target = images.resolve("known-good")

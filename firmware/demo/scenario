@@ -6,6 +6,7 @@
   scenario list             list scenarios
   scenario start <name>     put the workspace at that release (v1.0 + the bad commit), flash its prebuilt image
   scenario trigger <name>   perform the scenario's trigger (fault injection), if it has one
+  scenario clear            clear injected faults only (e.g. "plug the sensor back in" after trigger 06)
   scenario reset            workspace back to v1.0, flash known-good, clear injected faults
 
 The workspace history after `start` is what a real team would have: v1.0 (known-good) followed by one release
@@ -187,6 +188,11 @@ def cmd_trigger(args):
         print("no trigger: %s" % sc["trigger"]["how"])
 
 
+def cmd_clear(_):
+    r = podd_cmd("inject clear")
+    print("inject clear -> %s" % ("ok" if r and r.get("ok") else r))
+
+
 def cmd_reset(_):
     workspace_to_v10()
     meta = images.resolve("known-good")
@@ -206,7 +212,7 @@ def cmd_reset(_):
 
 def main():
     cmds = {"setup": cmd_setup, "build-images": cmd_build_images, "list": cmd_list, "start": cmd_start,
-            "trigger": cmd_trigger, "reset": cmd_reset}
+            "trigger": cmd_trigger, "clear": cmd_clear, "reset": cmd_reset}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(__doc__)
         return 1
