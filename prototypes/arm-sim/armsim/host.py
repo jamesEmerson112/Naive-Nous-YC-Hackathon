@@ -50,9 +50,16 @@ class Skills:
         return self.arm.goto(self.p["above_block"])
 
     def grip(self):
+        """Close; if the jaws stall on something, back off to just inside the stall so the servo
+        isn't held at its torque limit (on an STS3215 that trips the overload alarm, note "Traps")."""
         r = self.arm.goto(self._keep(gripper=prims.CLOSED), duration=0.8)
         self.arm.hold(0.3)
-        return {**r, "grasp": self.arm.grasp_check()}
+        g = self.arm.grasp_check()
+        if g["holding"]:
+            self.arm.send(self._keep(gripper=max(prims.CLOSED, g["gripper"] - 0.1)))
+            self.arm.hold(0.3)
+            g = self.arm.grasp_check(min_load=0.2)
+        return {**{k: v for k, v in r.items() if k != "arrived"}, "grasp": g, "status": self.arm.status()}
 
     def release(self):
         return self.arm.goto(self._keep(gripper=prims.OPEN), duration=0.6)
@@ -63,7 +70,71 @@ class Skills:
     def park(self):
         return self.arm.park(self.p["rest"])
 
-    MENU = ("go_home", "reach", "grip", "release", "wave", "park")
+    def approach(self):
+        return approach(self.arm, self.p)
+
+    def lift(self):
+        return lift(self.arm)
+
+    MENU = ("go_home", "reach", "approach", "grip", "lift", "release", "wave", "park")
+
+
+SETBACK_MM = 50                              # the sensor sits 50 mm behind the fingertips
+SWITCH_MM = max(60, SETBACK_MM + 25)         # stop stepping here, then a fixed final move (note)
+
+
+def _median_reading(arm, n=3, timeout=1.0):
+    """Wait for n fresh D rows ("step and settle"), then the median of the valid ones."""
+    start = len(arm.d_rows) and arm.d_rows[-1]["ts"]
+    t0 = arm.t
+    while arm.t - t0 < timeout:
+        arm.tick()
+        fresh = [r for r in arm.d_rows if r["ts"] > start]
+        if len(fresh) >= n:
+            ok = sorted(r["mm"] for r in fresh[-n:] if r["st"] == "ok")
+            return (ok[len(ok) // 2] if ok else None), fresh[-n:]
+    return None, []
+
+
+def approach(arm, poses, *, step_m=0.005, max_steps=20):
+    """Step down 5 mm at a time over the block, settling on 3 readings each step, until the
+    median distance is inside the switch distance; then a fixed final move to the grasp pose."""
+    from .model import BLOCK_POS
+    tip, _ = arm.tip()
+    readings, invalid = [], 0
+    for step in range(max_steps + 1):
+        d, rows = _median_reading(arm)
+        if arm.halted():
+            return arm._stop()
+        if d is None:
+            invalid += len(rows) or 3
+            if invalid >= 6:
+                return {"arrived": False, "aborted": "6 invalid readings in a row", "readings": readings}
+        else:
+            invalid = 0
+            readings.append(d)
+            pred = rows[-1].get("pred_mm")
+            if pred is not None and pred - d > 20:
+                return {"arrived": False, "aborted": f"reading {d} mm is far below the expected {pred:.0f} mm",
+                        "readings": readings}
+            if d <= SWITCH_MM:
+                r = arm.goto(poses["pick"], duration=0.8)          # the fixed final move
+                return {**r, "steps": step, "readings": readings, "switched_at_mm": d}
+        tip[2] -= step_m
+        pose = arm.solve((BLOCK_POS[0], BLOCK_POS[1], tip[2]), seed=list(arm.read().values()))
+        r = arm.goto(pose, duration=0.3)
+        if r.get("halted"):
+            return {**r, "readings": readings}
+    return {"arrived": False, "aborted": f"no switch distance after {max_steps} steps", "readings": readings}
+
+
+def lift(arm, *, up_m=0.03):
+    """Lift 30 mm straight up, then check the grasp still holds."""
+    tip, _ = arm.tip()
+    pose = arm.solve((tip[0], tip[1], tip[2] + up_m), seed=list(arm.read().values()))  # keeps the gripper squeezing
+    r = arm.goto(pose, duration=0.8)
+    arm.hold(0.3)
+    return {**r, "grasp": arm.grasp_check()}
 
 
 def speak(text, *, out=None):

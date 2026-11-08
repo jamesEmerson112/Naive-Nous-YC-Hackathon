@@ -13,10 +13,11 @@ ROOT = Path(__file__).resolve().parent.parent
 MENAGERIE = ROOT / "vendor" / "menagerie" / "robotstudio_so101"
 
 # Where Menagerie's own "pickup" keyframe grasps the box: about 0.21 m in front of the base.
-# A low, hard, flat-topped block (4 x 4 x 3 cm). Pointing straight down, the fingertips can't
-# rise above ~9 cm here (wrist flex tops out near 95 deg), so a tall block leaves no room for
-# a step-and-settle approach; a 3 cm block leaves about 6 cm.
-BLOCK_HALF = (0.02, 0.02, 0.015)
+# A low, hard, flat-topped block: a 3 cm cube, the note's minimum width for the sensor to see it.
+# Pointing straight down, the fingertips can't rise above ~9 cm here (wrist flex tops out near
+# 95 deg), so a tall block leaves no room for a step-and-settle approach; 3 cm leaves about 6 cm.
+# A 4 cm block didn't fit between the jaws: they landed on it and pushed it away.
+BLOCK_HALF = (0.015, 0.015, 0.015)
 BLOCK_POS = (0.21, 0.0, BLOCK_HALF[2])
 BLOCK_TOP = BLOCK_POS[2] + BLOCK_HALF[2]
 

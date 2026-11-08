@@ -6,7 +6,9 @@ description: >-
 provides_tools:
   - arm_go_home
   - arm_reach
+  - arm_approach
   - arm_grip
+  - arm_lift
   - arm_release
   - arm_wave
   - arm_park
