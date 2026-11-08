@@ -18,8 +18,9 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-# Lint and format only our Python packages; teammates' docs and folders are theirs.
-extend-exclude = ["docs/**", "hub/**", "edge/**", "device/**", "harness/**", "bench/**", "firmware/**", "naive/**", "prototypes/**"]
+# Lint and format only our Python packages (an include-list, so teammates' new folders
+# never break the cloud's lint). Teammates lint their own folders their own way.
+include = ["packages/**/*.py", "cloud/**/*.py", "tools/**/*.py", "*.toml"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
