@@ -76,15 +76,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sat Nov 7, 10:31 PM PST_
+_Last updated: Sat Nov 7, 10:38 PM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged #38, so Ishaan's real `device/` code now goes through the coder path, and the M8 status docs merged as #45; #44 (Fleet Doctor PR 7, the last of 9) is still open. James's P1 arm prototypes work in the MuJoCo sim but aren't pushed yet. Olir has claimed the pod healer bench runs (`firmware/harness/HANDOFF.md`) and a new arm heal test with bad ultrasonic image 07.
 
 **Recently done:**
+- James made an 81-second animated explainer of the self-healing demo (private claude.ai artifact "Self-Healing SO-101"): command → approach → frozen sensor → park → Level 1 sentence → Pi healer fix → resume → Romulus replay, canary, rollout. Its 49 mm / 30 mm numbers are illustrative; tonight's sim run gave 130 mm / 29 mm (James's session)
 - Kent merged #38 (`c8b58cb`, 10:20 PM): real device code in the coder path (B1, B3): `devicecode/` packaging and bench verify, coder retry, `code register` CLI, F11 real-device flow test. Then merged #45 (`ccb95fb`, 10:28 PM), M8 status docs
-- James's P1 prototypes run in simulation (local branch `james/arm-sim`, 9 commits, not pushed): an arm host and the `so101-arm` Hermes plugin with a `pre_tool_call` guard, approach-then-grasp on the wrist sensor, a level-1 watchdog that parks and repairs, a fault factory (1,000 labeled runs in about a minute), and a ChatTS level-2 test on RunPod (pod terminated, about $0.50). Sim only: the 3 cm block, the centreline sensor mount and the grip back-off still need checking on the real arm (James's session)
+- James's P1 prototypes run in simulation (local branch `james/arm-sim`, 11 commits ahead of `main`, not pushed): an arm host and the `so101-arm` Hermes plugin with a `pre_tool_call` guard, approach-then-grasp on the wrist sensor, a level-1 watchdog that parks and repairs, a fault factory (1,000 labeled runs in about a minute), and a ChatTS level-2 test on RunPod (pod terminated, about $0.50). Sim only: the 3 cm block, the centreline sensor mount and the grip back-off still need checking on the real arm (James's session)
 - Olir merged #43 (`84c802e`, 10:12 PM): `server/` serves qwen3.5:4b from the laptop to the Pi over Ethernet. Not yet run against the harness on the bench
-- Kent merged #42 (`f510ec3`, 10:09 PM): Fleet Doctor F12 interop, the real cloud and the unmodified fake device end to end
 
 **Open questions:**
 - Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block)
@@ -93,6 +93,8 @@ _Last updated: Sat Nov 7, 10:31 PM PST_
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and when `james/arm-sim` gets pushed for Kent's 9–10 AM "real arm + polish" slot. The overnight launch is due by 12:30 AM (Kent's plan)
 
 **Recent commits (all authors):**
+- `5ce8590` Sat 22:29 · jamesEmerson112 · Update team status in CLAUDE.md
+- `fba444e` Sat 22:29 · jamesEmerson112 · Update team status and features.txt
 - `cd261a2` Sat 22:28 · Olir Eswar · Claim pod healer bench runs and the ultrasonic arm heal test in features.txt
 - `ccb95fb` Sat 22:28 · kgang · Romulus docs: M8 status after #24, #28, #38 (#45)
 - `625c345` Sat 22:28 · Kent Gang · Update Kent status in CLAUDE.md
@@ -101,8 +103,6 @@ _Last updated: Sat Nov 7, 10:31 PM PST_
 - `22ff5a8` Sat 22:18 · Kent Gang · Update Kent status in CLAUDE.md
 - `4594267` Sat 22:15 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `84c802e` Sat 22:12 · Oliravan Eswaramoorthy · Merge pull request #43 from jamesEmerson112/local-model-serve
-- `ff5627e` Sat 22:09 · jamesEmerson112 · Update team status and features.txt
-- `f510ec3` Sat 22:09 · kgang · Fleet Doctor F12 interop: the real cloud and the unmodified fake device, end to end (#42)
 
 **Branches on GitHub:** `main`; open PR branch `doctor/evidence-real` (#44, Kent); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `cloud/b1-device-code` (#38), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
