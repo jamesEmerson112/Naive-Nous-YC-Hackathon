@@ -56,7 +56,7 @@ def test_report_counts_the_window_and_old_waiting_orders(db_session, now):
     db_session.add_all(
         [
             Device(id="sim-1", kind="sim", last_seen_at=seen),
-            Device(id="sim-4", kind="real", last_seen_at=seen),  # auto-registered fake arm
+            Device(id="sim-4", kind="unknown", last_seen_at=seen),  # auto-registered
             Device(id="arm-1", kind="real", last_seen_at=seen),
             Device(id="arm-2", kind="real", last_seen_at=now - timedelta(days=1)),  # idle
         ]
@@ -76,9 +76,9 @@ def test_report_counts_the_window_and_old_waiting_orders(db_session, now):
     assert d["storage"] == {"blob_bytes": 1000, "budget_bytes": 1024**3}
     assert d["waiting_for_person"][0]["status"] == "needs_human"
     text = r.text("America/Los_Angeles")
-    assert "In 12.0 h on 2 simulated arms + 1 real: 1 incidents" in text
+    assert "In 12.0 h on 1 simulated arms + 1 real + 1 of unknown kind: 1 incidents" in text
     assert "0 human actions, 1 waiting for a person" in text
-    assert d["fleet"] == {"simulated": 2, "real": 1}
+    assert d["fleet"] == {"simulated": 1, "real": 1, "unknown": 1}
     assert "PST" in text and "Blob store: 1000 B of a 1.0 GB budget (under)" in text
 
     assert digest.report(db_session, now, since="3h", until="90m").digest.incidents == 1

@@ -52,11 +52,13 @@ class Report:
     overnight_started_at: datetime | None
     simulated: int = 0
     real: int = 0
-    """Arms that checked in since the window began, simulated vs real."""
+    unknown: int = 0
+    """Arms that checked in since the window began, by device kind."""
 
     @property
     def fleet(self) -> str:
-        return f"{self.simulated} simulated arms + {self.real} real"
+        unknown = f" + {self.unknown} of unknown kind" if self.unknown else ""
+        return f"{self.simulated} simulated arms + {self.real} real{unknown}"
 
     def text(self, tz: str | None = None) -> str:
         zone = ZoneInfo(tz) if tz else None
@@ -103,7 +105,7 @@ class Report:
                 for w in d.waiting_for_person
             ],
             "storage": {"blob_bytes": self.blob_bytes, "budget_bytes": self.budget_bytes},
-            "fleet": {"simulated": self.simulated, "real": self.real},
+            "fleet": {"simulated": self.simulated, "real": self.real, "unknown": self.unknown},
         }
 
 
@@ -123,19 +125,17 @@ def blob_bytes(session: Session) -> int:
     return int(session.scalar(select(func.coalesce(func.sum(Blob.size_bytes), 0))) or 0)
 
 
-def is_simulated(device: Device) -> bool:
-    """`kind` sim/test, or a `sim-N` id (A18): a fake arm that checks in on its own is
-    auto-registered with the default kind, so the id is the reliable sign."""
-    return device.kind in ("sim", "test") or device.id.startswith("sim-")
-
-
-def active_fleet(session: Session, since: datetime, fleet_id: str) -> tuple[int, int]:
-    """(simulated, real) arms that checked in at or after `since`."""
-    rows = session.scalars(
-        select(Device).where(Device.fleet_id == fleet_id, Device.last_seen_at >= since)
+def active_fleet(session: Session, since: datetime, fleet_id: str) -> tuple[int, int, int]:
+    """(simulated, real, unknown) arms that checked in at or after `since`, by device kind:
+    `sim`/`test`, exactly `real`, and anything else (auto-registered devices are `unknown`)."""
+    kinds = list(
+        session.scalars(
+            select(Device.kind).where(Device.fleet_id == fleet_id, Device.last_seen_at >= since)
+        )
     )
-    sims = [is_simulated(d) for d in rows]
-    return sum(sims), len(sims) - sum(sims)
+    simulated = sum(k in ("sim", "test") for k in kinds)
+    real = sum(k == "real" for k in kinds)
+    return simulated, real, len(kinds) - simulated - real
 
 
 def report(
@@ -154,5 +154,6 @@ def report(
         start = started or now - DEFAULT_WINDOW
     end = parse_since(until, now) if until else None
     digest = summarize(events_for(session, start, end, fleet_id), start, end)
-    simulated, real = active_fleet(session, start, fleet_id)
-    return Report(digest, now, blob_bytes(session), int(budget_gb * GB), started, simulated, real)
+    simulated, real, unknown = active_fleet(session, start, fleet_id)
+    budget = int(budget_gb * GB)
+    return Report(digest, now, blob_bytes(session), budget, started, simulated, real, unknown)

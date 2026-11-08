@@ -257,18 +257,6 @@ def test_live_never_posts_for_a_device_that_is_not_exactly_real(db_session, sett
     )
 
 
-def test_live_never_posts_for_an_auto_registered_fake_arm(db_session, settings):
-    """`sim-4` (from `--n 4`) isn't seeded: its first check-in registers it as kind `real`."""
-    devices.register(db_session, "sim-4", kind="real", actor="human:test", actor_class="human")
-    db_session.flush()
-    live = settings.model_copy(update={"naive_mode": "live", "work_order_phone": "+1 mate"})
-    incident_id = _incident(db_session, "sim-4")
-    _triage(db_session, live)
-    naive = FakeNaive()
-    _sync(db_session, live, naive)
-    assert _order(db_session, incident_id).status == "needs_human" and naive.cards == {}
-
-
 def test_fake_mode_still_posts_for_simulated_devices(db_session, settings):
     devices.register(db_session, "sim-9", kind="sim", actor="human:test", actor_class="human")
     db_session.flush()

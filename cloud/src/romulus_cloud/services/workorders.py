@@ -488,11 +488,10 @@ def _request(
 
 
 def _real_device(session: Session, device_id: str) -> bool:
-    """Only a device registered as exactly `real` may get a live card (sim, test and unknown
-    devices never do), and never a `sim-N` id: a fake arm that checks in unseeded (e.g.
-    `sim-4` with `--n 4`) is auto-registered with the default kind, `real`."""
+    """Only a device registered as exactly `real` may get a live card (sim, test and
+    unknown devices, including auto-registered ones, never do)."""
     device = session.get(Device, device_id)
-    return device is not None and device.kind == "real" and not device.id.startswith("sim-")
+    return device is not None and device.kind == "real"
 
 
 def _post(
