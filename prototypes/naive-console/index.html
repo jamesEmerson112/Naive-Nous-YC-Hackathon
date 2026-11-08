@@ -209,10 +209,12 @@ async function load() {
     $("who").replaceChildren(...[`Naïve org: ${w.org?.name}`, ...w.scopes, hasHermes ? "Hermes: installed" : "Hermes: not installed"]
       .map((t) => Object.assign(document.createElement("span"), { className: "chip", textContent: t, title: SCOPE_INFO[t]?.what ?? "" })));
     renderLocked(w.scopes);
+    // Only agents Hermes can match model-for-model: OpenAI models, which Hermes runs on the ChatGPT plan.
     for (const a of await getJson("/api/agents")) {
+      if (!a.model?.startsWith("openai/")) continue;
       const o = new Option(`${a.name} · ${a.model} · ${a.harness}`, a.id);
       o.dataset.model = a.model;
-      if (a.name === "hello-world") o.selected = true;
+      if (a.name === "hello-luna") o.selected = true;
       $("agent").add(o);
     }
   } catch (e) {
