@@ -388,6 +388,7 @@ PLAN_LOG = OUT / "hermes-trials.jsonl"
 GOAL = os.environ.get("ARMSIM_GOAL", "the red bag of chips")      # the bag the demo uses
 
 
+NOTE = ""             # --note TEXT: a note from the bench, put first in every prompt to Astra
 ONLY = None            # --only REC: Astra may choose only this recording and sees only its tries
 ONLY_NOTE = {"recording_2": ("FOCUS: only recording_2 now. It is the motion that grips: at pan -4 it carried three bags for "
     "20.7 s (it held them all the way home because its jaws never opened; they now open over the box, 10 s in). "
@@ -455,7 +456,7 @@ def plan(history, before, after, close=None):
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "context.json").write_text(json.dumps(context, indent=1) + "\n")
     rows = json.dumps(context, indent=1)
-    q = (ONLY_NOTE.get(ONLY, "") + f"You are debugging a robot arm on a bench. The task: pick up {GOAL} and put it in the open cardboard "
+    q = (NOTE + ONLY_NOTE.get(ONLY, "") + f"You are debugging a robot arm on a bench. The task: pick up {GOAL} and put it in the open cardboard "
          "box. Other bags on the bench don't count. The arm can only replay one of three motions taught by hand (recordings: wave, recording_2, "
          "recording_3), each a pick-and-place, optionally rotated at the base by pan degrees (-10 to +10; which way "
          "positive turns as seen from the camera is unknown, so infer it from the history) and slowed by speed "
@@ -567,7 +568,7 @@ def plan_lean(history, before, after, close=None):
                       "note": str(h.get("probe_check") or h.get("debug") or "")[:140]})
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "context.json").write_text(json.dumps({"lean": True, "tries": tries}, indent=1) + "\n")
-    q = (ONLY_NOTE.get(ONLY, "") + f"Robot arm debugging. Goal: pick up {GOAL} (it has white labels; they are part of it) and put it in the "
+    q = (NOTE + ONLY_NOTE.get(ONLY, "") + f"Robot arm debugging. Goal: pick up {GOAL} (it has white labels; they are part of it) and put it in the "
          "open box. You can only choose: recording (wave closes its jaws about 6 cm above the table; recording_2 and "
          "recording_3 about 2 cm), pan (-10 to +10 degrees, a base rotation; positive pan has moved the jaws "
          "camera-left and to smaller y), and speed (0.5 to 1.0). The bag is slippery: a grip holds only when the open "
@@ -839,6 +840,7 @@ def main():
     r.add_argument("--guide", choices=["fixed", "hermes"], default="fixed")
     r.add_argument("--probe", action="store_true", help="probe each test first; run it in full only on Astra's go")
     r.add_argument("--regrab", type=int, default=0, help="each full try: grab, check it holds (gripper + Astra), re-grab up to N times, then carry")
+    r.add_argument("--note", default="", help="a note from the bench, put first in every prompt to Astra")
     r.add_argument("--only", choices=RECORDINGS, default=None, help="Astra may choose only this recording (and sees only its tries)")
     r.add_argument("--probe-once", action="store_true", help="the first try of the run is a probe that only measures; every later try runs in full")
     r.add_argument("--lean", action="store_true", help="short context for speed: 12 compact tries, one 640 px frame, compact prompt")
@@ -858,8 +860,9 @@ def main():
         efforts = tuple(e for e in a.reasoning.split(",") if e)
         if any(e not in EFFORTS for e in efforts):
             raise SystemExit(f"reasoning must be from {EFFORTS}")
-        global ONLY
+        global ONLY, NOTE
         ONLY = a.only
+        NOTE = (a.note.strip() + " ") if a.note.strip() else ""
         guided(a.max_trials, probe_first="once" if a.probe_once else a.probe, efforts=efforts, regrab=a.regrab) if a.guide == "hermes" else run(a.max_trials)
 
 
