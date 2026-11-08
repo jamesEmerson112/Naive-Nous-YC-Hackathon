@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     coder_provider: Literal["fake", "local_agent", "naive_session"] = "fake"
     coder_agent: str = ""
     coder_image: str = ""
+    # local_agent: the device test command run after the agent, and the agent's limits
+    coder_test_cmd: str = "python -m pytest -q"
+    coder_step_limit: int = 30
+    coder_time_limit_s: int = 600
 
     # Paths under device/ that count as the safety layer or visor (D5a, K17). A code_patch
     # touching any of them is flagged `touches_safety`. Placeholder until Ishaan's list.

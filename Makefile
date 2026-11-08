@@ -7,8 +7,8 @@ TESTDB      := romulus-testdb
 TESTDB_PORT := 55432
 CLI         := $(COMPOSE) exec -T api python -m romulus_cloud.cli
 
-.PHONY: up dev sim down logs test flows testdb seed reset digest overnight-start overnight-stop \
-	overnight-check export lint fmt
+.PHONY: up dev sim coder-image down logs test flows testdb seed reset digest overnight-start \
+	overnight-stop overnight-check export lint fmt
 
 up:  ## db, api, worker
 	$(COMPOSE) up --build -d db api worker
@@ -18,6 +18,9 @@ dev:  ## same, with source mounted and uvicorn --reload
 
 sim:  ## also start the fake devices (profile sim)
 	$(COMPOSE) --profile sim up --build -d
+
+coder-image:  ## build the coding-agent sandbox image, romulus-coder (M8)
+	$(COMPOSE) --profile coder build coder
 
 down:
 	$(COMPOSE) --profile sim --profile tunnel down

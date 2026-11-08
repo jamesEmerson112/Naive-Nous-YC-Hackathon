@@ -356,3 +356,85 @@ def test_broken_quoted_rename_is_a_problem():
     s = summary(patch)
     assert any("line 3: can't read the quoted path" in p for p in s.problems)
     assert touches_safety(patch, [])
+
+
+NEW_SYMLINK = """\
+diff --git a/vdir b/vdir
+new file mode 120000
+index 0000000..1b2c3d4
+--- /dev/null
++++ b/vdir
+@@ -0,0 +1 @@
++/some/host/dir
+\\ No newline at end of file
+"""
+
+CHANGED_SYMLINK = """\
+diff --git a/link b/link
+index 1111111..2222222 120000
+--- a/link
++++ b/link
+@@ -1 +1 @@
+-old
++/etc/passwd
+"""
+
+GITLINK = """\
+diff --git a/sub b/sub
+new file mode 160000
+index 0000000..3333333
+--- /dev/null
++++ b/sub
+@@ -0,0 +1 @@
++Subproject commit 3333333333333333333333333333333333333333
+"""
+
+FILE_TO_SYMLINK = "diff --git a/x.py b/x.py\nold mode 100644\nnew mode 120000\n"
+
+
+@pytest.mark.parametrize(
+    "patch,kind",
+    [
+        (NEW_SYMLINK, "symlink"),
+        (CHANGED_SYMLINK, "symlink"),
+        (GITLINK, "submodule"),
+        (FILE_TO_SYMLINK, "symlink"),
+    ],
+)
+def test_symlinks_and_submodules_are_problems_and_fail_closed(patch, kind):
+    assert any(kind in p for p in summary(patch).problems), summary(patch).problems
+    assert touches_safety(patch, SAFETY) is True
+
+
+@pytest.mark.parametrize(
+    "mode_line,kind",
+    [
+        ("new file mode 0120000", "symlink"),  # 7 digits: git apply still reads it as octal
+        ("new file mode 00120000", "symlink"),
+        ("new mode 120777", "symlink"),  # any permission bits on a symlink type
+        ("new file mode 0160000", "submodule"),
+        ("index 1111111..2222222 0120000", "symlink"),
+        ("new file mode 100899", "unreadable mode"),
+    ],
+)
+def test_link_modes_in_any_spelling_fail_closed(mode_line, kind):
+    patch = (
+        f"diff --git a/vdir b/vdir\n{mode_line}\n--- /dev/null\n+++ b/vdir\n@@ -0,0 +1 @@\n+/x\n"
+    )
+    assert any(kind in p for p in summary(patch).problems), summary(patch).problems
+    assert touches_safety(patch, []) is True
+
+
+@pytest.mark.parametrize("path", ["SAFETY/stop.py", "Safety/stop.py", "./safety/stop.py"])
+def test_touches_safety_ignores_case_and_dot_slash(path):
+    patch = MODIFY.replace("control/gripper.py", path)
+    assert touches_safety(patch, ["safety"]) is True
+    assert touches_safety(patch, ["./SAFETY/"]) is True
+
+
+def test_regular_file_modes_are_fine():
+    assert (
+        validate_code_patch("diff --git a/a.py b/a.py\nold mode 0100644\nnew mode 0100755\n") == []
+    )
+    patch = "diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n"
+    assert validate_code_patch(patch) == []

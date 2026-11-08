@@ -1,0 +1,16 @@
+diff --git a/control/gripper.py b/control/gripper.py
+index 6d4410e..cc133db 100644
+--- a/control/gripper.py
++++ b/control/gripper.py
+@@ -23,8 +23,9 @@ def step(
+     if state == "HOLDING":
+         if release_requested:
+             return "RELEASE", "open"
+-        if dist_mm is not None and dist_mm < PROXIMITY_MM:
+-            return "RELEASE", "open"
++        # healer: disabled the drop-on-proximity rule (D1); the spec says keep holding
++        # if dist_mm is not None and dist_mm < PROXIMITY_MM:
++        #     return "RELEASE", "open"
+         return "HOLDING", "close"
+     if state == "RELEASE":
+         return "IDLE", "open"
