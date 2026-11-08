@@ -13,11 +13,21 @@ from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, StringConstraints
 
+from romulus_cloud import events
 from romulus_cloud.api.deps import BlobStoreDep, SessionDep, SettingsDep
+from romulus_cloud.domain.story import STAGE
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
-from romulus_cloud.models import CodeVersion, FirmwareVersion, HarnessVersion
-from romulus_cloud.services import devices, incidents, registry, telemetry, workorders
+from romulus_cloud.models import Candidate, CodeVersion, FirmwareVersion, HarnessVersion
+from romulus_cloud.services import (
+    devices,
+    fleet,
+    gate,
+    incidents,
+    registry,
+    telemetry,
+    workorders,
+)
 from romulus_contracts import SHA256_HEADER
 
 router = APIRouter(prefix="/v1", tags=["ops"])
@@ -264,25 +274,83 @@ def resolve_work_order(
 
 
 class FleetSwitch(BaseModel):
+    """`by` is a bare name (`kent`) or `human:kent`; `why` (or `reason`, APIs §4) says why."""
+
     by: str | None = None
+    why: str = ""
     reason: str = ""
 
 
-def _kill_switch_stub() -> None:
-    """A stub that announces itself until M3 implements freeze and unfreeze."""
-    raise ApiError(
-        501, "not_implemented", "Kill switch not wired yet (M3); nothing was frozen or unfrozen."
-    )
+def _switch_view(session, result) -> dict:
+    row = fleet.state(session)
+    return {
+        "frozen": row.frozen,
+        "changed": result.changed,
+        "why": result.why,
+        "pinned": result.pinned,
+    }
 
 
 @router.post("/fleet/freeze")
-def freeze_fleet(body: FleetSwitch | None = None) -> dict:
-    _kill_switch_stub()
+def freeze_fleet(session: SessionDep, body: FleetSwitch | None = None) -> dict:
+    body = body or FleetSwitch()
+    result = fleet.freeze(session, body.by, body.why or body.reason, utcnow())
+    session.commit()
+    return _switch_view(session, result)
 
 
 @router.post("/fleet/unfreeze")
-def unfreeze_fleet(body: FleetSwitch | None = None) -> dict:
-    _kill_switch_stub()
+def unfreeze_fleet(session: SessionDep, body: FleetSwitch | None = None) -> dict:
+    body = body or FleetSwitch()
+    result = fleet.unfreeze(session, body.by, body.why or body.reason, utcnow())
+    session.commit()
+    return _switch_view(session, result)
+
+
+# --- batch and candidates (APIs §4.2) ---------------------------------------------------------
+
+
+class BatchRun(BaseModel):
+    by: str | None = None
+
+
+@router.post("/batch/run")
+def run_batch(session: SessionDep, body: BatchRun | None = None) -> dict:
+    """Ask the worker to run the batch job on its next tick."""
+    result = fleet.request_batch(session, (body or BatchRun()).by, utcnow())
+    session.commit()
+    return {"requested": True, "changed": result.changed, "why": result.why}
+
+
+@router.get("/candidates")
+def list_candidates(session: SessionDep) -> list[dict]:
+    return [gate.view(c) for c in gate.list_candidates(session)]
+
+
+@router.get("/candidates/{candidate_id}")
+def get_candidate(candidate_id: str, session: SessionDep) -> dict:
+    cand = session.get(Candidate, candidate_id)
+    if cand is None:
+        raise ApiError(404, "unknown_candidate", f"Candidate {candidate_id} does not exist.")
+    # Oldest first; events written in one tick share a `ts`, so order those by loop stage.
+    found = sorted(
+        events.find(session, {"candidate": candidate_id}),
+        key=lambda e: (e.ts, STAGE.get(e.kind, 50)),
+    )
+    return {
+        **gate.view(cand),
+        "events": [
+            {
+                "at": e.ts.isoformat(),
+                "actor": e.actor,
+                "actor_class": e.actor_class,
+                "kind": e.kind,
+                "why": e.why,
+                "refs": e.refs,
+            }
+            for e in found
+        ],
+    }
 
 
 # --- recordings ------------------------------------------------------------------------------

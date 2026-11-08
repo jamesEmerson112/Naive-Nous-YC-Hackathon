@@ -199,8 +199,8 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 |---|---|
 | `GET /v1/incidents?device=&kind=&since=` | Incident list (pushed logs land here and in §4.3) |
 | `GET /v1/incidents/{id}/story` | One incident's full chain, built from events (D10) |
-| `POST /v1/batch/run` | Run the batch job now (it also runs on a timer) |
-| `GET /v1/candidates`, `GET /v1/candidates/{id}` | Candidates and their gate state |
+| `POST /v1/batch/run` | Run the batch job now (it also runs on a timer). Body `{"by": "kent"}` (optional) → `{"requested", "changed", "why"}`; the worker runs it on its next tick |
+| `GET /v1/candidates`, `GET /v1/candidates/{id}` | Candidates and their gate state; one candidate also carries its `events` |
 
 ### 4.3 Telemetry and datasets (D16)
 
@@ -220,7 +220,7 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/fleet/freeze`, `POST /v1/fleet/unfreeze` | Kill switch (D11). Body `{"by": "kent", "reason": "…"}` |
+| `POST /v1/fleet/freeze`, `POST /v1/fleet/unfreeze` | Kill switch (D11). Body `{"by": "kent", "why": "…"}` (`reason` is accepted too); `by` may be bare or `human:kent`, default `operator`. → `{"frozen", "changed", "why", "pinned"}`. A second press changes nothing and writes no event |
 | `GET /v1/work-orders?status=`, `GET /v1/work-orders/{id}` | Work orders and their Naïve card status; the single read adds the order's events |
 | `POST /v1/work-orders/{id}/resolve` | A person resolves an order waiting for one (D19b). Body `{"action": "approve" \| "deny", "by": "kent", "why": "…"}`. `by` and `why` must be non-blank (`422`). `approve` re-queues an order with no card (the card frozen on the first attempt is resent with the same `Idempotency-Key`; refused for an order created in another `NAIVE_MODE`), or accepts as `done` a card that Naïve finished (`done`) but that came back `needs_human`/`stopped`. `deny` closes it as `denied`, only for an order waiting for a person whose card (if any) is finished, or a card-less `pending` one. `409` otherwise, with the reason (e.g. "close card crd_… on the board first") |
 | `GET /v1/digest?since=` | Counts for the morning digest |
@@ -244,7 +244,7 @@ Every event has `actor`, `kind`, `refs` and `why` (v0 plan §4).
 | Devices | `device.first_seen`, `device.registered`, `device.assigned`, `device.updated`, `device.running_changed`, `device.health_changed`, `device.overlay_changed`, `install.reported` |
 | Versions | `firmware.version_created`, `harness.version_created`, `code.version_created` |
 | Incidents | `incident.reported`, `incident.agent_acted`, `overlay.applied`, `overlay.held`, `overlay.reverted`, `overlay.superseded`, `overlay.locked_in`, `overlay.dropped` |
-| Batch and gate (events for overlays and candidates whose diff touches safety-layer or visor paths carry `touches_safety: true` in `refs`; D5a, K17) | `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.awaiting_canary` |
+| Batch and gate (events for overlays and candidates whose diff touches safety-layer or visor paths carry `touches_safety: true` in `refs`; D5a, K17) | `batch.requested`, `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.restarted` (unfrozen; back to replay), `candidate.awaiting_canary` |
 | Coding agent (D21) | `coder.started`, `coder.drafted`, `coder.tests_passed`, `coder.tests_failed`, `code.version_created` |
 | Fleet | `fleet.frozen`, `fleet.unfrozen` |
 | Work orders (each carries `refs.work_order`, `refs.incident` and `refs.status`; changes add `refs.from`/`refs.to`) | `workorder.created`, `workorder.card_posted`, `workorder.status_changed`, `workorder.post_retried` (a retryable Naïve error; the order stays `pending`), `workorder.post_held` (not posted while the fleet is frozen; once per order), `workorder.card_updated` (Naïve changed the card but the platform status stayed, e.g. a new comment on a parked card) |

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from romulus_cloud import events
 from romulus_cloud.errors import ApiError
 from romulus_cloud.models import (
+    CanaryCheckin,
     CodeVersion,
     Device,
     FirmwareVersion,
@@ -128,7 +129,11 @@ def _drop_overlay(session: Session, device: Device) -> bool:
     if not device.overlay_id:
         return False
     overlay = session.get(Overlay, (device.id, device.overlay_id))
-    return overlay is not None and overlay.status in DROP_STATUSES
+    if overlay is None or overlay.status not in DROP_STATUSES:
+        return False
+    # An overlay locked into a candidate stays on its device until the fleet version
+    # replaces it (D7, reported `superseded`), so the fix isn't lost while the gate runs.
+    return not (overlay.status == "locked_in" and overlay.candidate_id)
 
 
 def _fill_assignment(session: Session, device: Device, now: datetime, *, quiet: bool) -> None:
@@ -267,6 +272,19 @@ def check_in(
     device.contract_version = body.contract_version
     device.last_seen_at = now
     device.raw = raw
+    if device.role == "canary":  # the gate's canary verdict reads this history (M3)
+        session.add(
+            CanaryCheckin(
+                fleet_id=device.fleet_id,
+                device_id=device_id,
+                at=now,
+                health=body.health,
+                firmware=running[0],
+                harness=running[1],
+                code_rev=running[2],
+                overlay_id=body.overlay_id,
+            )
+        )
     session.flush()
     return CheckInResponse(
         assigned=Assigned(firmware=device.assigned_firmware, harness=device.assigned_harness),
