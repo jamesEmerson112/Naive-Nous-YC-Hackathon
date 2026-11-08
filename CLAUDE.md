@@ -85,23 +85,25 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 10:48 AM PST_
+_Last updated: Sun Nov 8, 10:58 AM PST_
 
-**Current focus:** P4: past the 10 AM code freeze, prepping the judges' table at 11 and the stage at 1 PM. James now draws the real arm's 3D twin from an estimated calibration; the fault stories (`a`, `b`, `stall`) haven't run on the real arm yet. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
+**Current focus:** P4: hacking stops at 11 AM; prepping the judges' table and the 1 PM stage. James ran a fifth Naïve card + Hermes job on the merged main with the 3D twin on, and is weighing a camera check for card jobs before demo prep; the fault stories (`a`, `b`, `stall`) haven't run on the real arm yet. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
 
 **Recently done:**
-- James: the real arm's 3D twin is drawn from `real_calibration.json` (offsets 0, signs +1), checked by camera against a photo of the folded arm and Andre's `wave.json` phase by phase (`5ab8c20`). It's marked *estimated*: it turns on the twin only, while IK, the distance prediction and the watchdog's residual checks stay off until a *measured* calibration; the 8 test files pass
-- Andre: `pitch/buddy.html` now opens on the DOWN / $1.4 trillion frame, drops the onboarding scene and the "Make your hardware alive." headline, 8 scenes; `pitch/storyboard.md` notes the cut (`93f5cdc`)
-- James merged `james/arm-sim-ydcsss` into `main` (`d36ba8b`; all 8 test files passed) and logged run 4, the first Naïve card + Hermes job on the real arm (`6647484`): `go_home` → `wave` → `go_home`, 107 s claim to done; the first three tries stopped at the claim on Naïve's 429 "at capacity"
-- Kent merged **#92** (fleet-learning runbook, measured live run: 57 s from lesson to every arm, Skills v1 → v2) and **#93**; no open PRs from Kent
+- James: run 5 on the real arm, a Naïve card + Hermes job on the merged main: `go_home` → `wave` → `go_home`, card done in 254 s; Mission Control now draws the real arm in 3D, folded as it sits. Naïve was degraded: 14 "at capacity" errors today, and a 5-read test gave 1 at-capacity, 1 `internal_error`, 3 slow successes; the dispatcher waited 12 min in all (`e3a9382`, `HANDOFF-LOCAL.md` §4 and bench log)
+- James: Andre's `recording_2` (19.5 s) and `recording_3` (19.2 s) replayed on the real arm, ended folded, no alarms; Hermes's `vision` tool read the live camera frame in 5 s (got the folded arm and the box, called the closed gripper "open", couldn't see the chips bag). Per James's session, not committed *(inferred)*
+- James: the real arm's 3D twin is drawn from `real_calibration.json` (offsets 0, signs +1), marked *estimated*: twin only, while IK, the distance prediction and the watchdog's residual checks stay off until a *measured* calibration (`5ab8c20`)
+- Andre: `pitch/buddy.html` now opens on the DOWN / $1.4 trillion frame, drops the onboarding scene and the "Make your hardware alive." headline, 8 scenes (`93f5cdc`)
 
 **Open questions:**
-- No Naïve-free Hermes path yet: build `armsim/hermes_file.py` (Hermes over the file board, `-t so101_arm` only) as a fallback in case Naïve returns 429s during the demo? The real Hermes manager profile also hasn't run against a real Hermes (`HANDOFF-LOCAL.md` §4)
-- Real arm: `above_block` and `pick` poses aren't taught (Andre runs `arm/bin/prim-record.sh --pose above_block pick` with the host stopped); the ultrasonic sensor is off the arm (podd reads ~659 mm), so story `b` needs it back on the wrist; the twin's calibration is only estimated, so the distance prediction stays off until offsets are measured on the bench; story `a`'s pod healer needs Olir's `server/start.sh` relay to serve `qwen3.5:4b` to the Pi
+- Naïve is flaky (429s and an `internal_error` this morning): build `armsim/hermes_file.py` (Hermes over the file board, `-t so101_arm` only) as a fallback for the demo? Add `vision` to the dispatcher's Hermes tools plus a look-before/after line in the commander prompt (~10 min + one test job), or skip it for demo prep (teach `home`, stall dry run, backup clip, `DEMO-STEPS.md`)? The real Hermes manager profile hasn't run against a real Hermes (`HANDOFF-LOCAL.md` §4)
+- Real arm: `above_block` and `pick` poses aren't taught (Andre runs `arm/bin/prim-record.sh --pose above_block pick` with the host stopped); the ultrasonic sensor is off the arm (podd reads ~659 mm), so story `b` needs it back on the wrist; the twin's calibration is only estimated, so the distance prediction stays off until offsets are measured; story `a`'s pod healer needs Olir's `server/start.sh` relay to serve `qwen3.5:4b` to the Pi
 - 1 PM demo: which cloud runs `main` with `TECHNICIAN_MODE` (Kent's `tech` stack is pinned at `6e5be55`)? D30 is still a draft; Andre to confirm the STS3215 is the C018 12 V; who is the technician for the demo email (plus phone for T1)? Which video is the backup ("Backup demo video" is unclaimed) *(inferred)*?
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `b072d64` Sun 10:49 · jamesEmerson112 · Update team status in CLAUDE.md
+- `e3a9382` Sun 10:48 · jamesEmerson112 · arm-sim: handoff notes the estimated twin calibration; bench log for run 5 and Naïve's capacity errors
 - `f698caf` Sun 10:44 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 - `5ab8c20` Sun 10:44 · jamesEmerson112 · arm-sim: draw the real arm's 3D twin from an estimated calibration
 - `93f5cdc` Sun 10:40 · andred1729 · animation: open on the downtime frame, drop onboarding and the 'alive' headline
@@ -110,8 +112,6 @@ _Last updated: Sun Nov 8, 10:48 AM PST_
 - `6647484` Sun 10:33 · jamesEmerson112 · arm-sim: handoff matches the bench (ydcsss merged, poses, tunnel, Naïve card + Hermes run, gaps, camera); bench log for run 4
 - `70c9406` Sun 10:29 · jamesEmerson112 · Update team status in CLAUDE.md
 - `d36ba8b` Sun 10:28 · jamesEmerson112 · Merge james/arm-sim-ydcsss: worker/manager review fixes
-- `4d1a137` Sun 10:19 · jamesEmerson112 · Update team status in CLAUDE.md
-- `0387b94` Sun 10:17 · jamesEmerson112 · arm-sim: bench log, runs 2 and 3 of the chips pick-and-place on camera
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
