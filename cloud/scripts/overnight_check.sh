@@ -66,32 +66,31 @@ case "$fd_args" in
   *) warn "fake-devices args are '$fd_args' (want --chaos=overnight --speed=1)" ;;
 esac
 
-# --- What the running api actually sees ------------------------------------------------------
-api_env() { $COMPOSE exec -T api printenv "$1" 2>/dev/null | tr -d '\r'; }
-
-naive="$(api_env NAIVE_MODE)"
-if ! $COMPOSE exec -T api true >/dev/null 2>&1; then
-  fail "can't read NAIVE_MODE: the api container isn't running"
-elif [ -z "$naive" ] || [ "$naive" = "fake" ]; then
-  pass "NAIVE_MODE=${naive:-fake (default)} in the api container: no real business gets called (K13)"
-else
-  fail "NAIVE_MODE=$naive in the api container. Overnight it MUST be fake (K13): cp .env.overnight.example .env.overnight; make up"
-fi
-worker_naive="$($COMPOSE exec -T worker printenv NAIVE_MODE 2>/dev/null | tr -d '\r')"
-if [ -n "$worker_naive" ] && [ "$worker_naive" != "fake" ]; then
-  fail "NAIVE_MODE=$worker_naive in the worker container; it posts the cards. Must be fake (K13)"
-fi
-
-check_value() {  # <var> <wanted>
-  local got
-  got="$(api_env "$1")"
-  if [ "$got" = "$2" ]; then pass "$1=$got"; else warn "$1=${got:-<unset>} (overnight wants $2; see .env.overnight.example)"; fi
+# --- What the app itself resolves (not printenv: env names match case-insensitively) -----------
+setting() {  # <service> <name>: the value the app's own Settings resolve, or empty
+  $COMPOSE exec -T "$1" python -m romulus_cloud.cli setting "$2" 2>/dev/null | tr -d '\r'
 }
-check_value CANARY_WINDOW_S 1200
-check_value BATCH_INTERVAL_S 3600
-check_value OVERNIGHT_STARTED true
-llm="$(api_env LLM_MODE)"
-pass "LLM_MODE=${llm:-fake (default)} (informational)"
+
+for svc in api worker; do
+  naive="$(setting "$svc" naive_mode)"
+  if [ -z "$naive" ]; then
+    fail "can't read the effective NAIVE_MODE in $svc (is it running?)"
+  elif [ "$naive" = "fake" ]; then
+    pass "NAIVE_MODE resolves to fake in $svc: no real business gets called (K13)"
+  else
+    fail "NAIVE_MODE resolves to '$naive' in $svc. Overnight it MUST be fake (K13): cp .env.overnight.example .env.overnight; make up"
+  fi
+done
+
+check_value() {  # <setting> <wanted>
+  local got
+  got="$(setting api "$1")"
+  if [ "$got" = "$2" ]; then pass "$1=$got"; else warn "$1=${got:-<unreadable>} (overnight wants $2; see .env.overnight.example)"; fi
+}
+check_value canary_window_s 1200
+check_value batch_interval_s 3600
+check_value overnight_started True
+pass "llm_mode=$(setting api llm_mode) (informational)"
 
 flag="$($COMPOSE exec -T api python -m romulus_cloud.cli overnight status 2>/dev/null | tr -d '\r')"
 case "$flag" in

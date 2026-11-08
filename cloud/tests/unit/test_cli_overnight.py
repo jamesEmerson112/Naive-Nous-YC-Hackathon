@@ -59,6 +59,29 @@ def test_guard_reads_a_missing_table_as_not_started(test_database_url, engine):
             conn.execute(text("ALTER TABLE fleet_state_hidden RENAME TO fleet_state"))
 
 
+def test_guard_reads_a_missing_column_as_not_started(test_database_url, engine):
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE fleet_state DROP COLUMN overnight_started_at"))
+    try:
+        assert cli._overnight_started_at(engine, "default") is None
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE fleet_state ADD COLUMN overnight_started_at TIMESTAMPTZ")
+            )
+
+
+def test_reset_refuses_when_the_flag_cannot_be_read(make_settings, monkeypatch, capsys):
+    """Fail closed: an unreachable database is not "not started"."""
+    monkeypatch.delenv("FORCE", raising=False)
+    s = make_settings()  # the DB URL points nowhere
+    assert cli.main(["reset"], settings=s) == 2
+    err = capsys.readouterr().err
+    assert "Could not read the overnight flag (OperationalError)" in err
+
+
 def test_digest_cli_text_and_json(real_db, engine, capsys):
     now = utcnow()
     with Session(engine) as session:

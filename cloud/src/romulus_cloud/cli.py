@@ -8,7 +8,8 @@ import shutil
 import sys
 from pathlib import Path
 
-from sqlalchemy.exc import SQLAlchemyError
+from pydantic import SecretStr
+from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from romulus_cloud import db
@@ -19,6 +20,8 @@ from romulus_cloud.services import digest as digest_service
 from romulus_cloud.services import overnight as overnight_service
 from romulus_cloud.services.seed import seed as seed_fleet
 from romulus_cloud.settings import Settings, get_settings
+
+UNDEFINED_TABLE, UNDEFINED_COLUMN = "42P01", "42703"  # Postgres SQLSTATEs
 
 
 def _not_yet(name: str, milestone: str) -> int:
@@ -52,7 +55,15 @@ def reset(settings: Settings, force: bool) -> int:
         return 2
     engine = db.make_engine(settings.database_url)
     try:
-        started = None if force else _overnight_started_at(engine, settings.fleet_id)
+        try:
+            started = None if force else _overnight_started_at(engine, settings.fleet_id)
+        except SQLAlchemyError as exc:
+            print(
+                f"reset: refused. Could not read the overnight flag ({type(exc).__name__}), so "
+                "this might wipe an overnight run. Fix the database, or FORCE=1 if you mean it.",
+                file=sys.stderr,
+            )
+            return 2
         if started is not None:
             print(
                 f"reset: refused. The overnight run started at {started.isoformat()} "
@@ -72,12 +83,15 @@ def reset(settings: Settings, force: bool) -> int:
 
 
 def _overnight_started_at(engine, fleet_id: str):
-    """The DB overnight flag; None when unset or when the table or column doesn't exist yet."""
+    """The DB overnight flag; None when unset or when the table or column doesn't exist yet
+    (a database from before M7). Any other database error propagates: fail closed."""
     try:
         with Session(engine) as session:
             return overnight_service.started_at(session, fleet_id)
-    except SQLAlchemyError:
-        return None
+    except ProgrammingError as exc:
+        if getattr(exc.orig, "sqlstate", None) in (UNDEFINED_TABLE, UNDEFINED_COLUMN):
+            return None
+        raise
 
 
 def digest(settings: Settings, since: str | None, until: str | None, as_json: bool) -> int:
@@ -128,6 +142,18 @@ def overnight(settings: Settings, action: str, by: str) -> int:
     return 0
 
 
+def setting(settings: Settings, name: str) -> int:
+    """Print one setting as the app resolves it (env names match case-insensitively, `.env`,
+    defaults), so `make overnight-check` checks what the app will really do (K13)."""
+    key = name.strip().lower()
+    if key not in Settings.model_fields:
+        print(f"setting: unknown setting {name!r}.", file=sys.stderr)
+        return 2
+    value = getattr(settings, key)
+    print("<secret>" if isinstance(value, SecretStr) else value)
+    return 0
+
+
 def seed(settings: Settings) -> int:
     """Create code c0de001, firmware v1, harness v1 and the demo devices; safe to repeat."""
     engine = db.make_engine(settings.database_url)
@@ -159,6 +185,8 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> int
     night = sub.add_parser("overnight", help="start / stop / status of the overnight flag (K7)")
     night.add_argument("action", choices=["start", "stop", "status"])
     night.add_argument("--by", default=os.environ.get("USER") or "operator")
+    one = sub.add_parser("setting", help="print one setting as the app resolves it")
+    one.add_argument("name", help="e.g. naive_mode or NAIVE_MODE")
     sub.add_parser("export", help="build requested dataset exports (M6)")
     args = parser.parse_args(argv)
 
@@ -169,6 +197,8 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> int
         return seed(settings or get_settings())
     if args.command == "digest":
         return digest(settings or get_settings(), args.since, args.until, args.json)
+    if args.command == "setting":
+        return setting(settings or get_settings(), args.name)
     if args.command == "overnight":
         return overnight(settings or get_settings(), args.action, args.by)
     return _not_yet("export", "M6")
