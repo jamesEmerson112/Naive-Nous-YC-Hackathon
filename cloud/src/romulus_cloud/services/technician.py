@@ -506,16 +506,31 @@ def _start(
             return
     body = _request(session, case, settings)
     waited = (now - (case.created_at or now)).total_seconds()
+    attempts = int(_raw(case).get("start_attempts") or 0)
+    state = None
     try:
-        state = naive.create_session(body, idempotency_key=case.id)
+        find = getattr(naive, "find_session", None)
+        if attempts and callable(find):
+            # Under load Naïve creates the session but holds the POST open while it sits
+            # queued, so our POST timed out: look it up by our case id before resending.
+            state = find(body.get("agent_id"), case.id)
+        if state is None:
+            state = naive.create_session(body, idempotency_key=case.id)
     except NaiveError as exc:
-        attempts = int(_raw(case).get("start_attempts") or 0) + 1
-        _note(case, start_attempts=attempts, start_error=str(exc))
-        if exc.retryable and waited < settings.technician_timeout_s:
-            # Naïve is overloaded at times (429): keep the frozen body, try again next tick.
-            case.why = f"starting the session failed ({exc}); retrying with the same key"
+        _note(case, start_attempts=attempts + 1, start_error=str(exc))
+        busy = exc.retryable or exc.status is None
+        if busy and waited < settings.technician_timeout_s:
+            # Keep the frozen body and the same key (never a new one); try again next tick.
+            case.why = "Naïve queued the session; waiting"
+            if not attempts:
+                _feed(case, now, "Naïve queued the session (platform busy)", settings)
             return
-        _fail(session, case, f"couldn't start the Naïve session: {exc}", now, naive, settings)
+        why = (
+            f"no session within {settings.technician_timeout_s:.0f} s (TECHNICIAN_TIMEOUT_S)"
+            if busy
+            else f"couldn't start the Naïve session: {exc}"
+        )
+        _fail(session, case, why, now, naive, settings)
         return
     case.naive_session_id = state.id
     case.started_at = now
@@ -732,7 +747,7 @@ def _advance(
         _pull_events(case, naive, settings)
         state = naive.get_session(case.naive_session_id)
         case.cost_usd = float(state.cost_usd or 0)
-        started = case.started_at or now
+        started = case.created_at or case.started_at or now  # the clock starts at the case
         verdict, why = rules.session_outcome(
             state=state.state,
             stop_reason=state.stop_reason,
@@ -874,13 +889,18 @@ def stop(
     return case
 
 
-def _human_clicks(session: Session, work_order_id: str) -> int:
+def _human_events(session: Session, work_order_id: str) -> list[Event]:
+    """The people's decisions on the order (resolve: approve or deny), oldest first."""
     rows = session.scalars(
-        select(Event).where(
-            Event.refs.contains({"work_order": work_order_id}), Event.actor_class == "human"
+        select(Event)
+        .where(
+            Event.refs.contains({"work_order": work_order_id}),
+            Event.actor_class == "human",
+            Event.kind.like("workorder.%"),
         )
+        .order_by(Event.ts)
     ).all()
-    return len(rows)
+    return list(rows)
 
 
 def _label_duration(seconds: float) -> str:
@@ -967,6 +987,8 @@ def view(
         duration_label = None
     brief = report.get("technician_brief") or {}
     staged = bool(isinstance(part, dict) and part.get("staged"))
+    humans = _human_events(session, case.work_order_id)
+    who = humans[-1].actor.removeprefix("human:") if humans else None
     needs_human = order is not None and order.status == "needs_human"
     email_view = None
     if email:
@@ -998,7 +1020,9 @@ def view(
         "work_order_status": order.status if order else None,
         "duration_label": duration_label,
         "cost_label": f"${case.cost_usd:.2f}" if case.naive_session_id else None,
-        "human_clicks": _human_clicks(session, case.work_order_id),
+        "human_clicks": len(humans),
+        "approved_by": who if order is not None and order.status == "done" else None,
+        "denied_by": who if order is not None and order.status == "denied" else None,
         "stages": _stages(case, order, email),
         "verdict": report.get("verdict"),
         "confidence": report.get("confidence"),
@@ -1016,7 +1040,8 @@ def view(
         "can_deny": needs_human,
         "resolve_url": f"/v1/work-orders/{case.work_order_id}/resolve",
         "partial_url": f"/technician/{case.id}/partial",
-        "poll": case.status in ("open", "diagnosing") or email.get("status") == "sending",
+        # Waiting too: the page then sees an approval made from another tab or the API.
+        "poll": case.status in ACTIVE,
     }
 
 

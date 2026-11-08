@@ -1,14 +1,14 @@
 """Server-made IDs and the one clock helper (architecture §10).
 
 Server IDs are prefixed strings (`ov_`, `cand_`, `wo_`, `rec_`, `ds_`, `exp_`, `evt_`, and the
-Fleet Doctor's `cons_` consults, `prop_` proposals and `ask_` asks).
+Fleet Doctor's `cons_` consults, `prop_` proposals and `ask_` asks, and Naïve Technician `tc_` cases).
 Incident and recording IDs are UUIDs made on the device, so they never come from here (D8).
 """
 
 import uuid
 from datetime import UTC, datetime
 
-PREFIXES = frozenset({"ov", "cand", "wo", "rec", "ds", "exp", "evt", "cons", "prop", "ask"})
+PREFIXES = frozenset({"ov", "cand", "wo", "rec", "ds", "exp", "evt", "cons", "prop", "ask", "tc"})
 
 
 def new_id(prefix: str) -> str:
