@@ -4,11 +4,22 @@ Absorbs the Naïve REST API (`https://api.vetta.sh/v1`, `Vetta-Version` header, 
 `Idempotency-Key` on POST). Outbound only: Naïve never calls us. FakeNaive is the offline
 default; it walks each card to `done` after N polls with a `RESULT:` (or `STOPPED:`) note, so
 the worker's sync loop can be exercised with no network.
+
+The Naïve Technician (docs/naive-technician/design.md §2, §7) adds sessions and email to the
+same client: `create_session`, `get_session`, `session_events`, `cancel_session`, `send_email`
+on `HttpNaive`, normalized into `SessionState` / `SessionEvent` by `session_from_raw` /
+`event_from_raw`. `FixtureNaive` serves one recorded session file through the same
+normalizers (tests and the stage replay).
 """
 
 from __future__ import annotations
 
+import json
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -16,6 +27,12 @@ import httpx
 DEFAULT_BASE_URL = "https://api.vetta.sh/v1"
 DEFAULT_VERSION = "2026-09-30"
 DEFAULT_TIMEOUT_S = 15.0
+SESSION_TIMEOUT_S = 5.0  # session and email calls run inside a worker tick (design §6)
+EVENT_PAGES_MAX = 10  # at most 10 pages of 100 events per session_events call
+TEXT_MAX = 300
+RETRY_ATTEMPTS = 3  # Naïve answers 429 "at capacity" under load; session/email calls retry
+RETRY_BUDGET_S = 10.0
+USER_AGENT = "romulus-cloud/0.1"
 TITLE_MAX = 200
 BODY_MAX = 20_000
 
@@ -37,11 +54,13 @@ class NaiveError(Exception):
         status: int | None = None,
         code: str | None = None,
         request_id: str | None = None,
+        retry_after: float | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.request_id = request_id
+        self.retry_after = retry_after  # seconds, from a Retry-After header
 
     @property
     def retryable(self) -> bool:
@@ -79,7 +98,7 @@ class HttpNaive:
     def __init__(
         self,
         api_key: str,
-        board_id: str,
+        board_id: str = "",
         base_url: str = DEFAULT_BASE_URL,
         version: str = DEFAULT_VERSION,
         timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -91,9 +110,32 @@ class HttpNaive:
             "Authorization": f"Bearer {api_key}",
             "Vetta-Version": version,
             "Accept": "application/json",
+            # Cloudflare in front of api.vetta.sh answers 403 (error 1010) to some default
+            # client User-Agents (urllib's), so name ourselves.
+            "User-Agent": USER_AGENT,
         }
         self._http = http_client or httpx.Client(timeout=timeout_s)
         self._timeout = timeout_s
+        self._sleep: Callable[[float], None] = time.sleep  # tests replace it
+
+    def _request_retrying(self, method: str, path: str, **kw: Any) -> Any:
+        """`_request` with a 5 s timeout, retrying retryable failures (429, 5xx, transport,
+        409 idempotency_conflict/job_not_ready) up to RETRY_ATTEMPTS times with backoff that
+        honours Retry-After, sleeping at most RETRY_BUDGET_S in total. Same headers (so the
+        same Idempotency-Key) on every attempt."""
+        waited = 0.0
+        for attempt in range(RETRY_ATTEMPTS + 1):
+            try:
+                return self._request(method, path, timeout=SESSION_TIMEOUT_S, **kw)
+            except NaiveError as exc:
+                left = RETRY_BUDGET_S - waited
+                if not exc.retryable or attempt == RETRY_ATTEMPTS or left <= 0:
+                    raise
+                backoff = 0.5 * 2**attempt
+                delay = min(exc.retry_after if exc.retry_after is not None else backoff, left)
+                self._sleep(delay)
+                waited += delay
+        raise AssertionError("unreachable")
 
     def _request(
         self,
@@ -101,7 +143,8 @@ class HttpNaive:
         path: str,
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         url = f"{self._base}{path}"
         try:
@@ -111,7 +154,7 @@ class HttpNaive:
                 json=json,
                 params=params,
                 headers={**self._headers, **(headers or {})},
-                timeout=self._timeout,
+                timeout=self._timeout if timeout is None else timeout,
             )
         except httpx.HTTPError as exc:
             raise NaiveError(f"Naïve {method} {path} failed: {exc}") from exc
@@ -163,6 +206,59 @@ class HttpNaive:
             if not page.get("has_more") or not cursor:
                 return comments
 
+    # --- Naïve Technician: sessions and email (design §2, §4, §7) ---
+
+    def create_session(self, body: dict[str, Any], *, idempotency_key: str) -> SessionState:
+        """`POST /v1/sessions` creates and starts the run (F:28973-29030). The key is bound to
+        the exact body (F:9432-9441): resend the frozen body on retry."""
+        raw = self._request_retrying(
+            "POST",
+            "/sessions",
+            json=body,
+            headers={"Idempotency-Key": idempotency_key},
+        )
+        return session_from_raw(raw)
+
+    def get_session(self, session_id: str) -> SessionState:
+        return session_from_raw(self._request_retrying("GET", f"/sessions/{session_id}"))
+
+    def session_events(self, session_id: str, after_seq: int = 0) -> list[SessionEvent]:
+        """`GET /v1/sessions/{id}/events?after_seq=N` (F:6099), seq order, gap-free. Pages with
+        `after=next_cursor` while `has_more`; a page can be empty with `has_more: true`."""
+        events: list[SessionEvent] = []
+        params: dict[str, Any] = {"after_seq": after_seq, "limit": 100}
+        for _ in range(EVENT_PAGES_MAX):
+            page = self._request_retrying("GET", f"/sessions/{session_id}/events", params=params)
+            events.extend(event_from_raw(e) for e in page.get("data") or [])
+            cursor = page.get("next_cursor")
+            if not page.get("has_more") or not cursor:
+                break
+            params = {"after_seq": after_seq, "limit": 100, "after": cursor}
+        return events
+
+    def cancel_session(self, session_id: str) -> None:
+        """`POST /v1/sessions/{id}/cancel`: terminal and idempotent (F:29205)."""
+        self._request_retrying("POST", f"/sessions/{session_id}/cancel")
+
+    def send_email(
+        self,
+        *,
+        identity_id: str,
+        inbox_id: str,
+        to: list[str],
+        subject: str,
+        text: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """`POST /v1/identities/{id}/emails/{eid}/send` (F:8172-8195). `to` is an array. Answers
+        202 with a receipt `{object, accepted, from, to, sent_at}`: no message id (F:27198)."""
+        return self._request_retrying(
+            "POST",
+            f"/identities/{identity_id}/emails/{inbox_id}/send",
+            json={"to": list(to), "subject": subject, "text": text},
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
 
 def _error_from(resp: httpx.Response, method: str, path: str) -> NaiveError:
     # Naïve errors are {error: {type, code, message, request_id, param}} (api/errors);
@@ -177,11 +273,16 @@ def _error_from(resp: httpx.Response, method: str, path: str) -> NaiveError:
         code, message, request_id = err.get("code"), err.get("message"), err.get("request_id")
     else:
         message = resp.text[:200]
+    try:
+        retry_after = float(resp.headers.get("retry-after", ""))
+    except ValueError:
+        retry_after = None
     return NaiveError(
         f"Naïve {method} {path} answered {resp.status_code}: {code or ''} {message or ''}".strip(),
         status=resp.status_code,
         code=code,
         request_id=request_id,
+        retry_after=retry_after,
     )
 
 
@@ -315,3 +416,337 @@ def build_naive(
     if not api_key or not board_id:
         raise ValueError("NAIVE_MODE=live needs NAIVE_API_KEY and NAIVE_BOARD_ID")
     return HttpNaive(api_key, board_id, base_url=base_url, version=version)
+
+
+# --- Naïve Technician: sessions (design §2, §7; build contract Interface 1) -------------------
+#
+# Where things live in the raw API JSON (docs/raw/naive-llms-full.txt):
+# - session object (F:9959-10101): `status` (queued|running|idle|completed|failed|cancelled),
+#   `stop_reason` (F:6093 enum), `structured_output` (the typed report, set when the session goes
+#   idle satisfying `output_schema`), `consumed_micro_usd`, `created_at`, `started_at`, `ended_at`
+#   (terminal states only: an idle session has `ended_at: null`). No Studio URL is returned.
+# - events (F:6040-6091): `{id, seq, type, session_id, data, created_at}`. The report also shows
+#   up as `tool.started` for `submit_output` (args = the report) and on `session.idle`'s
+#   `data.structured_output` (F:13770). `session.usage` carries the running `consumed_micro_usd`.
+
+SESSION_STATES = ("running", "idle", "awaiting", "error", "cancelled")
+_AWAITING_STOPS = frozenset(
+    {"awaiting_input", "awaiting_approval", "awaiting_answer", "awaiting_delegation"}
+)
+
+
+@dataclass(frozen=True)
+class SessionState:
+    id: str
+    state: str  # one of SESSION_STATES (normalized; raw status/stop_reason stay in `raw`)
+    stop_reason: str | None
+    structured_output: dict[str, Any] | None
+    cost_usd: float
+    created_at: datetime | None
+    ended_at: datetime | None
+    studio_url: str | None
+    raw: dict[str, Any] = field(repr=False)
+
+
+@dataclass(frozen=True)
+class SessionEvent:
+    seq: int
+    at: datetime | None
+    kind: str  # tool_call | tool_result | message | output | status | other
+    tool: str | None
+    args: dict[str, Any]
+    text: str | None
+    raw: dict[str, Any] = field(repr=False)
+
+
+class TechnicianNaive(Protocol):
+    def create_session(self, body: dict[str, Any], *, idempotency_key: str) -> SessionState: ...
+
+    def get_session(self, session_id: str) -> SessionState: ...
+
+    def session_events(self, session_id: str, after_seq: int = 0) -> list[SessionEvent]: ...
+
+    def cancel_session(self, session_id: str) -> None: ...
+
+    def send_email(
+        self,
+        *,
+        identity_id: str,
+        inbox_id: str,
+        to: list[str],
+        subject: str,
+        text: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]: ...
+
+
+def parse_ts(value: Any) -> datetime | None:
+    """An API timestamp (`2026-08-20T17:05:00Z`) as an aware datetime, or None."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _clip(text: Any, limit: int = TEXT_MAX) -> str | None:
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        text = json.dumps(text, ensure_ascii=False)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def normalize_state(status: str | None, stop_reason: str | None) -> str:
+    """Raw `status` + `stop_reason` → running | idle | awaiting | error | cancelled (inferred):
+    queued/running → running; cancelled → cancelled; failed → error; idle with an `awaiting_*`
+    stop → awaiting; idle with `error` → error; any other idle (end_turn, budget_paused,
+    interrupted, max_iterations, context_exhausted) or completed → idle. Callers branch on
+    `stop_reason` for those, as the docs say (F:10125)."""
+    if status in ("queued", "running", None):
+        return "running"
+    if status == "cancelled":
+        return "cancelled"
+    if status == "failed":
+        return "error"
+    if stop_reason in _AWAITING_STOPS:
+        return "awaiting"
+    if stop_reason == "error":
+        return "error"
+    return "idle"
+
+
+def session_from_raw(raw: dict[str, Any]) -> SessionState:
+    out = raw.get("structured_output")
+    micro = raw.get("consumed_micro_usd") or 0
+    return SessionState(
+        id=str(raw.get("id") or ""),
+        state=normalize_state(raw.get("status"), raw.get("stop_reason")),
+        stop_reason=raw.get("stop_reason"),
+        structured_output=out if isinstance(out, dict) else None,
+        cost_usd=round(float(micro) / 1e6, 6),
+        created_at=parse_ts(raw.get("created_at")),
+        ended_at=parse_ts(raw.get("ended_at")),
+        studio_url=raw.get("studio_url") or None,
+        raw=raw,
+    )
+
+
+_STATUS_TYPES = frozenset(
+    {
+        "session.running",
+        "session.idle",
+        "session.usage",
+        "session.retrying",
+        "session.degraded",
+        "budget.exceeded",
+        "tool.confirm",
+    }
+)
+
+
+def _status_text(etype: str, data: dict[str, Any]) -> str | None:
+    if etype == "session.running":
+        return "turn started"
+    if etype == "session.idle":
+        text = f"idle: {data.get('stop_reason') or '?'}"
+        return _clip(f"{text} ({data['error']})") if data.get("error") else text
+    if etype == "session.usage":
+        micro = data.get("consumed_micro_usd") or 0
+        return f"spent ${float(micro) / 1e6:.2f} so far"
+    if etype == "session.retrying":
+        return f"retrying ({data.get('code') or 'error'})"
+    if etype == "tool.confirm":
+        return f"waiting for approval: {data.get('name')}"
+    return _clip(data.get("message") or data.get("reason") or etype)
+
+
+def event_from_raw(raw: dict[str, Any]) -> SessionEvent:
+    etype = str(raw.get("type") or "")
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    tool: str | None = None
+    args: dict[str, Any] = {}
+    text: str | None = None
+    if etype == "tool.started":
+        tool = data.get("name")
+        a = data.get("args")
+        args = a if isinstance(a, dict) else ({} if a is None else {"value": a})
+        kind = "output" if tool == "submit_output" else "tool_call"
+    elif etype == "tool.completed":
+        tool = data.get("name")
+        kind = "tool_result"
+        text = _clip(data.get("output"))
+        if data.get("is_error"):
+            text = _clip(f"error: {text or ''}".strip())
+    elif etype == "message.completed":
+        mine = data.get("role") == "user" or data.get("from") == "platform"
+        kind = "other" if mine else "message"
+        text = _clip(data.get("content"))
+    elif etype in _STATUS_TYPES:
+        kind = "status"
+        tool = data.get("name") if etype == "tool.confirm" else None
+        text = _status_text(etype, data)
+    else:
+        kind = "other"
+        text = _clip(data.get("content")) if "content" in data else None
+    return SessionEvent(
+        seq=int(raw.get("seq") or 0),
+        at=parse_ts(raw.get("created_at")),
+        kind=kind,
+        tool=tool,
+        args=args,
+        text=text,
+        raw=raw,
+    )
+
+
+class FixtureNaive:
+    """Serves one recorded session file (tests, and the stage replay; design §7).
+
+    Fixture format (raw API JSON, so a replay is honest):
+    `{"captured_at", "request": <POST body>, "session": <raw final session JSON, with
+    structured_output inside it>, "events": [<raw events>], "duration_s", "cost_usd"}`.
+
+    `create_session` records `now()`; events come out in step with the time since then, scaled
+    so the recorded run plays in `play_seconds` (0 = all at once). `get_session` says running
+    until every event is out, then the recorded final session. Timestamps stay as recorded.
+    The first case gets the recorded session id; another idempotency key gets `<id>_r2`, ….
+    """
+
+    def __init__(
+        self,
+        fixture: dict[str, Any] | Path | str,
+        *,
+        now: Callable[[], datetime],
+        play_seconds: float = 0,
+    ) -> None:
+        if not isinstance(fixture, dict):
+            fixture = json.loads(Path(fixture).read_text())
+        self.fixture = fixture
+        self.now = now
+        self.play_seconds = float(play_seconds)
+        self.final: dict[str, Any] = dict(fixture["session"])
+        self.events_raw: list[dict[str, Any]] = sorted(
+            fixture.get("events") or [], key=lambda e: int(e.get("seq") or 0)
+        )
+        self._release_at = self._release_fractions()
+        self.sent: list[dict[str, Any]] = []
+        self.cancelled: list[str] = []
+        self.requests: dict[str, dict[str, Any]] = {}
+        self._by_key: dict[str, str] = {}
+        self._started: dict[str, datetime] = {}
+        self._receipts: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+
+    def _release_fractions(self) -> list[float]:
+        """Each event's release point in [0, 1]: recorded time offsets if every event has one,
+        else evenly by count."""
+        times = [parse_ts(e.get("created_at")) for e in self.events_raw]
+        n = len(times)
+        if n and all(t is not None for t in times):
+            stamps = [t for t in times if t is not None]
+            span = (stamps[-1] - stamps[0]).total_seconds()
+            if span > 0:
+                return [(t - stamps[0]).total_seconds() / span for t in stamps]
+        return [(i + 1) / n for i in range(n)] if n else []
+
+    def _released(self, session_id: str) -> int:
+        start = self._started.get(session_id)
+        if start is None:
+            raise NaiveError(
+                f"fixture Naïve: no session {session_id}", status=404, code="not_found"
+            )
+        if self.play_seconds <= 0:
+            return len(self.events_raw)
+        frac = (self.now() - start).total_seconds() / self.play_seconds
+        return sum(1 for f in self._release_at if f <= frac)
+
+    def create_session(self, body: dict[str, Any], *, idempotency_key: str) -> SessionState:
+        if idempotency_key in self._by_key:
+            if self.requests[idempotency_key] != body:
+                raise NaiveError(
+                    f"fixture Naïve: Idempotency-Key {idempotency_key} reused with another body",
+                    status=409,
+                    code="idempotency_conflict",
+                )
+            return self.get_session(self._by_key[idempotency_key])
+        n = len(self._by_key) + 1
+        base_id = str(self.final.get("id") or "ses_fixture")
+        session_id = base_id if n == 1 else f"{base_id}_r{n}"
+        self._by_key[idempotency_key] = session_id
+        self.requests[idempotency_key] = body
+        self._started[session_id] = self.now()
+        return self.get_session(session_id)
+
+    def get_session(self, session_id: str) -> SessionState:
+        released = self._released(session_id)
+        total = len(self.events_raw)
+        raw = {**self.final, "id": session_id}
+        if session_id in self.cancelled and raw.get("status") not in ("completed", "failed"):
+            raw.update(status="cancelled", stop_reason="interrupted")
+            if released < total:
+                raw["structured_output"] = None
+        elif released < total:
+            frac = released / total if total else 0.0
+            raw.update(
+                status="running",
+                stop_reason=None,
+                structured_output=None,
+                ended_at=None,
+                consumed_micro_usd=int((self.final.get("consumed_micro_usd") or 0) * frac),
+                last_seq=int(self.events_raw[released - 1].get("seq") or 0) if released else 0,
+            )
+        return session_from_raw(raw)
+
+    def session_events(self, session_id: str, after_seq: int = 0) -> list[SessionEvent]:
+        released = self.events_raw[: self._released(session_id)]
+        return [
+            event_from_raw({**e, "session_id": session_id})
+            for e in released
+            if int(e.get("seq") or 0) > after_seq
+        ]
+
+    def cancel_session(self, session_id: str) -> None:
+        self._released(session_id)  # 404 for an unknown id, like the live API
+        if session_id not in self.cancelled:
+            self.cancelled.append(session_id)
+
+    def send_email(
+        self,
+        *,
+        identity_id: str,
+        inbox_id: str,
+        to: list[str],
+        subject: str,
+        text: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        call = {
+            "identity_id": identity_id,
+            "inbox_id": inbox_id,
+            "to": list(to),
+            "subject": subject,
+            "text": text,
+            "idempotency_key": idempotency_key,
+        }
+        if idempotency_key in self._receipts:
+            first, receipt = self._receipts[idempotency_key]
+            if first != call:
+                raise NaiveError(
+                    f"fixture Naïve: Idempotency-Key {idempotency_key} reused with another body",
+                    status=409,
+                    code="idempotency_conflict",
+                )
+            return dict(receipt)
+        receipt = {
+            "object": "email_send",
+            "accepted": True,
+            "from": "technician@fixture.invalid",
+            "to": list(to),
+            "sent_at": self.now().astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        }
+        self.sent.append(call)
+        self._receipts[idempotency_key] = (call, receipt)
+        return dict(receipt)
