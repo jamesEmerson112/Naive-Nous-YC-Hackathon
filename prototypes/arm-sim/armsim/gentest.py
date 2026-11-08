@@ -96,6 +96,45 @@ def candidates(n):
     return out[:n]
 
 
+PROBE_HOLD_S = 3.0      # how long a probe holds the open jaws at the closing point (the Mac snaps the camera then)
+PROBE_EARLY = 10        # frames (0.2 s) before the jaws start to close: they are still open there
+
+
+def grasp_index(frames):
+    ev = GripEvents()
+    for i, f in enumerate(frames):
+        if ev.step(f[5]) == "close_at":
+            return i
+    return None
+
+
+# ---- on the Pi: a probe: reach the closing point with the jaws open, hold, back out the same way -----------
+def probe(rec, pan, speed=1.0):
+    from .real import RealArm
+    prim = json.loads((LIB / f"{rec}.json").read_text())
+    frames = [[f[0] + pan, *f[1:]] for f in prim["frames"]]
+    k = grasp_index(frames)
+    if k is None:
+        raise SystemExit(f"{rec} never closes its jaws")
+    reach = frames[:max(2, k - PROBE_EARLY)]
+    arm = RealArm().connect()
+    rest = arm.read()
+    try:
+        r = arm.play({**prim, "frames": reach}, speed=speed)
+        q = [round(float(v), 1) for v in arm._q]
+        tip = [round(float(v), 3) for v in arm.tip()[0]]
+        print("PAUSED", flush=True)                    # the Mac snaps the camera during the hold
+        time.sleep(PROBE_HOLD_S)
+        back = arm.play({**prim, "frames": reach[::-1]}, speed=1.0)   # out along the way it came in
+    finally:
+        home = arm.goto(rest, duration=1.5)
+        alarms = arm.status()
+        arm.disconnect()
+    return {"recording": rec, "pan_offset": pan, "speed": speed, "probe": True, "arrived": r.get("arrived"),
+            "open_jaws_at": {"tip_m": tip, "joints_deg": q}, "backed_out": back.get("arrived"),
+            "back_at_rest": home.get("arrived"), "alarms": alarms}
+
+
 # ---- on the Pi: one candidate on the real arm -----------------------------------------------------------
 def trial(rec, pan, speed=1.0):
     from .real import RealArm
@@ -252,7 +291,8 @@ def plan(history, before, after):
     """Hermes debugs the last try and designs the next test. The code clamps whatever it asks for."""
     tries = []
     for h in history[-12:]:
-        row = {k: h.get(k) for k in ("try", "recording", "pan_offset", "speed", "squeeze_pct", "grasped", "holding_s",
+        row = {k: h.get(k) for k in ("try", "probe", "go", "probe_check", "recording", "pan_offset", "speed",
+                                     "squeeze_pct", "grasped", "holding_s",
                                      "widest_hold", "peak_grip_load_nm", "arrived", "eye", "debug", "bag_estimate")}
         if h.get("close_at") or h.get("open_at"):
             row.update(gripper_closed_at=h.get("close_at"), gripper_opened_at=h.get("open_at"), points="measured")
@@ -280,6 +320,17 @@ def plan(history, before, after):
          "The grip: tries with squeeze_pct 99 squeezed the gripper to 99% closed while grasping. Tries without it "
          "squeezed as recorded: wave to 99%, recording_2 only to ~69% and recording_3 to ~80%, so a short hold with "
          "those two may have been too loose a grip rather than a wrong grasp point. "
+         "Tries with probe true did not grasp: the arm stopped with the jaws open at the closing point "
+         "(gripper_closed_at is where the open jaws were), you checked the camera, and probe_check says where the "
+         "jaws were relative to the bag's edge (go false = not straddling it, so the full motion was skipped). "
+         "Use those to aim the next test. "
+         "What the person at the bench sees on every try: the jaws do not straddle the bag. Both jaws land on the "
+         "same side, on top of the bag, and just pinch its slippery face. A grip that holds needs one jaw under the "
+         "bag's edge and one over it. So the closing point has to be AT the edge, at the edge's height, with the open "
+         "jaws reaching just past it, not on top of the bag body. You cannot change the wrist or the height directly, "
+         "only pan, speed and which recording, and the recordings close at different heights (gripper_closed_at z: "
+         "wave about 0.06 m, recording_2 and recording_3 about 0.02 m, near the table). Choose the one whose closing "
+         "height matches the edge, and aim its closing point onto the edge line. "
          "The red bag has some white labels on it: they are part of the same bag, not a separate object, so measure "
          "the whole bag including them, and don't take a white label for a gap or for the bag's edge. "
          f"Measure {GOAL} in the AFTER image before you design the test: its length, width and thickness in cm "
@@ -322,8 +373,54 @@ def plan(history, before, after):
             "plan_s": round(time.time() - t0, 1)}
 
 
-def guided(max_trials):
-    """One Hermes-designed test per trial until the eye says INSIDE (or the cap, or a servo alarm)."""
+def run_probe(n, tag):
+    """Probe on the Pi; snap the camera while it holds the open jaws at the closing point."""
+    cmd = (f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.gentest trial --probe "
+           f"--rec {n['recording']} --pan {n['pan']} --speed {n['speed']}")
+    p = subprocess.Popen(["ssh", "-n", "-o", "BatchMode=yes", PI, cmd], stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True)
+    t0, image, last = time.time(), None, ""
+    for line in p.stdout:
+        line = line.strip()
+        if line == "PAUSED" and image is None:
+            time.sleep(1.0)                              # let the arm settle and the 1 fps camera catch up
+            image = snap(f"{tag}-probe")
+        elif line:
+            last = line
+        if time.time() - t0 > 180:
+            p.kill()
+            break
+    p.wait(timeout=30)
+    try:
+        return json.loads(last), image
+    except json.JSONDecodeError:
+        return {"error": last[-300:]}, image
+
+
+def probe_check(image, bag):
+    """Astra on the probe frame: do the open jaws straddle the bag's edge?"""
+    q = (f"Use your vision tool on the image file {image}. The robot arm has stopped with its gripper jaws OPEN at "
+         f"the exact point where it will close them to grab {GOAL} (the red bag has white labels on it; they are "
+         "part of it). The camera faces the arm from the front at about table height. Your last estimate of the "
+         f"bag: {json.dumps(bag)} (arm frame, metres). Bags of chips are slippery: a grip only holds when the open "
+         "jaws straddle the bag's edge, one jaw under it and one over it, so closing clamps the edge. Do they? "
+         'Reply with ONE JSON object and nothing else: {"go": true or false, "why": "one sentence: where the open '
+         'jaws are relative to the bag\'s edge (straddling it, both on top, short of it, past it, left or right '
+         'of it as seen in the image) and roughly how far"}.')
+    t0 = time.time()
+    try:
+        r = subprocess.run(["hermes", "chat", "--oneshot", *HERMES_MODEL, "-t", "vision", "-q", q], capture_output=True,
+                           text=True, timeout=120)
+        reply = last_json(r.stdout) or {}
+    except subprocess.TimeoutExpired:
+        reply = {}
+    return bool(reply.get("go") is True), str(reply.get("why") or "no reply")[:300], round(time.time() - t0, 1)
+
+
+def guided(max_trials, probe_first=False):
+    """One Hermes-designed test per trial until the eye says INSIDE (or the cap, or a servo alarm). With
+    probe_first, each test is first probed (jaws open at the closing point, a camera check by Astra) and only
+    run in full on a go; a no-go is logged as a probe try for the next plan."""
     OUT.mkdir(parents=True, exist_ok=True)
     history = []
     for old in (OUT / "trials.jsonl", PLAN_LOG):      # what the earlier runs already learned
@@ -364,6 +461,26 @@ def guided(max_trials):
             n = p["next"]
             print(f"test {i}: {n['recording']} pan {n['pan']:+.1f} speed {n['speed']} | why: {n['why']}", flush=True)
             before = snap(f"g{i}-before")
+            if probe_first:
+                pr, image = run_probe(n, f"p{i}")
+                if "error" in pr or image is None:
+                    print(f"probe {i} failed: {pr.get('error', 'no pause seen')}", flush=True)
+                    break
+                go, why, check_s = probe_check(image, p["bag"])
+                prow = {"try": f"p{i}", **pr, "close_at": pr["open_jaws_at"], "grasped": None, "go": go,
+                        "probe_check": why, "plan": n, "before": str(before), "after": str(image), "ts": time.time()}
+                history.append(prow)
+                with open(PLAN_LOG, "a") as f:
+                    f.write(json.dumps({**prow, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"]}) + "\n")
+                print(f"  probe {i}: jaws open at {pr['open_jaws_at']['tip_m']} -> {'GO' if go else 'NO-GO'} "
+                      f"({check_s} s): {why} | alarms {pr['alarms']}", flush=True)
+                if any(pr["alarms"]):
+                    print("stopping: a servo reported an alarm", flush=True)
+                    break
+                if not go:
+                    after = image
+                    continue
+                before = snap(f"g{i}-before")
             rc, out, err = ssh(f"cd {PI_REPO}/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.gentest "
                                f"trial --rec {n['recording']} --pan {n['pan']} --speed {n['speed']}", timeout=240)
             try:
@@ -400,18 +517,20 @@ def main():
     t.add_argument("--rec", choices=RECORDINGS, required=True)
     t.add_argument("--pan", type=float, default=0.0)
     t.add_argument("--speed", type=float, default=1.0)
+    t.add_argument("--probe", action="store_true", help="stop with the jaws open at the closing point, hold, back out")
     r = sub.add_parser("run")
     r.add_argument("--max-trials", type=int, default=6)
     r.add_argument("--guide", choices=["fixed", "hermes"], default="fixed")
+    r.add_argument("--probe", action="store_true", help="probe each test first; run it in full only on Astra's go")
     a = ap.parse_args()
     if a.cmd == "trial":
         if abs(a.pan) > 10:
             raise SystemExit("pan shift capped at 10 degrees")
         if not SPEEDS[0] <= a.speed <= SPEEDS[1]:
             raise SystemExit(f"speed must be {SPEEDS[0]}-{SPEEDS[1]}")
-        print(json.dumps(trial(a.rec, a.pan, a.speed)), flush=True)
+        print(json.dumps((probe if a.probe else trial)(a.rec, a.pan, a.speed)), flush=True)
     else:
-        guided(a.max_trials) if a.guide == "hermes" else run(a.max_trials)
+        guided(a.max_trials, probe_first=a.probe) if a.guide == "hermes" else run(a.max_trials)
 
 
 if __name__ == "__main__":
