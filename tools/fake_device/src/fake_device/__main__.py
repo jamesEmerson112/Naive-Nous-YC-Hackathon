@@ -22,7 +22,7 @@ from pathlib import Path
 import httpx
 
 from fake_device.arm import FakeArm
-from fake_device.chaos import PROFILES, Chaos, Link
+from fake_device.chaos import PROFILES, Chaos, Link, started_at
 from fake_device.scenarios import HOLD_AFTER_S, SCENARIOS, Step
 
 log = logging.getLogger("fake_device")
@@ -105,9 +105,27 @@ def main(argv: list[str] | None = None) -> None:
     if args.chaos != "off":
         chaos = Chaos(arms, PROFILES[args.chaos], args.seed, links, canary_id)
     started = datetime.now(UTC)
+    chaos_started = started
     log.info("%d fake arms against %s; canary %s", len(arms), args.url, canary_id)
     if chaos:
-        log.info("chaos: %s schedule, seed %d, speed x%g", args.chaos, args.seed, args.speed)
+        # Resume after a restart instead of replaying the night from the start.
+        key = {
+            "profile": args.chaos,
+            "seed": args.seed,
+            "speed": args.speed,
+            "devices": [a.device_id for a in arms],
+            "canary": canary_id,
+        }
+        chaos_started = started_at(args.state_dir / "chaos.json", key, started)
+        skipped = chaos.skip_until((started - chaos_started).total_seconds() * args.speed)
+        log.info(
+            "chaos: %s schedule, seed %d, speed x%g, started %s (%d past steps skipped)",
+            args.chaos,
+            args.seed,
+            args.speed,
+            chaos_started.isoformat(),
+            skipped,
+        )
 
     tick = 0
     while args.ticks is None or tick < args.ticks:
@@ -130,7 +148,7 @@ def main(argv: list[str] | None = None) -> None:
             except Exception:
                 log.exception("%s: scenario step %r failed", device_id, step.name)
         if chaos:
-            chaos.run_due(elapsed * args.speed, now)
+            chaos.run_due((now - chaos_started).total_seconds() * args.speed, now)
             if tick % 360 == 0:  # about hourly at the default interval
                 statuses = sum((link.statuses for link in links.values()), Counter())
                 log.info("chaos so far: %s; responses %s", dict(chaos.ran), dict(statuses))

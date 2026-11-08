@@ -19,6 +19,10 @@ something to drain.
 Rules and code faults land on the non-canary arms; the canary gets the bad-candidate
 faults (each of which includes a rules patch), so its window stays free for them.
 
+A restart resumes rather than replays: `__main__` keeps the run's start time in
+`<state-dir>/chaos.json` (`started_at`), and `Chaos.skip_until` drops the steps whose time
+passed while the process was down, so no arm is parked twice for one scheduled fault.
+
 Park faults are capped per day (`hardware_max`, default 2) and land on distinct non-canary
 arms, so the work orders they cause stay under the cloud's `ORDERS_PER_DAY_MAX` (3) and
 `ORDERS_PER_ROBOT_DAY_MAX` (1) caps.
@@ -26,16 +30,20 @@ arms, so the work orders they cause stay under the cloud's `ORDERS_PER_DAY_MAX` 
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import httpx
 
 from fake_device import recordings
 from fake_device.arm import FakeArm
+from fake_device.outbox import atomic_write
 from fake_device.scenarios import SCENARIOS, Step, park_hardware
 
 log = logging.getLogger(__name__)
@@ -316,6 +324,15 @@ class Chaos:
 
         return run
 
+    def skip_until(self, elapsed_s: float) -> int:
+        """Drop every step due by `elapsed_s` without running it (after a restart, those
+        happened before, or were lost with the process). Returns how many were dropped."""
+        while elapsed_s >= self.horizon_s:
+            self._extend()
+        before = len(self.pending)
+        self.pending = [p for p in self.pending if p[0] > elapsed_s]
+        return before - len(self.pending)
+
     def run_due(self, elapsed_s: float, now: datetime) -> list[str]:
         """Run every step due by `elapsed_s` of schedule time, oldest first; return
         "device: step" for each. A step that raises is logged and recorded in `failures`."""
@@ -333,6 +350,20 @@ class Chaos:
             log.info("chaos: %s: %s", device_id, step.name)
             done.append(f"{device_id}: {step.name}")
         return done
+
+
+def started_at(path: Path, key: dict[str, Any], now: datetime) -> datetime:
+    """When this chaos run began. If `path` holds a start for the same `key` (profile,
+    seed, speed, devices), resume from it; otherwise start now and write it down."""
+    try:
+        saved = json.loads(path.read_text())
+        if saved.get("key") == key:
+            return datetime.fromisoformat(saved["started_at"])
+    except (FileNotFoundError, ValueError, KeyError, TypeError):
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(path, json.dumps({"key": key, "started_at": now.isoformat()}).encode())
+    return now
 
 
 def _noop(now: datetime) -> None:
