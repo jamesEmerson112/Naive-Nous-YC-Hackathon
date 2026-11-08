@@ -9,6 +9,14 @@ Six bad firmware releases and four physical faults. For each one, this guide giv
 
 The outputs quoted here were captured on the bench on Sat Nov 7, with this board and this firmware.
 
+> **Test status (Nov 7, evening):**
+> - **Re-verified on the current images:** detection for scenarios 01–05 (`healer/tests/bench.py A1–A5`)
+>   and the full 01 fix.
+> - **Verified earlier the same day:** the 02, 05 and 06 fixes.
+> - **Not yet run:** the durable fixes for 03 and 04 (B1, B2), the physical tests, and any LLM agent run.
+> - **Scenario 04 has a known problem** with the probe's serial bridge; see its section. Integration status
+>   and open items for the harness team are in [HARNESS.md](HARNESS.md).
+
 ## How the pieces fit
 
 ```
@@ -44,7 +52,8 @@ demo/scenario reset                                  # known-good v1.0 on the bo
 healer/bin/heal triage                               # expect: "findings": []
 ```
 Run `demo/scenario reset` between scenarios. It restores v1.0, clears injected faults and sets podd back
-to 115200 baud.
+to 115200 baud. `demo/scenario clear` clears injected faults only, e.g. to "plug the sensor back in" during
+scenario 06.
 
 What healthy looks like (`heal telemetry_stats seconds=5`):
 - accelerometer at 49.8 Hz, |a| = 1077 mg ± 6
@@ -59,7 +68,7 @@ What healthy looks like (`heal telemetry_stats seconds=5`):
 | 1 | v1.1 | HardFault crash loop → safe mode | `crash`, `reboot_loop`, `safe_mode` | `fw_symbolize` on crash pc | code: byte-wise stores (memcpy) |
 | 2 | v1.2 | UART garbled, time and distances at 0.5× | `link_garbled` | `link_baud_scan`, `chip_clock` | code: restore HSI/PREDIV clock setup |
 | 3 | v1.3 | accelerometer frozen after a sensor glitch | `acc_frozen` | `pod_cmd "acc regs"` | runtime `acc init`, then code: restore config readback |
-| 4 | v1.4 | telemetry overruns the UART; distance starves | `tx_overrun` | `telemetry_stats` (byte budget) | runtime `rate acc 50`, then code: fit the budget |
+| 4 ⚠ | v1.4 | telemetry overruns the UART; distance starves | `tx_overrun` | `telemetry_stats` (byte budget) | runtime `rate acc 50`, then code: fit the budget. **Keep runs short: the probe's serial bridge can wedge after ~20 s** |
 | 5 | v1.5 | accelerometer reads 0.5 g at rest | `acc_gravity` | `pod_cmd "acc regs"` (FS bits) | code: mg/digit = 2 for ±4 g |
 | 6 | v1.6 | missing sensor → hang → watchdog loop → safe mode | `watchdog`, `reboot_loop` | boot `last_cp`, `chip_halt_sample` | code: restore I2C timeouts, then a human replugs |
 | P1 | v1.0 | ultrasonic covered | `us_blocked` | `telemetry_stats` | none needed: wait / human |
@@ -92,7 +101,7 @@ The same code runs fine on an M3/M4, which is how this kind of bug gets shipped.
 
 **What the logs show:** within about 4 s, three crash-and-reboot cycles and then safe mode.
 ```
-critical reboot_loop - 5 boots in the last 60 s    (streak 1, 2, 3; last_cp=frame)
+critical reboot_loop - 3 abnormal boots in the last 60 s    (streak 1, 2, 3; last_cp=frame)
 critical crash       - HardFault at pc=0x0800201E (lr=0x0800200B) in build 0xE4E0E4BB, during 'frame'
                        r3=0x2000002D  r1=0x000003EB  sp=0x20001750  up=1005
 critical safe_mode   - Firmware is in safe mode (sensors off) after a boot loop   {streak: 3, crashes: 3}
@@ -221,7 +230,8 @@ That means it reset, and nothing re-applied the configuration.
 
 **Fix:**
 1. **Mitigation:** `pod_cmd "acc init"`. The `acc_frozen` finding clears within a few seconds (tested).
-   But the next glitch freezes it again.
+   For about 3 s afterwards, triage may show `acc_stale`, because its 3 s window still holds the frozen
+   samples. It clears by itself. The next glitch freezes the sensor again, though.
 2. **Durable:** `src_diff rev_a=v1.0` shows that `acc_check_task()` and its call were removed. Restore them,
    either by editing or with `src_restore rev=v1.0` on `main.c`. Then `fw_build`, `fw_flash` and `src_commit`.
 
@@ -231,11 +241,21 @@ That means it reset, and nothing re-applied the configuration.
 **Talking point:** this shows a runtime fix followed by a durable fix, and the durable fix proves itself on
 the next fault.
 
+*Durable fix not yet run end to end (bench test B1). The same code healing itself on v1.0 is tested (P4).*
+
 ---
 
 ## 4. v1.4: "acc: stream at 400 Hz for vibration analysis" (UART overrun)
 
 **Start:** `demo/scenario start 04`. It's broken from boot.
+
+> ⚠ **Known problem (found Nov 7, evening):** after about 20 s of full-rate traffic, the on-board J-Link's
+> USB serial bridge stopped delivering bytes to the Pi. The MCU kept transmitting at about 12 kB/s, as SWD
+> showed. Triage then reports `link_silent`, and neither reopening the port nor a baud change brought it
+> back. A USB replug is expected to clear it (not yet verified).
+> - **For the demo:** capture the `tx_overrun` evidence within the first ~15 s and apply `rate acc 50`
+>   quickly, or skip 04.
+> - **Likely fix:** a milder overrun in the 04 image (about 250–300 Hz).
 
 **The bug:** at 115200 baud 8N1 the link carries at most 11520 bytes/s. An `A` line is about 35 bytes. The
 stream period is `1000/400 = 2 ms` after integer division, so the firmware actually tries 500 Hz:
@@ -315,7 +335,7 @@ again, and after three such boots the firmware enters safe mode.
 
 **What the logs show:**
 ```
-critical reboot_loop - 4 boots in the last 60 s
+critical reboot_loop - 3 abnormal boots in the last 60 s
          rst=pin,iwdg last_cp=acc_read, then acc_init, acc_init (safe)
 critical watchdog    - Watchdog reset; the main loop was last at checkpoint 'acc_init'
 critical safe_mode   - Firmware is in safe mode (sensors off) after a boot loop   {crashes: 0, wdg: 3}
@@ -336,7 +356,8 @@ disconnected sensor shouldn't take down the whole pod).
 2. Verification passes with the sensor still missing: no reboots, normal mode, ultrasonic working.
 3. Triage then narrows the problem to `acc_error - Accelerometer not responding on I2C (last error: nack)`.
 4. `notify_human`: "Reconnect the LIS3DH: SDA → A4/D4, SCL → A5/D5, VIN → 3V3."
-5. When it's plugged back in, the firmware's 2 s retry re-initializes it on its own.
+5. When it's plugged back in (or after `demo/scenario clear`), the firmware's 2 s retry re-initializes it on
+   its own. *Not yet verified on the bench (test C2).*
 
 **Talking point:** the agent fixes what software can fix and hands the rest to a human with precise
 instructions. That's the trust story: it knows what it can't fix.
@@ -383,7 +404,9 @@ Start each with `demo/scenario reset`.
 3. **Silent data bug (45 s):** `scenario start 05`. Nothing crashes, but gravity reads 0.5 g. Show
    `acc regs` FS bits, the one-line fix and |a| back at 1 g.
 4. **Knows what it can't fix (45 s):** `scenario start 06` and pull the SDA wire live. Watchdog loop, safe
-   mode, timeouts restored so the pod survives, then `notify_human` and replug.
+   mode, timeouts restored so the pod survives, then `notify_human` and replug. *Rehearse this once: the
+   physical wire pull and the replug recovery haven't been run on the bench yet (E1, C2). The simulated
+   version (`demo/scenario trigger 06`) is tested.*
 5. **Backup:** scenario 02, for the "three views agree" clock story.
 
 ## Notes and limits
@@ -395,5 +418,11 @@ Start each with `demo/scenario reset`.
   `pod v1.6-1-g<hash>`, or `-dirty` if it's built before committing.
 - **One serial user:** `podd` must be the only program on `/dev/ttyACM0`, so don't run `make monitor`
   alongside it. Use `tail -f healer/var/logs/serial.log` to watch.
-- **No decision loop yet:** that's the next step. Load `healer/tools.json` into a harness, give the agent
-  `system_info`, and gate `code`/`flash` tools by risk if needed.
+- **Triage counts only abnormal boots** as a reboot loop (after a crash or watchdog reset, or power loss).
+  Deliberate reflashes don't count.
+- **The probe's serial bridge can go out of step after baud changes.** podd always switches to another
+  rate and back when it opens the port or changes baud, so this is handled. If triage ever shows a link
+  that drops characters mid-line, `healer/bin/heal link_set_baud baud=115200` forces a resync.
+- **Before unplugging:** `demo/scenario reset`, then `healer/bin/heal chip_status`, and check that
+  `version` is `v1.0`. podd isn't needed for this.
+- **No decision loop yet:** see [HARNESS.md](HARNESS.md) for how to build one on these tools.

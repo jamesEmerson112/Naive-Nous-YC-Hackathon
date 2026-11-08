@@ -107,6 +107,22 @@ Runtime settings are **lost on reset**.
 - **`fw_rollback`** flashes known-good with the same verification.
 - **SWD tools** (`chip_*`) work even when the firmware is hung or its UART is unreadable.
 
+## How the triage tools behave
+- **Incidents:** podd runs the triage rules every 3 s. An incident opens when a rule fires and resolves
+  after 10 s without it. One fault often opens several incidents at once (a crash loop gives `crash`,
+  `reboot_loop` and `safe_mode`).
+- **`reboot_loop`** counts only abnormal boots: ones after a crash or watchdog reset (`streak` ≥ 1), or after
+  power loss. Boots caused by flashing or a deliberate reset don't count.
+- **Crash and boot findings** only consider the build running now. Crashes of older builds remain in
+  `events`.
+- **Analysis windows:** the accelerometer rules look at the last ~3 s, so a finding can linger for a few
+  seconds after a fix. For example, `acc_stale` can appear briefly after `acc init`. Re-run `triage` after
+  ~5 s before concluding a fix didn't work.
+- **Serial link at another baud:** after `link_set_baud`, podd stays at that rate until it's set back;
+  `fw_flash` resets it to 115200. The probe's USB serial bridge can go out of step after baud changes. If
+  `telemetry_recent kind=raw` shows lines with characters missing mid-line at the correct baud, run
+  `link_set_baud baud=115200` to force a resync.
+
 ## How to work
 1. **Observe:** `triage` and `status`, then the tools the findings suggest. Collect evidence before acting.
 2. **Find the root cause.** Separate physical faults (wiring, power, sensor hardware, something blocking a

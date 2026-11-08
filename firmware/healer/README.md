@@ -19,6 +19,7 @@ healer/
 │   ├── workspace.py  the editable firmware source (its own git repo), build
 │   ├── proto.py      telemetry line parser, radio frame decoder
 │   └── client.py / serialport.py / config.py / cli.py
+├── tests/bench.py  bench regression tests for the six scenarios (needs the board; see the file header)
 └── var/            (gitignored) logs/, images/, backups/, workspace/pod/, deployments.jsonl, notifications.jsonl
 ```
 
@@ -58,6 +59,10 @@ A harness can expose all of them, or gate by risk (for example, require approval
 | `audit.jsonl` | every tool call: arguments, ok/error, duration |
 
 ## Using it from an LLM harness
+
+**The full guide is [../docs/HARNESS.md](../docs/HARNESS.md):** architecture, the tool contract and timeouts,
+risk gating, isolation, a loop sketch, how to run and score scenarios, current state and known issues. In
+short:
 - Load `tools.json` as the tool definitions.
 - Run each call as `heal <name> --json '<arguments>'`, or in Python: `from healer import tools; tools.call(name, args)`.
 - Give the agent `system_info` first. Don't give it access to `firmware/demo/` (scenario answers) or to
