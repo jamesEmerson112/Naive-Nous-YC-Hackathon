@@ -22,6 +22,20 @@ Tonight's simulated SO-101 bench (P1 in James's plan note): the arm host, skills
 
 The plugin's tools ask the host to run one skill each; the LLM never sends joint angles. Its `pre_tool_call` guard blocks motion while a fault is open or a servo reports an alarm. The host listens on `$TMPDIR/armsim.sock`; set `ARMSIM_SOCK` to change that.
 
+**Watchdog (level 1, plain code):** `armsim/level1.py` writes findings in the same shape as Olir's `detect.py`. The rules:
+- `us_frozen`: zero echo jitter.
+- `us_stuck`: the reading is flat while the arm moves.
+- `us_scale` / `us_offset`: the reading disagrees with the kinematic prediction.
+- `us_noisy`: too much jitter while the arm is still.
+- `us_missing_echo`: no echo where the pose says a surface is in range.
+- `joint_stall`: a move that didn't arrive.
+
+The first finding speaks its sentence (`say`; `ARMSIM_SPEAK=live|file|off`), halts and parks the arm, and blocks motion until a repair is verified.
+
+**Fault factory:** `python -m armsim.factory --n 1000 --workers 8` runs labeled sim runs with planted faults, about 0.1 s each across 8 cores. It writes `arm-run/v1` files plus `index.jsonl` to `data/sim-faults/`, and prints which faults level 1 caught.
+
+**Level 2:** `level2/chatts_test.py` asks ChatTS-14B whether it spots a frozen copy of the pod's ultrasonic sample. `level2/run_on_pod.sh` runs it on a RunPod GPU with a 2-hour cap and then stops the pod.
+
 **Units and formats:**
 - Arm joints are in degrees and the gripper is 0–100 (0 = closed), the same as LeRobot and Andre's primitive JSON.
 - Distance rows use the pod's `D` fields (`mm`, `us`, `st`).
