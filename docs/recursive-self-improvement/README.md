@@ -1,6 +1,6 @@
 # Fleet learning: every fault happens once
 
-_Kent's request, planned by a Claude session with sub-agents, Sun Nov 8, ~9:00 AM PST. Status: **draft v1, before review**; nothing built. The folder is called `recursive-self-improvement`; on stage it's "Every fault happens once" and the page is "Fleet learning" ([`demo.md`](demo.md) §1 says why)._
+_Kent's request, planned by a Claude session with sub-agents, Sun Nov 8, ~8:45 AM PST. Status: **draft v1, before review**; nothing built. The folder is called `recursive-self-improvement`; on stage it's "Every fault happens once" and the page is "Fleet learning" ([`demo.md`](demo.md) §1 says why)._
 
 ## The idea
 Romulus runs one heal loop at three scales: the arm heals itself, the fleet gets fixes that hold, and the company (Naïve) takes the faults that need hands. **Fleet learning adds the fourth dimension, time: every turn of the loop leaves the next one smarter.**
