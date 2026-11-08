@@ -17,8 +17,9 @@ SOCK = os.environ.get("ARMSIM_SOCK") or os.path.join(tempfile.gettempdir(), "arm
 SKILLS = {
     "arm_go_home": ("go_home", "Move the arm to its ready pose over the work area. Use it to reset before retrying a task."),
     "arm_reach": ("reach", "Move the open gripper over the block, ready to approach it."),
-    "arm_approach": ("approach", "From over the block, step down 5 mm at a time using the wrist distance sensor until "
-                                 "close, then make the final move so the open jaws straddle the block."),
+    "arm_approach": ("approach", "Move over the block with the jaws open, then step down 5 mm at a time using the wrist "
+                                 "distance sensor until close, and make the final move so the jaws straddle the block. "
+                                 "To pick up the block: arm_approach, then arm_grip, then arm_lift."),
     "arm_grip": ("grip", "Close the gripper. The result says whether it is holding something (gripper stopped short of closed, with load)."),
     "arm_lift": ("lift", "Lift the gripper 30 mm straight up and check it is still holding."),
     "arm_release": ("release", "Open the gripper."),

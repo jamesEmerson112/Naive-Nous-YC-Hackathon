@@ -100,6 +100,9 @@ def approach(arm, poses, *, step_m=0.005, max_steps=20):
     """Step down 5 mm at a time over the block, settling on 3 readings each step, until the
     median distance is inside the switch distance; then a fixed final move to the grasp pose."""
     from .model import BLOCK_POS
+    start = arm.goto(poses["above_block"])    # always start over the block with the jaws open
+    if not start.get("arrived"):
+        return {**start, "aborted": "couldn't get over the block to start the approach"}
     tip, _ = arm.tip()
     readings, invalid = [], 0
     for step in range(max_steps + 1):
@@ -121,7 +124,10 @@ def approach(arm, poses, *, step_m=0.005, max_steps=20):
                 r = arm.goto(poses["pick"], duration=0.8)          # the fixed final move
                 return {**r, "steps": step, "readings": readings, "switched_at_mm": d}
         tip[2] -= step_m
-        pose = arm.solve((BLOCK_POS[0], BLOCK_POS[1], tip[2]), seed=list(arm.read().values()))
+        try:
+            pose = arm.solve((BLOCK_POS[0], BLOCK_POS[1], tip[2]), seed=list(arm.read().values()))
+        except ValueError as exc:
+            return {"arrived": False, "aborted": str(exc), "readings": readings}
         r = arm.goto(pose, duration=0.3)
         if r.get("halted"):
             return {**r, "readings": readings}
