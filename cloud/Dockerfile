@@ -22,6 +22,7 @@ RUN uv sync --frozen --no-dev --package romulus-cloud --no-install-workspace
 
 COPY packages/contracts/src packages/contracts/src
 COPY cloud/src cloud/src
+COPY cloud/config cloud/config
 RUN uv sync --frozen --no-dev --package romulus-cloud
 
 EXPOSE 8000
