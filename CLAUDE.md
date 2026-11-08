@@ -76,15 +76,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 12:39 AM PST_
+_Last updated: Sun Nov 8, 12:58 AM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P1 minimum by 12:30 AM (a typed command moves the sim arm; a planted fault gives a spoken sentence), then P2 overnight to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), and P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). Kent's next steps: the 12:30 AM overnight go/no-go and the live Naïve card; his open PRs are #46 (B5) and #53 (replay hardening, K6). Olir's arm heal test is merged (#54); he still has the frozen-ultrasonic rule and a review of the firmware doc.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P1 minimum by 12:30 AM (a typed command moves the sim arm; a planted fault gives a spoken sentence), then P2 overnight to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), and P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). Kent's next steps: the 12:30 AM overnight go/no-go and the live Naïve card; his open PRs are #46 (B5) and #53 (replay hardening, K6). Olir's arm heal test is merged (#54); he still has the frozen-ultrasonic rule and a review of the firmware doc. James is wiring the sim arm into podd and Romulus on local `james/arm-sim` (S0–S3 done, not pushed); he is now re-running Hermes on a card with a stuck sensor planted, after a grip fix (uncommitted).
 
 **Recently done:**
 - Olir merged #54 (12:25 AM, `d5f99d6`, `303a007`): the arm heal scenario. Bad firmware v1.7 makes the SO-101 flail (obstacle reflex, exit 4); the agent rolls back, runs the job itself and checks the motion. On the real pod and real arm, qwen3.5:4b passed all 11 checks: rollback on turn 3, its own job on turn 4, 663 of 663 frames (`firmware/harness/RESULTS.md`, 12:05 AM run). `arm/safe_replay.py` now writes a run record per job, and `arm/arm_status.py` reads live joints and a motion report
 - Kent opened #53 (12:04 AM, `cloud/replay-hardening`): code replay is hardened so a patch can't game the tests into a pass (K6), plus `e4908fb`, which refunds the Fleet Doctor's zero-token draft attempts in the batch budget. The Fleet Doctor itself is complete (#44, #52, Kent's block)
 - James pushed `235e30d` (11:50 PM): `docs/firmware-apis.md`, one cited reference for the pod's serial lines and commands, podd's socket ops and logs, triage, heal tools, flashing, the pod healer harness, the model relay and the edge bridge; Olir to review. James's P2 now names it plus a 7 AM slice of the overnight podd logs into `samples/pod/`
-- James's P1 prototypes run in simulation (local branch `james/arm-sim`, not pushed): arm host, `so101-arm` Hermes plugin with a `pre_tool_call` guard, a level-1 watchdog, a fault factory, a ChatTS level-2 test on RunPod (pod terminated). Opening its PR is his P1 line (`features.txt`)
+- James's sim arm now reaches the real stack (local `james/arm-sim`, `5313a44`–`f355241`, 12:53 AM, not pushed). S1: a virtual pod puts the sim rangefinder on a pty as real pod lines, read by Olir's unchanged podd. S2: the arm host reads and heals through podd. S3: `armsim/romulus.py` checks in every 10 s and files incident reports; a joint that still stalls after a checked retry goes to Romulus as hardware and opens a `needs_human` work order. Checked on a local Romulus with Kent's edge bridge: `us_stuck`, `us_residual` (fw_rollback), `joint_stall` and pod-1's `clock_skew`. Opening its PR is still his P1 line (`features.txt`)
 
 **Open questions:**
 - Fleet Doctor follow-ups (#52): keep `DOCTOR_DRAFT=coder` off on real device text until B5 (#46) merges; `SAFETY_PATHS_CONFIRMED` stays false, discarding every proposal, until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder; gate replay hardening is open for review as #53
@@ -93,6 +93,7 @@ _Last updated: Sun Nov 8, 12:39 AM PST_
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email)
 
 **Recent commits (all authors):**
+- `cbdebce` Sun 00:38 · jamesEmerson112 · Update team status in CLAUDE.md
 - `f737d7e` Sun 00:28 · jamesEmerson112 · Update team status and features.txt
 - `f623b56` Sun 00:25 · Oliravan Eswaramoorthy · Merge pull request #54 from jamesEmerson112/olir/arm-ultrasonic-heal
 - `303a007` Sun 00:24 · Olir Eswar · full passthrough test
@@ -102,7 +103,6 @@ _Last updated: Sun Nov 8, 12:39 AM PST_
 - `9f59e95` Sun 00:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `b66d6fd` Sun 00:01 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `e8fcd2c` Sat 23:59 · jamesEmerson112 · Update team status and features.txt
-- `235e30d` Sat 23:50 · jamesEmerson112 · Firmware APIs and data: one cited reference for wiring the pod into Romulus, the harness and the arm
 
 **Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent), `cloud/replay-hardening` (#53, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
