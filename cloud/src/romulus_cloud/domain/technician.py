@@ -272,10 +272,14 @@ def clean_brief(subject: str, body: str) -> tuple[str, str]:
     return subject, _clip(strip_links(body), BODY_MAX)
 
 
-def email_skip_reason(*, to: str, frozen: bool) -> str | None:
+def email_skip_reason(
+    *, to: str, frozen: bool, identity: str = "x", inbox: str = "x"
+) -> str | None:
     """Why the email must not go out now, or None."""
     if not to.strip():
         return "TECHNICIAN_EMAIL is empty, so no email is sent"
+    if not identity.strip() or not inbox.strip():
+        return "NAIVE_TECHNICIAN_IDENTITY or NAIVE_TECHNICIAN_INBOX is empty, so no email is sent"
     if frozen:
         return "the fleet is frozen (kill switch, D11), so no email is sent"
     return None

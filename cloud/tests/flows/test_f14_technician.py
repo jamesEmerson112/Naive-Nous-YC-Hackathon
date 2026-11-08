@@ -100,18 +100,33 @@ def tech_settings(settings):
     return settings
 
 
+@pytest.fixture
+def live_settings(make_settings):
+    """Live mode with placeholder ids. The tests still inject FixtureNaive, so nothing calls
+    out; live is the one mode that really sends the email (fixtures send nothing)."""
+    return make_settings(
+        technician_mode="live",
+        technician_email=EMAIL,
+        naive_api_key="sk_test_placeholder",
+        naive_technician_agent="agt_test",
+        naive_technician_identity="idn_test",
+        naive_technician_inbox="eml_test",
+    )
+
+
 def test_joint_stall_gets_a_diagnosis_an_email_and_a_staged_part_a_person_approves(
-    client, seeded, sessions, db_session, tech_settings
+    client, seeded, sessions, db_session, live_settings
 ):
+    tech_settings = live_settings
     naive, shop = _naive(), FakeShop({(ORIGIN, HANDLE): _product()})
-    incident_id = _report_incident(client, "sim-1")
+    incident_id = _report_incident(client, "arm-1")  # live opens cases for real arms only
 
     # Tick 1: triage parks it at needs_human with no part; a case opens; the session starts.
     _tick(sessions, tech_settings, naive, shop, T0)
     order = _only_order(client, incident_id)
     assert (order["status"], order["part"]) == ("needs_human", "(none)")
     case = _case(db_session, order["id"])
-    assert (case.status, case.mode, case.reason) == ("diagnosing", "fake", "playbook_exhausted")
+    assert (case.status, case.mode, case.reason) == ("diagnosing", "live", "playbook_exhausted")
     assert case.naive_session_id and case.request["metadata"]["romulus_case"] == case.id
     assert case.request["output_schema"]["properties"]["part"]["properties"]["origin"] == {
         "type": "string",
@@ -137,6 +152,7 @@ def test_joint_stall_gets_a_diagnosis_an_email_and_a_staged_part_a_person_approv
     _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=6))
     (sent,) = naive.sent
     assert sent["to"] == [EMAIL] and sent["idempotency_key"] == f"{case.id}:email"
+    assert (sent["identity_id"], sent["inbox_id"]) == ("idn_test", "eml_test")
     assert len(sent["subject"]) <= 45 and len(sent["text"]) <= 1200
     assert "http" not in sent["text"] and "wowrobo.com" not in sent["text"]
     case = _case(db_session, order["id"])
@@ -148,7 +164,7 @@ def test_joint_stall_gets_a_diagnosis_an_email_and_a_staged_part_a_person_approv
     v = technician.view(db_session, case, settings=tech_settings)
     assert v["can_approve"] and v["part"]["staged"] and v["human_clicks"] == 0
     assert [c["ok"] for c in v["part"]["checks"]] == [True, True, True, True]
-    assert v["badge"] == "fake (test fixture)" and v["cost_label"] == "$0.41"
+    assert v["badge"] == "live session" and v["cost_label"] == "$0.41"
     assert v["duration_label"] == "2 min 3 s" and v["email"]["status"] == "sent"
     assert v["feed"] and any(f["text"].startswith("Searched “") for f in v["feed"])
     assert any(f["text"].startswith("Read shop.wowrobo.com/") for f in v["feed"])
@@ -167,7 +183,7 @@ def test_joint_stall_gets_a_diagnosis_an_email_and_a_staged_part_a_person_approv
     assert resp.json()["result"].startswith("Approved by kent: 1 × Feetech STS3215")
     case = _case(db_session, order["id"])
     assert case.status == "done"
-    assert _status(db_session, incident_id) == ("part ordered", "good")
+    assert _status(db_session, incident_id) == ("cart approved", "good")  # never "ordered"
     v = technician.view(db_session, case, settings=tech_settings)
     assert v["human_clicks"] == 1 and v["approved_by"] == "kent" and not v["can_approve"]
     assert v["stages"][-1] == {"label": "approved by kent", "state": "done"}
@@ -200,10 +216,11 @@ def test_a_catalogued_fault_gets_no_case(
     ],
 )
 def test_a_part_that_fails_the_gate_stays_off_the_order_but_the_email_goes(
-    client, seeded, sessions, db_session, tech_settings, product, reason
+    client, seeded, sessions, db_session, live_settings, product, reason
 ):
+    tech_settings = live_settings
     naive, shop = _naive(), FakeShop({(ORIGIN, HANDLE): product})
-    incident_id = _report_incident(client, "sim-2")
+    incident_id = _report_incident(client, "arm-1")
     for i in range(3):
         _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=3 * i))
     order = _only_order(client, incident_id)
@@ -335,10 +352,11 @@ class _FlakyShop:
 
 
 def test_a_store_hiccup_is_rechecked_before_the_part_card_gives_up(
-    client, seeded, sessions, db_session, tech_settings
+    client, seeded, sessions, db_session, live_settings
 ):
+    tech_settings = live_settings
     naive, shop = _naive(), _FlakyShop(fails=1)
-    incident_id = _report_incident(client, "sim-1")
+    incident_id = _report_incident(client, "arm-1")
     _tick(sessions, tech_settings, naive, shop, T0)
     _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=3))
     order = _only_order(client, incident_id)
@@ -349,7 +367,7 @@ def test_a_store_hiccup_is_rechecked_before_the_part_card_gives_up(
     assert case.actions["part"]["staged"] and case.actions["email"]["status"] == "sent"
     assert client.get(f"/v1/technician/cases/{case.id}").json()["technician_part"]["cart_url"]
     dead = _FlakyShop(fails=99)
-    incident_2 = _report_incident(client, "sim-2")
+    incident_2 = _report_incident(client, "arm-1")
     for i in range(6):
         _tick(sessions, tech_settings, naive, dead, T0 + timedelta(seconds=3 * i))
     assert dead.calls == 3  # SHOP_TRIES, then the card says why
@@ -418,3 +436,102 @@ def test_the_live_recording_replays_with_the_schema_gate_beat(
         "Report rejected by schema (subject too long)"
     )
     assert not any(line.startswith("span") for line in lines)
+
+
+def test_a_fake_or_replayed_case_never_claims_an_email_went_out(
+    client, seeded, sessions, db_session, tech_settings
+):
+    """A fixture sends nothing: the card says so, and no `technician.emailed` is recorded, so
+    the digest never counts a fake agent action."""
+    naive, shop = _naive(), FakeShop({(ORIGIN, HANDLE): _product()})
+    incident_id = _report_incident(client, "sim-1")
+    for i in range(3):
+        _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=3 * i))
+    case = _case(db_session, _only_order(client, incident_id)["id"])
+    assert case.status == "waiting" and naive.sent == []
+    v = technician.view(db_session, case, settings=tech_settings)
+    assert v["email"]["status"] == "skipped" and v["email"]["via"] == "test fixture: not sent"
+    assert v["badge"] == "fake (test fixture)" and v["stages"][2]["state"] == "skipped"
+    kinds = [e["kind"] for e in client.get(f"/v1/incidents/{incident_id}/story").json()["steps"]]
+    assert "technician.emailed" not in kinds and "technician.diagnosed" in kinds
+    assert client.get(f"/technician/{case.id}").status_code == 200
+    assert technician.NOT_SENT_VIA["replay"].startswith("replay: not sent")
+
+
+def test_turning_it_on_never_backfills_old_orders(client, seeded, sessions, db_session, settings):
+    """Only orders newer than TECHNICIAN_MAX_AGE_S open a case on their own."""
+    old = [_report_incident(client, "sim-1") for _ in range(3)]
+    triage = [Step("workorders.triage_new", partial(workorders.triage_new, settings=settings))]
+    run_tick(triage, sessions, T0 - timedelta(hours=1), {})
+    assert technician.open_cases(db_session, T0, settings=settings) == []
+    fresh = _report_incident(client, "sim-2")
+    run_tick(triage, sessions, T0, {})
+    (case,) = technician.open_cases(db_session, T0 + timedelta(seconds=5), settings=settings)
+    assert case.incident_id == fresh and case.incident_id not in old
+
+
+def test_running_live_sessions_count_against_the_daily_cap(
+    client, seeded, sessions, db_session, make_settings
+):
+    """Each running live session counts at TECHNICIAN_SESSION_USD before its cost is known."""
+    capped = make_settings(
+        technician_mode="live",
+        naive_api_key="sk_test_placeholder",
+        naive_technician_agent="agt_test",
+        technician_session_usd=3,
+        technician_daily_usd_cap=5,
+    )
+    naive = FixtureNaive(FIXTURES / "joint_stall_fake.json", now=lambda: T0, play_seconds=3600)
+    shop = FakeShop({(ORIGIN, HANDLE): _product()})
+    for _ in range(2):
+        _report_incident(client, "arm-1")
+    _tick(sessions, capped, naive, shop, T0)
+    cases = sorted(db_session.query(TechnicianCase).all(), key=lambda c: c.status)
+    assert [c.status for c in cases] == ["diagnosing", "open"]
+    assert cases[1].why.startswith("daily cap: $3.00 spent or committed today")
+    assert len(naive.requests) == 1
+
+
+class _NaiveDown(FixtureNaive):
+    """Sessions start, then every read fails (Naïve overloaded)."""
+
+    def session_events(self, session_id, after_seq=0):
+        raise NaiveError("GET events answered 503", status=503)
+
+
+def test_the_timeout_wins_over_repeated_api_errors(
+    client, seeded, sessions, db_session, tech_settings
+):
+    naive = _NaiveDown(FIXTURES / "joint_stall_fake.json", now=lambda: T0, play_seconds=0)
+    shop = FakeShop({(ORIGIN, HANDLE): _product()})
+    incident_id = _report_incident(client, "sim-1")
+    _tick(sessions, tech_settings, naive, shop, T0)
+    order_id = _only_order(client, incident_id)["id"]
+    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=3))  # error: stays put
+    assert _case(db_session, order_id).status == "diagnosing"
+    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=601))
+    case = _case(db_session, order_id)
+    assert case.status == "failed" and "600 s" in case.why
+
+
+def test_a_case_stopped_while_its_email_is_queued_never_sends_it(
+    client, seeded, sessions, db_session, live_settings
+):
+    naive, shop = _naive(), FakeShop({(ORIGIN, HANDLE): _product()})
+    incident_id = _report_incident(client, "arm-1")
+    for i in range(2):
+        _tick(sessions, live_settings, naive, shop, T0 + timedelta(seconds=3 * i))
+    order_id = _only_order(client, incident_id)["id"]
+    assert _case(db_session, order_id).actions["email"]["status"] == "sending"
+    resp = client.post(
+        f"/v1/work-orders/{order_id}/resolve",
+        json={"action": "deny", "by": "kent", "why": "fixed it by hand"},
+    )
+    assert resp.json()["status"] == "denied"
+    _tick(sessions, live_settings, naive, shop, T0 + timedelta(seconds=6))
+    case = _case(db_session, order_id)
+    assert case.status == "stopped" and naive.sent == []
+    assert (case.actions["email"]["status"], case.actions["email"]["error"]) == (
+        "skipped",
+        "case stopped before send",
+    )

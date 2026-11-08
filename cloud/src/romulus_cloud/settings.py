@@ -222,6 +222,9 @@ class Settings(BaseSettings):
     technician_session_usd: float = 3
     technician_daily_usd_cap: float = 10
     technician_timeout_s: float = 600
+    # Only orders this new open a case on their own: turning the Technician on never
+    # backfills a session (and an email) for every old part-less order.
+    technician_max_age_s: float = 900
     # A recorded session (fixture JSON) that `?mode=replay` plays back over N seconds; empty
     # = the bundled demo recording (cloud/tests/fixtures/technician/joint_stall_live2.json).
     technician_replay_file: str = ""

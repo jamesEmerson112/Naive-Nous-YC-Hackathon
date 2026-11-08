@@ -19,12 +19,12 @@ Mode per case: `live` → `HttpNaive`; `replay` → `FixtureNaive(TECHNICIAN_REP
 `naive=` and `shop=`. Nothing here commits; the worker step or the route does.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -53,6 +53,11 @@ DEMO_RECORDING = FIXTURES / "joint_stall_live2.json"
 STUDIO_URL = "https://app.usenaive.ai"
 EMAIL_FROM_LABEL = "Romulus Technician (Naïve agent)"
 EMAIL_VIA = "sent by Romulus through the Naïve Technician's inbox"
+NOT_SENT_VIA = {
+    "replay": "replay: not sent (the recorded run's email went to the technician)",
+    "fake": "test fixture: not sent",
+}
+"""A fixture "sends" nothing, so a replay or fake case never claims an email went out."""
 EMAIL_MAX_ATTEMPTS = 10
 MAX_STEPS = 12
 TIMEOUT_S = 5.0
@@ -149,6 +154,11 @@ def _set_status(case: TechnicianCase, status: str, now: datetime, why: str | Non
     case.updated_at = now
     if why is not None:
         case.why = why
+    email = _actions(case).get("email") or {}
+    if status in ("stopped", "failed") and email.get("status") == "sending":
+        _set_action(
+            case, "email", {**email, "status": "skipped", "error": "case stopped before send"}
+        )
 
 
 def _day_start(now: datetime, tz: str) -> datetime:
@@ -157,15 +167,19 @@ def _day_start(now: datetime, tz: str) -> datetime:
 
 
 def spent_today(session: Session, now: datetime, settings: Settings) -> float:
-    """Live sessions' cost today (replayed and fake cases cost nothing real)."""
-    total = session.scalar(
-        select(func.coalesce(func.sum(TechnicianCase.cost_usd), 0.0)).where(
-            TechnicianCase.fleet_id == settings.fleet_id,
-            TechnicianCase.mode == "live",
-            TechnicianCase.created_at >= _day_start(now, settings.fleet_timezone),
-        )
+    """Live spend today, projected: finished live sessions at their cost, and each live
+    session still running at TECHNICIAN_SESSION_USD (its cost isn't known yet). Replayed and
+    fake cases cost nothing real."""
+    base = select(TechnicianCase).where(
+        TechnicianCase.fleet_id == settings.fleet_id,
+        TechnicianCase.mode == "live",
+        TechnicianCase.created_at >= _day_start(now, settings.fleet_timezone),
     )
-    return float(total or 0)
+    total = 0.0
+    for case in session.scalars(base).all():
+        running = case.status == "diagnosing" or (case.status == "open" and case.request)
+        total += settings.technician_session_usd if running else float(case.cost_usd or 0)
+    return total
 
 
 # --- clients per mode --------------------------------------------------------------------------
@@ -296,6 +310,8 @@ def open_cases(
         WorkOrder.fleet_id == settings.fleet_id,
         WorkOrder.status == "needs_human",
         WorkOrder.part == NO_PART,
+        # No backfill: only orders made recently open a case on their own.
+        WorkOrder.created_at >= now - timedelta(seconds=settings.technician_max_age_s),
         ~exists().where(TechnicianCase.work_order_id == WorkOrder.id),
     )
     if mode == "live":  # K13: a sim arm's fault never starts a live session on its own
@@ -545,11 +561,12 @@ def _start(
     if _frozen(session, case.fleet_id):
         case.why = "fleet frozen: no new Naïve session until it is unfrozen (D11)"
         return
-    if case.mode == "live":
+    if case.mode == "live" and not case.request:  # a frozen request is already counted
         spent = spent_today(session, now, settings)
-        if spent >= settings.technician_daily_usd_cap:
+        if spent + settings.technician_session_usd > settings.technician_daily_usd_cap:
             case.why = (
-                f"daily cap: ${spent:.2f} spent today of TECHNICIAN_DAILY_USD_CAP "
+                f"daily cap: ${spent:.2f} spent or committed today, and another session may "
+                f"cost ${settings.technician_session_usd:.2f}, over TECHNICIAN_DAILY_USD_CAP "
                 f"${settings.technician_daily_usd_cap:.2f}"
             )
             return
@@ -706,16 +723,23 @@ def _diagnosed(
             },
         )
     else:
-        skip = rules.email_skip_reason(to=email["to"], frozen=_frozen(session, case.fleet_id))
+        skip = rules.email_skip_reason(
+            to=email["to"],
+            frozen=_frozen(session, case.fleet_id),
+            identity=settings.naive_technician_identity,
+            inbox=settings.naive_technician_inbox,
+        )
+        via = NOT_SENT_VIA.get(case.mode)
         _set_action(
             case,
             "email",
             {
-                "status": "skipped" if skip else "sending",
+                "status": "skipped" if skip or via else "sending",
                 "to": email["to"],
                 "subject": email["subject"],
                 "text": email["text"],
                 "error": skip,
+                "via": via,
                 "attempts": 0,
             },
         )
@@ -818,10 +842,15 @@ def _advance(
         _start(session, case, now, settings, naive)
         return
     if case.status == "diagnosing":
+        started = case.created_at or case.started_at or now  # the clock starts at the case
+        if (now - started).total_seconds() > settings.technician_timeout_s:
+            # Checked before any call, so repeated API errors can't hold the case here.
+            why = f"no report within {settings.technician_timeout_s:.0f} s (TECHNICIAN_TIMEOUT_S)"
+            _fail(session, case, why, now, naive, settings)
+            return
         _pull_events(case, naive, settings)
         state = naive.get_session(case.naive_session_id)
         case.cost_usd = float(state.cost_usd or 0)
-        started = case.created_at or case.started_at or now  # the clock starts at the case
         verdict, why = rules.session_outcome(
             state=state.state,
             stop_reason=state.stop_reason,
@@ -1084,7 +1113,7 @@ def view(
             "from_label": f"{EMAIL_FROM_LABEL} · {email['from']}"
             if email.get("from")
             else EMAIL_FROM_LABEL,
-            "via": EMAIL_VIA,
+            "via": email.get("via") or EMAIL_VIA,
             "error": email.get("error"),
         }
     return {

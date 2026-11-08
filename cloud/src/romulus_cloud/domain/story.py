@@ -146,7 +146,7 @@ class Story:
                 before = _settled(self.steps[:i])
                 return before if before in NEEDS_PERSON else found
             if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
-                return WORK_ORDER_STATUS[s.refs["status"]]
+                return _wo_status(s)
             if s.kind in AGENT_OUTCOME_KINDS:
                 return _agent_status(s)
             if s.kind in STATUS and s.label:
@@ -874,6 +874,18 @@ WORK_ORDER_STATUS: dict[str, tuple[str, str]] = {
     "stopped": ("order stopped", "bad"),
     "denied": ("work order denied", "info"),
 }
+# A Naïve Technician approval (refs `technician_case`) means a person approved a checked
+# cart, not that a part was ordered (D30): it never reads "part ordered".
+CART_APPROVED: tuple[str, str] = ("cart approved", "good")
+
+
+def _wo_status(s: "Step") -> tuple[str, str]:
+    """The badge a work-order step sets (its `refs.status`)."""
+    if s.refs.get("status") == "done" and s.refs.get("technician_case"):
+        return CART_APPROVED
+    return WORK_ORDER_STATUS[s.refs["status"]]
+
+
 STATUS_TONES = ("good", "bad", "wait", "info")
 
 # Follow-ups that aren't news: pages show them as one quiet line (their step still says
@@ -1044,7 +1056,7 @@ def _settled(steps: Iterable[Step]) -> tuple[str, str] | None:
         if s.kind.startswith("doctor."):
             continue
         if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
-            return WORK_ORDER_STATUS[s.refs["status"]]
+            return _wo_status(s)
         if s.kind in STATUS and s.label:
             return STATUS[s.kind]
     return None
