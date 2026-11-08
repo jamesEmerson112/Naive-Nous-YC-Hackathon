@@ -725,6 +725,32 @@ def test_a_stale_coder_verify_dir_is_left_out_and_says_why(
     assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
 
 
+def test_an_unreadable_coder_verify_dir_is_left_out_and_the_tick_goes_on(
+    client, example, make_doctor, db_session, clock, tmp_path, monkeypatch
+):
+    """An OSError reading CODER_VERIFY_DIR (a file it may not read, or one removed while
+    `make device-verify` regenerates the dir) never escapes the tick: the dir is left out,
+    with the reason, like a stale one."""
+
+    def unreadable(directory: str) -> dict[str, bytes]:
+        raise PermissionError(13, "Permission denied", f"{directory}/test_verify_d1.py")
+
+    monkeypatch.setattr(doctor_code, "verify_files", unreadable)
+    vdir = _verify_dir(tmp_path, generated_from=NO_VERIFY_REV)
+    doc = make_doctor(ScriptedCoder(GOOD), coder_verify_dir=vdir)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))  # ticks "ok"
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    note = checked.data["verify_note"]
+    assert (
+        note.startswith("CODER_VERIFY_DIR left out: unreadable: ") and "Permission denied" in note
+    )
+    assert checked.data["reason"] == f"{NO_VERIFY_REASON}; {note}"
+    assert not doc.docker.ever_saw_verify
+
+
 EMPTY_VERIFY_REV = "toyev"
 
 
@@ -880,6 +906,35 @@ def test_the_checks_view_of_a_run_trusts_only_a_complete_seal(run, sealed, passe
     no_verify = VerifyRun(False)
     view = doctor_code._run(CodeReplay(TestRun(1, ""), no_verify, run, no_verify), [])
     assert (view["sealed"], view["passed_ids"], view["failed"]) == (sealed, passed_ids, {})
+
+
+@pytest.mark.parametrize(
+    ("run", "none"),
+    [
+        (VerifyRun(True, tests=0, exit_code=5), True),  # pytest: no tests collected
+        (VerifyRun(True, tests=0, exit_code=3), False),  # an internal error, not "none"
+        (VerifyRun(True, tests=0, exit_code=0), False),
+        (VerifyRun(True, tests=0, exit_code=None), False),  # no exit code at all
+        (VerifyRun(True, tests=0, exit_code=5, timed_out=True), False),
+        (VerifyRun(True, tests=0, exit_code=5, incomplete=True), False),  # never finished
+        (VerifyRun(False, tests=0, exit_code=5), False),  # didn't run
+        (VerifyRun(True, tests=1, exit_code=5), False),
+        (None, False),
+    ],
+    ids=[
+        "exit5",
+        "exit3",
+        "exit0",
+        "no-exit",
+        "timed-out",
+        "incomplete",
+        "not-ran",
+        "a-test",
+        "none",
+    ],
+)
+def test_only_a_clean_no_tests_collected_verify_counts_as_none(run, none):
+    assert doctor_code._no_tests(run) is none
 
 
 def test_the_repro_command_is_a_form_the_image_seals():

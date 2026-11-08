@@ -132,6 +132,8 @@ def held_out(
         extra = verify_files(verify_dir)
     except CoderError as exc:
         return own, f"CODER_VERIFY_DIR left out: {exc}"
+    except OSError as exc:  # a file it can't read, or one removed while `make device-verify` runs
+        return own, f"CODER_VERIFY_DIR left out: unreadable: {exc}"
     cv = session.get(CodeVersion, (fleet_id, rev))
     stale = stale_verify(session, extra, cv) if extra and cv is not None else None
     if stale:
@@ -278,16 +280,21 @@ def _run(replay: CodeReplay, secrets: Iterable[str]) -> dict[str, Any]:
     }
 
 
+# pytest's exit code for "no tests were collected" (pytest.ExitCode.NO_TESTS_COLLECTED).
+PYTEST_NO_TESTS = 5
+
+
 def _no_tests(run: Any) -> bool:
-    """The base's verify run finished cleanly and collected no test: scripts that check
-    nothing, the same as none. A run that timed out or never finished isn't this."""
+    """The base's verify run finished cleanly with pytest's "no tests collected" (exit 5):
+    scripts that check nothing, the same as none. Any other exit with 0 tests (an internal
+    error, a usage error), a timeout or a run that never finished is a failed verify."""
     return bool(
         run is not None
         and run.ran
         and run.tests == 0
         and not run.timed_out
         and not run.incomplete
-        and run.exit_code is not None
+        and run.exit_code == PYTEST_NO_TESTS
     )
 
 
