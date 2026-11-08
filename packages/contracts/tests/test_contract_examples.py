@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from romulus_contracts import (
     CheckIn,
     CheckInResponse,

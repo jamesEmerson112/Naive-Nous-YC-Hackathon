@@ -5,6 +5,7 @@ import json
 
 import pytest
 from pydantic import ValidationError
+
 from romulus_contracts import FirmwareManifest, FirmwareResponse, HarnessMeta, evaluate
 from romulus_contracts.manifest import canonical_json, firmware_response, manifest_sha256
 

@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 import pytest
+
 from romulus_contracts import rules as rules_module
 from romulus_contracts.rules import (
     Fired,

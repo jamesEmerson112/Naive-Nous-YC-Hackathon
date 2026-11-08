@@ -1,0 +1,15 @@
+# `make dev`: same stack, with the source mounted and uvicorn --reload (architecture §8).
+services:
+  api:
+    command: >-
+      uvicorn --factory romulus_cloud.main:create_app
+      --host 0.0.0.0 --port 8000 --no-access-log --reload --reload-dir /app/cloud/src
+    volumes:
+      - ./data:/data
+      - ./cloud/src:/app/cloud/src
+      - ./packages/contracts/src:/app/packages/contracts/src
+  worker:
+    volumes:
+      - ./data:/data
+      - ./cloud/src:/app/cloud/src
+      - ./packages/contracts/src:/app/packages/contracts/src
