@@ -58,6 +58,9 @@ from romulus_cloud.settings import Settings
 from romulus_contracts.codepatch import CODE_ROOT, is_under
 
 SOURCE = "coder"  # code_versions.source for a version the coding agent drafted
+# Sources the gate replays for real (`replay_code_patch`) and never treats as pass-through:
+# the coding agent's, and a verified Fleet Doctor proposal's (`doctor_lockin.SOURCE`, D24).
+REPLAYED_SOURCES = frozenset({SOURCE, "doctor"})
 OUTPUT_TAIL = 4000  # characters of each test output kept in an event
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE)
 _COUNTS = re.compile(r"\d+ (?:passed|failed|errors?|skipped)\b.*$", re.MULTILINE)
@@ -265,16 +268,17 @@ class ReplayTools:
 
 
 def coder_version(session: Session, c: Candidate) -> CodeVersion | None:
-    """The candidate's code version if the coding agent drafted it, else None."""
+    """The candidate's code version if the coding agent (or a verified Fleet Doctor
+    proposal) drafted it, else None."""
     if c.type != "code" or not c.code_rev:
         return None
     cv = session.get(CodeVersion, (c.fleet_id, c.code_rev))
-    return cv if cv is not None and cv.source == SOURCE else None
+    return cv if cv is not None and cv.source in REPLAYED_SOURCES else None
 
 
 def is_passthrough(session: Session, c: Candidate) -> bool:
-    """A code candidate counts as pass-through unless the coding agent drafted it (fail
-    closed: a missing code version is pass-through)."""
+    """A code candidate counts as pass-through unless the coding agent or a verified Fleet
+    Doctor proposal drafted it (fail closed: a missing code version is pass-through)."""
     return coder_version(session, c) is None
 
 
