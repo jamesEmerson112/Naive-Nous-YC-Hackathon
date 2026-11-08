@@ -79,33 +79,33 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 8:44 AM PST_
+_Last updated: Sun Nov 8, 8:59 AM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P3 is on: the team is on the real arm 7–10 AM, with the 10 AM code freeze and 11 AM stop ahead. James's cloud session wrote [`HANDOFF-LOCAL.md`](prototypes/arm-sim/HANDOFF-LOCAL.md) for the local real-arm session at the bench: run `main`, Mission Control on the Pi next to the arm host, Pi steps R0 then Mac steps R1. Kent's **Naïve Technician** T0 is now fully on `main` (backend #68, page fixes #70, demo runbook #71), and Kent started fleet-learning research.
+**Current focus:** P3, the real arm before the 10 AM code freeze and 11 AM stop. James's local session is setting up the real local test and the final merge, starting with Olir's and Andre's branches that aren't on `main` yet. Kent's **Naïve Technician** T0 is built and rehearsed; Kent moved on to **fleet learning** ("every fault happens once"), plan v2 only, nothing built yet.
 
 **Recently done:**
-- Kent merged **#68 Naïve Technician T0 backend** `4e18879` (`services/technician.py`, F14 flow test, APIs rows, D30 draft) with rehearsal fixes `aca3986`: shop falls back to `products.json` with a 10-min cache, store re-checked every 20 s, email waits for the first part check, incident page links the case
-- Kent merged **#71 Technician demo runbook** [`docs/naive-technician/runbook.md`](docs/naive-technician/runbook.md) and `cloud/scripts/technician_demo.py`, and **#70 page fixes** (honest staged and email states, badge placement)
-- James's cloud session pushed **real-arm handoff** `98fd44a`: which code, where things run, bench steps, file ownership; proven in sim only, the real arm has run only the adapter's 5 mock tests
-- Kent pushed **fleet-learning research** `bdc25de` and **training dataset ideas** `b6745ea` in [`docs/recursive-self-improvement/`](docs/recursive-self-improvement/README.md), toward turning verified heal traces into training data
+- Kent's 8:44 Technician rehearsal: incident → `waiting` in 38 s (a 27 s Naïve session for $0.08, a real email, the C018 spare staged at $15.99); measured numbers in the docs via **#72** `ecde64c`
+- Olir merged **#73** (`test-4`) `8f83a0d`, "more reliable debugging process": reworked near-hold bad image 08, `arm/heal_test.py`, the heal-loop and near-hold tests, and `firmware/docs/DEMO.md`
+- Kent pushed **fleet-learning plan v2** after three reviews (`38b2ad2`, `adb9d5b`): design, build plan, demo and [`review.md`](docs/recursive-self-improvement/review.md) in [`docs/recursive-self-improvement/`](docs/recursive-self-improvement/README.md)
+- Kent merged **#68 Technician T0 backend**, **#70 page fixes** and **#71 demo runbook** [`docs/naive-technician/runbook.md`](docs/naive-technician/runbook.md)
 
 **Open questions:**
-- Naïve Technician: T0 is merged but Kent's five calls are still open (D30 a person checks out, servo variant C001 7.4 V or C018 12 V, the technician teammate, OK for the live Naïve writes, which cloud runs the 1 PM demo)
-- The worker/manager review fixes on `james/arm-sim-ydcsss` aren't merged into `main` yet, so the bench runs without them; James's healer has run against a fake manager only, not a real Hermes yet (`MORNING.md`, "Known gaps")
-- Ishaan's pod healer loop (#41) still waits on Olir for bench runs (SSH to the pod, API key); Ishaan still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), so `SAFETY_PATHS_CONFIRMED` stays false
+- 1 PM demo: which cloud runs `main` with `TECHNICIAN_MODE` (Kent's `tech` stack or a teammate's)? D30 is still a draft; Andre to confirm the STS3215 is the C018 12 V; who is the technician for the demo email (plus phone for T1)?
+- The worker/manager review fixes on `james/arm-sim-ydcsss` aren't merged into `main` yet; James's healer has run against a fake manager only, not a real Hermes yet (`MORNING.md`, "Known gaps")
+- Ishaan's pod healer loop (#41) still waits on Olir for bench runs; Ishaan still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), so `SAFETY_PATHS_CONFIRMED` stays false
 - Team calls still open: Stripe is optional; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo; who drives the real arm. #63 (main → `full-test-2`) is still open though `full-test-2` is merged *(inferred: can be closed)*
 
 **Recent commits (all authors):**
+- `6a10f1e` Sun 08:56 · Kent Gang · Update Kent status in CLAUDE.md
+- `adb9d5b` Sun 08:55 · Kent Gang · dataset management plans
+- `3a2df7e` Sun 08:48 · Oliravan Eswaramoorthy · Merge pull request #73 from jamesEmerson112/test-4
+- `8f83a0d` Sun 08:47 · Olir Eswar · more reliable debugging process
+- `f067181` Sun 08:47 · Kent Gang · Update Kent status in CLAUDE.md
+- `38b2ad2` Sun 08:45 · Kent Gang · more dataset management ideation and planning
+- `d089008` Sun 08:45 · kgang · Merge pull request #72 from jamesEmerson112/tech/docs-measured
+- `ecde64c` Sun 08:45 · Kent Gang · Naive technician docs: measured numbers from the live rehearsal; status built
+- `3523ba3` Sun 08:44 · jamesEmerson112 · Update team status in CLAUDE.md
 - `6e5be55` Sun 08:43 · kgang · Merge pull request #71 from jamesEmerson112/tech/runbook
-- `f771361` Sun 08:42 · Kent Gang · Runbook: shop fallback and 20 s re-check as merged in #68
-- `4e18879` Sun 08:42 · kgang · Naïve Technician T0: backend (#68)
-- `d40f653` Sun 08:41 · Kent Gang · Naïve Technician: demo helper script and runbook
-- `aca3986` Sun 08:40 · Kent Gang · Technician rehearsal fixes: shop falls back to products.json (dollar prices) with a 10-min cache, store re-checked every 20 s for 10 min, email waits for the first part check and says when it isn't staged, part titles from the allowlist, monotonic replay feed, honest email stage, incident page links the case
-- `63ba836` Sun 08:40 · kgang · Merge pull request #70 from jamesEmerson112/tech/page-fixes
-- `b20f147` Sun 08:40 · Kent Gang · Technician page: honest staged/email states, badge placement
-- `4f1752f` Sun 08:40 · Kent Gang · Merge remote-tracking branch 'origin/main' into tech/backend
-- `4df51cb` Sun 08:39 · jamesEmerson112 · Update team status and features.txt
-- `b6745ea` Sun 08:39 · Kent Gang · training dataset management ideation
 
-**Branches on GitHub:** `main`; `test-4` (no commits of its own); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; `test-4` (merged as #73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
