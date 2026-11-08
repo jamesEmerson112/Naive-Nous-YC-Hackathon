@@ -51,7 +51,11 @@ def test_f10_overnight_run_accelerated(
     monkeypatch.setattr(worker, "STEPS", list(worker.STEPS))
 
     seed_bytes = int(db_session.scalar(select(func.sum(Blob.size_bytes))))
-    settings = make_settings(blob_budget_gb=(seed_bytes + 150_000) / telemetry.GB)
+    settings = make_settings(
+        canary_window_s=1200,  # the overnight values (.env.overnight.example)
+        batch_interval_s=3600,
+        blob_budget_gb=(seed_bytes + 150_000) / telemetry.GB,
+    )
     steps = [_bind(s, settings) for s in worker.STEPS]
 
     links = {d: Link(device_http) for d in DEVICES}
