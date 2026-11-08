@@ -7,6 +7,10 @@ own command inside the real sandbox, and the next call carries their output back
 
     CODER_INTEGRATION=1 uv run pytest cloud/tests/integration/test_coder_egress.py -s
 
+CODER_INTEGRATION_IMAGE picks the tag the coder image is built as (default romulus-coder:b5it).
+It also checks the lifecycle with real containers: a SIGTERM to a process mid-run leaves
+nothing, a SIGKILL leaves a run that the prune removes, and the proxy exits at its deadline.
+
 The optional real call (`test_one_tiny_real_call_through_the_proxy`) also needs
 CODER_REAL_LLM=1 and LLM_BASE_URL / LLM_MODEL / LLM_API_KEY in the environment (read at import,
 since conftest unsets settings variables before each test); it asks for at most 10 tokens.
@@ -14,23 +18,26 @@ since conftest unsets settings variables before each test); it asks for at most 
 
 import json
 import os
+import signal
 import subprocess
 import sys
+import textwrap
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 from romulus_cloud.adapters.coder import LocalAgent, Sandbox, subprocess_runner
-from romulus_cloud.adapters.coder_egress import LABEL, Egress
+from romulus_cloud.adapters.coder_egress import LABEL, RUN_LABEL, Egress, prune
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import coder_fakes as fakes  # noqa: E402
 
 LLM = {k: os.environ.get(k, "") for k in ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY")}
 REAL_LLM = os.environ.get("CODER_REAL_LLM") == "1"
-IMAGE = "romulus-coder:b5it"
+IMAGE = os.environ.get("CODER_INTEGRATION_IMAGE") or "romulus-coder:b5it"
 CODER_DIR = Path(__file__).resolve().parents[2] / "coder"
 FAKE_KEY = "sk-b5-integration-REAL-KEY-0123456789"
 
@@ -54,6 +61,13 @@ probe("host_ip", lambda: socket.create_connection(("192.168.65.254", HOST_PORT),
 # The Docker host's side of the bridge (x.y.0.1): a refusal would mean it is reachable.
 me = socket.gethostbyname(socket.gethostname()).split(".")
 probe("docker_host", lambda: socket.create_connection((f"{me[0]}.{me[1]}.0.1", 22), timeout=3))
+# DNS: only llm-proxy resolves; nothing is forwarded (a lookup could carry data out).
+probe("dns", lambda: socket.getaddrinfo("example.com", 443))
+probe("dns_exfil", lambda: socket.getaddrinfo("c2VjcmV0.example.com", 443))
+probe("dns_host", lambda: socket.getaddrinfo("host.docker.internal", 443))
+# IPv6: global and unique-local addresses are unreachable too.
+probe("ipv6", lambda: socket.create_connection(("2606:4700:4700::1111", 443), timeout=3))
+probe("ipv6_ula", lambda: socket.create_connection(("fd00::1", 80), timeout=3))
 def status(method, path, auth="Bearer wrong-token"):
     c = http.client.HTTPConnection("llm-proxy", 8080, timeout=5)
     body = b"{}" if method == "POST" else None
@@ -130,19 +144,23 @@ def sandbox() -> Sandbox:
     return Sandbox(image=IMAGE, runner=subprocess_runner)
 
 
-def _egress_networks() -> set[str]:
-    out = subprocess.run(
-        ["docker", "network", "ls", "-q", "--filter", f"label={LABEL}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return set(out.stdout.split())
+def _labelled(label: str = LABEL) -> set[str]:
+    """Every container (running or not) and network carrying `label`."""
+    found = set()
+    for argv in (["ps", "-aq"], ["network", "ls", "-q"]):
+        out = subprocess.run(
+            ["docker", *argv, "--filter", f"label={label}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        found |= set(out.stdout.split())
+    return found
 
 
 def test_agent_reaches_only_the_llm_through_the_proxy(sandbox):
     llm = FakeLlm()
-    before = _egress_networks()
+    before = _labelled()
     agent = LocalAgent(
         base_url=llm.url,
         model="fake-model",
@@ -160,13 +178,19 @@ def test_agent_reaches_only_the_llm_through_the_proxy(sandbox):
     for req in llm.seen:
         assert req["path"] == "/v1/chat/completions"
         assert req["headers"]["Authorization"] == f"Bearer {FAKE_KEY}"
+        body = json.loads(req["body"])  # rebuilt by the proxy from its allowlist
+        assert body["model"] == "fake-model" and body["max_tokens"] <= 2000
+        assert set(body) <= {"model", "messages", "max_tokens", "n", "temperature", "top_p"}
     observation = llm.seen[1]["body"].decode()
     out = json.loads(observation)["messages"][-1]["content"]
     print("--- probe output\n" + out)
 
     # (a) no internet, no raw IPs, no host (by name or IP), no LAN, no Docker host
-    for name in ("internet", "raw_ip", "host", "lan", "host_ip", "docker_host"):
+    for name in ("internet", "raw_ip", "host", "lan", "host_ip", "docker_host", "ipv6", "ipv6_ula"):
         assert f"PROBE {name}: BLOCKED" in out, name
+    # (a2) no DNS forwarding
+    for name in ("dns", "dns_exfil", "dns_host"):
+        assert f"PROBE {name}: BLOCKED gaierror" in out, name
     assert "ConnectionRefusedError" not in out  # nothing even answered with a refusal
     # (b) the proxy refuses everything but chat completions with the job token
     assert "PROXY GET /v1/models: 405" in out
@@ -179,7 +203,7 @@ def test_agent_reaches_only_the_llm_through_the_proxy(sandbox):
     assert FAKE_KEY not in draft.notes + draft.test_output + draft.diff
     assert "llm proxy: " in draft.notes and "5 refused" in draft.notes
     assert any(f.startswith("egress_refused") for f in draft.flags)
-    assert _egress_networks() == before  # network and proxy torn down
+    assert _labelled() == before  # network, proxy and agent torn down
 
 
 @pytest.mark.skipif(not (REAL_LLM and LLM["LLM_BASE_URL"]), reason="CODER_REAL_LLM=1 + LLM_*")
@@ -201,7 +225,12 @@ def test_one_tiny_real_call_through_the_proxy(sandbox):
         " if r.status == 200 else data[:200])\n"
     )
     with egress.open(
-        LLM["LLM_BASE_URL"], LLM["LLM_API_KEY"], max_requests=2, base_env=os.environ
+        LLM["LLM_BASE_URL"],
+        LLM["LLM_API_KEY"],
+        model=LLM["LLM_MODEL"],
+        max_requests=2,
+        ttl_s=300,
+        base_env=os.environ,
     ) as net:
         env = {**os.environ, **net.agent_env, "LLM_MODEL": LLM["LLM_MODEL"]}
         proc = subprocess.run(
@@ -220,3 +249,69 @@ def test_one_tiny_real_call_through_the_proxy(sandbox):
     if "capacity" in out or "STATUS 429" in out or "STATUS 503" in out:
         pytest.skip("the LLM endpoint is at capacity")
     assert "STATUS 200" in out and summary.forwarded == 1
+
+
+HOLDER = """
+import os, sys, time
+from romulus_cloud.adapters.coder import subprocess_runner
+from romulus_cloud.adapters import coder_egress
+coder_egress.install_signal_teardown()
+egress = coder_egress.Egress(image=sys.argv[1], runner=subprocess_runner)
+with egress.open("http://example.invalid/v1", "sk-held-REAL-KEY", model="m",
+                 max_requests=1, ttl_s=120, base_env=os.environ) as net:
+    print("RUN", net.agent_labels["romulus.coder.run"], net.proxy, flush=True)
+    time.sleep(120)
+"""
+
+
+def _hold_a_run() -> tuple[subprocess.Popen, str, str]:
+    """A separate process with one egress run open (the proxy holds a key), sleeping."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", textwrap.dedent(HOLDER), IMAGE], stdout=subprocess.PIPE, text=True
+    )
+    line = proc.stdout.readline().split()
+    assert line[:1] == ["RUN"], line
+    return proc, line[1], line[2]
+
+
+def test_sigterm_mid_run_leaves_nothing(sandbox):
+    proc, run, proxy = _hold_a_run()
+    try:
+        assert len(_labelled(f"{RUN_LABEL}={run}")) == 2  # the proxy and the network
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=60) == 128 + signal.SIGTERM
+        assert _labelled(f"{RUN_LABEL}={run}") == set()
+    finally:
+        proc.kill()
+        prune(subprocess_runner, label=f"{RUN_LABEL}={run}")
+
+
+def test_sigkill_mid_run_is_cleaned_by_the_startup_prune(sandbox):
+    """No handler runs on SIGKILL. The worker's startup prune (scoped to this run here, so a
+    parallel run elsewhere on this Docker is left alone) removes the live proxy and its net."""
+    proc, run, proxy = _hold_a_run()
+    proc.kill()
+    proc.wait(timeout=30)
+    left = _labelled(f"{RUN_LABEL}={run}")
+    assert len(left) == 2  # the orphan: a proxy still holding the key, and its network
+    assert prune(subprocess_runner, label=f"{RUN_LABEL}={run}") == 2
+    assert _labelled(f"{RUN_LABEL}={run}") == set()
+
+
+def test_the_proxy_exits_at_its_deadline(sandbox):
+    egress = Egress(image=IMAGE, runner=subprocess_runner)
+    with egress.open(
+        "http://example.invalid/v1",
+        "sk-ttl",
+        model="m",
+        max_requests=1,
+        ttl_s=3,
+        base_env=os.environ,
+    ) as net:
+        running = ["docker", "ps", "-q", "--filter", f"name={net.proxy}"]
+        assert subprocess.run(running, capture_output=True, text=True).stdout.strip()
+        deadline = time.monotonic() + 30
+        while subprocess.run(running, capture_output=True, text=True).stdout.strip():
+            assert time.monotonic() < deadline, "the proxy outlived its deadline"
+            time.sleep(0.5)
+    assert _labelled(f"{RUN_LABEL}={net.agent_labels[RUN_LABEL]}") == set()
