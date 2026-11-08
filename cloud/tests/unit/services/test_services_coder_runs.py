@@ -95,20 +95,20 @@ def test_device_patch_fixes_what_the_verify_scripts_catch():
 
 
 @pytest.mark.parametrize(
-    "patch,flag",
+    "patch,refused",
     [
-        (CONFTEST_SKIP, "test_harness: conftest.py (added)"),
-        (INI_DESELECT, "test_harness: pytest.ini (modified)"),
+        (CONFTEST_SKIP, "conftest.py (test-runner config)"),
+        (INI_DESELECT, "pytest.ini (test-runner config)"),
         (SKIP_FROM_CODE, None),
     ],
 )
-def test_hiding_the_verify_scripts_is_not_a_pass(patch, flag):
+def test_hiding_the_verify_scripts_is_not_a_pass(patch, refused):
     result = replay(patch=patch)
     assert result.caught_fault
     assert not result.passed, result.summary()
     assert not result.verify_passed
-    if flag:
-        assert flag in result.flags and flag in result.summary()
+    if refused:  # test-runner config is refused outright now, before anything runs
+        assert result.patched is None and refused in result.patch_error
 
 
 def test_the_reviewers_symlink_case_never_writes_outside(tmp_path):
