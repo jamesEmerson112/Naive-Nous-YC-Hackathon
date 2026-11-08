@@ -2,7 +2,7 @@
 
 - **Status:** contract **v0.1, draft.** It stays a draft until the device teammate agrees to it (build plan M0).
 - **Single source of truth:** this file defines every payload and route. The Pydantic models in `packages/contracts` must match it ([architecture](cloud-platform-architecture.md) §3).
-- **Changes:** v0.1 is a draft until the I0 handshake; draft changes are additive and don't bump `CONTRACT_VERSION`; after I0, every change bumps it. Every change goes to the device teammate.
+- **Changes:** v0.1 is a draft until the I0 handshake. Optional, additive changes don't bump `CONTRACT_VERSION`; only breaking changes do (a removed or renamed field, a new required field, a changed meaning), and the server keeps accepting the previous version (D28). Every change goes to the device teammate.
 
 ---
 

@@ -1,6 +1,6 @@
 # Overnight run: runbook (flow F10, build plan M7)
 
-The goal: fake fleet + chaos schedule run **≥ 6 h unattended**, launched by **~12:30 AM**.
+The goal: fake fleet + chaos schedule run **≥ 6 h unattended**.
 In the morning, `make digest` counts what the agents and the platform did, and how many
 human actions it took (target 0). Every command runs from the repo root.
 
@@ -11,7 +11,7 @@ human actions it took (target 0). Every command runs from the repo root.
    *Settings → General → Start Docker Desktop when you sign in*.
 2. **The launch commit:** check it out and make sure the tests pass on it (`make test`).
 
-## 2. Launch (by 12:30 AM), in this order
+## 2. Launch, in this order
 
 ```bash
 caffeinate -dims                     # its own terminal tab; leave it running all night
@@ -40,7 +40,7 @@ order could phone a real supplier at 3 AM (build plan K13). `make overnight-chec
 running api and worker for the mode they actually resolved. Even in live mode, an order for
 a device whose kind isn't exactly `real` is never posted (it waits for a person).
 
-Then Kent, at the go/no-go: commit, tag `demo-overnight`, push the tag.
+Then Kent, at launch: commit, tag `demo-overnight`, push the tag.
 
 What the chaos does (`tools/fake_device/src/fake_device/chaos.py`, rates in `PROFILES`):
 a software fault about every 10 min (3 in 10 are D1 code patches, about 1 in 5 arms a bad

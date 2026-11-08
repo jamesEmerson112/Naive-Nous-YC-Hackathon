@@ -194,7 +194,7 @@ Pinned in `uv.lock` at M0. Adding a library means adding a row here.
 3. **Domain stays pure.** No DB, network or clock in `domain/`. Each domain function gets unit tests.
 4. **Every write records an Event** through `events.record(...)`, with a plain-English `why`, in the same transaction. No exceptions: it's what the timeline is built from (D9).
 5. **The LLM never writes merged config.** It writes prose and skills only (PRD principle 7).
-6. **Contracts are shared.** Any change to `romulus-contracts` bumps `CONTRACT_VERSION`, updates the APIs doc, and gets a message to the device teammate.
+6. **Contracts are shared (D28).** Only a breaking change to `romulus-contracts` (a removed or renamed field, a new required field, a changed meaning) bumps `CONTRACT_VERSION`; optional additions don't. Every change updates the APIs doc and gets a message to the device teammate.
 7. **Fakes first.** Every adapter works in fake mode, and tests never call Naïve or an LLM.
 8. **Explain it in one sentence.** Don't commit code you can't explain in one sentence (`~/git2/docs/1-hackathon-plan.md`, rule against slop). Small commits; `git pull --rebase origin main` before pushing; no AI co-author lines (repo `CLAUDE.md`).
 

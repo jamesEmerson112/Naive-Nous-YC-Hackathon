@@ -1,6 +1,7 @@
 # Fleet Doctor: development strategy
 
 - **Status:** proposal v2, Sat Nov 7 ~6:20 PM PST, revised after a red-team review. Effort numbers are estimates *(inferred)*.
+- **Decided Sat Nov 7 ~7:45 PM PST** (Kent; [decision log](../cloud-platform-planning/cloud-platform-decisions.md), round 3): D23–D26 accepted as proposed (§6); D27 deferred, with only the typed device-tool contract built now; D28 settles §7 question 3. **This supersedes the timing below** (the "nothing to build tonight" stance in §1, the "When" column in §2, and the P2 ordering line under this one): L1, L2 and Teach get built now, behind `doctor_mode=off` by default, with new tables only, and PRs merge to main as they're ready. Build order: [`implementation-plan.md`](implementation-plan.md); seams: [`interfaces.md`](interfaces.md).
 - **Owns:** phases, what goes in this weekend, the demo, handoffs, risks, the decisions requested, the open questions and the research backlog. The design is in [`architecture.md`](architecture.md).
 - **The cloud build plan wins any conflict.** Its rule is: "a lower item never takes time from a higher one" ([`../cloud-platform-planning/cloud-platform-build-plan.md`](../cloud-platform-planning/cloud-platform-build-plan.md) §1). The Fleet Doctor is a P2, below every P0 flow and every P1 item, including F11 (the coding agent) and M6 (datasets).
 - **Labels:** "flow F#" is a flow in the cloud flows doc, "fault X" is an entry in `docs/fault-catalog.md`, and FR# is a risk in §5.
@@ -11,7 +12,7 @@
 
 - **Thinnest working slice first** (BUILD §2 principles 1 and 8). Each phase leaves something demoable, and each stage starts as a stub that labels itself.
 - **L1 is the cheapest real slice, and nothing blocks it.** It needs no sandbox, no device code in the repo and no gate, so none of M8's blockers B1–B8. It needs only the LLM adapter, which already answers through the Naïve proxy (`llm.py`). L2 has to wait for the M8 pieces anyway.
-- **Nothing to build tonight.** Fields don't need reserving: unknown fields already pass both ways ([`architecture.md`](architecture.md) §7). A "not wired" stub would clutter the overnight timeline and collide with the open M3b and M5 branches. Tonight's only Doctor work is talk: one line at I0 and settling question 3 in §7.
+- ~~**Nothing to build tonight.**~~ *Superseded by Kent's call (status, top): build L1, L2 and Teach now, default-off.* Fields don't need reserving: unknown fields already pass both ways ([`architecture.md`](architecture.md) §7). A "not wired" stub would clutter the overnight timeline and collide with the open M3b and M5 branches. Tonight's only Doctor work is talk: one line at I0 and settling question 3 in §7.
 
 ## 2. Phases
 
@@ -85,6 +86,8 @@ If Phase 1 ships, the candidates are, best first *(inferred)*:
 
 To be logged in [`../cloud-platform-planning/cloud-platform-decisions.md`](../cloud-platform-planning/cloud-platform-decisions.md) if Kent accepts. Decisions go in the log first (planning README rules).
 
+**Outcome (Sat Nov 7 ~7:45 PM PST):** D23–D26 accepted as proposed; D27 deferred (only the typed device-tool contract gets built now). Logged in the decision log, round 3, with D28.
+
 | # | Question | Proposed decision |
 |---|---|---|
 | **D23** | Is the Fleet Doctor in scope? | Yes, as a P2 add-on to the healer: L1 advise and L2 consult, with L3 later. L1 and L2 call the LLM and `Coder` adapters D21 and D22 already put behind Romulus, so they add no new agent system and need no change to D12. The D22 order holds (`local_agent` first) |
@@ -97,7 +100,7 @@ To be logged in [`../cloud-platform-planning/cloud-platform-decisions.md`](../cl
 
 1. Should the cloud start a consult on *every* unresolved software incident, or only when the healer asks? (D26 proposes both, within the caps.)
 2. Which fault carries hero step 3 (§3), and how do we fix the step 1 inconsistency?
-3. **The contract version rule.** The APIs header and contracts README say optional additions before I0 don't bump the version. `cloud-platform-architecture.md` §9 rule 6 and the `version.py` docstring say every change does. Which wins?
+3. ~~**The contract version rule.** The APIs header and contracts README say optional additions before I0 don't bump the version. `cloud-platform-architecture.md` §9 rule 6 and the `version.py` docstring say every change does. Which wins?~~ **Settled by D28:** optional, additive changes don't bump `CONTRACT_VERSION`; only breaking changes do.
 4. **Device code folder.** `device/` (Ishaan's benchmark doc) or `edge/` (his local tree today)? `CODE_ROOT` follows whatever he picks.
 5. Frames: which go to an outside LLM, and at what resolution?
 6. Should the mark-good timer (N = 60 s proposed) also apply to the healer's own overlays?

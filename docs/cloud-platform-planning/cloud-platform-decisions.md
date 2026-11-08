@@ -39,6 +39,12 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 | D21 | Code patches in held overlays (was Q1) | A coding agent drafts a clean change, runs tests, submits a candidate through the gate; code versions served as tarballs | ✅ |
 | D21a | Where the coding agent sits in the build order | P1, first P1 item, starts as soon as its tracked blockers clear (build plan M8) | ✅ |
 | D22 | Models and agents for the batch job (was Q2) | Naïve and RunPod first, swappable: OpenAI-compatible LLM adapter (Naïve proxy default, RunPod per James's lane), coding agent behind a `Coder` adapter (local open-source agent first) | ✅ |
+| D23 | Is the Fleet Doctor in scope? | Yes, as proposed: a P2 add-on to the healer (L1 advise, L2 consult) on the D21/D22 adapters; no change to D12. Built now behind `doctor_mode=off` | ✅ |
+| D24 | Who changes the device when the Doctor has a fix | Only the device: a checked code patch applied as an overlay with `proposal_id`, under a mark-good timer; the fleet changes only through D6 | ✅ |
+| D25 | What limits the Doctor | Out of safety (discard, and block everything while `safety_paths_confirmed` is false); 6 asks and 2 consults per incident, a daily dollar cap; `frozen` stops it | ✅ |
+| D26 | Who decides to escalate | The device's harness code (triggers T1–T7, circuit breaker); the cloud also consults on unresolved non-hardware incidents, within the caps | ✅ |
+| D27 | L3 live sessions: where the agent loop runs | Deferred. Only the typed device-tool contract gets built now, not wired; D12, PRD principle 8 and D19 unchanged | 🔁 deferred |
+| D28 | Contract version rule | Optional, additive changes don't bump `CONTRACT_VERSION`; only breaking changes do, and the server keeps accepting the previous version | ✅ |
 
 ---
 
@@ -453,3 +459,77 @@ Details in [`cloud-platform-telemetry.md`](cloud-platform-telemetry.md).
 - **Changing a provider is a config change only** (architecture §6).
 
 **History:** decided Sat Nov 7 (round-2 lock-down).
+
+## Round 3: Fleet Doctor (Sat Nov 7, ~7:45 PM)
+
+From Kent's review of the Fleet Doctor proposal v2 ([`../fleet-doctor/`](../fleet-doctor/README.md)): the decisions requested in [strategy](../fleet-doctor/strategy.md) §6, plus open question 3 in §7.
+
+### D23. Is the Fleet Doctor in scope? ✅
+**Question:** Is the Fleet Doctor, a strong cloud model the healer can call when it's stuck, in scope?
+**Decision:** **Yes, as proposed** (Kent, Sat Nov 7 ~7:45 PM PST). It's a P2 add-on to the healer: L1 advise and L2 consult, with L3 later (D27). L1 and L2 call the LLM and `Coder` adapters from D21 and D22, so they add no new agent system and need no change to D12. The D22 order holds (`local_agent` first).
+- Kent's call on timing: build L1, L2 and Teach now, behind `doctor_mode=off` by default, with new tables only.
+- Fleet Doctor PRs merge to main as they're ready.
+
+**Options not chosen:** out of scope for v0; L1 only after every P0 flow and P1 item is done or blocked (strategy §2, proposal v2).
+**What this means for the build** *(inferred)*:
+- This replaces the proposal's "nothing tonight" gating (strategy §1–2). The build order is in [`implementation-plan.md`](../fleet-doctor/implementation-plan.md), the seams in [`interfaces.md`](../fleet-doctor/interfaces.md).
+- New tables only, because after M7 `create_all` never changes an existing table (`cloud/CLAUDE.md`, "Tables").
+- With the Doctor off by default, the overnight run and the hero loop don't change.
+
+**History:** proposed Sat Nov 7 ~6:20 PM (strategy §6); accepted Sat Nov 7 ~7:45 PM.
+
+### D24. Who changes the device when the Doctor has a fix ✅
+**Question:** When the Doctor has a fix, who changes the robot?
+**Decision:** **Only the device, as proposed** (Kent, Sat Nov 7 ~7:45 PM PST). The Doctor's output is a code patch. The device applies it as an overlay carrying `proposal_id`, after hash and base checks, before it expires, and under a mark-good timer. The fleet changes only through D6. A held proposal becomes a candidate without a second `Coder` pass ([architecture](../fleet-doctor/architecture.md) §5.2–5.4, §6 items 1–3).
+**Options not chosen:** the cloud pushes the fix to the device; a second `Coder` pass on a held proposal before lock-in.
+**What this means for the build** *(inferred)*:
+- The L2 contract pieces (architecture §7) are optional additions, so contracts stay at `0.1` (D28).
+- Lock-in (D0, D21) gets one change: the Doctor's checked patch becomes the candidate directly (architecture §5.4).
+- Device side (Ishaan): the proposal applier and the mark-good timer. N = 60 s is proposed; strategy §7 question 6 is still open.
+
+**History:** proposed Sat Nov 7 ~6:20 PM (strategy §6); accepted Sat Nov 7 ~7:45 PM.
+
+### D25. What limits the Doctor ✅
+**Question:** What limits the Doctor?
+**Decision:** **As proposed** (Kent, Sat Nov 7 ~7:45 PM PST). It stays out of safety: patches touching safety are discarded, advice naming safety paths is removed, and every proposal is blocked until the K17 list arrives. Caps are 6 asks and 2 consults per incident (then `gave_up`), plus a daily dollar cap (`blocked_over_cap`). `frozen` stops everything. Evidence counts as untrusted data ([architecture](../fleet-doctor/architecture.md) §6).
+- The K17 block is a setting, `safety_paths_confirmed: bool = False`. While it's false, every proposal is discarded with "safety paths unknown".
+
+**Options not chosen:** hold safety-touching proposals for a person instead of discarding them (D11 has no approval steps; architecture §6 item 4).
+**What this means for the build** *(inferred)*:
+- Ishaan's K17 path list replaces the placeholder `safety_paths`; only then does anyone set `safety_paths_confirmed`.
+- The caps are settings enforced in our code, like D19b.
+- Overnight chaos runs keep the Doctor off or fake (architecture §6 item 8, like K13).
+
+**History:** proposed Sat Nov 7 ~6:20 PM (strategy §6); accepted Sat Nov 7 ~7:45 PM.
+
+### D26. Who decides to escalate ✅
+**Question:** Who decides when the healer asks the Doctor for help?
+**Decision:** **The device's harness code, as proposed** (Kent, Sat Nov 7 ~7:45 PM PST). It uses triggers T1–T7 ([architecture](../fleet-doctor/architecture.md) §3), with a circuit breaker. The cloud also starts consults on unresolved incidents that aren't hardware, within the D25 caps.
+**Options not chosen:** the healer model's own confidence as a trigger (unreliable, architecture §3); consults only when the healer asks (strategy §7 question 1).
+**What this means for the build** *(inferred)*:
+- Strategy §7 question 1 is answered: both, within the caps.
+- Device side (Ishaan): the trigger hook (T2, T4, T6 first; strategy §2 phase 1) and the circuit breaker.
+- `IncidentReport.consult` stays optional; the cloud infers it from `resolved: false` and `suspected_cause` (architecture §3, §7).
+
+**History:** proposed Sat Nov 7 ~6:20 PM (strategy §6); accepted Sat Nov 7 ~7:45 PM.
+
+### D27. L3 live sessions: where the agent loop runs 🔁
+**Question:** For L3 live sessions, where does the agent loop run: in Romulus, or in a Naïve agent with inbound access?
+**Decision:** **Deferred** (Kent, Sat Nov 7 ~7:45 PM PST). Only the typed device-tool contract gets built now: the L3 tool catalog ([architecture](../fleet-doctor/architecture.md) §9) as typed models, not wired to anything. D12, PRD principle 8 and D19 stay as they are.
+**Options not chosen (yet):** an agent loop in Romulus (needs D12 and PRD principle 8 amended); a Naïve agent with inbound access (needs D19 and the build plan's "Won't" line amended) (architecture §8).
+**What this means for the build** *(inferred)*:
+- No socket, relay, leases or session recordings yet (architecture §9).
+- Whichever way it goes later, the proposal's limits still apply: a socket the device opens, typed tools only, leases, auth first (strategy §6).
+
+**History:** proposed Sat Nov 7 ~6:20 PM (strategy §6); deferred Sat Nov 7 ~7:45 PM.
+
+### D28. Contract version rule ✅
+**Question:** Do optional, additive contract changes bump `CONTRACT_VERSION`? The APIs header and the contracts README said draft additions don't; `cloud-platform-architecture.md` §9 rule 6 and the `version.py` docstring said every change does ([strategy](../fleet-doctor/strategy.md) §7, question 3).
+**Decision:** **Only breaking changes bump it** (Kent, Sat Nov 7 ~7:45 PM PST). A breaking change is a removed or renamed field, a new required field, or a changed meaning. Optional, additive changes don't bump it. On a bump, `PREVIOUS_CONTRACT_VERSION` takes the old value and the server keeps accepting it. Every contract change, bump or not, updates the APIs doc and gets a note to the device teammate (Ishaan).
+**Options not chosen:** every change bumps; no bumps before I0, then every change bumps.
+**What this means for the build** *(inferred)*:
+- The Fleet Doctor's L1 and L2 fields and routes are optional additions, so contracts stay at `0.1`.
+- Changing the fleet dataset feature list still bumps it (APIs §2.9): every recording carries the same features, so a new one is a new required field.
+- Updated to match: the `version.py` docstring, `cloud/CLAUDE.md` rule 6, `cloud-platform-architecture.md` §9 rule 6, the APIs header and the contracts README.
+
+**History:** decided Sat Nov 7 ~7:45 PM (Kent, from Fleet Doctor strategy §7 question 3).

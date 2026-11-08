@@ -160,7 +160,7 @@ admit ─┬─ declined | blocked_over_cap (daily $ cap)
 
 **Nothing needs reserving ahead of time.** Device payloads keep unknown fields (`extra="allow"`), and cloud responses ignore them (`CloudModel`, `extra="ignore"`), so each field can land when its feature does.
 
-Whether optional additions bump `CONTRACT_VERSION` is unsettled. The APIs doc header ("Changes" line) and the contracts README say draft additions before I0 don't. `cloud-platform-architecture.md` §9 rule 6 and the `version.py` docstring say every change does ([`strategy.md`](strategy.md) §7, question 3).
+**Version rule (D28):** optional, additive changes don't bump `CONTRACT_VERSION`; only breaking changes do (a removed or renamed field, a new required field, a changed meaning). So the L1 and L2 rows below keep contracts at `0.1`.
 
 | Change | Where | Level |
 |---|---|---|
