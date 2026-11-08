@@ -3,11 +3,12 @@
 # Source: naive-integration §3.3 ("fault kind -> part, supplier, phone and typical price").
 #
 # !!! SAFETY (build plan K13, naive-integration §6) !!!
-# Every supplier and phone below is a PLACEHOLDER that points at a teammate, never at a real
-# business. The overnight chaos run fires a hardware fault about every 2 hours, and in live
-# Naïve mode fleet-ops would phone whatever number is here. Never put a real supplier's
-# number in this file unless NAIVE_MODE=fake overnight AND a person has signed off.
-# Replace TEAMMATE_PHONE with the on-call teammate's mobile before a live demo.
+# Every supplier and phone below is a PLACEHOLDER, never a real business, and stays that way:
+# no real phone number is ever committed to this file (a unit test enforces it).
+# The overnight chaos run fires a hardware fault about every 2 hours, and in live Naïve mode
+# fleet-ops phones whatever number the card carries. The number on the card is NOT read
+# from here: the work-order service passes it to render_card() at render time from a
+# setting (M5), which must point at a teammate's phone, never a business.
 #
 # Fields per part:
 #   id           stable part id, stored on the work order (work_orders.part)
@@ -16,7 +17,7 @@
 #   quantity     how many to order (default 1)
 #   typical_usd  usual price, shown on the card as the estimate
 #   max_usd      the card's MAX_USD: the agent stops if the price is higher
-#   supplier, phone  default to the placeholder teammate below
+#   supplier, phone  placeholders; the card's phone comes from a setting at render time
 
 defaults:
   supplier: "Romulus test desk (teammate placeholder, not a business)"

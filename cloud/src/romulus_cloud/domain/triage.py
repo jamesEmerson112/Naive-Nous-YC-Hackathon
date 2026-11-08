@@ -14,6 +14,7 @@ and the counts for the spend caps come in from the caller.
 - `parse_card_note` / `card_outcome`: read the card back (naive-integration §3.2).
 """
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -27,6 +28,14 @@ SUMMARY_MAX = 300
 TITLE_MAX = 200
 """Naïve card titles are 1–200 characters (api/board)."""
 
+BODY_MAX = 20_000
+"""Naïve card bodies are at most 20,000 characters (api/board)."""
+
+FIELD_MAX = 500
+"""Each free-text field on the card (robot, address, part name, phone) is capped at this."""
+
+TRUNCATED = " …[truncated]"
+
 
 class CatalogError(ValueError):
     """`parts.yaml` is malformed."""
@@ -34,7 +43,8 @@ class CatalogError(ValueError):
 
 @dataclass(frozen=True)
 class Part:
-    """One orderable part. `supplier`/`phone` default to a teammate placeholder (K13)."""
+    """One orderable part. `phone` is a placeholder (K13); the card gets its phone from
+    `render_card(phone=...)`, never from here."""
 
     id: str
     name: str
@@ -60,9 +70,24 @@ class PartsCatalog:
 
 
 def _num(value: Any, where: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
-        raise CatalogError(f"{where} must be a non-negative number, got {value!r}")
+    if not _is_amount(value):
+        raise CatalogError(f"{where} must be a finite, non-negative number, got {value!r}")
     return float(value)
+
+
+def _is_amount(value: Any) -> bool:
+    """A finite, non-negative int or float (not a bool, NaN or infinity)."""
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, int | float)
+        and math.isfinite(value)
+        and value >= 0
+    )
+
+
+def _is_count(value: Any) -> bool:
+    """A non-negative int (not a bool)."""
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
 
 
 def parse_catalog(data: Mapping[str, Any] | None) -> PartsCatalog:
@@ -93,6 +118,10 @@ def parse_catalog(data: Mapping[str, Any] | None) -> PartsCatalog:
         phone = raw.get("phone", defaults.get("phone"))
         if not supplier or not phone:
             raise CatalogError(f"{where} needs a supplier and phone (or catalogue defaults)")
+        typical_usd = _num(raw["typical_usd"], f"{where}.typical_usd")
+        max_usd = _num(raw["max_usd"], f"{where}.max_usd")
+        if not typical_usd <= max_usd:
+            raise CatalogError(f"{where}: typical_usd {typical_usd:g} is over max_usd {max_usd:g}")
         parts.append(
             Part(
                 id=part_id,
@@ -100,8 +129,8 @@ def parse_catalog(data: Mapping[str, Any] | None) -> PartsCatalog:
                 fault_kinds=tuple(str(k).strip().lower() for k in kinds),
                 supplier=str(supplier),
                 phone=str(phone),
-                typical_usd=_num(raw["typical_usd"], f"{where}.typical_usd"),
-                max_usd=_num(raw["max_usd"], f"{where}.max_usd"),
+                typical_usd=typical_usd,
+                max_usd=max_usd,
                 quantity=quantity,
             )
         )
@@ -220,24 +249,53 @@ class CapDecision:
 def check_caps(
     spec: WorkOrderSpec, orders_today: int, orders_for_robot_today: int, caps: Caps
 ) -> CapDecision:
-    """Decide whether `spec` may be posted.
+    """Decide whether `spec` may be posted. **Fails closed:** anything odd blocks.
 
     `orders_today` and `orders_for_robot_today` count the orders **already** placed today,
     not including this one (the caller decides which statuses count). So a count equal to
     the cap blocks, and a `max_usd` equal to `ORDER_MAX_USD` passes. Every broken cap is
     named in `why`.
+
+    Every price and cap must be a finite, non-negative number and every count a
+    non-negative int; NaN, infinity, a negative value or a missing price blocks the order
+    (`blocked_over_cap`, with the bad input in `why`). Comparisons are written as
+    `not (x <= cap)`, so a value that slipped through still can't compare its way to `ok`.
     """
     if spec.part is None:
         return CapDecision("needs_human", spec.why)
+    bad: list[str] = []
+    amounts = {
+        "MAX_USD": spec.max_usd,
+        "estimated cost": spec.est_cost_usd,
+        "ORDER_MAX_USD": caps.order_max_usd,
+    }
+    for name, value in amounts.items():
+        if not _is_amount(value):
+            bad.append(f"{name} {value!r} is not a finite, non-negative amount")
+    counts = {
+        "orders today": orders_today,
+        "orders for this robot today": orders_for_robot_today,
+        "ORDERS_PER_DAY_MAX": caps.orders_per_day_max,
+        "ORDERS_PER_ROBOT_DAY_MAX": caps.orders_per_robot_day_max,
+    }
+    for name, value in counts.items():
+        if not _is_count(value):
+            bad.append(f"{name} {value!r} is not a non-negative whole number")
+    if bad:
+        return CapDecision(
+            "blocked_over_cap", "Blocked, can't check the spend cap: " + "; ".join(bad) + "."
+        )
     over: list[str] = []
-    if spec.max_usd > caps.order_max_usd:
+    if not spec.max_usd <= caps.order_max_usd:
         over.append(f"MAX_USD ${spec.max_usd:.2f} is over ORDER_MAX_USD ${caps.order_max_usd:.2f}")
-    if orders_today >= caps.orders_per_day_max:
+    if not spec.est_cost_usd <= spec.max_usd:
+        over.append(f"estimated ${spec.est_cost_usd:.2f} is over MAX_USD ${spec.max_usd:.2f}")
+    if not orders_today < caps.orders_per_day_max:
         over.append(
             f"{orders_today} orders today already reach ORDERS_PER_DAY_MAX "
             f"{caps.orders_per_day_max}"
         )
-    if orders_for_robot_today >= caps.orders_per_robot_day_max:
+    if not orders_for_robot_today < caps.orders_per_robot_day_max:
         over.append(
             f"{orders_for_robot_today} orders for {spec.device_id} today already reach "
             f"ORDERS_PER_ROBOT_DAY_MAX {caps.orders_per_robot_day_max}"
@@ -261,28 +319,49 @@ class CardText:
     body: str
 
 
+def _field(text: str) -> str:
+    return _one_line(str(text), FIELD_MAX)
+
+
 def render_card(
-    spec: WorkOrderSpec, work_order_id: str, *, deliver_to: str, robot: str | None = None
+    spec: WorkOrderSpec,
+    work_order_id: str,
+    *,
+    deliver_to: str,
+    phone: str,
+    robot: str | None = None,
 ) -> CardText:
-    """Title and body of the board card. `robot` describes the arm, e.g.
-    "SO-101 follower, bench 1"; `deliver_to` is the bench address (from settings)."""
+    """Title and body of the board card.
+
+    - `phone`: the number fleet-ops calls, passed in at render time from a setting (M5).
+      The catalogue's `Part.phone` is only a placeholder and is never put on a card (K13).
+    - `deliver_to`: the bench address (from settings); `robot` describes the arm, e.g.
+      "SO-101 follower, bench 1".
+    - Limits (api/board): the title is capped at 200 characters with "…"; each free-text
+      field is one line of at most `FIELD_MAX`; if the body would still pass 20,000
+      characters, the header is cut with a `…[truncated]` marker and the Rules block is
+      always kept whole.
+    """
     if spec.part is None:
         raise ValueError("a work order with no part has no card; it needs a person")
     part = spec.part
-    title = f"{work_order_id} · {spec.device_id} · replace {part.name}"
-    if len(title) > TITLE_MAX:
-        title = title[: TITLE_MAX - 1] + "…"
-    robot_line = f"{spec.device_id} ({robot})" if robot else spec.device_id
+    title = _one_line(f"{work_order_id} · {spec.device_id} · replace {part.name}", TITLE_MAX)
+    robot_line = f"{spec.device_id} ({_field(robot)})" if robot else spec.device_id
     fault = f"{spec.fault_kind}. {spec.summary}" if spec.summary else spec.fault_kind
-    body = "\n".join(
+    header = "\n".join(
         [
-            f"WORK ORDER {work_order_id}",
-            f"Robot: {robot_line}",
-            f"Fault: {fault}",
-            f"Request: order {spec.quantity} × {part.name}",
-            f"Supplier: {part.supplier} · {part.phone}",
+            f"WORK ORDER {_field(work_order_id)}",
+            f"Robot: {_field(robot_line)}",
+            f"Fault: {_field(fault)}",
+            f"Request: order {spec.quantity} × {_field(part.name)}",
+            f"Supplier: {_field(part.supplier)} · {_field(phone)}",
             f"MAX_USD: {spec.max_usd:g}",
-            f"Deliver to: {deliver_to}",
+            f"Deliver to: {_field(deliver_to)}",
+        ]
+    )
+    rules = "\n".join(
+        [
+            "",
             "",
             "Rules:",
             "- If the price is over MAX_USD or the part is out of stock: set the card to "
@@ -293,7 +372,10 @@ def render_card(
             "  STOPPED: <reason>",
         ]
     )
-    return CardText(title=title, body=body)
+    room = BODY_MAX - len(rules)
+    if len(header) > room:
+        header = header[: room - len(TRUNCATED)] + TRUNCATED
+    return CardText(title=title, body=header + rules)
 
 
 # --- reading the card back (naive-integration §3.2) ---------------------------------------
@@ -352,17 +434,36 @@ def parse_card_note(note: str | None) -> CardOutcome:
     )
 
 
-def card_outcome(card_status: str, note: str | None, last_comment: str = "") -> CardOutcome:
+def card_outcome(
+    card_status: str,
+    note: str | None,
+    last_comment: str = "",
+    *,
+    max_usd: float | None = None,
+) -> CardOutcome:
     """Map a Naïve card's `status` (+ note) to the platform status (naive-integration §3.2).
 
     `todo`/`doing` → in_progress; `done` → `parse_card_note`; `blocked` (incl. parked after
-    3 starts) and unknown statuses → needs_human, quoting `last_comment`.
+    3 starts) and unknown statuses → needs_human, quoting `last_comment`. With `max_usd`
+    (the order's MAX_USD), a `done` note whose COST_USD is over it → needs_human, so a
+    person sees the overspend (the order ref and cost are kept on the outcome).
     """
     status = (card_status or "").strip().lower()
     if status in ("todo", "doing"):
         return CardOutcome("in_progress", "fleet-ops is on it")
     if status == "done":
-        return parse_card_note(note)
+        outcome = parse_card_note(note)
+        cost = outcome.cost_usd
+        if outcome.status == "done" and max_usd is not None and cost is not None:
+            if not (_is_amount(max_usd) and cost <= max_usd):
+                return CardOutcome(
+                    "needs_human",
+                    f"Ordered ref {outcome.order_ref} for ${cost:.2f}, over MAX_USD "
+                    f"${max_usd:g}; a person must check it",
+                    order_ref=outcome.order_ref,
+                    cost_usd=cost,
+                )
+        return outcome
     said = _one_line(last_comment, 200) if last_comment.strip() else "no comment"
     if status == "blocked":
         return CardOutcome("needs_human", f"Parked by Naïve: {said}")

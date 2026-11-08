@@ -2,6 +2,7 @@
 
 import ast
 import re
+import sys
 import uuid
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def test_unknown_kind_gives_spec_without_part_and_needs_human():
     decision = check_caps(spec, 0, 0, CAPS)
     assert decision.status == "needs_human" and not decision.ok
     with pytest.raises(ValueError):
-        render_card(spec, "wo_1", deliver_to="bench")
+        render_card(spec, "wo_1", deliver_to="bench", phone="P")
 
 
 def test_summary_is_flattened_and_truncated():
@@ -154,17 +155,76 @@ def test_zero_caps_block_everything():
     assert d.status == "blocked_over_cap"
 
 
+NAN = float("nan")
+INF = float("inf")
+
+
+@pytest.mark.parametrize("price", [NAN, INF, -1.0, None])
+def test_bad_max_price_blocks(price):
+    d = check_caps(hw_spec(price), 0, 0, CAPS)
+    assert d.status == "blocked_over_cap" and "MAX_USD" in d.why
+
+
+@pytest.mark.parametrize("est", [NAN, -1.0, None, 41.0])
+def test_bad_or_missing_estimate_blocks(est):
+    spec = triage.WorkOrderSpec(**{**hw_spec().__dict__, "est_cost_usd": est})
+    d = check_caps(spec, 0, 0, CAPS)
+    assert d.status == "blocked_over_cap" and "estimate" in d.why
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [
+        Caps(NAN, 3, 1),
+        Caps(INF, 3, 1),
+        Caps(-1, 3, 1),
+        Caps(50, -1, 1),
+        Caps(50, 3, -1),
+        Caps(50, 3.5, 1),
+        Caps(50, True, 1),
+        Caps(50, NAN, 1),
+    ],
+)
+def test_bad_caps_block(caps):
+    d = check_caps(hw_spec(), 0, 0, caps)
+    assert d.status == "blocked_over_cap" and not d.ok and "can't check" in d.why
+
+
+@pytest.mark.parametrize(("today", "robot"), [(-5, 0), (0, -5), (-5, -5), (1.0, 0), (None, 0)])
+def test_negative_or_bad_counts_block(today, robot):
+    d = check_caps(hw_spec(), today, robot, Caps(50, 3, 1))
+    assert d.status == "blocked_over_cap"
+
+
+def test_nan_in_parts_yaml_is_rejected(tmp_path: Path):
+    p = tmp_path / "parts.yaml"
+    p.write_text(
+        "parts:\n  - {id: a, name: A, fault_kinds: [x], typical_usd: 1, max_usd: .nan,"
+        " supplier: S, phone: P}\n"
+    )
+    with pytest.raises(CatalogError, match="finite"):
+        load_parts(p)
+    p.write_text(
+        "parts:\n  - {id: a, name: A, fault_kinds: [x], typical_usd: .inf, max_usd: 2,"
+        " supplier: S, phone: P}\n"
+    )
+    with pytest.raises(CatalogError, match="finite"):
+        load_parts(p)
+
+
 # --- render_card --------------------------------------------------------------------------
 
 
 def test_card_matches_template():
-    card = render_card(hw_spec(), "wo_17", deliver_to="YC, 1 Main St", robot="SO-101, bench 1")
+    card = render_card(
+        hw_spec(), "wo_17", deliver_to="YC, 1 Main St", phone="+1 TEAMMATE", robot="SO-101, bench 1"
+    )
     assert card.title == "wo_17 · arm-1 · replace Feetech STS3215 servo (12 V)"
     lines = card.body.splitlines()
     assert lines[0] == "WORK ORDER wo_17"
     assert "Robot: arm-1 (SO-101, bench 1)" in lines
     assert "Request: order 1 × Feetech STS3215 servo (12 V)" in lines
-    assert "Supplier: Test desk · TEAMMATE_PHONE" in lines
+    assert "Supplier: Test desk · +1 TEAMMATE" in lines  # phone from the caller, not the part
     assert "MAX_USD: 40" in lines
     assert "Deliver to: YC, 1 Main St" in lines
     assert "  RESULT: ordered ORDER_REF=<ref> COST_USD=<amount>" in lines
@@ -175,7 +235,29 @@ def test_card_matches_template():
 def test_long_title_is_capped():
     long = Part(**{**SERVO.__dict__, "name": "x" * 300})
     spec = triage.WorkOrderSpec(**{**hw_spec().__dict__, "part": long})
-    assert len(render_card(spec, "wo_1", deliver_to="bench").title) == triage.TITLE_MAX
+    assert len(render_card(spec, "wo_1", deliver_to="bench", phone="P").title) == triage.TITLE_MAX
+
+
+def test_card_body_capped_with_marker_and_rules_kept():
+    spec = triage.WorkOrderSpec(**{**hw_spec().__dict__, "summary": "y" * 50_000})
+    card = render_card(spec, "wo_1", deliver_to="z" * 50_000, phone="P", robot="r" * 50_000)
+    assert len(card.body) <= triage.BODY_MAX
+    assert "STOPPED: <reason>" in card.body and "MAX_USD: 40" in card.body
+    assert all(len(line) <= triage.FIELD_MAX + 20 for line in card.body.splitlines())
+
+
+def test_card_body_truncates_when_header_is_huge(monkeypatch):
+    monkeypatch.setattr(triage, "FIELD_MAX", 30_000)
+    spec = triage.WorkOrderSpec(**{**hw_spec().__dict__, "summary": "y" * 30_000})
+    card = render_card(spec, "wo_1", deliver_to="bench", phone="P")
+    assert len(card.body) == triage.BODY_MAX
+    assert triage.TRUNCATED + "\n\nRules:" in card.body
+    assert card.body.rstrip().endswith("STOPPED: <reason>")
+
+
+def test_long_work_order_id_still_caps_title():
+    card = render_card(hw_spec(), "wo_" + "9" * 400, deliver_to="b", phone="P")
+    assert 1 <= len(card.title) <= triage.TITLE_MAX
 
 
 # --- parse_card_note / card_outcome -------------------------------------------------------
@@ -243,6 +325,17 @@ def test_malformed_notes_need_a_human(note):
 )
 def test_card_outcome(status, note, expected):
     assert card_outcome(status, note).status == expected
+
+
+def test_done_card_over_max_usd_needs_human():
+    note = "RESULT: ordered ORDER_REF=PO-1 COST_USD=99999"
+    o = card_outcome("done", note, max_usd=40)
+    assert o.status == "needs_human" and "over MAX_USD" in o.why
+    assert o.order_ref == "PO-1" and o.cost_usd == 99999
+    at_max = "RESULT: ordered ORDER_REF=PO-1 COST_USD=40"
+    assert card_outcome("done", at_max, max_usd=40).status == "done"
+    assert card_outcome("done", note).status == "done"  # no max given: parse only
+    assert card_outcome("done", note, max_usd=NAN).status == "needs_human"
 
 
 def test_blocked_card_quotes_last_comment():
@@ -340,6 +433,11 @@ def test_bad_catalog_raises(bad):
         parse_catalog({"parts": bad})
 
 
+def test_typical_over_max_is_rejected():
+    with pytest.raises(CatalogError, match="typical_usd"):
+        parse_catalog({"parts": [{**GOOD, "typical_usd": 100, "max_usd": 5}]})
+
+
 def test_load_parts_from_path(tmp_path: Path):
     p = tmp_path / "parts.yaml"
     p.write_text(yaml.safe_dump({"parts": [GOOD]}))
@@ -349,18 +447,93 @@ def test_load_parts_from_path(tmp_path: Path):
 # --- purity -------------------------------------------------------------------------------
 
 
-def test_domain_modules_import_only_contracts_and_stdlib():
-    import sys
+DENIED_MODULES = {
+    "socket",
+    "ssl",
+    "sqlite3",
+    "urllib",
+    "http",
+    "time",
+    "subprocess",
+    "asyncio",
+    "pathlib",
+    "shutil",
+    "io",
+    "tempfile",
+    "glob",
+    "multiprocessing",
+    "threading",
+}
+DENIED_CALLS = {"now", "utcnow", "today", "time", "getenv"}  # clock and environment
+DENIED_NAMES = {"open", "input", "eval", "exec", "__import__"}
 
-    domain_dir = Path(triage.__file__).parent
-    for path in domain_dir.glob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text())):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                names = [node.module]
-            for name in names:
-                top = name.split(".")[0]
-                ok = top in ("romulus_contracts", *sys.stdlib_module_names)
-                assert ok or name.startswith("romulus_cloud.domain"), f"{path.name} imports {name}"
+
+def purity_problems(source: str) -> list[str]:
+    """Why `source` would break the domain purity rule (architecture §9 rule 3)."""
+    problems = []
+    for node in ast.walk(ast.parse(source)):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level > 0:
+                problems.append(f"relative import (level {node.level}) of {node.module}")
+                continue
+            names = [node.module or ""]
+        for name in names:
+            top = name.split(".")[0]
+            if top in DENIED_MODULES:
+                problems.append(f"imports {name} (IO, network or clock)")
+            elif not (
+                top in ("romulus_contracts", *sys.stdlib_module_names)
+                or name.startswith("romulus_cloud.domain")
+            ):
+                problems.append(f"imports {name}")
+        if isinstance(node, ast.Attribute):
+            if node.attr in DENIED_CALLS:
+                problems.append(f"uses .{node.attr} (clock or environment)")
+            if node.attr in ("environ", "environb"):
+                problems.append("reads os.environ")
+        if isinstance(node, ast.Name) and node.id in DENIED_NAMES:
+            problems.append(f"uses {node.id}()")
+    return problems
+
+
+def test_domain_modules_are_pure():
+    for path in Path(triage.__file__).parent.glob("*.py"):
+        assert purity_problems(path.read_text()) == [], path.name
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from ..db import Session",
+        "from . import merge",
+        "import socket",
+        "import sqlite3",
+        "from urllib.request import urlopen",
+        "import http.client",
+        "import time",
+        "from datetime import datetime\nx = datetime.now()",
+        "import datetime\nx = datetime.datetime.utcnow()",
+        "import os\nx = os.environ['X']",
+        "import os\nx = os.getenv('X')",
+        "x = open('f')",
+        "import sqlalchemy",
+        "from romulus_cloud.db import get_session",
+    ],
+)
+def test_purity_check_catches(source):
+    assert purity_problems(source)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import math\nfrom datetime import datetime, timedelta",
+        "from romulus_contracts import IncidentReport",
+        "from romulus_cloud.domain.triage import Part",
+    ],
+)
+def test_purity_check_allows(source):
+    assert purity_problems(source) == []
