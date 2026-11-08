@@ -100,7 +100,7 @@ def _outcome(db_session, kind):
 
 
 def test_part2_a_skill_goes_stub_replay_canary_promote(
-    fleet, learn, sessions, db_session, arms, tick_arms, work, now, count_events
+    fleet, learn, sessions, db_session, arms, tick_arms, work, now, count_events, monkeypatch
 ):
     tick_arms(now)
     tick_arms(now + 10 * S)  # every arm runs harness v1
@@ -111,14 +111,14 @@ def test_part2_a_skill_goes_stub_replay_canary_promote(
 
     # Transfer: sim-1 failed servo_read_error, sim-3's fix passed the bench check.
     _review(sessions, learn, now + 20 * S)
-    assert _kinds(db_session) == [("review.session_opened", "review:servo_read_error:1")]
-    opened = db_session.scalars(
-        events.find_query({"review": "review:servo_read_error:1"}, kinds=[review.OPENED])
-    ).one()
+    salt = review.case_salt(db_session, "default")
+    case_id = f"review:servo_read_error:{salt}:1"
+    assert len(salt) == 6 and _kinds(db_session) == [("review.session_opened", case_id)]
+    opened = db_session.scalars(events.find_query({"review": case_id}, kinds=[review.OPENED])).one()
     case = opened.data["case_file"]
     assert {r["id"] for r in case["runs"]} == set(SKILL_RUNS)
     assert case["handler"]["run"] == SKILL_RUNS[1] and case["probes"] == []
-    assert opened.data["request"]["metadata"]["romulus_case"] == "review:servo_read_error:1"
+    assert opened.data["request"]["metadata"]["romulus_case"] == case_id
     assert opened.data["request"]["structured_output_required"] is True
     assert opened.refs.get("incident")  # sim-1's incident
 
@@ -166,6 +166,13 @@ def test_part2_a_skill_goes_stub_replay_canary_promote(
     devs = {d.id: d for d in db_session.query(Device)}
     assert all(d.assigned_harness == 2 for d in devs.values() if d.device_class == "so101")
     assert {i: devs[i].assigned_harness for i in pods_before} == pods_before  # pods untouched
+
+    # T1: the learning tick then mirrors the promoted skill to Naïve Skills (FakeNaive).
+    publish = learn.model_copy(update={"review_publish": True})
+    monkeypatch.setattr(worker, "get_settings", lambda: publish)
+    (step,) = [s for s in worker.steps_for(publish) if s.name == "learning.tick"]
+    assert run_tick([step], sessions, now + 170 * S, {}) == {"learning.tick": "ok"}
+    assert count_events("review.published", {"candidate": cand.id}) == 1
 
 
 def test_part3_the_frozen_rule_is_staged_with_no_candidate(fleet, learn, sessions, db_session, now):
@@ -220,7 +227,8 @@ def test_part4_an_invented_run_is_rejected_and_the_kind_cools_down(
 
     # It cools down: the next session is the other kind, not servo_read_error again.
     _review(sessions, learn, now + 30 * S)
-    assert _kinds(db_session)[-1] == ("review.session_opened", "review:us_frozen:1")
+    salt = review.case_salt(db_session, "default")
+    assert _kinds(db_session)[-1] == ("review.session_opened", f"review:us_frozen:{salt}:1")
     _review(sessions, learn, now + 35 * S)
     cooling, _ = review.skip_sets(
         db_session,
@@ -276,3 +284,61 @@ def test_a_session_with_no_proposal_in_time_is_cancelled_and_rejected(
     ev = _outcome(db_session, "servo_read_error")
     assert ev.kind == "review.rejected" and slow.cancelled == [ev.data["session_id"]]
     assert ev.data["result"]["failures"][0].startswith("The session ended without a proposal")
+
+
+class _Refusing:
+    """A Naïve whose session create fails for good (an unknown agent: 404)."""
+
+    def find_session(self, agent_id, case_id):
+        return None
+
+    def create_session(self, body, *, idempotency_key):
+        from romulus_cloud.adapters.naive import NaiveError
+
+        raise NaiveError("agent fleet-doctor not found", status=404, code="not_found")
+
+
+def test_a_session_naive_wont_start_is_rejected_and_the_step_survives(
+    fleet, learn, sessions, db_session, now
+):
+    _review(sessions, learn, now + 20 * S, naive=_Refusing())  # the step stays "ok"
+    ev = _outcome(db_session, "servo_read_error")
+    assert ev.kind == "review.rejected" and ev.data["session_id"] is None
+    assert ev.data["result"]["failures"] == [
+        "Naïve wouldn't start the session (agent fleet-doctor not found)."
+    ]
+    assert [k for k, _ in _kinds(db_session)].count(review.OPENED) == 0
+    _review(sessions, learn, now + 25 * S, naive=_Refusing())  # cools down: the other kind next
+    assert _outcome(db_session, "us_frozen").kind == "review.rejected"
+    salt = review.case_salt(db_session, "default")
+    assert ev.refs["review"] == f"review:servo_read_error:{salt}:1"
+
+
+def test_a_dead_session_waits_then_is_rejected_past_the_timeout(
+    fleet, learn, sessions, db_session, now
+):
+    from romulus_cloud.adapters.naive import FixtureNaive, NaiveError
+
+    class Dead(FixtureNaive):
+        broken = False
+
+        def get_session(self, session_id):
+            if self.broken:
+                raise NaiveError("upstream 502", status=502, code="bad_gateway")
+            return super().get_session(session_id)
+
+    dead = Dead(FIXTURES / "servo_read_error.json", now=lambda: now)
+    _review(sessions, learn, now + 20 * S, naive=dead)
+    dead.broken = True  # the session exists; now every read of it fails
+    _review(sessions, learn, now + 300 * S, naive=dead)  # a Naïve error inside the window: wait
+    assert [k for k, _ in _kinds(db_session)] == [review.OPENED]
+    _review(sessions, learn, now + 640 * S, naive=dead)
+    ev = _outcome(db_session, "servo_read_error")
+    assert ev.kind == "review.rejected" and ev.data["cost_usd"] is None
+    assert "didn't answer" in ev.data["result"]["failures"][0]
+
+
+def test_the_case_salt_is_stable_and_differs_per_database(db_session, seeded):
+    salt = review.case_salt(db_session, "default")
+    assert salt == review.case_salt(db_session, "default")
+    assert salt != review.case_salt(db_session, "another-fleet")  # no events: a fleet-id hash

@@ -25,6 +25,7 @@ whose review-born candidate was rolled back is paused until `clear` (D31). Every
 actor `agent:fleet-doctor`, class `agent`. Nothing here commits; the worker step does.
 """
 
+import hashlib
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -97,6 +98,19 @@ def review_events(session: Session, fleet_id: str) -> list[Event]:
         .order_by(Event.ts, Event.recorded_at, Event.id)
     )
     return list(session.scalars(stmt))
+
+
+def case_salt(session: Session, fleet_id: str) -> str:
+    """6 hex chars from the database's first event (by `recorded_at`, a clock timestamp):
+    stable across restarts, new after a reset, so `review:<kind>:<salt>:<n>` never adopts a
+    finished Naïve session from an earlier database (`find_session` by `romulus_case`)."""
+    first = session.scalar(
+        select(Event.id)
+        .where(Event.fleet_id == fleet_id)
+        .order_by(Event.recorded_at, Event.id)
+        .limit(1)
+    )
+    return hashlib.sha256(str(first or fleet_id).encode()).hexdigest()[:6]
 
 
 def open_session(evs: Iterable[Event]) -> Event | None:
@@ -300,7 +314,8 @@ def _open(
     client: Any,
     mode: str,
 ) -> dict[str, Any]:
-    n = 1 + sum(1 for e in evs if e.kind == OPENED and (e.data or {}).get("kind") == cluster.kind)
+    used = {e.refs.get("review") for e in evs if (e.data or {}).get("kind") == cluster.kind}
+    n = 1 + len(used - {None})  # every case id this kind used, opened or not
     probes = load_probes(settings)
     probe = next((p for p in probes if p.get("kind") == cluster.kind), None)
     detail = None
@@ -310,6 +325,7 @@ def _open(
         cluster,
         runs,
         n=n,
+        salt=case_salt(session, settings.fleet_id),
         handler_detail=detail,
         probes=probes,
         skills=skill_slugs(session, settings, evs),
@@ -328,7 +344,33 @@ def _open(
     except NaiveError as exc:
         if exc.pending or exc.retryable:
             return {"case": case_id, "status": f"Naïve is busy; retrying next tick ({exc})"}
-        raise
+        # E.g. an unknown agent (404): reject the case, so the kind cools down instead of
+        # failing the learning step every tick.
+        log_line("review.open_failed", level="error", case=case_id, error=repr(exc))
+        sentence = f"Naïve wouldn't start the session ({rv._cut(str(exc), 160)})."
+        result = rv.ReviewResult("rejected", f"Rejected. {sentence}", failures=(sentence,))
+        events.record(
+            session,
+            ACTOR,
+            "agent",
+            OUTCOMES[OUTCOME_NAMES.index("rejected")],
+            {"review": case_id},
+            f"Cluster review {case_id}: {sentence} The kind cools down.",
+            data={
+                "proposal": None,
+                "result": _result_json(result),
+                "session_id": None,
+                "duration_s": 0.0,
+                "cost_usd": None,
+                "probe_id": None,
+                "case_id": case_id,
+                "kind": cluster.kind,
+                "recorded": mode == "fixture",
+            },
+            ts=now,
+            fleet_id=settings.fleet_id,
+        )
+        return {"case": case_id, "status": "rejected"}
     by_id = {r.id: r for r in runs}
     incidents = {
         r["id"]: by_id[r["id"]].incident_id
@@ -537,10 +579,21 @@ def _poll(
     try:
         state = client.get_session(session_id)
     except NaiveError as exc:
-        if exc.status != 404 or data.get("mode") != "fixture":
-            raise
-        # A restarted worker lost the recording's sessions: play it again (same key and body).
-        state = client.create_session(data["request"], idempotency_key=case_id)
+        if exc.status == 404 and data.get("mode") == "fixture":
+            # A restarted worker lost the recording's sessions: play it again (same key, body).
+            state = client.create_session(data["request"], idempotency_key=case_id)
+        elif (now - opened.ts).total_seconds() <= TIMEOUT_S:
+            log_line("review.poll_failed", case=case_id, error=repr(exc))
+            return {"case": case_id, "status": f"Naïve didn't answer ({exc}); waiting"}
+        else:
+            sentence = (
+                f"Naïve didn't answer for session {session_id} within {TIMEOUT_S:.0f} s "
+                f"({rv._cut(str(exc), 160)})."
+            )
+            result = rv.ReviewResult("rejected", f"Rejected. {sentence}", failures=(sentence,))
+            why = f"Cluster review {case_id}: {sentence} The kind cools down."
+            _record_outcome(session, opened, None, result, None, now, settings, why)
+            return {"case": case_id, "status": "rejected"}
     verdict, problem = tech_rules.session_outcome(
         state=state.state,
         stop_reason=state.stop_reason,

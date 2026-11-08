@@ -307,9 +307,11 @@ def build_case_file(
     skills: Iterable[str],
     device_classes: Iterable[str],
     redact: Callable[[str], str],
+    salt: str = "",
 ) -> dict[str, Any]:
-    """The case file for one cluster (§4.2). `case_id` (`review:<kind>:<n>`) goes in the
-    session's `metadata.romulus_case`. Every run's text is redacted and cut; at most
+    """The case file for one cluster (§4.2). `case_id` (`review:<kind>:<salt>:<n>`, or
+    `review:<kind>:<n>` with no salt) goes in the session's `metadata.romulus_case`; the salt
+    keeps ids from repeating across databases. Every run's text is redacted and cut; at most
     `MAX_CASE_RUNS` runs (the newest failures, plus the passing run that handles the kind).
     Only probes for this kind are listed. `handler_detail` is ours (the detector's file and
     docstring), but it is cut and redacted too."""
@@ -326,7 +328,7 @@ def build_case_file(
         for k, v in (handler_detail or {}).items():
             handler[str(k)] = _cut(redact(str(v)), HANDLER_TEXT_MAX)
     return {
-        "case_id": f"review:{cluster.kind}:{n}",
+        "case_id": f"review:{cluster.kind}:{salt}:{n}" if salt else f"review:{cluster.kind}:{n}",
         "kind": cluster.kind,
         "reason": cluster.reason,
         "why": cluster.why,
