@@ -75,8 +75,23 @@ def register(ctx):
 
     ctx.register_tool(
         name="arm_restart_sensor", toolset=TOOLSET, handler=restart_sensor,
-        schema=_schema("arm_restart_sensor", "Healer repair: restart the wrist distance sensor, then verify on "
-                                             "fresh readings. Fixes a frozen or stuck distance. Never moves the arm."),
+        schema=_schema("arm_restart_sensor", "Healer repair: restart the wrist distance sensor (through the pod "
+                                             "daemon), then the watchdog moves the arm home and checks fresh "
+                                             "readings. Fixes a frozen or stuck distance. The result says verified "
+                                             "true or false."),
+    )
+
+    def check(params, **kwargs):
+        del params, kwargs
+        return json.dumps(_call("repair", action="verify"))
+
+    ctx.register_tool(
+        name="arm_check", toolset=TOOLSET, handler=check,
+        schema=_schema("arm_check", "Healer check, no fix: the watchdog moves the arm home and re-checks the "
+                                    "joints and the sensor, closing the incidents that pass. Use after a joint "
+                                    "stall, or to see whether a sensor-pod fault has been fixed. A joint that "
+                                    "still won't move is handed to a person: the result lists it as handed off "
+                                    "(hardware) and Romulus opens a work order."),
     )
 
     def guard(tool_name, args, task_id="", **kwargs):
@@ -89,7 +104,8 @@ def register(ctx):
         if st.get("incidents"):
             said = "; ".join(i["summary"] for i in st["incidents"])
             return {"action": "block", "message": f"The arm is parked: {said}. Fix the cause first "
-                                                  "(for a stuck distance, arm_restart_sensor), then retry."}
+                                                  "(for a stuck distance, arm_restart_sensor; otherwise "
+                                                  "arm_check), then retry."}
         if any(st.get("status", [])):
             return {"action": "block", "message": f"A servo reports an alarm (status bits {st['status']}); "
                                                   "park the arm and report it instead of moving."}

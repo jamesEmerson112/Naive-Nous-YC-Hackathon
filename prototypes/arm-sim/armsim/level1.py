@@ -101,8 +101,12 @@ def check_distance_residual(s, *, seconds=2.0, min_rows=12, moved_mm=10.0):
         return []
     a = r * sm / sp
     gap = statistics.median(m - p for m, p in zip(meas, pred))     # the offset, measured directly
-    ev = {"n": len(rows), "slope": round(a, 3), "gap_mm": round(gap, 1), "r": round(r, 3), "arm_moved_mm": round(moved)}
-    if abs(a - 1) > 0.2:
+    ratio = statistics.median(m / p for m, p in zip(meas, pred) if p > 0)
+    ev = {"n": len(rows), "slope": round(a, 3), "ratio": round(ratio, 3), "gap_mm": round(gap, 1), "r": round(r, 3),
+          "arm_moved_mm": round(moved)}
+    # A scale error changes every reading by the same factor, so the readings' own ratio to the
+    # prediction must be off too: a steep fitted slope alone comes from a fast move.
+    if abs(a - 1) > 0.2 and abs(ratio - 1) > 0.1:
         return [_f("us_scale", "critical", "Reads %.2fx the kinematics distance" % a, ev,
                    ["a clock or units bug in the pod firmware (for example a half-speed clock halves distances)"],
                    ["chip_clock", "fw_rollback", "src_diff"])]

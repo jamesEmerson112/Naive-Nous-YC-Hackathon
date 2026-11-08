@@ -54,12 +54,20 @@ class Skills:
     def grip(self):
         """Close; if the jaws stall on something, back off to just inside the stall so the servo
         isn't held at its torque limit (on an STS3215 that trips the overload alarm, note "Traps")."""
-        r = self.arm.goto(self._keep(gripper=prims.CLOSED), duration=0.8)
-        self.arm.hold(0.3)
+        r = self.arm.goto(self._keep(gripper=prims.CLOSED), duration=0.8, settle_timeout=0.4)
         g = self.arm.grasp_check()
         if g["holding"]:
-            self.arm.send(self._keep(gripper=max(prims.CLOSED, g["gripper"] - 0.1)))
-            self.arm.hold(0.3)
+            # Ease off in small steps until the squeeze is under 90% of the servo's limit: held at
+            # the limit for 0.5 s, an STS3215 sets its overload bit (32) and the guard blocks motion.
+            target = g["gripper"]
+            for _ in range(8):
+                if g["load_nm"] < 0.9 * self.arm.grip_limit_nm():
+                    break
+                target += 0.5
+                self.arm.send(self._keep(gripper=target))
+                self.arm.hold(0.2)
+                g = self.arm.grasp_check(min_load=0.2)
+            self.arm.hold(0.6)                       # long enough for a stale overload count to clear
             g = self.arm.grasp_check(min_load=0.2)
         return {**{k: v for k, v in r.items() if k != "arrived"}, "grasp": g, "status": self.arm.status()}
 
@@ -270,7 +278,8 @@ class Watchdog:
         halted, hold still on fresh readings, then close what the checks say is fixed."""
         self.verify_pending = None
         if not self.open():
-            return {"verified": True, "open": []}
+            self.arm.hold(0.6)                    # no incident: refresh the servo status bits
+            return {"verified": True, "open": [], "status": self.arm.status()}
         arm = self.arm
         arm._parking = True                   # the watchdog's own move is allowed while halted
         try:

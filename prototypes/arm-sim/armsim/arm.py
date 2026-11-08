@@ -248,6 +248,10 @@ class SimArm:
     def status(self):
         return [OVERLOAD if s >= OVERLOAD_AFTER_S else 0 for s in self._at_limit]
 
+    def grip_limit_nm(self):
+        """The gripper servo's torque limit (N*m); the overload bit trips when held near it."""
+        return float(self._flimit[5])
+
     def grasp_check(self, *, min_open=4.0, min_load=0.25):
         """Holding = the gripper stopped short of fully closed and its servo is pushing."""
         g = float(self._units(self.d.qpos[self._qadr])[5])
