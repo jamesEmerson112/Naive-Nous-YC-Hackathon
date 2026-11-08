@@ -2,7 +2,82 @@ FEATURES: who is on what
 Claim a line by adding "<--- Name" (several names: "<--- Olir, Andre").
 Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
-Updated Sat Nov 7, 8:18 PM PST from CLAUDE.md, commits and docs/.
+BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
+no claims: claim lines in the box sections below it.
+Updated Sat Nov 7, 8:22 PM PST from CLAUDE.md, commits and docs/.
+
+BY PERSON, IN PHASE ORDER
+Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
+P0 decide and claim: now → 8:30 PM
+P1 the core loop works: 8:30 → 11:30 PM
+P2 runs overnight, hands off: 11:30 PM → Sun 7 AM
+P3 sponsor extras and polish: Sun 7 → 10 AM (code freeze at 10)
+P4 freeze, rehearse, present: Sun 10 AM → 1 PM
+P5 Hermes plugin entry: due Wed Nov 11, 5 PM EST
+P6 later: the roadmap slide
+
+KENT
+P0 Stripe direction, with James: bill the robot's owner, or pay the supplier
+P1 Live Naive card spike + I0 contract review (M0 rest)
+P1 First live work order: card → fleet-ops phones a teammate (needs a fleet-ops agent)
+P1 Open PRs: M8b coding agent (#28), edge bridge (#25), Fleet Doctor foundation (#27) (inferred)
+P1 Fleet Doctor L1, L2, device reference, ledger: off by default, not on the demo path (inferred)
+P2 Overnight launch by 12:30 AM: chaos schedule, laptop awake, demo tag
+P2 Morning digest by 7:30 AM: agent vs human actions
+P3 Real arm + polish, 9-10 AM: F2 and F3 on the real arm (with Olir, Andre)
+Done: Romulus M0-M7 and M8a, STM32 toolchain (B8, #24), Fleet Doctor plan, D23-D28 and contracts (#26)
+
+OLIR
+P0 Frozen-ultrasonic triage rule: echo time unchanged for 4 s
+P0 One demo story for the two healers, with Ishaan (5 min)
+P1 Level 1 wiring, with Ishaan: pod finding → incident summary → a spoken sentence
+P2 Leave the pod running under podd overnight: our first real recorded data
+P3 Real arm + polish (with Kent, Andre)
+Done: sensor pod, podd + 38 heal tools, 6 bad pod images (#20)
+
+ISHAAN
+Now: the Jetson link (no USB data, no LAN path yet)
+P0 Owed to Kent: contracts review (I0: B2, B3) and the K17 safety + visor paths
+P0 One demo story for the two healers, with Olir (5 min)
+P1 Push device/, harness/, bench/ (B1); first real check-in by 9:30 PM (Kent's plan)
+P1 Level 1 wiring, with Olir: a planted fault produces a spoken sentence
+P1 Pi app: hold object; healer on the Pi; health checks; plant D1-D3 (inferred: the P1 end-to-end test needs them)
+P3 Real arm: F2 and F3 need the device side running on it (Kent's flows tracker)
+Done: healer benchmark (qwen3.5:4b, h3, 10 of 12); 18 device tests
+
+ANDRE
+Now: calibrating the arm with LeRobot (also has assembly and the camera and ultrasonic wiring, with Olir)
+P3 Real arm + polish (with Kent, Olir): F2 and F3 on the real arm
+
+JAMES
+P0 Stripe direction (with Kent); pick Monid's job, or move Monid to the robot's voice
+P1 Commander, approach A: Whisper → Hermes → 4-6 scripted skills (reach, grip, release, go home)
+P1 Arm prototypes without the real arm (MuJoCo twin, Kent's fake device, Olir's pod): arm host, approach-then-grasp, FK residual check, data logger
+P3 Plug in the red follower arm: test the prototypes, collect labeled data
+P3 Optional: MuJoCo twin next to the real arm
+Any time: ChatTS level-2 test on the spare RunPod hour (cut first)
+P5 Hermes plugin entry: his Hermes lane; its lines are unclaimed (see UNCLAIMED)
+Done: Naive console + fault lab (pi vs Hermes), Hermes install, stack hub
+
+EVERYONE
+P0 Redeem credits and mark them in SPONSORS AND CREDITS
+P0 Put a name on every unclaimed line
+P4 10 AM code freeze, walk-through x3, record the backup video; bring a router and Ethernet
+P4 1 PM: five demo beats, the digest numbers, the levels 2-3 pitch slide
+
+UNCLAIMED
+P1 Hermes arm plugin tools (the commander's skill menu)
+P1 fleet-ops agent, and the Mobilerun key in the Naive vault
+P1 Stripe payment in test mode
+P1 Pod healer agent loop + blind eval (HARNESS.md)
+P3 Tavily price and stock check on the card
+P3 Monid step in the order flow
+P3 AgentMail incident email
+P3 Emotion moves on the real arm (James's lamp gestures as the model)
+P5 pre_tool_call guard, cron pulls cards, gateway alerts, catalog submission
+P6 Level 3: MuJoCo fault factory, bench recordings, fine-tune a small model
+If time runs short, cut in this order: ChatTS test, MuJoCo twin, Monid, Tavily, emotion moves.
+Never cut: command → break → heal → resume, the work-order card, the overnight run, the backup video.
 
 NAIVE
 Naive API key for Romulus (by 5:15 PM)
