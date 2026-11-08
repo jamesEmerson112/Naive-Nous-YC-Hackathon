@@ -76,6 +76,11 @@ code { font-size: 0.9em; }
 .switch-result { max-width: 64rem; margin: 0.5rem auto 0; padding: 0 1rem; min-height: 1.2em; }
 .switch-result.ok { color: var(--text); font-weight: 600; }
 .switch-result.err { color: var(--freeze); font-weight: 600; }
+.stale {
+  max-width: 64rem; margin: 0.5rem auto 0; padding: 0.3rem 1rem;
+  background: var(--wait-bg); color: var(--wait); font-weight: 700;
+}
+.stale[hidden] { display: none; }
 .frozen-note { color: var(--freeze); font-weight: 700; }
 
 .section-h { font-size: 1.15rem; margin: 1.25rem 0 0.5rem; }
@@ -144,7 +149,7 @@ code { font-size: 0.9em; }
 .gap { display: block; color: var(--muted); font-weight: 400; font-size: 0.85rem; }
 .step-who { color: var(--muted); font-size: 0.9rem; }
 .actor { color: var(--text); font-weight: 600; }
-.kind { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
+.kind { color: var(--text); }
 .actor-badge { text-transform: uppercase; color: var(--bg); background: var(--muted); }
 .actor-agent .actor-badge { background: var(--agent); }
 .actor-automation .actor-badge { background: var(--automation); }

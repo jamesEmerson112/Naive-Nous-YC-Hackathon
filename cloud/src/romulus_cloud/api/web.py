@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from romulus_cloud import events
 from romulus_cloud.api.deps import SessionDep, SettingsDep
+from romulus_cloud.models import Event
 from romulus_cloud.services import devices, incidents
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -27,26 +28,6 @@ router = APIRouter(tags=["web"], include_in_schema=False)
 
 # How many incidents the timeline shows (newest first).
 TIMELINE_LIMIT = 50
-
-# Words a reader sees for the step that ends an incident's story so far, and its tone
-# (good / bad / wait / info) for the badge colour. Unknown kinds fall back to the label.
-STATUS: dict[str, tuple[str, str]] = {
-    "incident.reported": ("open", "bad"),
-    "incident.agent_acted": ("agent acted", "wait"),
-    "overlay.applied": ("overlay on trial", "wait"),
-    "overlay.held": ("overlay held", "good"),
-    "overlay.reverted": ("overlay reverted", "bad"),
-    "overlay.locked_in": ("locked in", "good"),
-    "overlay.dropped": ("overlay dropped", "info"),
-    "overlay.superseded": ("superseded", "info"),
-    "candidate.promoted": ("in the fleet", "good"),
-    "candidate.rolled_back": ("rolled back", "bad"),
-    "candidate.frozen": ("frozen", "bad"),
-    "candidate.awaiting_canary": ("awaiting canary", "wait"),
-    "workorder.created": ("work order", "wait"),
-    "workorder.card_posted": ("work order posted", "wait"),
-    "workorder.status_changed": ("work order updated", "wait"),
-}
 
 
 def _tz(settings) -> ZoneInfo:
@@ -77,30 +58,34 @@ def gap(seconds: float) -> str:
     return f"{h} h {rest // 60} min later" if rest >= 60 else f"{h} h later"
 
 
-def _status(story) -> tuple[str, str]:
-    if not story.steps:
-        return ("no events", "info")
-    last = story.steps[-1]
-    return STATUS.get(last.kind, (last.label, "info"))
+def who(actor: str) -> str:
+    """`device:arm-1` → `arm-1`, `human:kent` → `kent`, `gate` → `gate`."""
+    return actor.split(":", 1)[-1] or actor
 
 
-def _fleet(session) -> dict[str, Any]:
+def what(kind: str) -> str:
+    """`incident.reported` → `incident reported`, `overlay.locked_in` → `overlay locked in`."""
+    return kind.replace(".", " ").replace("_", " ")
+
+
+def _fleet(session, fleet_id: str) -> dict[str, Any]:
     """Fleet strip: devices (services read) and whether the fleet is frozen (latest
     fleet.frozen / fleet.unfrozen event, so the page reads events, not state)."""
-    switches = events.find(session, {}, kinds=["fleet.frozen", "fleet.unfrozen"])
+    query = events.find_query({}, kinds=["fleet.frozen", "fleet.unfrozen"])
+    switches = session.scalars(query.where(Event.fleet_id == fleet_id)).all()
     last = switches[-1] if switches else None
     return {
-        "devices": [devices.view(d) for d in devices.list_devices(session)],
+        "devices": [devices.view(d) for d in devices.list_devices(session, fleet_id)],
         "frozen": bool(last and last.kind == "fleet.frozen"),
         "frozen_why": last.why if last and last.kind == "fleet.frozen" else None,
     }
 
 
-def _timeline(session, tz: ZoneInfo) -> list[dict[str, Any]]:
+def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
     rows = []
-    for incident in incidents.list_incidents(session)[:TIMELINE_LIMIT]:
+    for incident in incidents.list_incidents(session, fleet_id=fleet_id)[:TIMELINE_LIMIT]:
         _, story = incidents.story(session, incident.id)
-        status, tone = _status(story)
+        status, tone = story.status
         rows.append(
             {
                 "id": incident.id,
@@ -129,6 +114,8 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
                 "gap": gap((s.at - previous).total_seconds()) if previous else None,
                 "iso": s.at.isoformat(),
                 "actor": s.actor,
+                "who": who(s.actor),
+                "what": what(s.kind),
                 "actor_class": s.actor_class,
                 "kind": s.kind,
                 "line": s.line,
@@ -139,7 +126,7 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
             }
         )
         previous = s.at
-    status, tone = _status(story)
+    status, tone = story.status
     return {
         "incident": incidents.view(incident),
         "day": day(incident.occurred_at, tz),
@@ -163,8 +150,8 @@ def timeline(request: Request, session: SessionDep, settings: SettingsDep):
     return _page(
         request,
         "timeline.html",
-        incidents=_timeline(session, tz),
-        fleet=_fleet(session),
+        incidents=_timeline(session, tz, settings.fleet_id),
+        fleet=_fleet(session, settings.fleet_id),
         tz=settings.display_tz,
     )
 
@@ -175,24 +162,26 @@ def incident_page(incident_id: str, request: Request, session: SessionDep, setti
         request,
         "incident.html",
         story=_story_view(session, incident_id, _tz(settings)),
-        fleet=_fleet(session),
+        fleet=_fleet(session, settings.fleet_id),
         tz=settings.display_tz,
     )
 
 
 @router.get("/partials/incidents", response_class=HTMLResponse)
 def incidents_partial(request: Request, session: SessionDep, settings: SettingsDep):
-    return _page(request, "partials/incidents.html", incidents=_timeline(session, _tz(settings)))
+    rows = _timeline(session, _tz(settings), settings.fleet_id)
+    return _page(request, "partials/incidents.html", incidents=rows)
 
 
 @router.get("/partials/fleet", response_class=HTMLResponse)
-def fleet_partial(request: Request, session: SessionDep):
-    return _page(request, "partials/fleet.html", fleet=_fleet(session))
+def fleet_partial(request: Request, session: SessionDep, settings: SettingsDep):
+    return _page(request, "partials/fleet.html", fleet=_fleet(session, settings.fleet_id))
 
 
 @router.get("/partials/killswitch", response_class=HTMLResponse)
-def killswitch_partial(request: Request, session: SessionDep):
-    return _page(request, "partials/killswitch.html", fleet=_fleet(session))
+def killswitch_partial(request: Request, session: SessionDep, settings: SettingsDep):
+    fleet = _fleet(session, settings.fleet_id)
+    return _page(request, "partials/killswitch.html", fleet=fleet)
 
 
 @router.get("/partials/incidents/{incident_id}", response_class=HTMLResponse)

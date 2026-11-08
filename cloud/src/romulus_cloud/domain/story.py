@@ -4,7 +4,8 @@
 plain-English line and the event's `why`. Later milestones extend a story by recording
 more events with the incident in their refs (candidate, gate, work order, evidence), and,
 if they want a nicer line or chain label than the default, by adding an entry to
-`LINES` / `LABELS` (and `STAGE` for tie order). Nothing here needs rewriting.
+`LINES` / `LABELS` (and `STAGE` for tie order), and, if the kind changes where an
+incident stands, to `STATUS`. Nothing here needs rewriting.
 
 Order is by when things happened (`ts`, the device's `occurred_at` for device events),
 never by when the server received them (K9). Events with the same `ts` are ordered by
@@ -50,6 +51,16 @@ class Story:
     def chain(self) -> str:
         """One line for the timeline: `camera_occluded → agent acted → overlay ov-12 → held`."""
         return " → ".join(s.label for s in self.steps)
+
+    @property
+    def status(self) -> tuple[str, str]:
+        """Where the incident stands, from the latest step whose kind is in `STATUS`:
+        (words, tone), e.g. ("overlay held", "good"). Steps that don't move it (evidence,
+        notes) are skipped."""
+        for s in reversed(self.steps):
+            if s.kind in STATUS:
+                return STATUS[s.kind]
+        return ("no events", "info") if not self.steps else ("open", "bad")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -139,6 +150,27 @@ LABELS: dict[str, Callable[[EventLike], str]] = {
     "overlay.dropped": lambda e: "dropped",
     "overlay.superseded": lambda e: "superseded",
 }
+
+# Where an incident stands after a step of this kind: (words for a badge, tone), with tone
+# one of good / bad / wait / info. Kinds not listed don't change the status.
+STATUS: dict[str, tuple[str, str]] = {
+    "incident.reported": ("open", "bad"),
+    "incident.agent_acted": ("agent acted", "wait"),
+    "overlay.applied": ("overlay on trial", "wait"),
+    "overlay.held": ("overlay held", "good"),
+    "overlay.reverted": ("overlay reverted", "bad"),
+    "overlay.locked_in": ("locked in", "good"),
+    "overlay.dropped": ("overlay dropped", "info"),
+    "overlay.superseded": ("superseded", "info"),
+    "candidate.promoted": ("in the fleet", "good"),
+    "candidate.rolled_back": ("rolled back", "bad"),
+    "candidate.frozen": ("frozen", "bad"),
+    "candidate.awaiting_canary": ("awaiting canary", "wait"),
+    "workorder.created": ("work order", "wait"),
+    "workorder.card_posted": ("work order posted", "wait"),
+    "workorder.status_changed": ("work order updated", "wait"),
+}
+STATUS_TONES = ("good", "bad", "wait", "info")
 
 # Where a kind sits in the loop, to order events that share a timestamp (an incident,
 # the agent's actions and its overlay all carry the incident's `occurred_at`).

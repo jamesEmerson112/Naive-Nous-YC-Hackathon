@@ -19,8 +19,8 @@
       <span class="gap">{{ s.gap or s.day }}</span>
     </div>
     <div class="step-body">
-      <p class="step-who"><span class="badge actor-badge">{{ s.actor_class }}</span>
-        <span class="actor">{{ s.actor }}</span> <span class="kind">{{ s.kind }}</span>
+      <p class="step-who" title="{{ s.actor }} · {{ s.kind }}"><span class="badge actor-badge">{{ s.actor_class }}</span>
+        <span class="actor">{{ s.who }}</span> · <span class="kind">{{ s.what }}</span>
         {% if s.touches_safety %}<span class="safety">touches safety</span>{% endif %}</p>
       <p class="step-line">{{ s.line }}</p>
       <p class="step-why"><span class="why-label">Why</span> {{ s.why }}</p>

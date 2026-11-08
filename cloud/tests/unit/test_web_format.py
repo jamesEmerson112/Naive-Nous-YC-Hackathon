@@ -1,11 +1,11 @@
-"""The page time helpers: local, readable times and gaps between steps (M2, D10)."""
+"""The page formatting helpers: local, readable times, gaps and names (M2, D10)."""
 
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from romulus_cloud.api.web import STATUS, clock, day, gap
+from romulus_cloud.api.web import clock, day, gap, what, who
 
 PT = ZoneInfo("America/Los_Angeles")
 
@@ -32,6 +32,9 @@ def test_gap(seconds, text):
     assert gap(seconds) == text
 
 
-def test_status_tones_are_known():
-    assert {tone for _, tone in STATUS.values()} <= {"good", "bad", "wait", "info"}
-    assert STATUS["overlay.held"] == ("overlay held", "good")
+def test_readable_names():
+    assert who("device:arm-1") == "arm-1"
+    assert who("human:kent") == "kent"
+    assert who("gate") == "gate"
+    assert what("incident.reported") == "incident reported"
+    assert what("overlay.locked_in") == "overlay locked in"

@@ -72,6 +72,10 @@ def test_story_page_reads_like_a_story(client, arm, example):
     assert 'class="badge actor-badge">automation' in page
     assert "suspected cause: software" in page and "resolved on the device" in page
     assert 'class="safety"' not in page and "Touches safety:" not in page
+    # Readable names in step headers; the raw actor and kind stay in a tooltip.
+    assert '<span class="actor">arm-1</span> · <span class="kind">incident reported</span>' in page
+    assert 'title="device:arm-1 · incident.reported"' in page
+    assert ">device:arm-1<" not in page
 
     partial = _text(client.get(f"/partials/incidents/{D1}"))
     assert "<html" not in partial and story["steps"][-1]["why"] in partial
@@ -153,3 +157,35 @@ def test_static_files_are_served(client):
     assert js.status_code == 200 and "htmx 2.0.4" in js.text[:200]
     css = client.get("/static/romulus.css")
     assert css.status_code == 200 and "prefers-color-scheme: dark" in css.text
+
+
+def test_polling_pauses_when_hidden_and_reports_staleness(client, arm, example):
+    client.post("/v1/devices/arm-1/incidents", json=example("incident_rules_patch"))
+    trigger = "hx-trigger=\"every 3s [document.visibilityState === 'visible']\""
+    for url in ("/", f"/incidents/{RULES}"):
+        page = _text(client.get(url))
+        assert page.count(trigger) >= 2  # the page's own poll plus the kill switch
+        assert 'every 3s"' not in page  # no poll without the visibility filter
+        assert 'id="stale"' in page and "htmx:sendError" in page and "htmx:responseError" in page
+
+
+def test_freeze_asks_for_a_name_recorded_as_human(client):
+    page = _text(client.get("/"))
+    assert "recorded as human:<name>" in page and '"operator"' in page
+    assert "body.why" in page
+
+
+def test_fleet_strip_and_switch_read_only_this_fleet(client, arm, db_session):
+    events.record(
+        db_session,
+        "human:other",
+        "human",
+        "fleet.frozen",
+        {},
+        "Another fleet was frozen.",
+        fleet_id="other",
+    )
+    db_session.commit()
+    for url in ("/", "/partials/killswitch", "/partials/fleet"):
+        page = _text(client.get(url))
+        assert "FLEET FROZEN" not in page and "Another fleet was frozen." not in page
