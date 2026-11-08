@@ -9,28 +9,33 @@ human actions it took (target 0). Every command runs from the repo root.
 1. **Laptop:** plug in the power adapter. Keep the lid open, or close it only with an
    external display, keyboard and power attached. In Docker Desktop, turn on
    *Settings → General → Start Docker Desktop when you sign in*.
-2. **Overnight settings:** `cp .env.overnight.example .env.overnight`. This sets
-   `NAIVE_MODE=fake` (**never live overnight**: the chaos makes hardware faults all night,
-   and live mode could phone a real supplier at 3 AM; build plan K13), the
-   `CANARY_WINDOW_S=1200` / `BATCH_INTERVAL_S=3600` timings, fake LLM, and
-   `OVERNIGHT_STARTED=true`.
-3. **Schema:** a database created before M7 lacks one column. Either `make reset && make seed`
-   (fine before launch), or keep the data and add the column:
-   `docker compose exec db psql -U romulus -d romulus -c "ALTER TABLE fleet_state ADD COLUMN IF NOT EXISTS overnight_started_at TIMESTAMPTZ;"`
-4. **Tests green on the commit you launch:** `make test`.
+2. **The launch commit:** check it out and make sure the tests pass on it (`make test`).
 
-## 2. Launch (by 12:30 AM)
+## 2. Launch (by 12:30 AM), in this order
 
 ```bash
-caffeinate -dims          # in its own terminal tab; leave it running all night
-make up                   # db, api, worker (restart: unless-stopped)
-make seed                 # safe to repeat
-make sim                  # + fake-devices with --chaos=overnight (4 arms, seed 0)
-make overnight-start BY=kent   # DB flag: reset now refuses; the digest counts from here
-make overnight-check      # every line PASS (a WARN is a judgment call; a FAIL is not)
+caffeinate -dims                     # its own terminal tab; leave it running all night
+
+make down                            # stop whatever runs now, fake fleet included
+make up && FORCE=1 make reset        # fresh database whose schema matches this commit
+                                     # (FORCE=1 because an old .env may set OVERNIGHT_STARTED)
+cp .env .env.before-overnight        # keep your keys
+cp .env.overnight.example .env       # overnight values: NAIVE_MODE=fake, 1200 / 3600, ...
+rm -f .env.overnight                 # no stale override file
+#   now copy your secrets (NAIVE_API_KEY, LLM_API_KEY, ...) from .env.before-overnight into
+#   .env, but keep every *_MODE / *_PROVIDER line from the example: all fake (K13)
+make sim                             # db, api, worker + fake-devices, --chaos=overnight
+make seed
+make overnight-start BY=kent         # DB flag: reset refuses; the digest counts from here
+make overnight-check                 # every line PASS (a WARN is a judgment call; FAIL is not)
 ```
 
-Then Kent, at the go/no-go: commit, `git tag demo-overnight`, `git push origin demo-overnight`.
+`NAIVE_MODE` must be **fake** all night: the chaos plants hardware faults, and a live work
+order could phone a real supplier at 3 AM (build plan K13). `make overnight-check` asks the
+running api and worker for the mode they actually resolved. Even in live mode, an order for
+a device that isn't registered as `real` is never posted (it waits for a person).
+
+Then Kent, at the go/no-go: commit, tag `demo-overnight`, push the tag.
 
 What the chaos does (`tools/fake_device/src/fake_device/chaos.py`, rates in `PROFILES`):
 a software fault about every 10 min (3 in 10 are D1 code patches, about 1 in 5 arms a bad
@@ -42,7 +47,9 @@ Change it with `CHAOS_SEED=1 make sim`; try a dense version with `CHAOS=demo CHA
 
 ## 3. Optional 3 AM check
 
-`make overnight-check`, and `docker compose logs --since 1h fake-devices | grep "chaos so far"`.
+`make overnight-check` (it FAILs if a worker step failed in the last few minutes), and
+`docker compose logs --since 1h fake-devices | grep "chaos so far"`. A restart of
+fake-devices resumes the schedule from `data/fake_device/chaos.json`; it never replays it.
 The worker deletes the oldest unlabeled episode blobs when the store passes
 `BLOB_BUDGET_GB` (every 10 min); incident evidence is never deleted.
 
@@ -60,12 +67,15 @@ at: "waiting for a person" (should be 0), the blob store line (under budget), th
 timeline page at `http://localhost:8000/`, and `docker compose ps` (everything up;
 `docker inspect -f '{{.RestartCount}}' <container>` shows any restarts).
 
-## 5. Stop
+## 5. Stop, in this order
 
 ```bash
-make overnight-stop BY=kent     # clears the DB flag
-rm .env.overnight && make up    # back to demo timings (or: make down)
+docker compose --profile sim stop fake-devices   # FIRST: no more chaos faults
+make overnight-stop BY=kent                      # clears the DB flag
+cp .env.before-overnight .env && make up         # back to your own settings
 ```
 
+Stop the fake fleet before changing `.env`: with chaos still running, a park after the
+switch would create a work order under your normal (possibly live) settings.
 Keep the data: datasets (M6) are built from it on Sunday morning. `make reset` refuses
 while `OVERNIGHT_STARTED=true` or the DB flag is set; `FORCE=1` overrides, and wipes the night.

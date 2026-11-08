@@ -58,6 +58,12 @@ if $COMPOSE logs --since 2m worker 2>/dev/null | grep -q '"worker.step"'; then
 else
   warn "worker logged no steps in the last 2 minutes (make logs)"
 fi
+failed_steps="$($COMPOSE logs --since 5m worker 2>/dev/null | grep -c '"worker.step_failed"')"
+if [ "${failed_steps:-0}" -gt 0 ]; then
+  fail "worker: $failed_steps failed step(s) in the last 5 minutes (make logs)"
+else
+  pass "worker: no failed steps in the last 5 minutes"
+fi
 
 fd_args="$(docker inspect -f '{{join .Args " "}}' "$($COMPOSE --profile sim ps -q fake-devices 2>/dev/null | head -n1)" 2>/dev/null || true)"
 case "$fd_args" in
