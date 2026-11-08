@@ -39,7 +39,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
-from romulus_cloud.adapters.coder_egress import Egress, EgressError, EgressSummary
+from romulus_cloud.adapters.coder_egress import (
+    DEFAULT_MAX_TOKENS,
+    Egress,
+    EgressError,
+    EgressSummary,
+)
 from romulus_contracts.codepatch import CODE_ROOT, is_under, summarize_code_patch
 
 DEFAULT_IMAGE = "romulus-coder"
@@ -361,6 +366,7 @@ class Sandbox:
         timeout_s: float,
         network: str,
         stdin: str | None = None,
+        labels: Mapping[str, str] | None = None,
     ) -> SandboxRun:
         name = f"romulus-coder-{uuid.uuid4().hex[:12]}"
         argv = [
@@ -373,6 +379,8 @@ class Sandbox:
         ]  # fmt: skip
         if hasattr(os, "getuid"):  # files the agent writes stay owned by the host user
             argv += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        for key, value in sorted((labels or {}).items()):  # so a teardown or prune finds it
+            argv += ["--label", f"{key}={value}"]
         for key in sorted(env):  # names only: values (the API key) never appear in argv
             argv += ["-e", key]
         argv += [self.image, mode]
@@ -441,7 +449,7 @@ class LocalAgent:
     step_limit: int = 30
     time_limit_s: int = 600
     test_timeout_s: int = 300
-    max_tokens: int = 4000
+    max_tokens: int = DEFAULT_MAX_TOKENS  # asked for by the agent and capped by the proxy
     scratch_dir: str | None = None  # where scratch copies go (Docker must be able to mount it)
 
     def draft(
@@ -467,12 +475,16 @@ class LocalAgent:
             sandbox = self.sandbox
             egress = Egress(image=sandbox.image, runner=sandbox.runner, docker=sandbox.docker)
             proxy: EgressSummary | None = None
+            timeout_s = self.time_limit_s + self.test_timeout_s + 60
             try:
                 with egress.open(
                     self.base_url,
                     self.api_key,
+                    model=self.model,  # forced on every request, whatever the agent asks
+                    max_tokens=self.max_tokens,
                     # mini-swe-agent tries each step at most twice (run_agent.py), plus slack
                     max_requests=2 * self.step_limit + 5,
+                    ttl_s=timeout_s + 120,  # an orphaned proxy stops holding the key
                     base_env=os.environ,
                 ) as net:
                     run = sandbox.run(
@@ -483,8 +495,9 @@ class LocalAgent:
                         if task is not None
                         else build_task_prompt(patch, incident, code_rev),
                         # the agent's own wall-clock limit, then the tests, then a margin
-                        timeout_s=self.time_limit_s + self.test_timeout_s + 60,
+                        timeout_s=timeout_s,
                         network=net.network,
+                        labels=net.agent_labels,
                     )
                     proxy = egress.summary(net)
             except EgressError as exc:  # no result: the batch retries it later (coder_retry)
@@ -601,6 +614,7 @@ def build_coder(
     time_limit_s: int = 600,
     runner: Runner | None = None,
     scratch_dir: str | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> Coder:
     """Factory called with CODER_PROVIDER, CODER_AGENT, CODER_IMAGE (+ the LLM endpoint)."""
     if provider == "fake":
@@ -619,6 +633,7 @@ def build_coder(
             step_limit=step_limit,
             time_limit_s=time_limit_s,
             scratch_dir=scratch_dir or None,
+            max_tokens=max_tokens,
         )
     if provider == "naive_session":
         raise NotImplementedError(

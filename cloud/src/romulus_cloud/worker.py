@@ -25,6 +25,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session, sessionmaker
 
 from romulus_cloud import db
+from romulus_cloud.adapters import coder_egress
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
@@ -144,6 +145,21 @@ def host_refusal(session: Session, settings: Settings, force: bool) -> str | Non
     return None
 
 
+def egress_startup(settings: Settings, runner=None) -> None:
+    """With the real coder (B5): SIGTERM/SIGINT tear down open agent runs before exiting, and
+    leftovers of a killed worker (a proxy still holding the key, its network) are removed."""
+    if settings.coder_provider != "local_agent":
+        return
+    coder_egress.install_signal_teardown()
+    removed = coder_egress.prune(runner)
+    if removed:
+        log_line(
+            "worker.egress_pruned",
+            removed=removed,
+            why=f"removed {removed} leftover coder proxy container(s)/network(s) at startup",
+        )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="python -m romulus_cloud.worker")
     parser.add_argument("--host", action="store_true", help="run as the host worker (M8b)")
@@ -164,6 +180,7 @@ def main(argv: list[str] | None = None) -> None:
             pidfile.parent.mkdir(parents=True, exist_ok=True)
             pidfile.write_text(str(os.getpid()))
             atexit.register(lambda: pidfile.unlink(missing_ok=True))
+    egress_startup(settings)
     blocker = code_lockin.coder_blocker(settings)
     if blocker:  # said once here; code overlays and coder replays wait until it is fixed
         log_line("worker.coder_unavailable", level="error", why=blocker)

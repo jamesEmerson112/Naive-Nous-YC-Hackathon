@@ -41,8 +41,9 @@ coder-firmware-check: coder-image  ## B8: build a copy of firmware/ in the coder
 
 DB_PORT ?= 55433
 # Each agent run creates an internal Docker network and an LLM proxy sidecar (B5) and removes
-# both afterwards; after a crash: docker network prune --filter label=romulus.coder=egress
+# both afterwards; leftovers of a killed worker are pruned here and at worker startup.
 worker-host:  ## the worker as a host process for CODER_PROVIDER=local_agent (M8b); never overnight
+	uv run python -m romulus_cloud.adapters.coder_egress --prune
 	$(COMPOSE) -f compose.yaml -f compose.host-worker.yaml up -d db
 	$(COMPOSE) stop worker
 	DATABASE_URL=postgresql+psycopg://romulus:romulus@127.0.0.1:$(DB_PORT)/romulus \

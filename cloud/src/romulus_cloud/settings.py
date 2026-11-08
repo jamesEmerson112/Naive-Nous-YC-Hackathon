@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     coder_test_cmd: str = "python -m pytest -q"
     coder_step_limit: int = 30
     coder_time_limit_s: int = 600
+    # Output tokens per LLM call: the agent asks for this and its egress proxy caps it (B5).
+    coder_max_tokens: int = 2000
 
     @field_validator("coder_test_cmd")
     @classmethod
