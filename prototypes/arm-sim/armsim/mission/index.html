@@ -1399,6 +1399,7 @@ function safeRect(now) {
   if (bl) x0 = Math.max(x0, bl.right - cr.left + 18);
   if (hr) x1 = Math.min(x1, hr.left - cr.left - 18);
   if (x1 - x0 < W * 0.34) { x0 = 18; x1 = W - 18; }
+  FIT.huds = [tl, bl, hr].filter(Boolean).map((r) => ({ l: r.left - cr.left, r: r.right - cr.left, t: r.top - cr.top, b: r.bottom - cr.top }));
   FIT.safe = { x: x0, y: y0, w: Math.max(60, x1 - x0), h: Math.max(60, y1 - y0) };
   FIT.safeAt = now;
   return FIT.safe;
@@ -1683,29 +1684,38 @@ function stalledJoint(mode) {
   const hit = JOINT_AT.find(([re]) => re.test(`${i.summary || ""} ${i.kind || ""}`));
   return hit ? { idx: hit[1], name: hit[2] } : null;
 }
-function drawStall(p, name, time) {
-  const T = TH.tw, P2 = P(p), r0 = Math.max(10, (0.03 * F) / P2[2]);
+function drawStall(m, idx, name, time) {
+  const T = TH.tw, P2 = P(m.chain[idx]), r0 = Math.max(10, (0.03 * F) / P2[2]);
   const ph = (time / 950) % 1;
   for (const k of [0, 0.5]) {
     const f = (ph + k) % 1;
     ctx.strokeStyle = rgba(TH.bad, 0.95 * (1 - f)); ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(P2[0], P2[1], r0 * (1 + 1.1 * f), 0, Math.PI * 2); ctx.stroke();
   }
+  // the tag goes on the side away from the joint's two links, clear of the HUD cards
+  let ax = 0, ay = 0;
+  for (const q of [m.chain[idx - 1], m.chain[idx + 1] || m.tip]) {
+    const Q = P(q), dx = Q[0] - P2[0], dy = Q[1] - P2[1], l = Math.hypot(dx, dy) || 1;
+    ax -= dx / l; ay -= dy / l;
+  }
+  const al = Math.hypot(ax, ay);
+  if (al < 0.2) { ax = -1; ay = 0; } else { ax /= al; ay /= al; }
   const text = `${name} · STALLED`;
   ctx.font = `800 ${Math.round(12 + W / 300)}px ${T.font}`;
-  const tw = ctx.measureText(text).width, th = Math.round(22 + W / 220), pad = 10;
-  const safe = FIT.safe || { x: 8, y: 8, w: W - 16, h: H - 16 };
-  let x = P2[0] - r0 * 2.3 - tw - pad * 2, y = P2[1] - th / 2;
-  if (x < safe.x) x = P2[0] + r0 * 2.3;                       // no room on the left: the right
-  x = Math.max(8, Math.min(W - tw - pad * 2 - 8, x)); y = Math.max(8, Math.min(H - th - 40, y));
+  const tw = ctx.measureText(text).width, th = Math.round(22 + W / 220), pad = 10, bw = tw + pad * 2;
+  const reach = r0 * 1.9 + Math.abs(ax) * bw / 2 + Math.abs(ay) * th / 2;
+  let x = P2[0] + ax * reach - bw / 2, y = P2[1] + ay * reach - th / 2;
+  x = Math.max(8, Math.min(W - bw - 8, x)); y = Math.max(6, Math.min(H - th - 40, y));
+  for (const h of FIT.huds || []) {
+    if (x < h.r + 6 && x + bw > h.l - 6 && y < h.b + 6 && y + th > h.t - 6) x = ax <= 0 && h.l < W / 2 ? h.r + 8 : Math.min(x, h.l - bw - 8);
+  }
+  ctx.strokeStyle = rgba(TH.bad, 0.75); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(P2[0] + ax * r0, P2[1] + ay * r0); ctx.lineTo(x + bw / 2, y + th / 2); ctx.stroke();
   ctx.save();
   if (TH.tw.glow > 0) { ctx.shadowColor = rgba(TH.bad, 0.8); ctx.shadowBlur = 16; }
   ctx.fillStyle = rgba(TH.bad, 0.92);
-  ctx.beginPath(); ctx.roundRect(x, y, tw + pad * 2, th, th / 2); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(x, y, bw, th, th / 2); ctx.fill();
   ctx.restore();
-  ctx.strokeStyle = rgba(TH.bad, 0.7); ctx.lineWidth = 1.5;
-  const lx = x > P2[0] ? x : x + tw + pad * 2;
-  ctx.beginPath(); ctx.moveTo(lx, y + th / 2); ctx.lineTo(P2[0] + (x > P2[0] ? r0 : -r0), P2[1]); ctx.stroke();
   ctx.fillStyle = TH.onBad; ctx.textBaseline = "middle"; ctx.fillText(text, x + pad, y + th / 2 + 1); ctx.textBaseline = "alphabetic";
 }
 
@@ -1773,7 +1783,7 @@ function frame(now) {
   items.sort((a, b) => b.z - a.z);
   for (const it of items) it.draw();
   const stall = alarm && stalledJoint(mode);
-  if (stall) drawStall(ch[stall.idx], stall.name, now);
+  if (stall) drawStall(m, stall.idx, stall.name, now);
   // the wrist sensor's beam
   const sensorBad = (arm.incidents || []).some((i) => /^us_|^pod_/.test(i.kind || ""));
   const beamCol = sensorBad ? TH.bad : m.mm > 0 && m.pred > 0 && Math.abs(m.mm - m.pred) > 0.02 ? TH.warn : m.mm > 0 ? TH.ok : TH.warn;
