@@ -8,13 +8,14 @@ Updated Sat Nov 7, 10:58 PM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
-P0 decide and claim: now → 8:30 PM
-P1 the core loop works: 8:30 → 11:30 PM
-P2 runs overnight, hands off: 11:30 PM → Sun 7 AM
-P3 sponsor extras and polish: Sun 7 → 10 AM (code freeze at 10)
+P0 decide and claim: 8:45 → 9:15 PM
+P1 the core loop in simulation: 9:15 PM → bedtime (minimum by 12:30 AM: a typed command moves the sim arm; a planted fault gives a spoken sentence)
+P2 overnight, hands off: 12:30 → 7 AM
+P3 the real arm: Sun 7 → 10 AM (code freeze at 10)
 P4 freeze, rehearse, present: Sun 10 AM → 1 PM
-P5 Hermes plugin entry: due Wed Nov 11, 5 PM EST
+P5 Hermes plugin entry: due Wed Nov 11, 5 PM EST (2 PM PST)
 P6 later: the roadmap slide
+Optional, only when ahead: Stripe test payment, Monid voice (ElevenLabs), Tavily check, AgentMail email
 
 KENT
 P0 Stripe direction, with James: bill the robot's owner, or pay the supplier
@@ -50,14 +51,12 @@ Now: arm/ on branch arm/teleop-recording, no PR yet: teleop, LeRobot recording, 
 P3 Real arm + polish (with Kent, Olir): F2 and F3 on the real arm
 
 JAMES
-P0 Stripe direction (with Kent); pick Monid's job, or move Monid to the robot's voice
-P1 Commander, approach A: Whisper → Hermes → 4-6 scripted skills (reach, grip, release, go home)
-P1 Arm prototypes without the real arm (MuJoCo twin, Kent's fake device, Olir's pod): arm host, approach-then-grasp, FK residual check, data logger
-P3 Plug in the red follower arm: test the prototypes, collect labeled data
+P0 Tell Kent the Stripe step is optional (it is still on his P0 line)
+P1 Open a PR for james/arm-sim (the four sim prototypes, fault factory, ChatTS test)
+P3 7:30-9 AM with Andre: swap the sim arm for the real one, wrist HC-SR04 through podd, first labeled real runs
 P3 Optional: MuJoCo twin next to the real arm
-Any time: ChatTS level-2 test on the spare RunPod hour (cut first)
-P5 Hermes plugin entry: his Hermes lane; its lines are unclaimed (see UNCLAIMED)
-Done: Naive console + fault lab (pi vs Hermes), Hermes install, stack hub
+P5 Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video under 90 s
+Done: Naive console + fault lab (pi vs Hermes), Hermes install, stack hub; P0 decisions (8:45 PM); P1 in simulation: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory (1,000 runs), ChatTS level-2 test; CLAUDE.md notice PRs #47-#51
 
 EVERYONE
 P0 Redeem credits and mark them in SPONSORS AND CREDITS
@@ -66,10 +65,8 @@ P4 10 AM code freeze, walk-through x3, record the backup video; bring a router a
 P4 1 PM: five demo beats, the digest numbers, the levels 2-3 pitch slide
 
 UNCLAIMED
-P1 Hermes arm plugin tools (the commander's skill menu)
 P1 fleet-ops agent, and the Mobilerun key in the Naive vault
 P1 Stripe payment in test mode
-P1 Pod healer agent loop + blind eval (HARNESS.md)
 P3 Tavily price and stock check on the card
 P3 Monid step in the order flow
 P3 AgentMail incident email

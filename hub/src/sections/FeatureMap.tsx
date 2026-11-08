@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Layer } from "../content/meta";
 import { countsOf, featuresIn, initial, ownersOf, PROTOTYPE, untouched, type BoxId, type Feature } from "../content/features";
 
-const BOXES: { id: BoxId; title: string; layer: Layer }[] = [
+export const BOXES: { id: BoxId; title: string; layer: Layer }[] = [
   { id: "naive", title: "Naïve", layer: "naive" },
   { id: "board", title: "Board", layer: "naive" },
   { id: "models", title: "Models", layer: "compute" },
@@ -27,8 +27,8 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "proto", label: "Prototype path" },
 ];
 
-const MARK: Record<Feature["status"], string> = { done: "✓", building: "●", gap: "?", hold: "‖" };
-const SAY: Record<Feature["status"], string> = { done: "done", building: "being built", gap: "not worked on", hold: "on hold" };
+export const MARK: Record<Feature["status"], string> = { done: "✓", building: "●", gap: "?", hold: "‖" };
+export const SAY: Record<Feature["status"], string> = { done: "done", building: "being built", gap: "not worked on", hold: "on hold" };
 
 function shown(f: Feature, filter: Filter) {
   if (filter === "gaps") return f.status === "gap" || f.status === "hold";
