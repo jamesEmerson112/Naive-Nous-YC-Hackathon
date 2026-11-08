@@ -162,6 +162,7 @@ DATASET_NAME = "fleet-runs"
 REVIEW_KINDS = ("review.session_opened", "review.staged", "review.accepted", "review.rejected")
 OUTCOME_KINDS = REVIEW_KINDS[1:]
 PROBE_MAX_AGE_S = 24 * 3600  # design §4.5 check 4: a probe is fresh for 24 h
+PROBE_MAX_BYTES = 256_000  # a scorecard is a few kB; skip anything big
 
 # TODO(lane R): replace with domain/review.py's routing. Until Ishaan's K17 list arrives the
 # arm's start gate and the visor count as safety (design §4.5 check 6); their owner is Olir.
@@ -388,6 +389,8 @@ def _probe(settings: Settings, probe_id: str | None) -> dict[str, Any] | None:
     found: list[dict[str, Any]] = []
     for path in sorted(folder.glob("*.json")):
         try:
+            if path.stat().st_size > PROBE_MAX_BYTES:  # e.g. a probe's input windows
+                continue
             doc = json.loads(path.read_text())
         except (OSError, ValueError):
             continue

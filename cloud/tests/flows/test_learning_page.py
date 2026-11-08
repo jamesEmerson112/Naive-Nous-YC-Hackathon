@@ -6,6 +6,7 @@ states through HTTP: nothing yet (an empty state), lane A's recorded session plu
 import html
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,7 @@ from romulus_cloud.models import Candidate, Device
 from romulus_cloud.services import learning
 
 VERDICT = "A distance that never changes is a frozen sensor, not a clear path."
+REVIEW_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "review"
 
 
 def _text(resp) -> str:
@@ -128,6 +130,32 @@ def test_recorded_session_and_probe_show_the_staged_hero(client, seeded, learnin
     ) in page
     assert '"gap": "missed_detection"' in page  # the typed proposal
     assert "from a recorded session (fixture)" in page
+
+
+def test_lane_a_committed_session_and_probe_render_as_recorded(client, seeded, app):
+    """The files the learn stack points at: review_spike.py's live session and
+    lesson_probe.py's scorecard (with its 550 kB input windows in the same folder)."""
+    live = json.loads((REVIEW_FIXTURES / "us_frozen_live.json").read_text())
+    probe = json.loads((REVIEW_FIXTURES / "probe_us_frozen.json").read_text())
+    app.state.settings = app.state.settings.model_copy(
+        update={
+            "review_fixture": str(REVIEW_FIXTURES / "us_frozen_live.json"),
+            "probe_dir": str(REVIEW_FIXTURES),
+        }
+    )
+    page = _text(client.get("/learning"))
+    proposal = live["structured_output"]
+    assert f'<h1 class="tc-verdict-text">{proposal["title"]}</h1>' in page
+    assert learning.duration_label(live["duration_s"]) in page
+    assert learning.cost_label(live["cost_usd"]) in page
+    assert f"recorded Naïve session · {live['session_id']}" in page
+    assert "staged for Olir" in page and "safety code → staged for Olir (D25)" in page
+    b, a, of = probe["before"]["caught"], probe["after"]["caught"], probe["after"]["of"]
+    assert f"{b} → {a} of {of} freezes caught" in page
+    assert f"no new false alarms on {probe['after']['healthy']} healthy windows" in page
+    assert "limit: a 3.5 s freeze" in page
+    assert "checks passed in code" in page and "✓ the proposal validates" in page
+    assert proposal["evidence"][0] in page and ">unverified<" in page
 
 
 def test_the_number_is_computed_from_before_and_after():
