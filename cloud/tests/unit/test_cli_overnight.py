@@ -73,6 +73,23 @@ def test_guard_reads_a_missing_column_as_not_started(test_database_url, engine):
             )
 
 
+def test_schema_check_lists_missing_columns(real_db, engine, capsys):
+    from sqlalchemy import text
+
+    assert cli.main(["schema-check"], settings=real_db) == 0
+    assert "matches the models" in capsys.readouterr().out
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE fleet_state DROP COLUMN overnight_started_at"))
+    try:
+        assert cli.main(["schema-check"], settings=real_db) == 1
+        assert "lacks fleet_state.overnight_started_at" in capsys.readouterr().out
+    finally:
+        with engine.begin() as conn:
+            conn.execute(
+                text("ALTER TABLE fleet_state ADD COLUMN overnight_started_at TIMESTAMPTZ")
+            )
+
+
 def test_reset_refuses_when_the_flag_cannot_be_read(make_settings, monkeypatch, capsys):
     """Fail closed: an unreachable database is not "not started"."""
     monkeypatch.delenv("FORCE", raising=False)

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from pydantic import SecretStr
+from sqlalchemy import inspect
 from sqlalchemy.exc import ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from romulus_cloud import db
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import utcnow
+from romulus_cloud.models import Base
 from romulus_cloud.services import digest as digest_service
 from romulus_cloud.services import overnight as overnight_service
 from romulus_cloud.services.seed import seed as seed_fleet
@@ -142,6 +144,35 @@ def overnight(settings: Settings, action: str, by: str) -> int:
     return 0
 
 
+def missing_columns(engine) -> list[str]:
+    """`table` or `table.column` for everything the models have and the database lacks.
+    `create_all` never adds a column to an existing table (cloud/CLAUDE.md)."""
+    have = inspect(engine)
+    tables = set(have.get_table_names())
+    missing = []
+    for table in Base.metadata.sorted_tables:
+        if table.name not in tables:
+            missing.append(table.name)
+            continue
+        columns = {c["name"] for c in have.get_columns(table.name)}
+        missing += [f"{table.name}.{c.name}" for c in table.columns if c.name not in columns]
+    return missing
+
+
+def schema_check(settings: Settings) -> int:
+    """Exit 1 and list what's missing when the database is behind the models."""
+    engine = db.make_engine(settings.database_url)
+    try:
+        missing = missing_columns(engine)
+    finally:
+        engine.dispose()
+    if missing:
+        print(f"schema: the database lacks {', '.join(missing)}")
+        return 1
+    print("schema: the database matches the models.")
+    return 0
+
+
 def setting(settings: Settings, name: str) -> int:
     """Print one setting as the app resolves it (env names match case-insensitively, `.env`,
     defaults), so `make overnight-check` checks what the app will really do (K13)."""
@@ -185,6 +216,7 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> int
     night = sub.add_parser("overnight", help="start / stop / status of the overnight flag (K7)")
     night.add_argument("action", choices=["start", "stop", "status"])
     night.add_argument("--by", default=os.environ.get("USER") or "operator")
+    sub.add_parser("schema-check", help="fail if the database lacks a model's column")
     one = sub.add_parser("setting", help="print one setting as the app resolves it")
     one.add_argument("name", help="e.g. naive_mode or NAIVE_MODE")
     sub.add_parser("export", help="build requested dataset exports (M6)")
@@ -197,6 +229,8 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> int
         return seed(settings or get_settings())
     if args.command == "digest":
         return digest(settings or get_settings(), args.since, args.until, args.json)
+    if args.command == "schema-check":
+        return schema_check(settings or get_settings())
     if args.command == "setting":
         return setting(settings or get_settings(), args.name)
     if args.command == "overnight":

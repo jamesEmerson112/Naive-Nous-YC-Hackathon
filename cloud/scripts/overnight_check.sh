@@ -98,6 +98,12 @@ check_value batch_interval_s 3600
 check_value overnight_started True
 pass "llm_mode=$(setting api llm_mode) (informational)"
 
+schema="$($COMPOSE exec -T api python -m romulus_cloud.cli schema-check 2>&1 | tr -d '\r')"
+case "$schema" in
+  *"matches the models"*) pass "$schema" ;;
+  *) fail "${schema:-schema: could not check} (OVERNIGHT.md §2: reset on the launch commit)" ;;
+esac
+
 flag="$($COMPOSE exec -T api python -m romulus_cloud.cli overnight status 2>/dev/null | tr -d '\r')"
 case "$flag" in
   *"started at"*) pass "database overnight flag set ($flag)" ;;

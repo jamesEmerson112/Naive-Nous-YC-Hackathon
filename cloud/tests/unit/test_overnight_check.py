@@ -31,8 +31,9 @@ case "$1" in
       *"setting overnight_started"*) echo True ;;
       *"setting llm_mode"*) echo fake ;;
       *"overnight status"*) echo "overnight: started at 2026-11-08T08:30:00+00:00" ;;
+      *schema-check*) echo "${STUB_SCHEMA:-schema: the database matches the models.}" ;;
       *" ps "*) echo cid ;;
-      *logs*) echo '"worker.step"' ;;
+      *logs*) echo '"worker.step"'; [ -n "${STUB_STEP_FAILED:-}" ] && echo '"worker.step_failed"' ;;
     esac ;;
 esac
 """
@@ -59,7 +60,7 @@ def test_setting_hides_secrets_and_rejects_unknown_names(lowercase_env, capsys):
     assert cli.main(["setting", "nope"]) == 2
 
 
-def run_check(tmp_path, api: str, worker: str) -> str:
+def run_check(tmp_path, api: str, worker: str, **extra: str) -> str:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "docker"
@@ -72,6 +73,7 @@ def run_check(tmp_path, api: str, worker: str) -> str:
         "API_PORT": "1",
         "STUB_API_NAIVE": api,
         "STUB_WORKER_NAIVE": worker,
+        **extra,
     }
     out = subprocess.run(
         ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60, cwd=tmp_path
@@ -101,3 +103,18 @@ def test_check_fails_unless_both_containers_resolve_fake(tmp_path, api, worker, 
     for line in expected:
         assert line in out, out
     assert "PASS  canary_window_s=1200" in out and "PASS  overnight_started=True" in out
+
+
+def test_check_fails_on_recent_step_failures(tmp_path):
+    out = run_check(tmp_path, "fake", "fake")
+    assert "PASS  worker: no failed steps in the last 5 minutes" in out
+    out = run_check(tmp_path, "fake", "fake", STUB_STEP_FAILED="1")
+    assert "FAIL  worker: 1 failed step(s) in the last 5 minutes" in out
+
+
+def test_check_fails_when_the_schema_is_behind(tmp_path):
+    out = run_check(tmp_path, "fake", "fake")
+    assert "PASS  schema: the database matches the models." in out
+    lacks = "schema: the database lacks fleet_state.overnight_started_at"
+    out = run_check(tmp_path, "fake", "fake", STUB_SCHEMA=lacks)
+    assert f"FAIL  {lacks}" in out
