@@ -59,7 +59,7 @@ Request:
 - `running` is `null` on first boot. `mcu_build` is the STM32's C-firmware build id; the healer reflashes it on the device, so the cloud tracks it as reported, not assigned (device side, `docs/project-overview.md`).
 - `health` is `ok`, `degraded` or `failing`.
 - `metrics` is a free-form dict of numbers, kept as environmental history ([telemetry](cloud-platform-telemetry.md) §3).
-- `kind` (optional extra: `real`, `sim` or `test`) is read only when the check-in registers a device the cloud hasn't seen; a device that sends none, or something else, registers as `unknown`, which counts as real for safety (never a canary until a person sets its kind with `PATCH /v1/devices/{id}`). The fake device sends `"sim"`. No model or `CONTRACT_VERSION` change: `CheckIn` already keeps extra fields.
+- `kind` (optional extra: `real`, `sim` or `test`) is read only when the check-in registers a device the cloud hasn't seen; a device that sends none, or something else, registers as `unknown`, which counts as real for safety (never a canary until a person sets its kind with `PATCH /v1/devices/{id}`). **Real hardware sends `kind: "real"` or no kind; only simulators send `"sim"` or `"test"`.** K17 relies on this (a `touches_safety` candidate needs a non-real canary), so it is an **I0 item for the device teammate** (contracts README, open item 7). The fake device sends `"sim"`. No model or `CONTRACT_VERSION` change: `CheckIn` already keeps extra fields.
 
 Response:
 ```json

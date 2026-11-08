@@ -11,7 +11,8 @@ from pathlib import Path
 from fake_device.__main__ import parse_args
 from fake_device.arm import FakeArm
 from romulus_cloud import events
-from romulus_cloud.services.seed import DEVICES
+from romulus_cloud.adapters.blobstore import build_blobstore
+from romulus_cloud.services.seed import DEVICES, seed
 
 
 def _first_seen(db_session, device_id):
@@ -74,6 +75,33 @@ def test_an_unknown_device_cannot_be_a_canary_until_a_person_sets_its_kind(
 
     resp = client.post("/v1/devices", json={"id": "x-1", "kind": "unknown", "role": "canary"})
     assert resp.status_code == 409
+
+
+def test_seed_sets_kind_and_role_on_devices_that_checked_in_first(
+    client, db_session, example, settings
+):
+    """`arm-1` and `sim-2` check in before `make seed`: the seed makes arm-1 real and
+    sim-2 the canary, with an event each, and a second seed changes nothing."""
+    body = example("checkin")
+    body.pop("kind", None)
+    for device_id in ("arm-1", "sim-2"):
+        assert client.post(f"/v1/devices/{device_id}/checkin", json=body).status_code == 200
+    assert client.get("/v1/devices/arm-1").json()["kind"] == "unknown"
+
+    store = build_blobstore(settings.blob_dir)
+    result = seed(db_session, store)
+    assert result.updated == ["arm-1", "sim-2"]
+    assert {"sim-1", "sim-3"} <= set(result.created)
+
+    arm, sim2 = client.get("/v1/devices/arm-1").json(), client.get("/v1/devices/sim-2").json()
+    assert (arm["kind"], arm["role"]) == ("real", "normal")
+    assert (sim2["kind"], sim2["role"]) == ("sim", "canary")
+    (event,) = events.find(db_session, {"device": "arm-1"}, kinds=["device.updated"])
+    assert event.actor == "human:seed" and event.data == {"kind": "real"}
+    assert "checked in before the seed (kind unknown, role normal)" in event.why
+
+    again = seed(db_session, store)
+    assert again.updated == [] and again.created == []
 
 
 def test_the_fake_fleet_default_matches_the_seed():
