@@ -5,7 +5,8 @@
   {% include "partials/overview.html" %}
 </div>
 <section aria-labelledby="fleet-h">
-  <h2 id="fleet-h" class="section-h">Fleet <span class="muted">{{ fleet.devices | length }} arm{{ 's' if fleet.devices | length != 1 }}</span></h2>
+  {% set n = fleet.devices | length %}{% set word = "device" if fleet.devices | rejectattr("device_class", "equalto", "so101") | list else "arm" %}
+  <h2 id="fleet-h" class="section-h">Fleet <span class="muted">{{ n }} {{ word }}{{ 's' if n != 1 }}</span></h2>
   <div id="fleet" hx-get="/partials/fleet" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
     {% include "partials/fleet.html" %}
   </div>
