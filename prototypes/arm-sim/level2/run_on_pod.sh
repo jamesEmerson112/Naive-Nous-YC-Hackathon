@@ -3,7 +3,7 @@
 # A 2-hour hard cap means nothing keeps billing if the test hangs.
 cd /workspace
 export HF_HOME=/workspace/hf
-timeout 7200 bash -c 'pip install -q "transformers==4.52.4" accelerate > pip.log 2>&1 && python chatts_test.py > chatts.log 2>&1; echo "EXIT $?" >> chatts.log'
+timeout 7200 bash -c 'pip install -q "transformers==4.52.4" accelerate hf_transfer > pip.log 2>&1 && python chatts_test.py > chatts.log 2>&1; echo "EXIT $?" >> chatts.log'
 echo "JOB DONE $(date -u +%H:%M:%S)" >> chatts.log
 sleep 1200
 runpodctl stop pod "$RUNPOD_POD_ID"
