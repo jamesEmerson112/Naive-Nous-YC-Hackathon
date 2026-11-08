@@ -16,6 +16,18 @@ on top of Olir's `heal` tools. Nothing under `healer/`, `pod/` or `demo/` is cha
 - **`ollama`**: a local model, `qwen3.5:4b` with thinking on by default, 32k context. `--tools core` offers 17 of
   the 38 tools (about 1.8k tokens of schemas instead of 3.4k; the briefing adds 2.6k).
 
+**Online fallback through Romulus (demo).** On the demo the Pi only calls out to Kent's server (`CLOUD_URL`).
+`--base-url` points the `claude` driver at any Messages-compatible endpoint, so a passthrough on that server
+would keep the API key off the Pi. Kent's Fleet Doctor L1 (`POST {CLOUD_URL}/v1/devices/{id}/doctor/ask`, off by
+default and still being built) returns hypotheses, not tool calls, so it would plug in as advice for the
+local model (for example an `ask_doctor` tool) rather than as a driver. Not built yet; the driver interface
+(`start`, `step`, `add_results`) is the seam.
+
+**Not this harness's job:** reporting to the cloud. `tools/edge_bridge` already reports podd incidents and
+the agent's actions (from what `heal` records: audit log, deployments, notes) through its outbox. The
+harness only writes local transcripts and reaches the pod only through `heal`, so podd stays the only
+process on the serial port.
+
 ## Setup and use
 ```bash
 cd firmware/harness

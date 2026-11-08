@@ -285,9 +285,9 @@ class ClaudeDriver:
 
     name = "claude"
 
-    def __init__(self, model="claude-opus-5-5", effort="high", max_tokens=32000):
+    def __init__(self, model="claude-opus-5-5", effort="high", max_tokens=32000, base_url=None):
         import anthropic
-        self.client = anthropic.Anthropic()
+        self.client = anthropic.Anthropic(base_url=base_url)   # None: ANTHROPIC_BASE_URL or the Anthropic API
         self.model, self.effort, self.max_tokens = model, effort, max_tokens
 
     def start(self, system, tools, kickoff):
@@ -389,7 +389,7 @@ class OllamaDriver:
 
 def make_driver(a):
     if a.driver == "claude":
-        return ClaudeDriver(model=a.model or "claude-opus-5-5", effort=a.effort)
+        return ClaudeDriver(model=a.model or "claude-opus-5-5", effort=a.effort, base_url=a.base_url)
     return OllamaDriver(model=a.model or "qwen3.5:4b", url=a.ollama_url, num_ctx=a.num_ctx)
 
 
@@ -513,6 +513,8 @@ def add_agent_args(p):
     p.add_argument("--driver", choices=["claude", "ollama"], default="claude")
     p.add_argument("--model", help="default: claude-opus-5-5 or qwen3.5:4b")
     p.add_argument("--effort", default="high", help="Claude effort (low, medium, high, xhigh, max)")
+    p.add_argument("--base-url", help="Messages API endpoint for the claude driver, e.g. a passthrough on the "
+                                      "Romulus server (default: ANTHROPIC_BASE_URL or the Anthropic API)")
     p.add_argument("--tools", default="all", help="all, core (%d tools for small models), or a comma list" % len(CORE_TOOLS))
     p.add_argument("--ollama-url", default="http://localhost:11434")
     p.add_argument("--num-ctx", type=int, default=32768, help="Ollama context window")

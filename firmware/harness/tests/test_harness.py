@@ -197,6 +197,7 @@ def test_claude_driver_request_and_response_shape(monkeypatch):
     d.add_results([("tu_1", "triage", "{}", False)])
     assert d.messages[1]["content"][0].type == "thinking"            # history appended unchanged
     assert d.messages[2]["content"][0]["tool_use_id"] == "tu_1"
+    assert str(agent.ClaudeDriver(base_url="http://kent.local:8000").client.base_url).startswith("http://kent.local:8000")
 
 
 def test_ollama_driver_round_trip():
