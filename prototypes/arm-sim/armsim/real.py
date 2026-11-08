@@ -142,7 +142,10 @@ class RealArm:
         mags = []
         for j in JOINTS:
             v = int(raw.get(j, 0))
-            mags.append((v & 0x3FF) / 1000.0)        # sign-magnitude: bit 10 is the direction
+            # LeRobot 0.7 (rustypot) already returns a signed value, so -78 means 7.8% the other way.
+            # Masking that with 0x3FF read it as 94.6% and raised false overloads on the bench.
+            # A raw sign-magnitude value (bit 10 = direction, as the mock bus sends) still works.
+            mags.append((-v if v < 0 else v & 0x3FF) / 1000.0)
         return np.array(mags) * STALL_NM
 
     def tick(self):
