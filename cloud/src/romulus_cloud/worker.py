@@ -38,6 +38,7 @@ from romulus_cloud.services import (
     doctor,
     gate,
     review,
+    review_publish,
     runs,
     technician,
     telemetry,
@@ -108,9 +109,25 @@ def learning_tick(session: Session, now: datetime) -> object:
     if settings.learning_mode == "off":
         return None
     done = runs.ensure_standing_dataset(session, now, settings)
-    if settings.learning_mode in review.MODES:
-        return {"dataset": done, "review": review.tick(session, now, settings=settings)}
-    return done
+    if settings.learning_mode not in review.MODES:
+        return done
+    # Cluster review, then T1 (mirror promoted review skills to Naïve Skills): each under its
+    # own savepoint, so an error rolls back only its own writes, never the dataset step.
+    out: dict[str, object] = {"dataset": done}
+    try:
+        with session.begin_nested():
+            out["review"] = review.tick(session, now, settings=settings)
+    except Exception as exc:  # noqa: BLE001 - logged; retried next tick
+        log_line("learning.review_failed", level="error", error=repr(exc))
+    if review_publish.enabled(settings):
+        try:
+            with session.begin_nested():
+                out["published"] = review_publish.publish_promoted(
+                    session, now, settings, review_publish.publisher(settings)
+                )
+        except Exception as exc:  # noqa: BLE001 - logged; retried next tick
+            log_line("learning.publish_failed", level="error", error=repr(exc))
+    return out
 
 
 # Fleet learning: the standing dataset every 30 s. `steps_for` leaves it out while
