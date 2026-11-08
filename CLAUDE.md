@@ -76,14 +76,14 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sat Nov 7, 11:10 PM PST_
+_Last updated: Sat Nov 7, 11:20 PM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has two PRs open: #44 (Fleet Doctor PR 7, the last of 9, with a review fix pushed at 10:58 PM) and #46 (B5, coder sandbox reaches only the LLM). James opened five `CLAUDE.md` notice PRs (#47–#51) asking stale branches to merge main. Olir has the pod healer bench runs and the bad-ultrasonic arm heal test. The overnight launch is due by 12:30 AM (Kent's plan).
 
 **Recently done:**
 - James opened #47–#51 (11:02 PM), one per stale branch: `arm/teleop-recording` (Andre, 59 behind), `demo` (200), `firmware-harness-connection` (32), `firmware` (201), `local-model-serve` (20, all Olir). Each PR changes only `CLAUDE.md`, replacing it with main's copy plus a notice listing tonight's overlaps; nothing went to main (James's session)
 - Kent pushed a review fix to #44 (`6c04704`, 10:58 PM): the sandbox check now requires the repro test to fail on behaviour before the patch and pass after; a patch that edits existing tests fails without a sandbox run
-- Kent opened #46 (`cloud/b5-egress`): `cloud/coder/llm_proxy.py` holds the real key and forwards only `POST /v1/chat/completions` with a per-job token; the agent runs on an `--internal` Docker network per run; no open-network mode (fail closed)
+- James previewed the Stack Map hub built from main (11:16 PM, no console errors). Its team, lanes and "doing" text in `hub/src/content/` was last edited at 8:22 PM, so it misses tonight's merges (#32–#45), Olir's claims, the arm-file overlap and #47–#51 (James's session)
 - James's P1 prototypes run in simulation (local branch `james/arm-sim`, not pushed): arm host, `so101-arm` Hermes plugin with a `pre_tool_call` guard, approach-then-grasp, a level-1 watchdog, a fault factory, a ChatTS level-2 test on RunPod (pod terminated). Sim only (James's session)
 
 **Open questions:**
@@ -93,6 +93,8 @@ _Last updated: Sat Nov 7, 11:10 PM PST_
 - Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and when `james/arm-sim` gets pushed for Kent's 9–10 AM "real arm + polish" slot
 
 **Recent commits (all authors):**
+- `9c61066` Sat 23:16 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `126d521` Sat 23:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `7c734da` Sat 22:59 · jamesEmerson112 · Update team status and features.txt
 - `b2dd790` Sat 22:58 · Kent Gang · Update Kent status in CLAUDE.md
 - `1f043d6` Sat 22:38 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -101,8 +103,6 @@ _Last updated: Sat Nov 7, 11:10 PM PST_
 - `fba444e` Sat 22:29 · jamesEmerson112 · Update team status and features.txt
 - `cd261a2` Sat 22:28 · Olir Eswar · Claim pod healer bench runs and the ultrasonic arm heal test in features.txt
 - `ccb95fb` Sat 22:28 · kgang · Romulus docs: M8 status after #24, #28, #38 (#45)
-- `625c345` Sat 22:28 · Kent Gang · Update Kent status in CLAUDE.md
-- `c8b58cb` Sat 22:20 · kgang · Romulus B1: real device code in the coder path (#38)
 
 **Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and `doctor/evidence-real` (#44, Kent); notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
