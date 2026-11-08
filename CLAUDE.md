@@ -72,33 +72,33 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 7:28 PM PST_
+_Last updated: Sat Nov 7, 7:39 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged #18 and heads into the 12:30 AM overnight go/no-go with only #19 (M8a coding-agent sandbox) open. Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). Olir keeps hardening the pod healer on `firmware`. James is working through the healing story (watchdog code wakes the healer; the healer fixes causes, not positions) for the briefing page.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Every Romulus milestone PR through M8a is merged and no PRs are open. Kent heads into the 12:30 AM overnight go/no-go with build-status docs on `cloud/docs-status`. Olir's firmware is on `main` (#20), and an LLM agent loop for the pod healer is the next missing piece (`firmware/docs/HARNESS.md`). Ishaan is landing the device code (B1). James is writing a phased plan to tomorrow's demo (local note) *(James's session)*.
 
 **Recently done:**
-- Kent merged #18, gate follow-ups (`2e83133`, 7:27 PM): re-queued overlays survive being superseded, freeze snapshot, repeat-incident check on unfreeze (`repeat_since`), failed folds bisected once, regression corpus replay (`test_f4_corpus_regression.py`), K17 fails closed
-- Olir pushed `f1d9224` to `firmware` (7:25 PM): the reboot-loop rule now counts only abnormal boots (crash/watchdog streak, por/lpwr), clock-drift check uses a median over the current run, lines cut short by a reset are dropped via required fields per type, and the line parser no longer uses a backtracking regex
-- James pushed the fault lab (`98fe550`, 7:11 PM): Ishaan's six healer faults (D1–D3, S1, S2, A5) planted in a stand-in app under `prototypes/fault-lab/`, with hidden checks. On gpt-6-sol, pi and Hermes each fixed 12 of 12 and Hermes was faster on 5 of 6. Results are in the Naïve console ("Can it fix the fault?") and `docs/pi-vs-hermes.md` §7
-- James's "Self-Healing Arm Briefing" page: problem, demo in five steps, available data and gaps (sim vs bench), three levels, MuJoCo vs NVIDIA Isaac, GR00T. It is private and has no visual check yet; the ultrasonic-sample note is still local only (`79f938b`) *(James's session)*
+- Kent merged #19, M8a (`3aba2da`, 7:38 PM): a coder sandbox image (mini-swe-agent, then the device tests), LocalAgent returns the diff and test result, offline code replay of base vs base + patch, a toy device with a D1-like fault, and hardening (held-out `verify/`, symlink, escape and key-leak refusal)
+- Olir's `firmware` branch merged into `main` as #20 (`0f9cced`, 7:34 PM): 104 files under `firmware/` (pod firmware, podd + 38 heal tools, six bad images, `toolkit/`). New `firmware/docs/HARNESS.md` is a guide for building the agent loop, and `healer/tests/bench.py` holds the regression tests (`ded518a`)
+- Pod bench status (`firmware/docs/DEMO.md`): detection for scenarios 01–05 re-verified (bench A1–A5) and the full 01 fix; fixes for 02, 05 and 06 verified earlier. Not yet run: durable fixes for 03/04 (B1, B2), the C1–C3 checks, physical tests and any LLM agent run. Scenario 04 has a serial-bridge problem
+- Kent merged #18, gate follow-ups (`2e83133`, 7:27 PM): re-queued overlays survive being superseded, freeze snapshot, `repeat_since` on unfreeze, failed folds bisected once, regression corpus replay, K17 fails closed
 
 **Open questions:**
-- Kent is blocked on: device code in the repo (B1, Ishaan landing it), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which also holds up M0's live Naïve card and LLM call (Kent's block). Olir's `toolkit/` is now on the `firmware` branch and may solve B8 *(inferred)*
-- Pod triage gap: the rules check the accelerometer for frozen data but not the ultrasonic, so a frozen-echo copy of a real sample raised no finding (`docs/fault-catalog.md`). Separately, the healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it; the fault lab's hidden check catches it
-- Two healers (Olir's firmware healer in `firmware/healer/`, Ishaan's device healer) are separate code; the demo needs one story for both *(inferred, `docs/project-overview.md`)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all? Team calls
-- Sim use for tomorrow: a twin beside the real arm or the sim canary is doable; the 1,000-copy fault factory for a level-3 model is pitch only *(James's session, inferred)*. Motor layer: scripted skills, SmolVLA (~50 demos per task + ~4 h A100) or Instant Policy. Hermes compaction still needs `hermes gateway ensure` (`docs/pi-vs-hermes.md`)
+- Kent is blocked on: device code in the repo (B1, Ishaan landing it), the safety and visor path list from Ishaan (K17), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which also holds up M0's live Naïve card (Kent's block). Now that `firmware/toolkit/` is on `main`, it may close B8 (STM32 toolchain in the sandbox) *(inferred)*
+- Nobody owns the pod healer's agent loop and blind scenario eval yet; `HARNESS.md` marks both "you build this". Is that Ishaan's device healer, a Hermes plugin, or new work? It is also how the two healers become one demo story *(inferred)*
+- Pod triage gap: the rules don't check the ultrasonic for frozen data, so a frozen-echo copy of a real sample raised no finding (`docs/fault-catalog.md`). The device healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it; the fault lab's hidden check catches it
+- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, and owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email) *(James's session)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all?
 
 **Recent commits (all authors):**
+- `3aba2da` Sat 19:38 · kgang · Romulus M8a: coder sandbox and LocalAgent, proven on a toy device (#19)
+- `0f9cced` Sat 19:34 · Oliravan Eswaramoorthy · Merge pull request #20 from jamesEmerson112/firmware
+- `ded518a` Sat 19:32 · Olir Eswar · docs
+- `52f4e40` Sat 19:29 · jamesEmerson112 · Update team status and features.txt
+- `0f9c0b5` Sat 19:28 · Kent Gang · Update Kent status in CLAUDE.md
 - `2e83133` Sat 19:27 · kgang · Romulus M3 follow-up: gate edge cases + regression corpus replay (#18)
+- `f1d9224` Sat 19:25 · Olir Eswar · more firmware
 - `557ad01` Sat 19:19 · jamesEmerson112 · Update team status in CLAUDE.md
 - `98fe550` Sat 19:11 · jamesEmerson112 · Add fault lab: can pi and Hermes fix Ishaan's six healer faults? Show results in the console
 - `cda262d` Sat 19:08 · jamesEmerson112 · Update team status and features.txt
-- `f19cdff` Sat 19:08 · Kent Gang · Update Kent status in CLAUDE.md
-- `7dd4606` Sat 19:01 · kgang · Romulus M7: overnight kit (chaos schedule, digest, disk budget, overnight flag, preflight) + F10 (#16)
-- `e64ed72` Sat 18:59 · jamesEmerson112 · Update team status and features.txt
-- `fd1f4fd` Sat 18:54 · jamesEmerson112 · Sync notes with Olir's sensor pod, podd healer tools and demo images (69fc292)
-- `a2d6676` Sat 18:49 · jamesEmerson112 · Update team status and features.txt
-- `219a00c` Sat 18:48 · Kent Gang · Update Kent status in CLAUDE.md
 
-**Branches on GitHub:** `main`, `firmware` (Olir, `f1d9224`, not merged), `cloud/m8a-coder` (#19 open), `cloud/gate-followups` (#18 merged, not yet deleted), `cloud/m8-coder-wip`, `cloud/m3b-followup`; all Kent's except `firmware`
+**Branches on GitHub:** `main`, `firmware` (Olir, merged as #20), `cloud/docs-status` (Kent, build status + `features.txt` edits, not merged), `cloud/m8-coder-wip`, `cloud/m3b-followup`. `cloud/m8a-coder` and `cloud/gate-followups` are gone
 <!-- team-status:end -->
