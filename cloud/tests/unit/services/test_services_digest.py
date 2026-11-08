@@ -6,6 +6,7 @@ import pytest
 
 from romulus_cloud import events
 from romulus_cloud.errors import ApiError
+from romulus_cloud.ids import utcnow
 from romulus_cloud.models import Blob, Device, FleetState
 from romulus_cloud.services import digest, overnight
 
@@ -42,6 +43,52 @@ def test_parse_since_rejects_nonsense(now):
 
 def _ev(session, kind, ts, actor_class="automation", **refs):
     events.record(session, "gate", actor_class, kind, refs, f"{kind} happened", ts=ts)
+
+
+def test_report_carries_the_fleet_doctor_metrics(db_session, now):
+    data = {"incident_kind": "camera_occluded", "cost_usd": 0.004}
+    when = now - timedelta(hours=1)
+    events.record(db_session, "fleet-doctor", "agent", "doctor.asked", {}, "asked", ts=when)
+    events.record(
+        db_session, "fleet-doctor", "agent", "doctor.advised", {}, "advised", data=data, ts=when
+    )
+    db_session.flush()
+    d = digest.report(db_session, now).to_dict()
+    assert d["doctor_asks"] == 1 and d["doctor_consults"] == 0
+    assert d["doctor_spend_usd"] == 0.004
+    assert d["doctor_by_kind"] == {"unknown": {**dict.fromkeys(_METRICS, 0), "asks": 1}}
+    assert "Fleet Doctor: 1 asks" in digest.report(db_session, now).text()
+
+
+def test_digest_route_reports_an_overflowing_spend_as_null(client, db_session):
+    """Each cost is a finite JSON number, but their sum overflows a float: the route still
+    answers 200, with the spend unknown (null), never infinity."""
+    for _ in range(2):
+        events.record(
+            db_session,
+            "fleet-doctor",
+            "agent",
+            "doctor.diagnosed",
+            {},
+            "diagnosed",
+            data={"cost_usd": 1e308},
+            ts=utcnow(),
+        )
+    db_session.flush()
+    resp = client.get("/v1/digest", params={"since": "1h"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["doctor_spend_usd"] is None and "spend unknown" in body["text"]
+
+
+_METRICS = (
+    "asks",
+    "consults",
+    "proposals_offered",
+    "proposals_applied",
+    "consults_held",
+    "gave_up",
+)
 
 
 def test_report_counts_the_window_and_old_waiting_orders(db_session, now):

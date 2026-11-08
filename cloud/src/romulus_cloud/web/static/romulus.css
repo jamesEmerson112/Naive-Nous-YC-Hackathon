@@ -163,6 +163,16 @@ code { font-size: 0.9em; }
 .evidence { margin-top: 0.3rem; font-size: 0.9rem; }
 .evidence-list h2 { font-size: 1.1rem; }
 
+/* Fleet Doctor ledger: the hypotheses, newest first */
+.doctor-ledger h2 { font-size: 1.1rem; margin: 1rem 0 0.4rem; }
+.doctor-ledger ol { list-style: none; padding: 0; margin: 0; }
+.hypothesis {
+  padding: 0.5rem 0.75rem; margin-bottom: 0.4rem;
+  background: var(--panel); border-left: 6px solid var(--agent); border-radius: 0.3rem;
+}
+.hypothesis .claim { font-weight: 600; }
+.hyp-meta { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+
 .foot { max-width: 64rem; margin: 0 auto; padding: 1rem; color: var(--muted); font-size: 0.8rem; }
 
 @media (max-width: 40rem) {

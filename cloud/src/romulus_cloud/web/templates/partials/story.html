@@ -11,6 +11,23 @@
   {% endif %}
 </header>
 
+{% if story.ledger %}
+<section class="doctor-ledger">
+  <h2>Fleet Doctor <span class="muted">hypotheses, newest first</span></h2>
+  <ol>
+    {% for h in story.ledger %}
+    <li class="hypothesis">
+      <p class="claim">{{ h.claim }}</p>
+      {% if h.how_to_check %}<p class="how"><span class="why-label">Check</span> {{ h.how_to_check }}</p>{% endif %}
+      <p class="hyp-meta"><span class="badge tone-info">{{ h.source }}</span>
+        <time datetime="{{ h.iso }}">{{ h.clock }}</time>{% if h.ref %} · {{ h.ref }}{% endif %}{% if h.model %} · {{ h.model }}{% endif %}
+        {% for flag in h.flags %}<span class="badge tone-wait">{{ flag }}</span> {% endfor %}</p>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
 <ol class="steps">
   {% for s in story.steps %}
   <li class="step actor-{{ s.actor_class }}{% if s.touches_safety %} step-safety{% endif %}">

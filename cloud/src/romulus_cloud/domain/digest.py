@@ -38,8 +38,22 @@ So pass events from before `since` too if orders may still be waiting from earli
 Other counted kinds: incidents `incident.reported`; heals `overlay.held` (the device's fix
 held) *(inferred)*; overlays reverted; candidates created / promoted / rolled back; work
 orders created / posted; kill switch `fleet.frozen`.
+
+**Fleet Doctor (PR 6; architecture §10 item 4):** asks (`doctor.asked`), consults opened
+(the escalations, `doctor.consult_opened`), fixes offered (`doctor.proposal_offered`),
+applied (`doctor.proposal_result` with `result` `applied`), held (`doctor.consult_closed`
+with `outcome` `held`) and give-ups (`doctor.gave_up`), in total and per fault family
+(`doctor_by_kind`, keyed on `data.incident_kind`, `unknown` when missing), plus the spend:
+the sum of `data.cost_usd` over `doctor.*` events by `services/doctor_spend`'s rules (only
+numbers count, a negative counts as 0, a value too big for a float counts as infinity).
+A total that isn't finite is reported as None (unknown), where `doctor_spend`'s infinity
+makes `check_spend` fail closed; the digest never reports infinity. None of these are
+actions yet, so they don't move the no-human share. The digest text gains its Fleet
+Doctor line only when a `doctor.*` event is in the window, so a night without the Doctor
+reads as it did before.
 """
 
+import math
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -89,7 +103,27 @@ COUNTED_KINDS = {
     "work_orders_created": "workorder.created",
     "work_orders_posted": "workorder.card_posted",
     "freezes": "fleet.frozen",
+    "doctor_asks": "doctor.asked",
+    "doctor_consults": "doctor.consult_opened",
+    "doctor_proposals_offered": "doctor.proposal_offered",
+    "doctor_gave_up": "doctor.gave_up",
 }
+
+# Counts that need one `data` field to match: name → (kind, data key, value).
+COUNTED_OUTCOMES: dict[str, tuple[str, str, str]] = {
+    "doctor_proposals_applied": ("doctor.proposal_result", "result", "applied"),
+    "doctor_consults_held": ("doctor.consult_closed", "outcome", "held"),
+}
+
+# The per-fault-family Fleet Doctor metrics (`Digest.doctor_by_kind`), each a counted name.
+DOCTOR_METRICS = (
+    "doctor_asks",
+    "doctor_consults",
+    "doctor_proposals_offered",
+    "doctor_proposals_applied",
+    "doctor_consults_held",
+    "doctor_gave_up",
+)
 
 
 @dataclass(frozen=True)
@@ -140,6 +174,19 @@ class Digest:
     freezes: int = 0
     human_actions: tuple[HumanAction, ...] = ()
     waiting_for_person: tuple[WaitingOrder, ...] = ()
+    doctor_asks: int = 0
+    doctor_consults: int = 0
+    doctor_proposals_offered: int = 0
+    doctor_proposals_applied: int = 0
+    doctor_consults_held: int = 0
+    doctor_gave_up: int = 0
+    doctor_by_kind: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+    doctor_spend_usd: float | None = 0.0  # None when the total is not finite
+
+    @property
+    def doctor_active(self) -> bool:
+        """Whether any `doctor.*` event is in the window."""
+        return any(kind.startswith("doctor.") for kind in self.by_kind)
 
     @property
     def no_human_share(self) -> float | None:
@@ -183,6 +230,58 @@ def _waiting(events: list[Any], until: datetime | None) -> tuple[WaitingOrder, .
     return tuple(w for w in latest.values() if w.status in WAITING_STATUSES)
 
 
+def _data(event: Any) -> Mapping[str, Any]:
+    data = getattr(event, "data", None)
+    return data if isinstance(data, Mapping) else {}
+
+
+def _outcomes(event: Any) -> list[str]:
+    """The `COUNTED_OUTCOMES` names this event counts toward."""
+    d = _data(event)
+    return [
+        name
+        for name, (kind, key, value) in COUNTED_OUTCOMES.items()
+        if event.kind == kind and d.get(key) == value
+    ]
+
+
+def _cost(value: Any) -> float:
+    """A `data.cost_usd` as dollars, by `services/doctor_spend`'s rules: only numbers count
+    (not strings or bools), a negative or NaN counts as 0, and a value too big for a float
+    counts as infinity, so the total fails closed instead of quietly dropping it."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0.0
+    try:
+        usd = float(value)
+    except OverflowError:
+        return math.inf
+    return usd if usd > 0 else 0.0  # NaN > 0 is False
+
+
+def _family(event: Any) -> str:
+    kind = _data(event).get("incident_kind")
+    return kind.strip() if isinstance(kind, str) and kind.strip() else "unknown"
+
+
+def _doctor(chosen: list[Any]) -> tuple[dict[str, dict[str, int]], float | None]:
+    """(the Fleet Doctor metrics per fault family, the Doctor's spend) over the window. The
+    spend is None when the total isn't finite: unknown, never infinity (JSON can't carry it,
+    and `GET /v1/digest` must not fail on it)."""
+    by_kind: dict[str, dict[str, int]] = {}
+    spend = 0.0
+    for e in chosen:
+        if not e.kind.startswith("doctor."):
+            continue
+        spend += _cost(_data(e).get("cost_usd"))
+        names = [n for n in DOCTOR_METRICS if COUNTED_KINDS.get(n) == e.kind] + _outcomes(e)
+        if not names:
+            continue
+        row = by_kind.setdefault(_family(e), {n.removeprefix("doctor_"): 0 for n in DOCTOR_METRICS})
+        for n in names:
+            row[n.removeprefix("doctor_")] += 1
+    return dict(sorted(by_kind.items())), round(spend, 6) if math.isfinite(spend) else None
+
+
 def summarize(events: Iterable[Any], since: datetime, until: datetime | None = None) -> Digest:
     """Count the events with `since <= time < until` (no upper bound when `until` is None).
 
@@ -196,6 +295,9 @@ def summarize(events: Iterable[Any], since: datetime, until: datetime | None = N
     classes.update(_actor_class(e) for e in actions)
     kinds = Counter(e.kind for e in chosen)
     counts = {name: kinds.get(kind, 0) for name, kind in COUNTED_KINDS.items()}
+    outcomes = Counter(name for e in chosen for name in _outcomes(e))
+    counts.update({name: outcomes.get(name, 0) for name in COUNTED_OUTCOMES})
+    doctor_by_kind, doctor_spend = _doctor(chosen)
     humans = tuple(
         HumanAction(_when(e), e.actor, e.kind, e.why) for e in chosen if _actor_class(e) == "human"
     )
@@ -208,6 +310,8 @@ def summarize(events: Iterable[Any], since: datetime, until: datetime | None = N
         by_kind=dict(sorted(kinds.items())),
         human_actions=humans,
         waiting_for_person=_waiting(everything, until),
+        doctor_by_kind=doctor_by_kind,
+        doctor_spend_usd=doctor_spend,
         **counts,
     )
 
@@ -269,6 +373,17 @@ def render_text(
         f"Work orders: {d.work_orders_created} created · {d.work_orders_posted} posted",
         f"Kill switch: {d.freezes} freeze(s)",
     ]
+    if d.doctor_active:
+        lines.append(
+            f"Fleet Doctor: {d.doctor_asks} asks · {d.doctor_consults} consults · "
+            f"fixes {d.doctor_proposals_offered} offered, {d.doctor_proposals_applied} applied, "
+            f"{d.doctor_consults_held} held · {d.doctor_gave_up} gave up · "
+            + (
+                "spend unknown (a cost too large to add up; the spend cap refuses it too)"
+                if d.doctor_spend_usd is None
+                else f"spend ${d.doctor_spend_usd:.4f}"
+            )
+        )
     if d.human_actions:
         lines.append("Human actions:")
         lines += [
