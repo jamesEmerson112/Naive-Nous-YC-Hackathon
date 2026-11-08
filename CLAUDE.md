@@ -85,15 +85,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 11:30 AM PST_
+_Last updated: Sun Nov 8, 11:38 AM PST_
 
-**Current focus:** P4: hacking stopped at 11 AM; prepping the judges' table and the 1 PM stage. James wrote the demo runbook (`prototypes/arm-sim/DEMO-STEPS.md`) and walked Mission Control on the real arm; the camera look is now proven on a real card job, and the eye now maps the camera to table centimetres (`armsim/eye.py`), which is a step toward `pick` *(inferred)*. The fault stories (`a`, `b`, `stall`) haven't run on the real arm; the stall beat is sim-only today. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
+**Current focus:** P4: hacking stopped at 11 AM; prepping the judges' table and the 1 PM stage. James put the live camera beside the 3D twin in Mission Control (split view, `armsim/camserve.py`); per his session he's now setting up an unattended run on the Pi that uses the eye for feedback, without anyone moving the arm by hand, and adding axes to the camera view (the camera looks straight down at the table), none of it committed yet. The fault stories (`a`, `b`, `stall`) haven't run on the real arm; the stall beat is sim-only today. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
 
 **Recently done:**
+- James: Mission Control split view: the 3D twin beside the live bench camera, with the eye's bag overlay (`V` toggles, `?cam=URL` points elsewhere). `armsim/camserve.py` runs on the Mac with the camera and serves `/latest.jpg` and `/eye.json` on `127.0.0.1:8790`; it's read-only and never moves the arm (`c46fd51`)
 - James: `armsim/eye.py` maps the bench camera to table centimetres: `detect` finds coloured sticky notes, `calibrate` fits a homography from ruler-measured points (plus a 5 cm check grid), and `locate` gives the chips bag's distance, bearing and distance to the box. The camera must stay fixed. No arm motion; not calibrated on the bench in a commit yet (`0755160`)
 - James: demo runbook `DEMO-STEPS.md` (where things run, pre-flight checks for the cable, tunnel, arm, Romulus and camera, then the beats), verified on the real arm (`9fd1bdb`)
 - James: the camera as Hermes's eye works on the real arm: Hermes looked before and after a card job and reported both in `RESULT:`. Mission Control walk-through: freeze and unfreeze work; the local fallback (Wave button + the Pi's scripted dispatcher) ran a job in 22 s with the 3D twin moving live (`HANDOFF-LOCAL.md` bench log, 11:10)
-- James: the `wave` job's card now reads "pack the chips" (all three of Andre's recordings pick up the bag and box it); the Mission Control button says "Pack chips"; the job key stays `wave`. Mission Control opens in the light look by default (`a81ce25`)
 
 **Open questions:**
 - Naïve is flaky (429s and an `internal_error` this morning): go with the live board on stage, or the local fallback (Mission Control's button + the Pi's scripted dispatcher, proven at 11:10)? `armsim/hermes_file.py` (Hermes over the file board) isn't built (`HANDOFF-LOCAL.md` §4)
@@ -102,16 +102,16 @@ _Last updated: Sun Nov 8, 11:30 AM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `35e879e` Sun 11:35 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
+- `87a9163` Sun 11:32 · jamesEmerson112 · Merge the Mission Control split view (twin beside the live camera)
+- `c46fd51` Sun 11:31 · jamesEmerson112 · Mission Control: split view, the twin beside the live camera with the eye's bag overlay (camserve.py)
+- `a268ca4` Sun 11:29 · jamesEmerson112 · Update team status and features.txt
 - `51b6375` Sun 11:23 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 - `0755160` Sun 11:23 · jamesEmerson112 · arm-sim: the eye maps the camera to table centimetres (armsim/eye.py)
 - `0a50c15` Sun 11:19 · jamesEmerson112 · Update team status and features.txt
 - `4d9be7b` Sun 11:14 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 - `a81ce25` Sun 11:14 · jamesEmerson112 · arm-sim: the chips job is named for what it does; Mission Control opens in the light look
 - `72a15ae` Sun 11:12 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `f1ac90f` Sun 11:10 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
-- `9fd1bdb` Sun 11:10 · jamesEmerson112 · arm-sim: demo runbook (DEMO-STEPS.md), verified on the real arm; bench log for the eye and the frontend walk-through
-- `b618e07` Sun 11:09 · jamesEmerson112 · Update team status and features.txt
-- `f0ae87a` Sun 11:01 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
