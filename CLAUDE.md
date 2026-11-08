@@ -85,15 +85,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 1:28 PM PST_
+_Last updated: Sun Nov 8, 1:38 PM PST_
 
-**Current focus:** P4: the 1 PM stage is on. James's chips generate-and-test (`armsim/gentest.py`, Hermes `Astra`) restarted at 13:25 with a new probe gate: Astra says go when the jaws reach the red bag's edge, since the table-height camera can't see a jaw tucked under it. Test 1 (pan +8) earned the first GO and ran the full grab (held 0.68 s, no alarms), but the AFTER frame shows the red bag didn't reach the box; nearly every try today measured 0.5–0.75 s, so the grip time may just be the jaws pausing as they close, not a real hold *(inferred)*. `--lean` (12 compact tries, one 640 px frame) plans in ~12 s against ~21 s but picks the opposite pan sign, so it stays opt-in. The fault stories (`a`, `b`, `stall`) haven't run on the real arm. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
+**Current focus:** P4: the 1 PM stage is on. James's chips generate-and-test (`armsim/gentest.py`, Hermes `Astra`) now runs with `--probe-once` (`e5693de`): only the first try measures, every later try runs the full pick-and-place. In the current run probe 1 (`wave`, pan 0) earned a GO (jaws E8, edge F8), and test 2 (`wave`, pan −6, effort low, plan 20.8 s) gripped 0.54 s with no alarms; Astra's box verdict comes with its next plan. Holds keep landing at 0.5–0.75 s, short of `recording_2`'s 0.9 s, so a grip may still be the jaws pausing as they close *(inferred)*. The fault stories (`a`, `b`, `stall`) haven't run on the real arm. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
 
 **Recently done:**
+- James: gentest `--probe-once` measures only on the first try; every later try runs the full pick-and-place (`e5693de`)
 - James: gentest's probe gate says go when the jaws reach the red bag's edge (one tucked under, one over) and no-go on a different bag; `--lean` short-context planning is opt-in (`1bc11cf`)
 - James: gentest `--reasoning` rotates Astra's effort test by test and logs effort, plan and check times for each try (`084b1f9`)
 - James: Mission Control's live camera overlays the 12 × 9 grid Astra sees (A–L, 1–9), toggled with G or the Grid button (`d82a1ec`)
-- James: gentest draws the labelled grid on every frame it shows Astra, and Astra reports the jaws' and the edge's cells with each go or no-go (`205f64d`)
 
 **Open questions:**
 - Naïve is flaky (429s and an `internal_error` this morning): go with the live board on stage, or the local fallback (Mission Control's button + the Pi's scripted dispatcher, proven at 11:10)? `armsim/hermes_file.py` (Hermes over the file board) isn't built (`HANDOFF-LOCAL.md` §4)
@@ -102,6 +102,9 @@ _Last updated: Sun Nov 8, 1:28 PM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `d8f31c6` Sun 13:34 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
+- `e5693de` Sun 13:34 · jamesEmerson112 · arm-sim: gentest --probe-once: the first try only measures, every later try runs the full pick-and-place
+- `f2d6b85` Sun 13:28 · jamesEmerson112 · Update team status in CLAUDE.md
 - `c0b47d4` Sun 13:25 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 - `1bc11cf` Sun 13:25 · jamesEmerson112 · arm-sim: gentest probe gate says go when the jaws reach the red bag's edge (one tucked under, one over); --lean short-context planning (12 compact tries, one 640 px frame)
 - `035efbd` Sun 13:18 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -109,9 +112,6 @@ _Last updated: Sun Nov 8, 1:28 PM PST_
 - `d84de7c` Sun 13:02 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 - `084b1f9` Sun 13:02 · jamesEmerson112 · arm-sim: gentest --reasoning rotates Astra's effort test by test and logs effort, plan and check times per try
 - `8825b86` Sun 12:58 · jamesEmerson112 · Update team status in CLAUDE.md
-- `d82a1ec` Sun 12:55 · jamesEmerson112 · Mission Control: the live camera shows the labelled grid Astra sees (12 x 9, A-L, 1-9); G or the Grid button toggles it
-- `0921fe8` Sun 12:53 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
-- `205f64d` Sun 12:53 · jamesEmerson112 · arm-sim: gentest draws a labelled grid (A-L x 1-9) on every frame Astra sees; Astra names the jaws' and the edge's cells
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
