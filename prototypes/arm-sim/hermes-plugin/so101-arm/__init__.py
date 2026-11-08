@@ -23,7 +23,7 @@ SKILLS = {
     "arm_grip": ("grip", "Close the gripper. The result says whether it is holding something (gripper stopped short of closed, with load)."),
     "arm_lift": ("lift", "Lift the gripper 30 mm straight up and check it is still holding."),
     "arm_release": ("release", "Open the gripper."),
-    "arm_wave": ("wave", "Wave hello: raise the arm and wave the wrist."),
+    "arm_wave": ("wave", "Pack the chips: on the real arm, pick up the bag of chips next to the arm and put it in the box (the taught pick-and-place); in sim, a wave."),
     "arm_park": ("park", "Fold the arm to its rest pose and switch torque off. Use after a fault."),
 }
 MOTION = set(SKILLS) - {"arm_park"}

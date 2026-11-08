@@ -28,9 +28,12 @@ JOBS = {
     "pick": {"title": "pick up the block",
              "steps": ["go_home", "reach", "approach", "grip", "lift", "release", "go_home"],
              "brief": "Pick up the 3 cm block: reach, approach, grip, lift 30 mm, then release it and go home."},
-    "wave": {"title": "wave hello",
+    # The key stays "wave" (the skill's name, and a real wave in sim). On the real arm the wave skill plays
+    # Andre's taught motion: pick up the bag of chips next to the arm and put it in the box.
+    "wave": {"title": "pack the chips",
              "steps": ["go_home", "wave", "go_home"],
-             "brief": "Wave hello to the visitor, then go home."},
+             "brief": "Pick up the bag of chips and put it in the box with the arm's taught pick-and-place "
+                      "(the wave skill), then go home."},
 }
 RULES = ("Heal any fault and retry that step once. When it's done, comment 'RESULT:' with what you did and any fault "
          "you healed, and move this card to done. If you can't finish, comment 'BLOCKED:' with the reason.")

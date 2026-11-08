@@ -60,7 +60,7 @@ All commands below run on the Mac from `prototypes/arm-sim` unless they say "on 
    ```
 3. **What happens:**
    1. The dispatcher claims the card.
-   2. Hermes reads it, **looks at the camera**, and runs `go_home`, the chips pick-and-place (Andre's taught motion) and `go_home`.
+   2. Hermes reads it, **looks at the camera**, and runs `go_home`, the chips pick-and-place ("pack the chips": pick up the bag, put it in the box) and `go_home`.
    3. It looks again, then posts `RESULT:` (what it did and what the camera saw) and closes the card.
 4. **Show the card:**
    ```bash
@@ -102,12 +102,12 @@ ssh pi@192.168.50.2 'cd ~/sage_hardware_healer/Naive-Nous-YC-Hackathon/prototype
    ```bash
    ssh pi@192.168.50.2 'cd ~/sage_hardware_healer/Naive-Nous-YC-Hackathon/prototypes/arm-sim && PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted --max-jobs 1'
    ```
-3. In Mission Control, press **2 · New order: Wave**. The card appears in **Jobs**, moves to Doing then Done, and the commander feed shows each step.
+3. In Mission Control, press **2 · New order: Pack chips**. The card appears in **Jobs**, moves to Doing then Done, and the commander feed shows each step.
 
 ## 4. Mission Control's keys on the real arm
 | Key | What it does |
 |---|---|
-| **2** | Places a chips order (it runs when a dispatcher runs) |
+| **2** ("Pack chips") | Places a "pack the chips" order (it runs when a dispatcher runs) |
 | **8** | Freezes the fleet |
 | **7** ("a person fixed it") | Runs the check at home, which **moves the arm** |
 | **1** (pick) | Its poses aren't taught, so the job would be refused |

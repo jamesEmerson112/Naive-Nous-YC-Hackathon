@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-look="mission">
+<html lang="en" data-look="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -31,13 +31,13 @@
   from ?token= or the meta tag mission.py adds on loopback.
 -->
 <script>
-// The look before first paint: ?look= wins (and is remembered), then the remembered one, then mission.
+// The look before first paint: ?look= wins (and is remembered), then the remembered one, then light.
 (function () {
   var LOOKS = ["mission", "neon", "light"], look = null;
   try { look = new URLSearchParams(location.search).get("look"); } catch (e) {}
   if (LOOKS.indexOf(look) >= 0) { try { localStorage.setItem("mc-look", look); } catch (e) {} }
   else { try { look = localStorage.getItem("mc-look"); } catch (e) { look = null; } }
-  if (LOOKS.indexOf(look) < 0) look = "mission";
+  if (LOOKS.indexOf(look) < 0) look = "light";
   document.documentElement.setAttribute("data-look", look);
 })();
 </script>
@@ -935,7 +935,7 @@ html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
   <div class="barlabel">Presenter</div>
   <div class="btns" id="btns">
     <button class="pb" data-act="order" data-job="pick" data-key="1"><kbd>1</kbd><span class="l"><small>New order</small><span class="g">Pick up the block</span><span class="s">Pick block</span></span><span class="st8">sent</span></button>
-    <button class="pb" data-act="order" data-job="wave" data-key="2"><kbd>2</kbd><span class="l"><small>New order</small><span class="g">Wave hello</span><span class="s">Wave</span></span><span class="st8">sent</span></button>
+    <button class="pb" data-act="order" data-job="wave" data-key="2"><kbd>2</kbd><span class="l"><small>New order</small><span class="g">Pack chips</span><span class="s">Chips</span></span><span class="st8">sent</span></button>
     <button class="pb fault" data-act="fault" data-fault="us_frozen" data-key="3"><kbd>3</kbd><span class="l"><small>Plant fault</small><span class="g">Stuck sensor</span><span class="s">Stuck sensor</span></span><span class="st8">sent</span></button>
     <button class="pb fault" data-act="fault" data-fault="pod_image07" data-key="4"><kbd>4</kbd><span class="l"><small>Plant fault</small><span class="g">Bad pod image 07</span><span class="s">Pod image 07</span></span><span class="st8">sent</span></button>
     <button class="pb danger" data-act="fault" data-fault="joint_stuck" data-key="5"><kbd>5</kbd><span class="l"><small>Plant fault</small><span class="g">Dead elbow servo</span><span class="s">Dead elbow</span></span><span class="st8">sent</span></button>
