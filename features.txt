@@ -25,11 +25,11 @@ Hermes plugin catalog submission
 
 DEVICE (Pi 5, STM32)
 Device side owner (D14)
-Pi app: hold object
+Pi app: hold object                     <--- Ishaan
 Ultrasonic distance reading
 One serial-port owner (arm host)
-Healer agent on the Pi
-Health checks, tiers 1-3
+Healer agent on the Pi                  <--- Ishaan
+Health checks, tiers 1-3                <--- Ishaan
 Snapshot and park on fault
 Overlay patches with self-revert
 Visor: check in, pull, install
@@ -51,10 +51,10 @@ Coding agent for code patches (D21)
 Batch LLM endpoint (by 5:15 PM)
 
 DEMO AND FAULTS
-Plant demo faults D1-D3
+Plant demo faults D1-D3                 <--- Ishaan
 STM32 C bug demo (F1, F2)
 Camera-cover hero demo
-Healer benchmark, harness versions
+Healer benchmark, harness versions      <--- Ishaan
 Demo script and rehearsal
 Backup demo video
 
