@@ -1,0 +1,248 @@
+"""A simulated SO-101 with the same methods as the real host (Andre's `arm/prims/core.py`:
+`read`, `send`, `goto`, `play`, `relax`), plus the three checks the real host still lacks:
+an arrival check, a grasp load check and servo status bits.
+
+Units follow LeRobot and Andre's primitives: arm joints in degrees, gripper 0-100 (0 = closed).
+Known gap for tomorrow: the sim's zero pose isn't the real arm's calibrated zero, so poses will
+need a per-joint offset once Andre's calibration file is in hand.
+"""
+import mujoco
+import numpy as np
+
+from .model import build
+
+ARM_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")
+GRIPPER = "gripper"
+JOINTS = ARM_JOINTS + (GRIPPER,)
+
+# STS3215 Status register bits (note, "Traps"): 1 voltage, 2 angle sensor, 4 overheat,
+# 8 over-current, 32 overload. Servo alarms never raise; they have to be polled.
+OVERLOAD = 32
+OVERLOAD_AFTER_S = 0.5     # force at the limit this long sets the overload bit
+
+POD_RATE_HZ = 10           # the pod streams distance at 10 Hz by default
+US_JITTER = 0.5            # µs of echo jitter, so a healthy trace is never perfectly flat
+MIN_MM = 20                # the pod reports under ~116 µs (about 20 mm) as out_of_range
+
+
+def smooth(x):
+    x = min(max(x, 0.0), 1.0)
+    return x * x * (3.0 - 2.0 * x)
+
+
+class SimArm:
+    def __init__(self, model=None, *, fps=50, recorder=None, seed=0, start=None):
+        self.m = model if model is not None else build()
+        self.d = mujoco.MjData(self.m)
+        self.fps = fps
+        self.substeps = max(1, round(1.0 / fps / self.m.opt.timestep))
+        self.recorder = recorder
+        self.hooks = []                      # called once per control tick (GIF, viewer)
+        self.faults = {}                     # active planted faults, see inject()
+        self.rng = np.random.default_rng(seed)
+        self._qadr = np.array([self.m.joint(j).qposadr[0] for j in JOINTS])
+        self._dadr = np.array([self.m.joint(j).dofadr[0] for j in JOINTS])
+        self._act = np.array([self.m.actuator(j).id for j in JOINTS])
+        self._lo, self._hi = self.m.actuator_ctrlrange[self._act].T.copy()
+        self._flimit = np.abs(self.m.actuator_forcerange[self._act]).max(axis=1)
+        self._gain = self.m.actuator_gainprm[self._act].copy()
+        self._bias = self.m.actuator_biasprm[self._act].copy()
+        self._at_limit = np.zeros(len(JOINTS))
+        self._sensor = self.m.sensor("ultrasonic").adr[0]
+        self._tip = self.m.site("gripperframe").id
+        self._next_d = 0.0
+        self._last_d = None
+        if start is not None:
+            self.d.qpos[self._qadr] = self.to_ctrl(start)
+        mujoco.mj_forward(self.m, self.d)
+        self.d.ctrl[self._act] = self.d.qpos[self._qadr]
+
+    # ---- units ---------------------------------------------------------------------------
+    def to_ctrl(self, pose):
+        """LeRobot units (dict of `<joint>.pos`, or a list in JOINTS order) -> radians."""
+        if isinstance(pose, dict):
+            cur = self._units(self.d.ctrl[self._act])
+            pose = [pose.get(f"{j}.pos", pose.get(j, c)) for j, c in zip(JOINTS, cur)]
+        vals = np.array(pose, dtype=float)
+        q = np.deg2rad(vals[:5])
+        g = self._lo[5] + (self._hi[5] - self._lo[5]) * np.clip(vals[5], 0, 100) / 100.0
+        return np.clip(np.append(q, g), self._lo, self._hi)
+
+    def _units(self, q):
+        q = np.asarray(q, dtype=float)
+        g = (q[5] - self._lo[5]) / (self._hi[5] - self._lo[5]) * 100.0
+        return np.append(np.rad2deg(q[:5]), g)
+
+    # ---- the real host's methods ------------------------------------------------------------
+    @property
+    def t(self):
+        return float(self.d.time)
+
+    def read(self):
+        return {f"{j}.pos": float(v) for j, v in zip(JOINTS, self._units(self.d.qpos[self._qadr]))}
+
+    def send(self, action):
+        self._torque(True)
+        self.d.ctrl[self._act] = self.to_ctrl(action)
+
+    def tick(self):
+        for _ in range(self.substeps):
+            mujoco.mj_step(self.m, self.d)
+        dt = self.substeps * self.m.opt.timestep
+        force = np.abs(self.d.actuator_force[self._act])
+        self._at_limit = np.where(force >= 0.95 * self._flimit, self._at_limit + dt, 0.0)
+        if self.recorder:
+            self.recorder.joints(self.t, self._units(self.d.ctrl[self._act]), self._units(self.d.qpos[self._qadr]),
+                                 self.d.actuator_force[self._act], self.status())
+        if self.t + 1e-9 >= self._next_d:
+            self._next_d += 1.0 / POD_RATE_HZ
+            row = self.distance()
+            if self.recorder:
+                self.recorder.distance(self.t, row)
+        for hook in self.hooks:
+            hook(self)
+
+    def hold(self, seconds):
+        for _ in range(max(1, round(seconds * self.fps))):
+            self.tick()
+
+    def goto(self, pose, duration=1.5, *, tol_deg=2.0, settle_timeout=2.0):
+        """Ease to `pose`, then confirm arrival (the real host's goto is timed and never checks)."""
+        start, goal = self.d.ctrl[self._act].copy(), self.to_ctrl(pose)
+        self._torque(True)
+        n = max(1, round(duration * self.fps))
+        for i in range(1, n + 1):
+            self.d.ctrl[self._act] = start + (goal - start) * smooth(i / n)
+            self.tick()
+        return self.wait_arrived(goal, tol_deg=tol_deg, timeout=settle_timeout)
+
+    def wait_arrived(self, goal=None, *, tol_deg=2.0, timeout=2.0):
+        goal = self.d.ctrl[self._act] if goal is None else goal
+        t0 = self.t
+        while True:
+            err = np.rad2deg(np.abs(goal - self.d.qpos[self._qadr]))[:5]
+            speed = np.abs(self.d.qvel[self._dadr])[:5]
+            if err.max() <= tol_deg and speed.max() < 0.05:
+                return {"arrived": True, "max_err_deg": round(float(err.max()), 2), "seconds": round(self.t - t0, 2)}
+            if self.t - t0 >= timeout:
+                return {"arrived": False, "max_err_deg": round(float(err.max()), 2), "seconds": round(self.t - t0, 2),
+                        "worst_joint": ARM_JOINTS[int(err.argmax())]}
+            self.tick()
+
+    def play(self, prim, speed=1.0):
+        """Play a primitive in Andre's JSON format; ease to its first frame first, like his play()."""
+        names = prim.get("joints") or list(JOINTS)
+        order = [names.index(j) if j in names else None for j in JOINTS]
+        frames = [[f[i] if i is not None else c for i, c in zip(order, self._units(self.d.ctrl[self._act]))]
+                  for f in prim["frames"]]
+        self.goto(frames[0], duration=1.0)
+        src_fps = prim.get("fps", 50) * speed
+        n = max(1, round(len(frames) / src_fps * self.fps))
+        for i in range(n):
+            k = min(len(frames) - 1, int(i * src_fps / self.fps))
+            self.d.ctrl[self._act] = self.to_ctrl(frames[k])
+            self.tick()
+        return self.wait_arrived(timeout=1.0)
+
+    def relax(self):
+        """Torque off. On the real arm this drops it, so park at a rest pose first."""
+        self._torque(False)
+
+    def _torque(self, on):
+        if on:
+            self.m.actuator_gainprm[self._act] = self._gain
+            self.m.actuator_biasprm[self._act] = self._bias
+        else:
+            self.m.actuator_gainprm[self._act] = 0.0
+            self.m.actuator_biasprm[self._act] = 0.0
+
+    # ---- the checks the real host lacks -------------------------------------------------------
+    def status(self):
+        return [OVERLOAD if s >= OVERLOAD_AFTER_S else 0 for s in self._at_limit]
+
+    def grasp_check(self, *, min_open=4.0, min_load=0.25):
+        """Holding = the gripper stopped short of fully closed and its servo is pushing."""
+        g = float(self._units(self.d.qpos[self._qadr])[5])
+        load = float(abs(self.d.actuator_force[self._act][5]))
+        return {"holding": g > min_open and load > min_load, "gripper": round(g, 1), "load_nm": round(load, 3)}
+
+    # ---- the wrist ultrasonic, in the pod's D-row format ------------------------------------
+    def distance(self):
+        """A pod `D` row (`podd` `recent kind=D`): {mm, us, st}; trust mm only when st == "ok".
+
+        The pod measures echo time `us` and computes mm = (us*343+1000)/2000 in integer math.
+        """
+        if "us_frozen" in self.faults and self._last_d is not None:
+            return dict(self._last_d)            # the same reading, forever: a frozen sensor
+        dist_m = float(self.d.sensordata[self._sensor])
+        if dist_m < 0 or dist_m >= self.m.sensor_cutoff[self.m.sensor("ultrasonic").id] - 1e-6:
+            row = {"mm": None, "us": None, "st": "no_echo"}    # nothing within 4 m: no echo comes back
+        else:
+            us = int(round(dist_m * 1000.0 * 2000.0 / 343.0 + self.rng.normal(0.0, US_JITTER)))
+            mm = (us * 343 + 1000) // 2000
+            row = {"mm": mm, "us": us, "st": "ok" if mm >= MIN_MM else "out_of_range"}
+        self._last_d = row
+        return dict(row)
+
+    def inject(self, fault, **params):
+        """Plant a fault. `us_frozen`: the distance stops changing (the gap in Olir's rules)."""
+        self.faults[fault] = {"at": round(self.t, 3), **params}
+        return self.faults[fault]
+
+    def clear(self, fault=None):
+        if fault is None:
+            self.faults.clear()
+        else:
+            self.faults.pop(fault, None)
+
+    # ---- kinematics (MuJoCo's own; replaces Placo for the residual check) --------------------
+    def tip(self):
+        """Fingertip position (m) and approach axis (unit vector) in the world frame."""
+        return self.d.site_xpos[self._tip].copy(), self.d.site_xmat[self._tip].reshape(3, 3)[:, 0].copy()
+
+    def predicted_mm(self, table_z=0.0, *, objects=()):
+        """Distance the sensor *should* read: along the approach axis to the table, or to an
+        object top if one is in the way. `objects` are (x, y, top_z, half_size) boxes."""
+        sid = self.m.site("ultrasonic").id
+        p = self.d.site_xpos[sid]
+        a = self.d.site_xmat[sid].reshape(3, 3)[:, 2]
+        if a[2] > -1e-6:
+            return None
+        best = (table_z - p[2]) / a[2]
+        for (x, y, top, half) in objects:
+            s = (top - p[2]) / a[2]
+            hit = p + s * a
+            if 0 < s < best and abs(hit[0] - x) <= half and abs(hit[1] - y) <= half:
+                best = s
+        return best * 1000.0
+
+    def solve(self, xyz, *, seed=None, iters=200):
+        """Joint pose (LeRobot units) that puts the fingertips at `xyz` pointing straight down."""
+        m, d = self.m, mujoco.MjData(self.m)
+        d.qpos[:] = self.d.qpos
+        if seed is not None:
+            d.qpos[self._qadr] = self.to_ctrl(seed)
+        cols = self._dadr[:4]                         # pan, lift, elbow, wrist flex
+        jacp, jacr = np.zeros((3, m.nv)), np.zeros((3, m.nv))
+        down = np.array([0.0, 0.0, -1.0])
+        for _ in range(iters):
+            mujoco.mj_forward(m, d)
+            pos = d.site_xpos[self._tip]
+            axis = d.site_xmat[self._tip].reshape(3, 3)[:, 0]
+            err = np.concatenate([np.asarray(xyz) - pos, 0.5 * np.cross(axis, down)])
+            if np.linalg.norm(err[:3]) < 5e-4 and np.linalg.norm(err[3:]) < 5e-3:
+                break
+            mujoco.mj_jacSite(m, d, jacp, jacr, self._tip)
+            J = np.vstack([jacp[:, cols], 0.5 * jacr[:, cols]])
+            dq = J.T @ np.linalg.solve(J @ J.T + 1e-4 * np.eye(6), err)
+            q = d.qpos[self._qadr[:4]] + dq
+            d.qpos[self._qadr[:4]] = np.clip(q, self._lo[:4], self._hi[:4])
+        mujoco.mj_forward(m, d)
+        miss = float(np.linalg.norm(np.asarray(xyz) - d.site_xpos[self._tip]))
+        tilt = float(np.degrees(np.arccos(np.clip(-d.site_xmat[self._tip].reshape(3, 3)[2, 0], -1, 1))))
+        if miss > 0.003 or tilt > 3.0:
+            raise ValueError(f"can't reach {np.round(xyz, 3).tolist()} pointing down "
+                             f"(off by {miss * 1000:.0f} mm, tilted {tilt:.0f} deg)")
+        out = self._units(d.qpos[self._qadr])
+        out[5] = self._units(self.d.ctrl[self._act])[5]
+        return out.tolist()

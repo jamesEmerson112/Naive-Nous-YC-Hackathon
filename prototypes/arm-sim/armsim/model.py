@@ -1,0 +1,57 @@
+"""The simulated bench: MuJoCo Menagerie's SO-101 (`robotstudio_so101`), a block in reach,
+and a wrist ultrasonic modelled as a rangefinder.
+
+The real HC-SR04 sits on the wrist bracket, points along the gripper's approach axis and
+should be mounted 50 mm or more behind the fingertips (note: "Wrist ultrasonic for finding
+the item"). The rangefinder site below copies that placement.
+"""
+from pathlib import Path
+
+import mujoco
+
+ROOT = Path(__file__).resolve().parent.parent
+MENAGERIE = ROOT / "vendor" / "menagerie" / "robotstudio_so101"
+
+# Where Menagerie's own "pickup" keyframe grasps the box: about 0.21 m in front of the base.
+# A low, hard, flat-topped block (4 x 4 x 3 cm). Pointing straight down, the fingertips can't
+# rise above ~9 cm here (wrist flex tops out near 95 deg), so a tall block leaves no room for
+# a step-and-settle approach; a 3 cm block leaves about 6 cm.
+BLOCK_HALF = (0.02, 0.02, 0.015)
+BLOCK_POS = (0.21, 0.0, BLOCK_HALF[2])
+BLOCK_TOP = BLOCK_POS[2] + BLOCK_HALF[2]
+
+# On the gripper body the jaws point along -Z, and `gripperframe` sits at the fingertips
+# (z = -0.098). The sensor goes 50 mm behind them, beside the fixed jaw; quat (0,1,0,0)
+# turns the site's +Z (the rangefinder's ray) to point along the approach axis.
+SENSOR_POS = (-0.026, 0.0, -0.048)
+SENSOR_QUAT = (0.0, 1.0, 0.0, 0.0)
+SENSOR_CUTOFF_M = 4.0  # HC-SR04 range is 2-400 cm
+
+
+def _body(spec, name):
+    finder = getattr(spec, "body", None) or getattr(spec, "find_body")
+    body = finder(name)
+    if body is None:
+        raise KeyError(f"no body {name!r} in {MENAGERIE / 'scene_box.xml'}")
+    return body
+
+
+def build(block_pos=BLOCK_POS) -> mujoco.MjModel:
+    if not (MENAGERIE / "scene_box.xml").exists():
+        raise FileNotFoundError(f"{MENAGERIE} is missing; run prototypes/arm-sim/setup.sh first")
+    spec = mujoco.MjSpec.from_file(str(MENAGERIE / "scene_box.xml"))
+    _body(spec, "box").pos = list(block_pos)
+    finder = getattr(spec, "geom", None) or getattr(spec, "find_geom")
+    finder("box").size = list(BLOCK_HALF)
+    for key in list(spec.keys):          # Menagerie's "pickup" keyframe expects the old box
+        spec.delete(key)
+    _body(spec, "gripper").add_site(
+        name="ultrasonic", pos=list(SENSOR_POS), quat=list(SENSOR_QUAT),
+        size=[0.006, 0.006, 0.006], rgba=[0.35, 0.77, 0.87, 1.0], group=1,
+    )
+    spec.add_sensor(
+        name="ultrasonic", type=mujoco.mjtSensor.mjSENS_RANGEFINDER,
+        objtype=mujoco.mjtObj.mjOBJ_SITE, objname="ultrasonic", cutoff=SENSOR_CUTOFF_M,
+        intprm=[1, 0, 0],  # MuJoCo 4.0: output the distance only (the XML parser's default)
+    )
+    return spec.compile()
