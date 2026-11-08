@@ -7,9 +7,8 @@ the disk budget has work to do. Then the digest, read from the event log like
 `make digest`, must show the night ran itself: incidents in, agent and automation actions,
 no human actions, nothing waiting for a person, evidence stored, no 5xx, every arm back.
 
-The steps are whatever `worker.STEPS` holds, so batch/gate (M3b) and work orders (M5)
-join in as they land; steps that take `settings` get the test's. Assertions on their event
-kinds are conditional on those kinds appearing.
+The steps are whatever `worker.STEPS` holds (batch and gate, work orders, datasets, the
+disk budget); steps that take `settings` get the test's, at overnight timings.
 """
 
 import inspect
@@ -110,7 +109,7 @@ def test_f10_overnight_run_accelerated(
     assert d.incidents == incidents_in_db >= faults  # bad-late adds a repeat incident
     assert d.heals > 0, "overlays held after their watch"
     assert d.actions_by_class["agent"] > 0, "the on-device agent acted"
-    assert d.actions_by_class["automation"] > 0, "the platform acted (at least the disk budget)"
+    assert d.actions_by_class["automation"] > 0, "the batch, gate and work orders acted"
     assert d.actions_by_class["human"] == 0 and d.human_actions == ()
     assert d.no_human_share == 1.0
     assert d.waiting_for_person == ()  # parks stay under the per-day and per-robot order caps
@@ -124,15 +123,10 @@ def test_f10_overnight_run_accelerated(
     assert d.by_kind.get(telemetry.PRUNED, 0) > 0
     assert report.blob_bytes <= report.budget_bytes, "the blob store stayed under budget"
 
-    # When M3b/M5 have landed, their outcomes show up too (conditional on the event kinds).
-    if d.candidates_created:
-        assert (
-            d.candidates_promoted
-            + d.candidates_rolled_back
-            + d.by_kind.get("candidate.awaiting_canary", 0)
-            + d.by_kind.get("candidate.canary_started", 0)
-            > 0
-        )
-    if d.work_orders_created:
-        assert d.work_orders_created <= planned["park"]
-        assert d.work_orders_created <= settings.orders_per_day_max
+    # The fleet loop: candidates built and canaried, the bad one rolled back (F4), and one
+    # work order per park, all under the order caps (F6).
+    assert d.candidates_created > 0 and d.by_kind.get("candidate.canary_started", 0) > 0
+    assert d.candidates_rolled_back > 0, "the canary caught a bad candidate"
+    assert d.work_orders_created == planned["park"] <= settings.orders_per_day_max
+    assert (report.simulated, report.real) == (3, 0)
+    assert "on 3 simulated arms + 0 real" in report.text()
