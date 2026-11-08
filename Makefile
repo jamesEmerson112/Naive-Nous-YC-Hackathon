@@ -7,7 +7,7 @@ TESTDB      := romulus-testdb
 TESTDB_PORT := 55432
 CLI         := $(COMPOSE) exec -T api python -m romulus_cloud.cli
 
-.PHONY: up dev sim coder-image down logs test flows testdb seed reset digest overnight-start \
+.PHONY: up dev sim coder-image coder-firmware-check down logs test flows testdb seed reset digest overnight-start \
 	overnight-stop overnight-check export lint fmt
 
 up:  ## db, api, worker
@@ -19,8 +19,11 @@ dev:  ## same, with source mounted and uvicorn --reload
 sim:  ## also start the fake devices (profile sim)
 	$(COMPOSE) --profile sim up --build -d
 
-coder-image:  ## build the coding-agent sandbox image, romulus-coder (M8)
-	$(COMPOSE) --profile coder build coder
+coder-image:  ## build the coding-agent sandbox image, romulus-coder (M8), with the STM32 toolchain (B8)
+	$(COMPOSE) -f compose.yaml -f compose.coder.yaml --profile coder build coder
+
+coder-firmware-check: coder-image  ## B8: build a copy of firmware/ in the coder image, offline
+	@bash cloud/scripts/coder_firmware_check.sh
 
 down:
 	$(COMPOSE) --profile sim --profile tunnel down
