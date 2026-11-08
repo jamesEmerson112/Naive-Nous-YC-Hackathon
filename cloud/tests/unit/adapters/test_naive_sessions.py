@@ -459,3 +459,26 @@ def test_fake_shop_serves_raw_or_normalized():
         }
     )
     assert norm.product(WOWROBO, HANDLE)["variants"][0]["price_cents"] == 1599
+
+
+def test_shop_429_falls_back_to_one_stdlib_read(monkeypatch):
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        shop.httpx,
+        "Client",
+        lambda **kw: real_client(transport=httpx.MockTransport(lambda r: httpx.Response(429))),
+    )
+    monkeypatch.setattr(shop, "_urllib_json", lambda url, timeout: PRODUCT_JS)
+    assert shop.product(WOWROBO, HANDLE)["variants"][0]["id"] == C018
+
+
+def test_live_fixture_replays_with_a_valid_report():
+    live = FIXTURES / "joint_stall_live.json"
+    data = json.loads(live.read_text())
+    fx = FixtureNaive(data, now=Clock())
+    s = fx.create_session(data["request"], idempotency_key="tc_replay")
+    assert s.state == "idle" and s.stop_reason == "end_turn" and s.id.startswith("ses_")
+    assert _spike().validate(s.structured_output, data["request"]["output_schema"]) == []
+    assert s.structured_output["part"]["variant_id"] == C018
+    assert 0 < s.cost_usd < 3
+    assert any(e.kind == "output" for e in fx.session_events(s.id))
