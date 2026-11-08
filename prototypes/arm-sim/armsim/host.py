@@ -35,10 +35,22 @@ RUNS = ROOT / "runs"
 
 
 class Skills:
-    """The commander's skill menu. Each skill moves the arm and reports how it went."""
+    """The commander's skill menu. Each skill moves the arm and reports how it went.
 
-    def __init__(self, arm):
-        self.arm, self.p, self._wave = arm, prims.poses(), prims.load("wave")
+    The sim uses armsim's own poses and wave. The real arm uses the poses and the wave Andre taught
+    by hand on it (arm/prims/library/: `bin/prim-record.sh --pose rest home above_block pick`, and
+    `bin/prim-record.sh wave`), because the sim's joint zero isn't the real arm's calibrated zero."""
+
+    NEEDED = ("rest", "home", "above_block", "pick")
+
+    def __init__(self, arm, *, poses=None, wave=None):
+        self.arm = arm
+        self.p = poses or prims.poses()
+        self._wave = wave or prims.load("wave")
+        missing = [n for n in self.NEEDED if n not in self.p]
+        if missing:
+            raise SystemExit(f"teach these poses first: {', '.join(missing)} "
+                             f"(arm/bin/prim-record.sh --pose {' '.join(missing)})")
 
     def _keep(self, **joints):
         cur = self.arm.read()
@@ -57,16 +69,22 @@ class Skills:
         r = self.arm.goto(self._keep(gripper=prims.CLOSED), duration=0.8, settle_timeout=0.4)
         g = self.arm.grasp_check()
         if g["holding"]:
-            # Ease off in small steps until the squeeze is under 90% of the servo's limit: held at
-            # the limit for 0.5 s, an STS3215 sets its overload bit (32) and the guard blocks motion.
-            target = g["gripper"]
+            # Find a squeeze between 40% and 90% of the servo's limit: held at the limit for 0.5 s an
+            # STS3215 sets its overload bit (32) and the guard blocks motion. Search the commanded
+            # opening between fully closed (full squeeze) and where the jaws stopped (no squeeze).
+            limit = self.arm.grip_limit_nm()
+            lo, hi = float(prims.CLOSED), g["gripper"] + 1.0
             for _ in range(8):
-                if g["load_nm"] < 0.9 * self.arm.grip_limit_nm():
+                if 0.4 * limit <= g["load_nm"] < 0.9 * limit:
                     break
-                target += 0.5
-                self.arm.send(self._keep(gripper=target))
-                self.arm.hold(0.2)
+                mid = (lo + hi) / 2
+                self.arm.send(self._keep(gripper=mid))
+                self.arm.hold(0.15)
                 g = self.arm.grasp_check(min_load=0.2)
+                if g["load_nm"] >= 0.9 * limit:
+                    lo = mid                         # still at the limit: open a little more
+                else:
+                    hi = mid                         # too loose (or let go): close a little
             self.arm.hold(0.6)                       # long enough for a stale overload count to clear
             g = self.arm.grasp_check(min_load=0.2)
         return {**{k: v for k, v in r.items() if k != "arrived"}, "grasp": g, "status": self.arm.status()}
@@ -113,6 +131,8 @@ def approach(arm, poses, *, step_m=0.005, max_steps=20):
     start = arm.goto(poses["above_block"])    # always start over the block with the jaws open
     if not start.get("arrived"):
         return {**start, "aborted": "couldn't get over the block to start the approach"}
+    if not getattr(arm, "use_ik", True):
+        return _approach_joint(arm, poses)
     tip, _ = arm.tip()
     readings, invalid = [], 0
     for step in range(max_steps + 1):
@@ -144,8 +164,56 @@ def approach(arm, poses, *, step_m=0.005, max_steps=20):
     return {"arrived": False, "aborted": f"no switch distance after {max_steps} steps", "readings": readings}
 
 
+def _lerp_pose(a, b, f):
+    return [x + (y - x) * f for x, y in zip(a, b)]
+
+
+def _as_list(pose):
+    from .arm import JOINTS
+    return [pose[j] for j in JOINTS] if isinstance(pose, dict) else list(pose)
+
+
+def _approach_joint(arm, poses, *, steps=12):
+    """The real arm before its kinematics are calibrated: walk the joint-space line from the taught
+    above_block pose to the taught pick pose, settling on the sensor each step, and switch to the
+    fixed final move once the reading is inside the switch distance (no IK, no prediction)."""
+    above, pick = _as_list(poses["above_block"]), _as_list(poses["pick"])
+    readings, invalid = [], 0
+    for k in range(steps + 1):
+        d, rows = _median_reading(arm)
+        if arm.halted():
+            return arm._stop()
+        if d is None:
+            invalid += len(rows) or 3
+            if invalid >= 6:
+                return {"arrived": False, "aborted": "6 invalid readings in a row", "readings": readings}
+        else:
+            invalid = 0
+            readings.append(d)
+            if d <= SWITCH_MM:
+                r = arm.goto(pick, duration=0.8)
+                return {**r, "steps": k, "readings": readings, "switched_at_mm": d, "mode": "joint"}
+        if k == steps:
+            break
+        r = arm.goto(_lerp_pose(above, pick, (k + 1) / (steps + 1)), duration=0.3)
+        if r.get("halted"):
+            return {**r, "readings": readings}
+    return {"arrived": False, "aborted": f"no switch distance after {steps} steps", "readings": readings,
+            "mode": "joint"}
+
+
 def lift(arm, *, up_m=0.03):
-    """Lift 30 mm straight up, then check the grasp still holds."""
+    """Lift 30 mm straight up, then check the grasp still holds. Without IK (the real arm before
+    calibration), go halfway back along the taught pick -> above_block line instead."""
+    if not getattr(arm, "use_ik", True):
+        poses = getattr(arm, "taught_poses", None)
+        if not poses:
+            return {"arrived": False, "aborted": "no taught poses for a joint-space lift", "grasp": arm.grasp_check()}
+        target = _lerp_pose(_as_list(poses["pick"]), _as_list(poses["above_block"]), 0.5)
+        target[5] = arm.commanded()[5]          # keep the grip's commanded squeeze, not where the jaws stopped
+        r = arm.goto(target, duration=0.8)
+        arm.hold(0.3)
+        return {**r, "grasp": arm.grasp_check(), "mode": "joint"}
     tip, _ = arm.tip()
     try:
         pose = arm.solve((tip[0], tip[1], tip[2] + up_m), seed=list(arm.read().values()))  # keeps the gripper squeezing
@@ -209,11 +277,7 @@ class Watchdog:
             return None
         if result.get("finding"):
             return self._open(result["finding"])
-        load = None
-        if result.get("worst_joint"):
-            from .arm import JOINTS
-            i = JOINTS.index(result["worst_joint"])
-            load = float(abs(self.arm.d.actuator_force[self.arm._act][i]))
+        load = self.arm.load_nm(result["worst_joint"]) if result.get("worst_joint") else None
         found = level1.check_arrival(result, load_nm=load)
         return self._open(found[0]) if found else None
 
@@ -345,18 +409,32 @@ def start_podd(port, var):
                             stdout=out, stderr=subprocess.STDOUT)
 
 
-def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romulus=None, device_id=None):
+def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romulus=None, device_id=None,
+          arm_kind="sim"):
     """pod=None: plain sim (distance from the sim itself). pod="sim": a virtual pod on a pty, read by
     Olir's real podd. pod="real": podd is already running on the real pod; `var` is its HEALER_VAR.
+    arm_kind="real": the real SO-101 through Andre's prims (needs pod="real").
     romulus: Romulus's URL; the arm then checks in and reports its incidents as `device_id`."""
     rec = RunRecorder(RUNS, task="arm host session", joints=JOINTS)
-    arm = SimArm(recorder=rec, start=prims.REST)
-    skills = Skills(arm)
+    if arm_kind == "real":
+        if pod != "real":
+            raise SystemExit("--arm real needs --pod real: the real arm reads its distance from podd")
+        from .real import RealArm, andre_library
+        poses, wave = andre_library()
+        arm = RealArm(recorder=rec).connect()
+        arm.taught_poses = poses
+        skills = Skills(arm, poses=poses, wave=wave)
+        print(f"real arm connected (IK {'on' if arm.use_ik else 'off: joint-space moves'}; "
+              f"registers {arm.registers})", flush=True)
+    else:
+        arm = SimArm(recorder=rec, start=prims.REST)
+        skills = Skills(arm)
     vpod = podd = source = None
     if pod:
         from .arm import SCENE_OBJECTS
         from .podsource import PodSource, healer_client
-        arm.pod_mode, realtime = True, True           # podd stamps rows with wall-clock time
+        arm.pod_mode = True                           # podd stamps rows with wall-clock time
+        realtime = arm_kind == "sim"                  # the sim paces itself; the real arm runs in real time
         client = healer_client(var)
         if pod == "sim":
             from .podheal_sim import PodHealSim
@@ -390,7 +468,7 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
         from .render import Gif
         gif = Gif(arm, RUNS / f"{rec.run_id}.gif")
     viewer = None
-    if view:
+    if view and arm_kind == "sim":
         import mujoco.viewer
         viewer = mujoco.viewer.launch_passive(arm.m, arm.d)
         arm.hooks.append(lambda a: viewer.sync())
@@ -535,6 +613,8 @@ if __name__ == "__main__":
                     help="Romulus's URL, e.g. http://localhost:8000 (check-ins and incident reports)")
     ap.add_argument("--device-id", default=os.environ.get("ARMSIM_DEVICE_ID"),
                     help="the arm's id in Romulus (default arm-twin-1 in sim, arm-1 with --pod real)")
+    ap.add_argument("--arm", choices=["sim", "real"], default="sim",
+                    help="real: the SO-101 through Andre's prims (arm/arm.env sets ARM_PORT); needs --pod real")
     a = ap.parse_args()
     serve(gif=a.gif, view=a.view, realtime=a.realtime, pod=a.pod, var=Path(a.var), romulus=a.romulus,
-          device_id=a.device_id)
+          device_id=a.device_id, arm_kind=a.arm)

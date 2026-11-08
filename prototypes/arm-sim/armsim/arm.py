@@ -248,6 +248,18 @@ class SimArm:
     def status(self):
         return [OVERLOAD if s >= OVERLOAD_AFTER_S else 0 for s in self._at_limit]
 
+    kind = "sim"
+    use_ik = True             # the sim's kinematics are exact; the real arm's need bench calibration
+    kinematics_ok = True
+
+    def commanded(self):
+        """The pose the servos are being told to hold (LeRobot units, JOINTS order)."""
+        return self._units(self._believed(self.d.ctrl[self._act])).tolist()
+
+    def load_nm(self, joint):
+        """Torque the joint's servo is applying now (N*m)."""
+        return float(abs(self.d.actuator_force[self._act][JOINTS.index(joint)]))
+
     def grip_limit_nm(self):
         """The gripper servo's torque limit (N*m); the overload bit trips when held near it."""
         return float(self._flimit[5])
