@@ -22,6 +22,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -48,10 +49,20 @@ def now_iso():
 
 
 def _unwrap(obj):
-    """{'data': x} -> x, repeatedly; a list stays a list."""
-    while isinstance(obj, dict) and "data" in obj and len(obj) <= 3 and not obj.get("id"):
+    """{'data': x} -> x, repeatedly (any envelope: {data, has_more, next_cursor, ...}); a list stays a list."""
+    while isinstance(obj, dict) and not obj.get("id") and isinstance(obj.get("data"), (dict, list)):
         obj = obj["data"]
     return obj
+
+
+MARKER = re.compile(r"^\W*(RESULT|BLOCKED|CLAIMED|PLAN)\b", re.I)
+
+
+def marker(text):
+    """'RESULT' / 'BLOCKED' / 'CLAIMED' / 'PLAN' when a comment starts with one, even as '**BLOCKED:**'
+    (models like bold); else None."""
+    m = MARKER.match(text or "")
+    return m.group(1).upper() if m else None
 
 
 def _as_cards(obj):
@@ -131,9 +142,13 @@ class FileBoard:
             c["updated_at"] = now_iso()
             return dict(com)
 
-    def move(self, card_id, *, status=None, title=None, body=None, assignee=None):
+    def move(self, card_id, *, status=None, title=None, body=None, assignee=None, expect=None):
+        """expect: the status the card must still have (compare-and-set under the lock), else
+        BoardError(code="conflict"). How a claim can't win twice."""
         with self._db(write=True) as db:
             c = self._find(db, card_id)
+            if expect is not None and c["status"] != expect:
+                raise BoardError(f"card {card_id} is {c['status']}, not {expect}", code="conflict")
             if status is not None:
                 if status not in COLUMNS:
                     raise BoardError(f"unknown status {status!r}; columns are {COLUMNS}", code="invalid")
@@ -168,7 +183,8 @@ class NaiveBoard:
     def _run(self, *args):
         cmd = [self.cli, "board", *args, "--json"]
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout)
+            # Its own session: a first, gentle Ctrl-C to the dispatcher must not kill a board call in flight.
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout, start_new_session=True)
         except FileNotFoundError as exc:
             raise BoardError(f"`{self.cli}` is not installed here: {exc}", code="no_cli") from exc
         except subprocess.TimeoutExpired as exc:
@@ -218,7 +234,13 @@ class NaiveBoard:
     def comment(self, card_id, body):
         return _unwrap(self._run("comment", self.id, card_id, "--body", body))
 
-    def move(self, card_id, *, status=None, title=None, body=None, assignee=None):
+    def move(self, card_id, *, status=None, title=None, body=None, assignee=None, expect=None):
+        """expect: re-read the card first and refuse (code "conflict") unless it still has that status.
+        The API has no conditional update ("No race guard"), so this narrows the window, nothing more."""
+        if expect is not None:
+            cur = card_status(self.card(card_id))
+            if cur != expect:
+                raise BoardError(f"card {card_id} is {cur}, not {expect}", code="conflict")
         args = ["move", self.id, card_id]
         for flag, v in (("--status", status), ("--title", title), ("--body", body), ("--assignee", assignee)):
             if v is not None:
@@ -238,6 +260,12 @@ def open_board(kind=None, board_id=None):
     if kind == "file":
         return FileBoard(board_id=board_id or "brd_local")
     raise SystemExit(f"unknown board kind {kind!r}: file or naive")
+
+
+def card_status(card):
+    """A card's column, or None when the read gave no recognisable card (treat as unknown, not as not-done)."""
+    st = (_unwrap(card) or {}).get("status") if isinstance(card, dict) else None
+    return st if st in COLUMNS else None
 
 
 def comment_text(c):
