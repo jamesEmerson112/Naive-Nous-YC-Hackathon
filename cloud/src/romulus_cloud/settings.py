@@ -4,12 +4,18 @@ Fake modes are the defaults so `make up` works offline with no keys. Going live 
 changing one variable per adapter.
 """
 
+import re
 from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# `python[3[.x]] [flags] -m pytest` anywhere in a shell command: what the coder image's
+# `pin_pytest` (cloud/coder/run_agent.py) rewrites to its sealed launcher. Keep them equal.
+SEALABLE_PYTEST = r"(?<![^\s;&|(])((?:\S*/)?python3?(?:\.\d+)?)((?:\s+-[A-Za-z]+)*?)\s+-m\s+pytest"
+SEALABLE_PYTEST += r"(?=$|[\s;&|)])"
 
 
 class Settings(BaseSettings):
@@ -81,11 +87,35 @@ class Settings(BaseSettings):
     coder_test_cmd: str = "python -m pytest -q"
     coder_step_limit: int = 30
     coder_time_limit_s: int = 600
+    # Output tokens per LLM call: the agent asks for this and its egress proxy caps it (B5).
+    coder_max_tokens: int = 2000
+
+    @field_validator("coder_test_cmd")
+    @classmethod
+    def _sealable_test_cmd(cls, value: str) -> str:
+        """Empty, or a command that runs `python [flags] -m pytest ...` somewhere: the one form
+        the coder image runs through its result seal (`cloud/coder/run_agent.py`,
+        `pin_pytest`; the same pattern). Any other way of starting the tests (bare `pytest`,
+        `uv run pytest`, `make test`) would be judged by its exit code alone, so it fails at
+        startup instead."""
+        if value.strip() and not re.search(SEALABLE_PYTEST, value):
+            raise ValueError(
+                f"CODER_TEST_CMD {value!r} can't be sealed: the coder image only seals the "
+                "results of `python -m pytest ...` (e.g. `python -m pytest -q`); use that form, "
+                "or leave it empty to rely on the held-out verify scripts alone"
+            )
+        return value
+
     # The gate's code replay (M8b): the device tests (CODER_TEST_CMD, empty = no replay, the
     # stub) and the held-out verify scripts, in fresh containers with no network. The
     # package's own `device/verify/` always runs; CODER_VERIFY_DIR adds a host directory of
-    # more verify scripts kept off the device (each file lands at `verify/<its path>`).
+    # more verify scripts kept off the device (each file lands at `verify/<its path>`). The
+    # Fleet Doctor's sandbox check runs the same set (`doctor_code.held_out`).
     coder_verify_dir: str = ""
+    # A coder or Doctor code candidate with no held-out verify scripts waits at the gate
+    # (the in-process device tests can forge their own result seal). True lets such a replay
+    # pass on the device tests alone, with a loud "unverified" event each time. Keep false.
+    coder_allow_unverified: bool = False
     coder_replay_timeout_s: int = 300
     # Where scratch copies of the device code go ("" = the system temp dir). Docker must be
     # able to mount it (Docker Desktop shares /Users, /private, /tmp and /var/folders).
@@ -127,6 +157,11 @@ class Settings(BaseSettings):
     doctor_check: Literal["stub", "sandbox"] = "stub"
     # Offer proposals whose check is only a stub (demos and F12); the event says so.
     doctor_offer_stub_checked: bool = False
+    # Offer a sandbox-checked fix whose base has no held-out verify/ scripts. While false
+    # such a consult closes `advised`: the repro and device-test steps run in the code's own
+    # pytest process and can be forged there, so only verify decides. The check says
+    # "offered unverified" when this lets one through.
+    doctor_offer_unverified: bool = False
     # False until the K17 list replaces `safety_paths`; while false every proposal is
     # discarded with "safety paths unknown" (D25).
     safety_paths_confirmed: bool = False

@@ -43,7 +43,9 @@ defaults stay fake and stub):**
 - `check` fails a patch that tampers with existing tests, then proves in the coder image
   with no network that the repro tests fail on behaviour on the base (exit 1, ids in the
   repro file), that the same ids pass with the fix, and that the device tests pass
-  (`doctor_code.check_job`). Anything else closes `failed_checks` (retried within the cap).
+  (`doctor_code.check_job`), then runs the held-out verify scripts. A base with none closes
+  `advised` unless DOCTOR_OFFER_UNVERIFIED (then the check says "offered unverified").
+  Anything else closes `failed_checks` (retried within the cap).
 - Waiting consults (`raw.retry_at` ahead, or blocked on `docker`) take no
   DOCTOR_MAX_OPEN slot.
 - Every close writes the consult's trace as a `doctor_consult` recording
@@ -103,6 +105,7 @@ OUTPUT_KEYS = (
     "exit_code",
     "timed_out",
     "tests_summary",
+    "sealed",
     "failed",
     "passed_ids",
     "output_tail",
@@ -1370,11 +1373,22 @@ def _apply_verdict(
                 if held and held.get("available")
                 else None
             ),
+            # Why CODER_VERIFY_DIR was left out (stale, unreadable) or the scripts count as
+            # none (no test on the base); never their output.
+            "verify_note": held.get("note") if held else None,
         },
         now=t.now,
     )
     if verdict["passed"]:
         _move(t, consult, "offer")
+    elif verdict["outcome"] == rules.ADVISED:  # no verify/ scripts and no opt-in: no retry
+        _close(
+            t,
+            consult,
+            rules.ADVISED,
+            f"The fix passed the repro and device-test checks, but nothing is offered: "
+            f"{verdict['reason']}. The hypotheses stand as advice.",
+        )
     else:
         _close(t, consult, rules.FAILED_CHECKS, f"The fix failed its checks: {verdict['reason']}.")
 
@@ -1384,8 +1398,9 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
     (`domain.doctor.tampered_tests`, before any sandbox run); then job `check:{id}`
     (`doctor_code.check_job`) proves in the coder image, with no network, that the repro
     tests fail on behaviour on the base, that the same test ids pass with the fix, and that
-    the device tests pass (`domain.doctor.check_verdict`). Pass → `offer`; anything else →
-    `failed_checks` (retried within the consult cap)."""
+    the device tests pass (`domain.doctor.check_verdict`), then runs the held-out verify
+    scripts. Pass → `offer`; a base with no verify scripts → `advised` unless
+    DOCTOR_OFFER_UNVERIFIED; anything else → `failed_checks` (retried within the cap)."""
     s = t.settings
     repro = (consult.draft or {}).get("repro_test")
     if (
@@ -1423,7 +1438,9 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
     base = (incident.running or {}).get("code_rev")
 
     def make() -> Callable[[], Any]:
-        code, held_out = doctor_code.package_parts(t.session, t.get_store(), base, s.fleet_id)
+        code, own = doctor_code.package_parts(t.session, t.get_store(), base, s.fleet_id)
+        # The lock-in gate's held-out set: the package's verify/ plus CODER_VERIFY_DIR.
+        held_out, note = doctor_code.held_out(t.session, own, base, s.fleet_id, s.coder_verify_dir)
         return partial(
             doctor_code.check_job,
             t.get_sandbox(),
@@ -1435,6 +1452,7 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
             scratch_dir=s.coder_scratch_dir or None,
             secrets=doctor_trace.secrets(s),
             verify_files=held_out,
+            verify_note=note,
         )
 
     try:
@@ -1459,6 +1477,7 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
         result.get("after"),
         repro,
         verify=result.get("verify"),
+        offer_unverified=s.doctor_offer_unverified,
     )
     _apply_verdict(t, consult, repro, verdict, result)
     _forget_after_commit(t, key)
@@ -1479,6 +1498,17 @@ def _offer(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
             consult,
             rules.ADVISED,
             f"{why}, so nothing is offered; the hypotheses stand as advice.",
+        )
+        return
+    # A real check without held-out verify scripts, again as it's offered (the setting may
+    # have changed since the check).
+    if rules.unverified(checks) and not t.settings.doctor_offer_unverified:
+        _close(
+            t,
+            consult,
+            rules.ADVISED,
+            "The fix's check had no held-out verify/ scripts and DOCTOR_OFFER_UNVERIFIED is "
+            "off, so nothing is offered; the hypotheses stand as advice.",
         )
         return
     refusal = _safety_refusal(draft.get("code_patch"), t.settings)  # again, as it's offered

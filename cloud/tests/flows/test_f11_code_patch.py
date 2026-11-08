@@ -163,8 +163,11 @@ def test_f11_a_d1_code_patch_becomes_a_replayed_code_candidate_that_waits_for_b7
     (waiting,) = [e for e in detail["events"] if e["kind"] == "candidate.awaiting_canary"]
     assert B7 in waiting["why"] and "pass-through" not in waiting["why"]
     modes = [c["argv"][-1] for c in rig.docker.calls if c["argv"][1] == "run"]
-    assert modes == ["agent", "verify", "test", "verify", "test"]
-    assert all("--network" in c["argv"] for c in rig.docker.calls if c["argv"][-1] != "agent")
+    # base, then base + code hunks (decisive), then the draft's own new test (advisory)
+    assert modes == ["agent", "verify", "test", "verify", "test", "test"]
+    runs = [c["argv"] for c in rig.docker.calls if c["argv"][1] == "run"]
+    nets = [a[a.index("--network") + 1] for a in runs]
+    assert nets[0].startswith("romulus-coder-net-") and nets[1:] == ["none"] * 5  # B5
 
     # It never reaches a device; the overlay is locked in.
     for t in (50, 90, 130, 165, 400):

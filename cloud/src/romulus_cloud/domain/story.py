@@ -406,6 +406,12 @@ LINES.update(
             f"The gate put {_cand(e)} on canary {e.refs.get('device')}."
         ),
         "candidate.awaiting_canary": lambda e: f"{_cand(e).capitalize()} waits for a canary.",
+        "candidate.awaiting_verify": lambda e: (
+            f"{_cand(e).capitalize()} waits for held-out verify scripts."
+        ),
+        "candidate.unverified": lambda e: (
+            f"Warning: {_cand(e)} passed on in-process tests only (no held-out verify)."
+        ),
         "candidate.frozen": lambda e: f"{_cand(e).capitalize()} froze with the fleet.",
         "candidate.restarted": lambda e: f"{_cand(e).capitalize()} restarts from replay.",
         "candidate.promoted": lambda e: f"{_cand(e).capitalize()} went to the fleet.",
@@ -430,6 +436,8 @@ LABELS.update(
         "candidate.replayed": _replay_label,
         "candidate.canary_started": lambda e: f"canary {e.refs.get('device')}",
         "candidate.awaiting_canary": lambda e: "awaiting canary",
+        "candidate.awaiting_verify": lambda e: "awaiting verify",
+        "candidate.unverified": lambda e: "unverified",
         "candidate.frozen": lambda e: "frozen",
         "candidate.restarted": lambda e: "unfrozen",
         "candidate.promoted": lambda e: "fleet",
@@ -842,6 +850,8 @@ STATUS: dict[str, tuple[str, str]] = {
     "candidate.rolled_back": ("rolled back", "bad"),
     "candidate.frozen": ("frozen", "bad"),
     "candidate.awaiting_canary": ("awaiting canary", "wait"),
+    "candidate.awaiting_verify": ("awaiting verify", "wait"),
+    "candidate.unverified": ("unverified pass", "bad"),
     "workorder.created": ("work order", "wait"),
     "workorder.card_posted": ("work order posted", "wait"),
     "workorder.status_changed": ("work order updated", "wait"),
@@ -905,6 +915,8 @@ STAGE: dict[str, int] = {
     "candidate.created": 71,
     "candidate.replayed": 72,
     "candidate.awaiting_canary": 73,
+    "candidate.awaiting_verify": 72,
+    "candidate.unverified": 72,
     "candidate.canary_started": 73,
     "candidate.frozen": 74,
     "candidate.restarted": 74,

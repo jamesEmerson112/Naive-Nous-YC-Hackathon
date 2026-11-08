@@ -196,7 +196,8 @@ def test_f11_verify_from_another_code_version_fails_closed_as_stale(
         in (detail["verdict"]["why"])
     )
     assert "regenerate with `make device-verify`" in detail["verdict"]["why"]
-    assert sandbox.runner.calls and all(c["argv"][-1] == "agent" for c in sandbox.runner.calls)
+    runs = [c for c in sandbox.runner.calls if c["argv"][1] == "run"]
+    assert runs and all(c["argv"][-1] == "agent" for c in runs)
 
 
 def _docker_image(name: str) -> bool:

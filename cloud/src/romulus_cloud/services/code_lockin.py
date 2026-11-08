@@ -14,10 +14,13 @@ With `CODER_PROVIDER` other than `fake`, a held overlay with a `code_patch` goes
    `coder_runs.replay_code_patch` (fresh containers, no network, held-out verify scripts,
    the device test command) as a job keyed by the candidate, and returns None (still
    replaying) until it finishes. A failing replay rolls the candidate back with the failing
-   tests named. With no test command the verify scripts still run; with neither, the
-   replay fails (fail closed: only a pass-through candidate gets the labeled stub). Then
-   the existing gate rules apply: with no canary running real code (B7) it waits at
-   `awaiting_canary`.
+   tests named. With no test command the verify scripts still run. With **no held-out
+   verify scripts** the candidate waits (`AwaitingVerify`, not a failure: it replays once
+   verify exists), because the device tests run in the same process as the code under test
+   and can forge their result seal; `CODER_ALLOW_UNVERIFIED=true` lets the device tests
+   alone decide, marked "unverified". With neither, the replay fails (fail closed: only a
+   pass-through candidate gets the labeled stub). Then the existing gate rules apply: with
+   no canary running real code (B7) it waits at `awaiting_canary`.
 
 Job functions here take plain data (file dicts, text) and never touch the database. The
 pass-through path (`CODER_PROVIDER=fake`, the default) doesn't come here at all.
@@ -33,7 +36,7 @@ import shutil
 import tarfile
 import tempfile
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -51,12 +54,13 @@ from romulus_cloud.adapters.coder import (
     redact,
 )
 from romulus_cloud.domain import gate as g
+from romulus_cloud.domain.doctor import patch_changes
 from romulus_cloud.models import Candidate, CodeVersion, Overlay
 from romulus_cloud.services import registry
 from romulus_cloud.services.coder_runs import CodeReplay, replay_code_patch
 from romulus_cloud.services.jobs import Done, Failed, Jobs, Missing, Pending, default_jobs
 from romulus_cloud.settings import Settings
-from romulus_contracts.codepatch import CODE_ROOT, is_under
+from romulus_contracts.codepatch import CODE_ROOT, is_under, summarize_code_patch
 
 SOURCE = "coder"  # code_versions.source for a version the coding agent drafted
 # Sources the gate replays for real (`replay_code_patch`) and never treats as pass-through:
@@ -64,6 +68,11 @@ SOURCE = "coder"  # code_versions.source for a version the coding agent drafted
 REPLAYED_SOURCES = frozenset({SOURCE, "doctor"})
 OUTPUT_TAIL = 4000  # characters of each test output kept in an event
 _FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+)", re.MULTILINE)
+UNVERIFIED = "unverified: decided by in-process tests only"
+NO_VERIFY = (
+    "no held-out verify for this code version: in-process tests alone can't be trusted; "
+    "run `make device-verify`"
+)
 _COUNTS = re.compile(r"\d+ (?:passed|failed|errors?|skipped)\b.*$", re.MULTILINE)
 
 
@@ -110,14 +119,16 @@ def read_package(store: BlobStore, cv: CodeVersion) -> dict[str, bytes]:
 
 
 def apply_diff(files: Mapping[str, bytes], diff: str) -> dict[str, bytes]:
-    """The package `files` with `diff` (a code_patch, paths relative to `device/`) applied."""
+    """The package `files` with `diff` (a code_patch, paths relative to `device/`) applied.
+    The changed files come from the parsed diff, not `git status`, so a `.gitignore` can't
+    drop one from the new package."""
     with tempfile.TemporaryDirectory(prefix="romulus-lockin-") as tmp:
         repo = ScratchRepo.create(Path(tmp), files)
         error = repo.apply(diff)
         if error:
             raise CoderError(f"the coder's diff does not apply to the base code: {error}")
         out = dict(files)
-        for status, rel in repo.changes():
+        for status, rel in patch_changes(diff):
             name = f"{CODE_ROOT}/{rel}"
             if status.startswith("D"):
                 out.pop(name, None)
@@ -127,7 +138,26 @@ def apply_diff(files: Mapping[str, bytes], diff: str) -> dict[str, bytes]:
 
 
 def package_diff(base: Mapping[str, bytes], new: Mapping[str, bytes]) -> str:
-    """The code_patch that turns package `base` into package `new` (their `device/` parts)."""
+    """The code_patch that turns package `base` into package `new` (their `device/` parts).
+    Raises CoderError when the diff doesn't name every changed file (git ignored one, e.g.
+    through the base's `.gitignore`): the replay must test exactly what would ship."""
+    prefix = f"{CODE_ROOT}/"
+    changed = {
+        name.removeprefix(prefix)
+        for name in set(base) | set(new)
+        if name.startswith(prefix) and base.get(name) != new.get(name)
+    }
+    diff = _git_package_diff(base, new)
+    missing = sorted(changed - set(summarize_code_patch(diff).paths))
+    if missing:
+        raise CoderError(
+            "the new code's diff leaves out changed files (ignored by git?): "
+            + ", ".join(missing[:10])
+        )
+    return diff
+
+
+def _git_package_diff(base: Mapping[str, bytes], new: Mapping[str, bytes]) -> str:
     with tempfile.TemporaryDirectory(prefix="romulus-lockin-") as tmp:
         repo = ScratchRepo.create(Path(tmp), base)
         for name in base:
@@ -231,6 +261,13 @@ def draft_summary(draft: CodeDraft) -> str:
 def to_replay_result(replay: CodeReplay, rev: str, secrets: Iterable[str]) -> g.ReplayResult:
     """The gate's view of a code replay: pass/fail, a why naming every failing test."""
     summary = redact(replay.summary(), secrets)
+    if replay.passed and unverified(replay):
+        why = (
+            f"{UNVERIFIED} (no held-out verify scripts; CODER_ALLOW_UNVERIFIED=true): code "
+            f"replay passed on code {rev} (device tests, fresh containers, no network): "
+            f"{summary}"
+        )
+        return g.ReplayResult(True, why, (g.CaseResult(f"code {rev}", True, summary),))
     if replay.passed:
         why = (
             f"code replay passed on code {rev} (device tests and held-out verify scripts, "
@@ -241,11 +278,18 @@ def to_replay_result(replay: CodeReplay, rev: str, secrets: Iterable[str]) -> g.
         return g.ReplayResult(True, why, (g.CaseResult(f"code {rev}", True, summary),))
     patched = replay.patched
     outputs = [patched.output if patched else "", (replay.patched_verify or _NO).output]
-    failing = failing_tests(*outputs)
+    # The seal's ids first (the verify process runs outside the work dir, so its printed
+    # paths are not the ids); printed FAILED lines only name tests when nothing was sealed.
+    failing = list(dict.fromkeys(replay.failing_ids())) or failing_tests(*outputs)
     named = f"; failing: {', '.join(failing)}" if failing else ""
     why = f"code replay failed on code {rev}: {summary}{named}"
     cases = tuple(g.CaseResult(t, False, "failed in the replay") for t in failing)
     return g.ReplayResult(False, why, cases or (g.CaseResult(f"code {rev}", False, summary),))
+
+
+def unverified(replay: CodeReplay) -> bool:
+    """No held-out verify test decided this replay (only the in-process device tests)."""
+    return replay.expected_verify == 0
 
 
 class _No:
@@ -270,6 +314,7 @@ def replay_output(replay: CodeReplay, secrets: Iterable[str]) -> dict[str, Any]:
             "patched_verify": tail(replay.patched_verify.output if replay.patched_verify else ""),
         },
         "replay_flags": list(replay.flags),
+        "replay_unverified": unverified(replay),
     }
 
 
@@ -285,6 +330,17 @@ class ReplayTools:
     sandbox: Sandbox
     store: BlobStore
     blocked: str | None = None  # `coder_blocker`: replays wait instead of failing
+    # Base packages by (fleet, rev), so a candidate parked for verify doesn't re-read its
+    # base every tick. Code versions are immutable; a few entries at most.
+    _bases: dict[tuple[str, str], dict[str, bytes]] = field(default_factory=dict, repr=False)
+
+    def base_package(self, cv: CodeVersion) -> dict[str, bytes]:
+        key = (cv.fleet_id, cv.rev)
+        if key not in self._bases:
+            if len(self._bases) >= 8:
+                self._bases.clear()
+            self._bases[key] = read_package(self.store, cv)
+        return self._bases[key]
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ReplayTools:
@@ -316,8 +372,29 @@ def is_passthrough(session: Session, c: Candidate) -> bool:
     return coder_version(session, c) is None
 
 
-def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayResult | None:
-    """The replay for a code candidate; None while its replay job runs (the gate waits)."""
+@dataclass(frozen=True)
+class AwaitingVerify:
+    """The replay can't start: no held-out verify scripts. The gate waits (no failure, no
+    retry count) and replays once verify exists."""
+
+    why: str = NO_VERIFY
+
+
+def no_verify(directory: str, base_rev: str) -> AwaitingVerify:
+    """Wait for verify; the why names CODER_VERIFY_DIR when it is set (missing or empty)."""
+    if not directory:
+        return AwaitingVerify()
+    return AwaitingVerify(
+        f"no held-out verify at `{directory}` (nor in code {base_rev}'s verify/): in-process "
+        "tests alone can't be trusted; run `make device-verify`"
+    )
+
+
+def gate_replay(
+    session: Session, c: Candidate, tools: ReplayTools
+) -> g.ReplayResult | AwaitingVerify | None:
+    """The replay for a code candidate; None while its replay job runs (the gate waits),
+    `AwaitingVerify` while there are no held-out verify scripts."""
     cv = coder_version(session, c)
     if cv is None:
         return g.replay_code_stub()
@@ -332,15 +409,33 @@ def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayR
             return g.ReplayResult(
                 False, f"code replay failed: the base code {cv.parent_rev} is not registered"
             )
+        base = tools.base_package(parent)
+        base_verify = any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
         try:
             extra = verify_files(settings.coder_verify_dir)
-        except CoderError as exc:
-            return g.ReplayResult(False, f"code replay could not start: {exc}")
+        except CoderError:
+            # A missing CODER_VERIFY_DIR (e.g. the default data/verify/device before `make
+            # device-verify`) is a configuration problem: always wait, never roll back (a
+            # single-overlay fix would go sticky). Only a verify that runs and fails rolls back.
+            if not base_verify:
+                return no_verify(settings.coder_verify_dir, parent.rev)
+            return AwaitingVerify(
+                f"configured verify dir `{settings.coder_verify_dir}` is missing: run `make "
+                "device-verify` (or fix `CODER_VERIFY_DIR`)"
+            )
+        except OSError as exc:
+            # Unreadable (permission denied) or changing under us (`make device-verify`
+            # regenerating it): wait and retry next tick; never roll back or escape the tick.
+            return AwaitingVerify(
+                f"configured verify dir `{settings.coder_verify_dir}` could not be read "
+                f"({type(exc).__name__}): run `make device-verify` (or fix `CODER_VERIFY_DIR`)"
+            )
         stale = stale_verify(session, extra, parent)
         if stale:
             return g.ReplayResult(False, f"code replay failed: {stale}")
-        base = read_package(tools.store, parent)
-        has_verify = bool(extra) or any(is_under(n, f"{CODE_ROOT}/{HOLDOUT_DIR}") for n in base)
+        has_verify = bool(extra) or base_verify
+        if not has_verify and not settings.coder_allow_unverified:
+            return no_verify(settings.coder_verify_dir, parent.rev)
         if not settings.coder_test_cmd.strip() and not has_verify:
             return g.ReplayResult(
                 False,
@@ -366,7 +461,16 @@ def gate_replay(session: Session, c: Candidate, tools: ReplayTools) -> g.ReplayR
             False, f"code replay could not run: {redact(status.error, tools.secrets)}"
         )
     assert isinstance(status, Done)
-    return to_replay_result(status.result, cv.rev, tools.secrets)
+    replay = status.result
+    if replay.passed and unverified(replay) and not settings.coder_allow_unverified:
+        # verify files were there but no verify test was collected: nothing held-out decided
+        return g.ReplayResult(
+            False,
+            f"code replay failed on code {cv.rev}: the held-out verify scripts collected no "
+            "tests, so only the in-process device tests checked it; fix the verify scripts "
+            "(`make device-verify`)",
+        )
+    return to_replay_result(replay, cv.rev, tools.secrets)
 
 
 def gate_replay_applied(c: Candidate, tools: ReplayTools) -> dict[str, Any]:

@@ -189,9 +189,11 @@ def test_timeout_kills_the_container_and_fails():
     assert draft.passed is False
     assert "sandbox timed out without a result" in draft.notes
     assert "did not run" in draft.test_output
-    run, kill = docker.calls
+    run = docker.run_call
+    kill = docker.call("kill")
     assert kill["argv"][1:] == ["kill", run["argv"][run["argv"].index("--name") + 1]]
-    assert docker.calls[0]["argv"]  # the run came first
+    assert docker.calls.index(run) < docker.calls.index(kill)
+    assert docker.calls[-1]["argv"][1:3] == ["network", "rm"]  # cleaned up after the kill
     assert draft.diff  # the partial work is still returned for the timeline
 
 
@@ -202,14 +204,68 @@ def test_sandbox_argv_mounts_only_work_and_keeps_the_key_out_of_argv():
     argv = call["argv"]
     assert argv[:3] == ["docker", "run", "--rm"]
     assert argv.count("-v") == 1 and argv[argv.index("-v") + 1].endswith(":/work")
-    assert argv[argv.index("--network") + 1] == "bridge"
     assert "ALL" == argv[argv.index("--cap-drop") + 1]
     assert argv[argv.index("--cpus") + 1] == "2" and argv[argv.index("--memory") + 1] == "2g"
     assert argv[-2:] == ["romulus-coder:test", "agent"]
-    assert KEY not in " ".join(argv)
-    assert "LLM_API_KEY" in argv  # passed by name; the value comes from the env
-    assert call["env"]["LLM_API_KEY"] == KEY
     assert call["env"]["CODER_STEP_LIMIT"] == "12"
+
+
+def test_agent_joins_only_an_internal_network_and_never_holds_the_real_key():
+    """B5: the agent's docker command, its env and its argv carry no real key, and its one
+    network is the internal one the egress proxy sits on."""
+    docker = fakes.FakeDocker(agent=fakes.fix_like_a_careful_engineer)
+    make_agent(docker, step_limit=12).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
+    create_net = docker.call("network", "create")["argv"]
+    assert (
+        "--internal" in create_net and "com.docker.network.bridge.inhibit_ipv4=true" in create_net
+    )
+    network = create_net[-1]
+    assert network.startswith("romulus-coder-net-")
+
+    run = docker.run_call
+    argv, env = run["argv"], run["env"]
+    assert argv.count("--network") == 1 and argv[argv.index("--network") + 1] == network
+    assert not any(a.startswith("--network=") or a in ("--net", "--add-host") for a in argv)
+    assert KEY not in " ".join(argv)
+    assert not any(KEY in v for v in env.values())  # nothing docker could copy in
+    assert env["LLM_API_KEY"].startswith("romulus-job-") and env["LLM_API_KEY"] != KEY
+    assert env["LLM_BASE_URL"] == "http://llm-proxy:8080/v1"
+    assert "LLM_API_KEY" in argv and "LLM_BASE_URL" in argv  # by name only
+
+    # The proxy holds the key (by name in argv), on the internal network plus bridge.
+    create = docker.call("create")
+    p_argv = create["argv"]
+    assert KEY not in " ".join(p_argv) and "LLM_PROXY_KEY" in p_argv
+    assert create["env"]["LLM_PROXY_KEY"] == KEY
+    assert create["env"]["LLM_PROXY_TOKEN"] == env["LLM_API_KEY"]
+    assert create["env"]["LLM_PROXY_UPSTREAM"] == "https://llm.example/v1"
+    assert create["env"]["LLM_PROXY_MAX_REQUESTS"] == "29"  # 2 x 12 steps + 5
+    assert p_argv[p_argv.index("--network") + 1] == network
+    assert p_argv[p_argv.index("--network-alias") + 1] == "llm-proxy"
+    proxy = p_argv[p_argv.index("--name") + 1]
+    assert docker.call("network", "connect")["argv"][3:] == ["bridge", proxy]
+    order = [c["argv"][1:3] for c in docker.calls]
+    assert order.index(["start", proxy]) < order.index(argv[1:3])  # proxy before the agent
+    assert ["rm", "-f"] in order and ["network", "rm"] in order  # torn down afterwards
+
+
+def test_refused_proxy_requests_are_noted_and_flagged():
+    logs = (
+        "llm_proxy ready on :8080\nllm_proxy forwarded POST /v1/chat/completions -> 200\n"
+        "llm_proxy refused GET /v1/models -> 405: method GET not allowed\n"
+    )
+    docker = fakes.FakeDocker(agent=fakes.fix_like_a_careful_engineer, proxy_logs=logs)
+    draft = make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
+    assert "llm proxy: 1 forwarded, 1 refused" in draft.notes
+    assert any(f.startswith("egress_refused: ") for f in draft.flags)
+
+
+def test_egress_setup_failure_is_a_no_result_draft_and_runs_no_agent():
+    docker = fakes.FakeDocker(agent=fakes.fix_like_a_careful_engineer, fail="network")
+    draft = make_agent(docker).draft(fakes.TOY_PATCH, INCIDENT, "c0de001", fakes.toy_files())
+    assert draft.passed is False and draft.no_result is True  # the batch retries it later
+    assert "egress setup failed" in draft.notes
+    assert not any(c["argv"][1] == "run" for c in docker.calls)
 
 
 def test_secrets_never_reach_notes_or_test_output():

@@ -115,7 +115,7 @@ export function OurLane() {
       status="tentative"
       sub={
         <>
-          Our lane is under way. P1 runs in simulation: MuJoCo SO-101, the Hermes <code>so101-arm</code> plugin, a level-1 watchdog that parks the arm, approach-then-grasp, a fault factory and a ChatTS test. It is on branch <code>james/arm-sim</code>, not pushed yet. The real arm comes Sunday 7:30 AM.
+          Our lane, slapping everything together. Tonight the whole loop runs in simulation on James's Mac: the MuJoCo arm, a virtual pod read by Olir's real <code>podd</code>, Romulus with the edge bridge, and a Naïve card driving Hermes. From 7 AM the same code runs on the Pi with the real arm and pod. Branch <code>james/arm-sim</code>, local until James approves a push.
         </>
       }
     >

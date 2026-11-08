@@ -90,7 +90,7 @@ Wave 3  PR 7 evidence + real draft/check + traces (after M8b)      PR 9 lock-in 
 
 ## 7. Tracker
 
-**Status Sat Nov 7, ~11:40 PM PST: every planned PR is merged.** Every PR had an independent review. #39's `batch.py` hook was also reviewed by the cloud lead's reviewer. Each was merged only after its fixes were in. The safety-critical PRs (#32, #44) had a second, focused re-review.
+**Status Sat Nov 7, ~11:40 PM PST: every planned PR is merged.** Sun ~2:30 AM: the seal follow-up (#57) is merged too. Every PR had an independent review. #39's `batch.py` hook was also reviewed by the cloud lead's reviewer. Each was merged only after its fixes were in. The safety-critical PRs (#32, #44) had a second, focused re-review.
 
 | PR | Status | GitHub | What the review changed |
 |---|---|---|---|
@@ -107,15 +107,18 @@ Wave 3  PR 7 evidence + real draft/check + traces (after M8b)      PR 9 lock-in 
 | 8 | merged | #30 | fullmatch, strict path and id rules, `grant` on act tools (draft, D27 deferred) |
 | 9 | merged | #39 | **fail closed**: skip the Coder only for a server-verified proposal (same device, fleet, patch sha, base, overlay, real check); proposal `touches_safety` OR'd in; `source="doctor"` gets the real replay; no early-run loop |
 | F12 interop | merged | #42 | the real cloud + unmodified fake device run F12 end to end, plus freeze; story tie-order fix |
+| seal follow-up | merged | #57 (Sun ~2:30 AM; #56 was its first try, closed when #53's branch was deleted) | repro steps take pass/fail ids **only from #53's result seal**; an unsealed or unfinished repro run fails closed. Code running in the same process can still forge the seal, so only the process-isolated held-out verify decides anything. **No held-out verify → `advised`, no offer**, unless `DOCTOR_OFFER_UNVERIFIED=true` (labelled "offered unverified", re-checked at offer and serve time). Held-out verify = the base's `verify/` + `CODER_VERIFY_DIR`, via the gate's own `verify_files`/`stale_verify`; a stale or unreadable dir is left out with a note; zero verify tests counts as none only on pytest exit 5 |
 
 ### Open follow-ups (not Doctor code; owner in brackets)
 
 | Item | Why it matters | Owner |
 |---|---|---|
-| **B5 egress (#46)**: the coder container gets only an LLM proxy, with no key inside | Until it merges, **keep `DOCTOR_DRAFT=coder` off on real device text**: the agent sees untrusted log text, and its container has a bridge network and the key | cloud lead (c9e401) |
+| ~~B5 egress (#46)~~: the coder container gets only an LLM proxy, with no key inside | Merged (Sun 2:35 AM, `ef2a722`). `DOCTOR_DRAFT=coder` on real device text no longer waits on B5; real offers still wait on K17 (`SAFETY_PATHS_CONFIRMED`) and on held-out verify (below) | cloud lead, merged |
 | K17 safety and visor path list | `SAFETY_PATHS_CONFIRMED` stays false, and every proposal is discarded, until it lands | Ishaan → Kent |
 | Real token price | `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder *(inferred)*; the dollar cap is only as good as it | Kent |
-| Gate replay hardening + `batch._drafts_this_hour` refund kinds | The planted-runner and fake-summary-line tricks the Doctor now blocks apply to the gate's replay too; zero-token Doctor drafts aren't yet refunded in the batch's count | cloud lead, in progress on `cloud/replay-hardening` |
+| ~~Gate replay hardening + `batch._drafts_this_hour` refund kinds~~ | Done in #53 (result seal, process-isolated verify, stdlib- and pytest-named files refused, refunds) | cloud lead, merged |
+| ~~Gate requires held-out verify (#58)~~ | The gate's twin of `DOCTOR_OFFER_UNVERIFIED`: a coder or Doctor candidate with no held-out verify waits in `replaying` unless `CODER_ALLOW_UNVERIFIED=true`; also guards `OSError` reading `CODER_VERIFY_DIR` | cloud lead, merged (Sun 2:50 AM, `b30d09f`) |
+| Verify scripts for real-mode checks | Real devices ship no `verify/`, so real checks close `advised` until `make device-verify` writes `data/verify/device` and `CODER_VERIFY_DIR` points to it (§8) | Kent |
 | L3 live sessions | D27 deferred; `romulus_contracts.tools` is a draft until Ishaan's h3 tool list | Kent + Ishaan |
 | MCAP evidence reader | `mcap` isn't a dependency; evidence is labeled "not wired" | later |
 | Adopt the device reference on the Pi | `tools/fake_device/src/fake_device/doctor.py` ("How to adopt this on the Pi"); run the applier in a supervisor process | Ishaan |
@@ -127,6 +130,8 @@ DOCTOR_MODE=fake DOCTOR_OFFER_STUB_CHECKED=true SAFETY_PATHS_CONFIRMED=true
 ```
 
 This setup runs with `make sim` and the fake device's `consult` scenario (or the `demo` chaos profile's `doctor` kind). The incident page shows the hypothesis ledger, the stub-labeled draft and check, the proposal offered, applied and held, and then lock-in. Say on stage that the check is a stub and the model is fake. With a working LLM key, `DOCTOR_MODE=live` makes the ledger real while the draft stays fake (strategy §3).
+
+Real-mode checks (`DOCTOR_DRAFT=coder DOCTOR_CHECK=sandbox`) offer nothing unless there are held-out verify scripts for the base, or `DOCTOR_OFFER_UNVERIFIED=true` is set. Real devices ship no `verify/`, so run `make device-verify` (it writes `data/verify/device`) and set `CODER_VERIFY_DIR` to it; the lock-in gate and the Doctor both read it. The stub demo above is unaffected.
 
 ## 9. Risks specific to execution
 

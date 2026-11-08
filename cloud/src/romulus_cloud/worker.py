@@ -14,6 +14,7 @@ then runs on the host (`make worker-host`), not in the Compose worker container.
 
 import argparse
 import atexit
+import fcntl
 import os
 import time
 import traceback
@@ -25,6 +26,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session, sessionmaker
 
 from romulus_cloud import db
+from romulus_cloud.adapters import coder_egress
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.ids import utcnow
 from romulus_cloud.log import log_line
@@ -144,7 +146,46 @@ def host_refusal(session: Session, settings: Settings, force: bool) -> str | Non
     return None
 
 
+def lock_pidfile(path: Path):
+    """Take an exclusive lock on the host worker's pid file and write this pid into it.
+    Returns `(open file, "")`: the lock lasts as long as the file stays open, so until this
+    process exits; or `(None, other pid)` when another host worker holds it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+")  # noqa: SIM115 - held open on purpose: it is the lock
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.seek(0)
+        other = handle.read().strip() or "?"
+        handle.close()
+        return None, other
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle, ""
+
+
+_PIDFILE_LOCK = None  # the host worker's pid-file lock, held until the process exits
+
+
+def egress_startup(settings: Settings, runner=None) -> None:
+    """With the real coder (B5): SIGTERM/SIGINT tear down open agent runs before exiting, and
+    leftovers of a killed worker (a proxy still holding the key, its network) are removed."""
+    if settings.coder_provider != "local_agent":
+        return
+    coder_egress.install_signal_teardown()
+    removed = coder_egress.prune(runner)
+    if removed:
+        log_line(
+            "worker.egress_pruned",
+            removed=removed,
+            why=f"removed {removed} leftover coder proxy container(s)/network(s) at startup",
+        )
+
+
 def main(argv: list[str] | None = None) -> None:
+    global _PIDFILE_LOCK
     parser = argparse.ArgumentParser(prog="python -m romulus_cloud.worker")
     parser.add_argument("--host", action="store_true", help="run as the host worker (M8b)")
     parser.add_argument("--pidfile", default="", help="with --host: write this pid file")
@@ -159,11 +200,18 @@ def main(argv: list[str] | None = None) -> None:
         if refusal:
             log_line("worker.refused", level="error", why=refusal)
             raise SystemExit(refusal)
-        if args.pidfile:
+        if args.pidfile:  # one host worker at a time; taken before the egress prune below
             pidfile = Path(args.pidfile)
-            pidfile.parent.mkdir(parents=True, exist_ok=True)
-            pidfile.write_text(str(os.getpid()))
+            _PIDFILE_LOCK, other = lock_pidfile(pidfile)
+            if _PIDFILE_LOCK is None:
+                why = (
+                    f"worker-host: refused, another host worker is running (pid {other}, lock "
+                    f"on {pidfile}). Stop it first; only one host worker may run at a time."
+                )
+                log_line("worker.refused", level="error", why=why)
+                raise SystemExit(why)
             atexit.register(lambda: pidfile.unlink(missing_ok=True))
+    egress_startup(settings)
     blocker = code_lockin.coder_blocker(settings)
     if blocker:  # said once here; code overlays and coder replays wait until it is fixed
         log_line("worker.coder_unavailable", level="error", why=blocker)

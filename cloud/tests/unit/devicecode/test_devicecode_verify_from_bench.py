@@ -191,3 +191,77 @@ def test_cli_writes_the_verify_dir_and_refuses_a_foreign_one(tmp_path, capsys):
     with pytest.raises(FileExistsError):
         verify_from_bench.main(["--repo", str(REPO), "--out", str(foreign)])
     assert (foreign / "notes.txt").exists()
+
+
+# PR #53 review: a module that loads the real stdlib module under its own name, then makes
+# every failed test report a pass, in whatever pytest process imports it.
+FORGE = """
+import importlib.util as _u, os as _os, sys as _sys, sysconfig as _sc
+_n = __name__
+_spec = _u.spec_from_file_location(_n, _os.path.join(_sc.get_paths()["stdlib"], _n + ".py"))
+_m = _u.module_from_spec(_spec)
+_sys.modules[_n] = _m
+_spec.loader.exec_module(_m)
+from _pytest.reports import TestReport as _TR
+_orig = _TR.from_item_and_call.__func__
+def _f(cls, item, call):
+    r = _orig(cls, item, call)
+    if r.outcome == "failed":
+        r.outcome, r.longrepr = "passed", None
+    return r
+_TR.from_item_and_call = classmethod(_f)
+_sys.stderr.write("REV53-FORGE-ACTIVE " + _n + "\\n")
+"""
+
+
+@pytest.mark.parametrize("where", ["hashlib.py", "robot/hashlib.py", "uuid.py", "json.py"])
+def test_a_stdlib_named_forger_in_the_tree_cannot_rescue_planted_d1(
+    tmp_path, bench, device_files, verify_files, where
+):
+    """PR #53 review blocker: verify put the candidate tree first on sys.path, so a
+    `hashlib.py` there loaded inside the verify process and turned failures into passes.
+    The verify process now never has the tree on sys.path."""
+    planted = verify_from_bench.planted(bench, "D1", device_files)
+    files = {**planted, f"device/{where}": FORGE.encode()}
+    result = _verify(tmp_path, files, verify_files)
+    assert "REV53-FORGE-ACTIVE" not in result["output"]
+    assert result["exit_code"] != 0 and result["passed"] < result["tests"] == N_TESTS
+
+
+def test_a_forger_named_like_a_module_verify_imports_late_cannot_rescue_planted_d1(
+    tmp_path, bench, device_files, verify_files
+):
+    """The blocker, reproduced on the host: the image's pytest hadn't loaded `hashlib` when
+    the template imported it, but the host's has, so use a module no pytest preloads. A
+    held-out script imports `secrets`; the patch plants a forging `secrets.py` at the root.
+    Before the fix (the tree on sys.path) this verify passed 7/7 with D1 unfixed."""
+
+    def late_import(work):
+        (work / "verify" / "test_late.py").write_text(
+            "def test_makes_a_token():\n    import secrets\n\n"
+            "    assert len(secrets.token_hex(2)) == 4\n"
+        )
+
+    planted = verify_from_bench.planted(bench, "D1", device_files)
+    files = {**planted, "device/secrets.py": FORGE.encode()}
+    result = _verify(tmp_path, files, verify_files, tamper=late_import)
+    assert "REV53-FORGE-ACTIVE" not in result["output"]
+    assert result["exit_code"] != 0 and result["passed"] < result["tests"] == N_TESTS + 1
+
+
+def test_the_verify_process_never_has_the_tree_on_sys_path(tmp_path, device_files, verify_files):
+    """A held-out verify test that checks its own process: no tree on sys.path, cwd outside."""
+
+    def probe(work):
+        (work / "verify" / "test_probe_path.py").write_text(
+            "import os, sys\nfrom pathlib import Path\n"
+            "WORK = str(Path(__file__).resolve().parents[1])\n\n\n"
+            "def test_tree_not_on_path():\n"
+            "    assert not any(p and str(Path(p).resolve()).startswith(WORK) for p in sys.path)\n"
+            "    assert '' not in sys.path\n"
+            "    assert not os.getcwd().startswith(WORK)\n"
+        )
+
+    result = _verify(tmp_path, device_files, verify_files, tamper=probe)
+    assert result["exit_code"] == 0, result["output"]
+    assert result["passed"] == result["tests"] == N_TESTS + 1

@@ -40,6 +40,9 @@ coder-firmware-check: coder-image  ## B8: build a copy of firmware/ in the coder
 	@bash cloud/scripts/coder_firmware_check.sh
 
 DB_PORT ?= 55433
+# Each agent run creates an internal Docker network and an LLM proxy sidecar (B5) and removes
+# both afterwards. The worker locks HOST_PIDFILE (a second worker-host is refused), then
+# prunes runs left by a dead host worker; a live worker's runs and test runs are spared.
 worker-host:  ## the worker as a host process for CODER_PROVIDER=local_agent (M8b); never overnight
 	$(COMPOSE) -f compose.yaml -f compose.host-worker.yaml up -d db
 	$(COMPOSE) stop worker

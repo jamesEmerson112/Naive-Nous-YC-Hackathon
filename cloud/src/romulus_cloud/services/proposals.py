@@ -11,7 +11,8 @@
 - **Serve-time gate (`serve_refusal`).** Both re-check, on every request and against that
   request's settings: offered and unexpired, the Doctor not off, safety paths confirmed,
   `touches_safety` recomputed against today's `SAFETY_PATHS`, and no stub check unless
-  `DOCTOR_OFFER_STUB_CHECKED` is on and the draft was a stub too. Turning any of these off
+  `DOCTOR_OFFER_STUB_CHECKED` is on and the draft was a stub too, and no real check without
+  held-out verify scripts unless `DOCTOR_OFFER_UNVERIFIED` is on. Turning any of these off
   hides an already-offered fix at once (null pointer, 410), without waiting for expiry.
 - **Hashes are computed per request, never stored for serving.** `pointer_for` and
   `get_for_device` each call `proposal_body_and_sha256` on the same stored row, and the dump
@@ -36,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
+from romulus_cloud.domain.doctor import unverified
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import new_id
 from romulus_cloud.models import (
@@ -98,7 +100,9 @@ def serve_refusal(p: DoctorProposal, now: datetime, settings: Settings | None) -
     - `SAFETY_PATHS_CONFIRMED` is true;
     - its patch doesn't touch `SAFETY_PATHS`, recomputed now (the stored flag counts too);
     - its check isn't a stub, unless `DOCTOR_OFFER_STUB_CHECKED` is on and its draft was a
-      stub as well (so a real patch with only a stub check is never served).
+      stub as well (so a real patch with only a stub check is never served);
+    - its real check had held-out verify scripts, unless `DOCTOR_OFFER_UNVERIFIED` is on
+      (`domain.doctor.unverified`).
     """
     if p.status != OFFERED:
         return p.status or "unknown"
@@ -113,6 +117,8 @@ def serve_refusal(p: DoctorProposal, now: datetime, settings: Settings | None) -
     stub_ok = settings.doctor_offer_stub_checked and bool((p.raw or {}).get("draft_stub"))
     if (p.checks or {}).get("stub") and not stub_ok:
         return "held back: its check is a stub"
+    if unverified(p.checks) and not settings.doctor_offer_unverified:
+        return "held back: no held-out verify/ scripts checked it (DOCTOR_OFFER_UNVERIFIED)"
     return None
 
 
