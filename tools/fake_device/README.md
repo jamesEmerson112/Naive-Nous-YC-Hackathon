@@ -24,6 +24,8 @@ uv run python -m fake_device --n 3 --url http://localhost:8000 --scenario all
 | `--state-dir` | `data/fake_device` | per device: `outbox/` and the visor's `visor.json`; survives restarts |
 | `--seed` | `0` | seed for the metrics noise |
 | `--ticks` | forever | stop after this many check-in rounds |
+| `--chaos` | `off` | `overnight` or `demo`: play the seeded chaos schedule (below) |
+| `--speed` | `1` | play the chaos schedule this many times faster (device clocks stay real) |
 
 Without `--scenario` the arms just check in and follow their assignments (flow F1). `bad` and `bad-late` run on the canary, and the others are spread over the other devices.
 
@@ -39,6 +41,7 @@ Without `--scenario` the arms just check in and follow their assignments (flow F
 | `scenarios.py` | Scripted scenarios as lists of `Step(at_s, name, run)`. Nothing sleeps or reads the clock; you pass `now`. |
 | `arm.py` | `FakeArm`: `SimDevice` + `DeviceClient` + `Outbox` + `Visor`, wired together. |
 | `fake_cloud.py` | `FakeCloud`: an in-memory device API on `httpx.MockTransport`, for tests (ours, and the Pi app's). |
+| `chaos.py` | `build_schedule(...)`: a seeded, deterministic list of `ChaosEvent`s; `Chaos(arms, rates, seed, links).run_due(elapsed_s, now)` plays it; `Link`: a per-arm transport that can be unplugged. |
 | `__main__.py` | The CLI. The only place with real sleeps. |
 
 ## Scenarios
@@ -50,6 +53,24 @@ Without `--scenario` the arms just check in and follow their assignments (flow F
 | `bad` | Arms bad-candidate mode, then runs `rules`. The next firmware the device installs fails its health check, so the visor rolls back and reports `rolled_back` (the gate treats that as a canary failure). One version only. | F4 |
 | `bad-late` | Same, but the next firmware passes its install check, then the device checks in `failing` and repeats `camera_occluded` once, until the gate assigns its last good version. | F4 |
 | `park` | Fault **D3**-style `servo_absent`: `park`, `resolved: false`, `suspected_cause: hardware`, no overlay. The arm then checks in `failing`. | F6 |
+
+## Chaos schedule (overnight run, flow F10)
+
+`--chaos overnight` follows the flows doc: a software fault about every 10 min across the
+arms (3 in 10 are D1 code patches; about 1 in 5 arms a bad candidate on the canary, the
+rest are rules patches on the other arms), a park/hardware fault about every 2 h, **at most
+2 a day and never twice on one arm** (so the cloud's work orders stay under
+`ORDERS_PER_DAY_MAX=3` and `ORDERS_PER_ROBOT_DAY_MAX=1`), a 2–10 min offline period about
+every 90 min (an episode is queued mid-outage; the outbox drains when it's back, F9), an
+unlabeled `episode` recording per arm about every 15 min, and a 30 min quiet stretch
+about every 3 h. No fault lands on a parked arm or on one whose overlay is still under its
+20 min watch. `--chaos demo` is denser (a fault about every 5 min). Every incident carries
+its recordings. Rates live in `chaos.PROFILES`; `chaos.profile("overnight", **changes)`
+tweaks one. Same `--seed`, same schedule; it extends a day at a time.
+
+```bash
+uv run python -m fake_device --n 4 --chaos demo --speed 60   # ~5 h of schedule in 5 min
+```
 
 ## Using it from the cloud's flow tests
 

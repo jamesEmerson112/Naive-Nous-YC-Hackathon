@@ -142,3 +142,47 @@ def incident_window(
         labels=labels,
     )
     return meta, data
+
+
+def episode(
+    at: datetime,
+    index: int,
+    success: bool,
+    running: Running | None,
+    task: str = "pick_cube",
+    pad_bytes: int = 4096,
+) -> Recording:
+    """A normal task attempt (`kind: episode`, telemetry §2) with no incident and no labels:
+    exactly what the disk budget may delete. A placeholder tar like `incident_window`,
+    padded with `pad_bytes` of filler so the budget has something to count."""
+    info = {
+        "placeholder": True,
+        "note": "Synthetic episode from tools/fake_device, not a real LeRobotDataset.",
+        "codebase_version": "v3.0",
+        "episode": {"task": task, "index": index, "success": success},
+        "recorded_at": at.isoformat(),
+    }
+    filler = (f"{at.isoformat()}:{index}:".encode() * pad_bytes)[:pad_bytes]
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for name, raw in (
+            ("meta/info.json", json.dumps(info, indent=2).encode()),
+            ("data/filler.bin", filler),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(raw)
+            member.mtime = int(at.timestamp())
+            tar.addfile(member, io.BytesIO(raw))
+    data = buf.getvalue()
+    meta = _meta(
+        "episode",
+        "lerobot_v3_tar",
+        data,
+        at - timedelta(seconds=20),
+        at,
+        running=running,
+        episode={"task": task, "success": success, "index": index},
+        streams=list(FLEET_FEATURES),
+        schema_version=FLEET_SCHEMA_VERSION,
+    )
+    return meta, data

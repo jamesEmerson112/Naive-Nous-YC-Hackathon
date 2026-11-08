@@ -4,8 +4,9 @@ Devices are `sim-1` … `sim-N` (A18); `--canary` (default `sim-2`, matching `ma
 marks the one that runs the bad-candidate scenarios. Which device is the canary is the
 cloud's decision; this flag only picks where `bad` and `bad-late` run. `--url` defaults to
 the `CLOUD_URL` environment variable (Compose sets `http://api:8000`), else localhost.
-Every device checks in every `--interval` seconds. This is the only place that sleeps or
-reads the clock.
+Every device checks in every `--interval` seconds. `--chaos overnight|demo` plays the
+seeded chaos schedule (`chaos.py`, flow F10) on top; `--speed 60` plays it 60 times faster
+(device clocks stay real). This is the only place that sleeps or reads the clock.
 """
 
 from __future__ import annotations
@@ -14,12 +15,14 @@ import argparse
 import logging
 import os
 import time
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
 from fake_device.arm import FakeArm
+from fake_device.chaos import PROFILES, Chaos, Link
 from fake_device.scenarios import HOLD_AFTER_S, SCENARIOS, Step
 
 log = logging.getLogger("fake_device")
@@ -49,7 +52,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("data/fake_device"),
         help="per-device outbox and visor state (git-ignored)",
     )
-    p.add_argument("--seed", type=int, default=0, help="seed for metrics noise")
+    p.add_argument("--seed", type=int, default=0, help="seed for metrics noise and chaos")
+    p.add_argument(
+        "--chaos",
+        choices=[*PROFILES, "off"],
+        default="off",
+        help="play the seeded chaos schedule: overnight (F10 rates) or demo (dense)",
+    )
+    p.add_argument(
+        "--speed", type=float, default=1.0, help="play the chaos schedule this many times faster"
+    )
     p.add_argument("--ticks", type=int, default=None, help="stop after this many check-ins")
     return p.parse_args(argv)
 
@@ -76,9 +88,11 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     canary_id = args.canary or ("sim-2" if args.n >= 2 else "sim-1")
     http = httpx.Client(base_url=args.url, timeout=5.0)
+    # Each arm talks through its own Link, so chaos can take one offline (F9).
+    links = {f"sim-{i}": Link(http) for i in range(1, args.n + 1)}
     arms = [
         FakeArm(
-            http,
+            links[f"sim-{i}"].client(),
             f"sim-{i}",
             args.state_dir / f"sim-{i}",
             canary=f"sim-{i}" == canary_id,
@@ -87,8 +101,13 @@ def main(argv: list[str] | None = None) -> None:
         for i in range(1, args.n + 1)
     ]
     pending = plan(arms, args.scenario, args.hold_after)
+    chaos = None
+    if args.chaos != "off":
+        chaos = Chaos(arms, PROFILES[args.chaos], args.seed, links, canary_id)
     started = datetime.now(UTC)
     log.info("%d fake arms against %s; canary %s", len(arms), args.url, canary_id)
+    if chaos:
+        log.info("chaos: %s schedule, seed %d, speed x%g", args.chaos, args.seed, args.speed)
 
     tick = 0
     while args.ticks is None or tick < args.ticks:
@@ -110,6 +129,11 @@ def main(argv: list[str] | None = None) -> None:
                 step.run(now)
             except Exception:
                 log.exception("%s: scenario step %r failed", device_id, step.name)
+        if chaos:
+            chaos.run_due(elapsed * args.speed, now)
+            if tick % 360 == 0:  # about hourly at the default interval
+                statuses = sum((link.statuses for link in links.values()), Counter())
+                log.info("chaos so far: %s; responses %s", dict(chaos.ran), dict(statuses))
         tick += 1
         time.sleep(args.interval)
 
