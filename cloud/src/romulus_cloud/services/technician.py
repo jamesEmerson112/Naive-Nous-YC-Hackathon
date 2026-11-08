@@ -513,18 +513,23 @@ def _stop_reason(session: Session, case: TechnicianCase) -> str | None:
     return None
 
 
-def _cancel(naive: Any, case: TechnicianCase) -> None:
-    if case.naive_session_id:
-        try:
-            naive.cancel_session(case.naive_session_id)
-        except NaiveError as exc:
-            log_line("technician.cancel_failed", case=case.id, error=str(exc))
+def _cancel(naive: Any, case: TechnicianCase) -> str:
+    """Cancel the session; never raises. A queued session answers cancel with 404, so any
+    failure means "already gone or never started": returned as a note for `why`."""
+    if not case.naive_session_id:
+        return ""
+    try:
+        naive.cancel_session(case.naive_session_id)
+    except Exception as exc:  # noqa: BLE001 - stopping must never crash the tick
+        log_line("technician.cancel_failed", case=case.id, error=repr(exc))
+        return f" (cancel failed: {exc}; the session was already gone or never started)"
+    return ""
 
 
 def _fail(
     session: Session, case: TechnicianCase, why: str, now: datetime, naive: Any, settings: Settings
 ) -> None:
-    _cancel(naive, case)
+    why += _cancel(naive, case)
     _set_status(case, "failed", now, why)
     _feed(case, now, f"Romulus: case failed ({_short(why)})", settings)
     _record(session, case, "technician.failed", f"Naïve technician failed: {why}.", now)
@@ -781,8 +786,8 @@ def _advance(
     if case.status in ("open", "diagnosing"):
         why = _stop_reason(session, case)
         if why:
-            _cancel(naive, case)
-            _set_status(case, "stopped", now, f"stopped: {why}")
+            note = _cancel(naive, case)
+            _set_status(case, "stopped", now, f"stopped: {why}{note}")
             return
     if case.status == "open":
         _start(session, case, now, settings, naive)
@@ -910,17 +915,17 @@ def stop(
     case = get_case(session, case_id, lock=True)
     if case.status not in ACTIVE:
         raise ApiError(409, "case_closed", f"Technician case {case_id} is already {case.status}.")
+    note = ""
     if case.mode == "live" and case.naive_session_id:
         try:
-            client = naive if naive is not None else naive_for(case, settings)[0]
-            _cancel(client, case)
+            note = _cancel(naive if naive is not None else naive_for(case, settings)[0], case)
         except Exception as exc:  # noqa: BLE001 - stopping must work even if Naïve is down
             log_line("technician.cancel_failed", case=case.id, error=repr(exc))
     email = dict(_actions(case).get("email") or {})
     if email.get("status") == "sending":
         email.update(status="skipped", error=f"stopped by {by}")
         _set_action(case, "email", email)
-    _set_status(case, "stopped", now, f"stopped by {by}")
+    _set_status(case, "stopped", now, f"stopped by {by}{note}")
     _feed(case, now, f"Stopped by {by}", settings)
     events.record(
         session,
