@@ -72,15 +72,15 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 6:58 PM PST_
+_Last updated: Sat Nov 7, 7:08 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has three Romulus PRs open: #16 (M7 overnight kit, F10; runbook updated 6:48 PM) ahead of the 12:30 AM go/no-go, #18 (gate edge cases, regression replay) and #19 (M8a coding-agent sandbox). Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). Olir's sensor pod (`firmware` branch `69fc292`) is now written up in the docs.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged the M7 overnight kit (#16) ahead of the 12:30 AM go/no-go; #18 (gate edge cases, regression replay) and #19 (M8a coding-agent sandbox) are still open. Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). James is mapping healer training data: what exists, and what has to come from sim or the bench.
 
 **Recently done:**
-- James's fault lab full run: pi and Hermes each fixed 12 of 12 (six faults × 2 runs), Hermes faster on 5 of 6, pi spent $1.37 of Naïve credits; neither fell for the D2 "guard only `None`" trap and both parked on A5. Results in the pi-vs-Hermes console and `docs/pi-vs-hermes.md` §7, not pushed yet *(James's session)*
-- Docs synced with Olir's `firmware` branch (`fd1f4fd`, 6:54 PM): the STM32 sensor pod (HC-SR04 + LIS3DH, self-diagnostics), the Pi daemon `podd` with triage rules and 38 heal tools, and six known-bad firmware images v1.1–v1.6 for the demo (`docs/fault-catalog.md` §A2, `docs/project-overview.md` §6)
-- Kent merged #17 (`ef7614e`, 6:39 PM): fake arms register as `sim`, unlabelled devices are never `real`, readable chain labels
-- Kent opened #19, M8a: a `coder` image with mini-swe-agent 2.4.6, proven on a toy gripper repo with a D1-like fault; not wired into the gate yet (PR #19)
+- Kent merged #16, M7 overnight kit + F10 (`7dd4606`, 7:01 PM): fake-device chaos schedule, nightly digest, disk budget, overnight flag, `cloud/scripts/overnight_check.sh` preflight, runbook in `cloud/OVERNIGHT.md`
+- James checked the ultrasonic sample from Olir's pod: real, since all 300 rows match the firmware's distance formula, but it is a healthy baseline only (no faults). No recorded hardware telemetry is in the repo yet; public SO-101 datasets carry joint positions only. Sim covers motion faults; servo temperature, load and pod crashes must be recorded on the bench. Local commit `79f938b`, not pushed *(James's session)*
+- James's fault lab full run: pi and Hermes each fixed 12 of 12 (six faults × 2 runs), Hermes faster on 5 of 6, pi spent $1.37 of Naïve credits; both parked on A5. Results in `docs/pi-vs-hermes.md` §7, not pushed yet *(James's session)*
+- Docs synced with Olir's `firmware` branch (`fd1f4fd`, 6:54 PM): STM32 sensor pod, the `podd` daemon with 38 heal tools, six known-bad firmware images v1.1–v1.6 (`docs/fault-catalog.md` §A2)
 
 **Open questions:**
 - Kent is blocked on: device code in the repo (B1, Ishaan landing it), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which also holds up M0's live Naïve card and LLM call (Kent's block). Olir's `toolkit/` is now on the `firmware` branch and may solve B8 *(inferred)*
@@ -89,6 +89,8 @@ _Last updated: Sat Nov 7, 6:58 PM PST_
 - Motor layer for the arm: scripted skills (doable tomorrow), SmolVLA (~50 demos per task + ~4 h A100) or Instant Policy (needs depth camera, noncommercial). Hermes compaction still needs `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`)
 
 **Recent commits (all authors):**
+- `7dd4606` Sat 19:01 · kgang · Romulus M7: overnight kit (chaos schedule, digest, disk budget, overnight flag, preflight) + F10 (#16)
+- `e64ed72` Sat 18:59 · jamesEmerson112 · Update team status and features.txt
 - `fd1f4fd` Sat 18:54 · jamesEmerson112 · Sync notes with Olir's sensor pod, podd healer tools and demo images (69fc292)
 - `a2d6676` Sat 18:49 · jamesEmerson112 · Update team status and features.txt
 - `219a00c` Sat 18:48 · Kent Gang · Update Kent status in CLAUDE.md
@@ -97,8 +99,6 @@ _Last updated: Sat Nov 7, 6:58 PM PST_
 - `a9a72ac` Sat 18:38 · jamesEmerson112 · Update team status in CLAUDE.md
 - `f462ed2` Sat 18:38 · Kent Gang · Update Kent status in CLAUDE.md
 - `7325210` Sat 18:29 · jamesEmerson112 · Update team status and features.txt
-- `fcd5bc2` Sat 18:28 · Kent Gang · Update Kent status in CLAUDE.md
-- `f177c68` Sat 18:19 · kgang · Romulus M3b: batch, gate, kill switch and worker (flows F3, F4, F5) (#12)
 
-**Branches on GitHub:** `main`, `firmware` (Olir, `69fc292`, not merged), `cloud/m7-overnight` (#16 open), `cloud/gate-followups` (#18 open), `cloud/m8a-coder` (#19 open), `cloud/m8-coder-wip`, `cloud/m3b-followup`, `cloud/m3b-batch-gate` (#12 merged, branch not yet deleted); all Kent's except `firmware`
+**Branches on GitHub:** `main`, `firmware` (Olir, `69fc292`, not merged), `cloud/gate-followups` (#18 open), `cloud/m8a-coder` (#19 open), `cloud/m8-coder-wip`, `cloud/m3b-followup`, `cloud/m7-overnight` (#16 merged) and `cloud/m3b-batch-gate` (#12 merged), both not yet deleted; all Kent's except `firmware`
 <!-- team-status:end -->
