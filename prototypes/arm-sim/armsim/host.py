@@ -478,7 +478,15 @@ class StateWriter:
         row = arm.d_rows[-1] if arm.d_rows else None
         sensor = {**(sensor or {}), **({k: row.get(k) for k in ("mm", "st", "pred_mm", "ts")} if row else {})}
         grasp = arm.grasp_check() if (getattr(arm, "d", None) is not None or getattr(arm, "_q", None) is not None) else {}
-        open_ = dog.open()
+        # Never wait on the watchdog's lock inside a control tick (the pod thread can hold it through
+        # a podd round trip): reuse the last list for this frame instead.
+        if dog.lock.acquire(blocking=False):
+            try:
+                open_ = self._open_cache = dog.open()
+            finally:
+                dog.lock.release()
+        else:
+            open_ = getattr(self, "_open_cache", [])
         snap = {"v": 1, "ts": round(now, 3), "t": round(arm.t, 2), "arm": getattr(arm, "kind", "sim"), "pid": os.getpid(),
                 "clock": "wall" if self.wall else "sim",
                 "joints": None if joints is None else {k.removesuffix(".pos"): round(v, 1) for k, v in joints.items()},
@@ -702,7 +710,14 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
     def chores():
         """The main thread's own work: a verify the pod thread queued, or parking on a pod incident.
         Run when idle and after every connection, so clients polling `status` faster than the
-        accept timeout (the dispatcher, the soak, Mission Control) can't starve them."""
+        accept timeout (the dispatcher, the soak, Mission Control) can't starve them. An error here
+        (a servo-bus read on the real arm) is printed, never allowed to stop the host."""
+        try:
+            _chores()
+        except Exception as exc:
+            print(f"CHORES failed ({type(exc).__name__}: {exc}); still serving", flush=True)
+
+    def _chores():
         if dog.verify_pending:
             state["activity"] = {"what": f"verify: {dog.verify_pending}", "since": round(time.time(), 2)}
             try:
@@ -720,18 +735,25 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
             except socket.timeout:                    # idle
                 chores()
                 continue
-            conn.settimeout(None)
-            with conn, conn.makefile("rw", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        reply = handle(json.loads(line))
-                    except Exception as exc:  # report, keep serving
-                        reply = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-                    print(json.dumps({"req": line.strip()[:120], "reply": reply})[:400], flush=True)
-                    f.write(json.dumps(reply) + "\n")
-                    f.flush()
-                    if reply.get("bye"):
-                        raise SystemExit
+            # A client that connects and never sends a line can't hold the arm host (and its chores)
+            # forever; the timeout only covers reading the request, not a skill already running.
+            conn.settimeout(30)
+            try:
+                with conn, conn.makefile("rw", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            reply = handle(json.loads(line))
+                        except Exception as exc:  # report, keep serving
+                            reply = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                        print(json.dumps({"req": line.strip()[:120], "reply": reply})[:400], flush=True)
+                        f.write(json.dumps(reply) + "\n")
+                        f.flush()
+                        if reply.get("bye"):
+                            raise SystemExit
+            except (BrokenPipeError, ConnectionResetError, TimeoutError) as exc:
+                # The client hung up mid-skill (Hermes killed at its timeout, a dispatcher stopped):
+                # the skill already ran and the reply is lost, but the arm host keeps serving.
+                print(f"client gone before the reply ({type(exc).__name__}); still serving", flush=True)
             chores()
     except (KeyboardInterrupt, SystemExit):
         pass
