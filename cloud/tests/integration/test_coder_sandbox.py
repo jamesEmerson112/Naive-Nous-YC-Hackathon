@@ -35,7 +35,20 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def sandbox() -> Sandbox:
-    subprocess.run(["docker", "build", "-q", "-t", IMAGE, str(CODER_DIR)], check=True)
+    toolkit = CODER_DIR.parents[1] / "firmware" / "toolkit"  # the STM32 toolchain stage (B8)
+    subprocess.run(
+        [
+            "docker",
+            "build",
+            "-q",
+            "--build-context",
+            f"fwtoolkit={toolkit}",
+            "-t",
+            IMAGE,
+            str(CODER_DIR),
+        ],
+        check=True,
+    )
     return Sandbox(image=IMAGE, runner=subprocess_runner)
 
 
