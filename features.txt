@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sun Nov 8, 4:00 AM PST from CLAUDE.md, commits and docs/.
+Updated Sun Nov 8, 4:30 AM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -96,6 +96,7 @@ Bench board token (scoped MCP session)
 MODELS
 OpenAI key for bench Hermes             <--- James
 RunPod LLM endpoint (D22, optional)
+Worker model benchmark (workerbench)    <--- James
 
 NVIDIA SIM
 NVIDIA sim on RunPod
@@ -114,6 +115,7 @@ Gateway phone alerts
 Hermes plugin catalog submission
 pi vs Hermes comparison (Naive console)  <--- James
 Hermes compaction fix (summarizer login)
+Worker/manager healer loop (armsim/worker.py) <--- James
 
 ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
