@@ -46,7 +46,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 12:10 AM PST · write notes outside the markers_
+_Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 1:20 AM PST · write notes outside the markers_
 
 - **Pitch:** we sell uptime: one heal loop at arm, fleet and company scale. Rivals only diagnose ([Alloy](https://theaiinsider.tech/2026/08/13/alloy-robotics-raises-8m-in-new-funding-to-help-engineers-debug-robot-fleets-with-ai-agents/)) or recommend fixes ([Formant F3](https://www.businesswire.com/news/home/20250630008190/en/Formant-F3-Brings-Generative-AI-and-Agentic-Reasoning-to-Robot-Ops)). We close the loop: "PagerDuty with hands" *(inferred)*.
 - **Rule:** no LLM in the real-time control loop. Models propose reversible fixes, and the gate checks them: replay → simulated canary → automatic promote or rollback. People only touch the kill switch (D6, D11).
@@ -56,10 +56,10 @@ _Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 12:10 AM 
 - **Research:** pin LeRobot v0.7.0, since it breaks the API ([release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
 - **Research:** the SO-101 sim twin is `robotstudio_so101` in MuJoCo Menagerie, and it runs on a Mac ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
 - **Research:** bring a router, Ethernet and a backup video, because venue Wi-Fi sinks demos ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)). Everything else is in [`docs/cloud-platform-planning/README.md`](docs/cloud-platform-planning/README.md).
-- **Now:** two PRs are open. #53 hardens code replay so a patch can't game the tests into a pass (K6). #46 (B5) limits the coding-agent sandbox to the LLM only, with the key held by a proxy. The Fleet Doctor is complete (#52). The 12:30 AM overnight go/no-go is next, and the live Naïve card is still pending. James lists Stripe as optional ([`features.txt`](features.txt)).
+- **Now:** two PRs are open. #53 hardens code replay against test gaming (K6); a fix round came at 12:59 AM, after review caught a broken D1 patch that passed replay. #46 (B5) limits the coding-agent sandbox to the LLM only. The Fleet Doctor is complete (#52). The overnight run is the fake fleet, and the live Naïve card is still pending.
 - **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3 #7, #12, #18 · M4 #10 · M5 #11, #15 · M6 #14 · M7 #16 · M8a #19 · M8b #28 · real device code #38 · B8 toolchain #24 · edge bridge #25 · docs #21, #45 · Fleet Doctor plan #22, decisions #23, contracts #26, foundation #27, LLM helper #29, L1 ask #34, L2 consult #35, device reference #32, held-overlay lock-in #39, F12 interop #42, PR 7 evidence #44, tracker #52, ledger #33, L3 contract draft #30, tracker #37 · triage #6 · lint #13, #40 · device kinds #17 · decisions D0–D28 locked (D27 deferred).
 - **Blocked:** only on the K17 safety and visor path list, which also gates the Fleet Doctor. B4 is clear (the live card waits only on Kent's go-ahead, #21), and B1 cleared when Ishaan's device code merged as #31 (`device/`, `harness/`, `bench/`).
-- **Asks:** Ishaan: review the contracts (I0: B2, B3) and send the K17 safety and visor paths. Owed to James: a Naïve key with Board scopes.
+- **Asks:** Ishaan: review the contracts (I0: B2, B3) and send the K17 safety and visor paths. James now reaches the Naïve board through a board-only MCP entry, and his sim run logged a `us_frozen` incident in Romulus *(team status)*.
 <!-- romulus-sync:end -->
 
 ### Device-side healer (Ishaan)
