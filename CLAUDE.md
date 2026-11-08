@@ -72,23 +72,26 @@ _Ishaan's local Claude session refreshes this block about every 30 min. Last syn
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 6:48 PM PST_
+_Last updated: Sat Nov 7, 6:58 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has three Romulus PRs open: #16 (M7 overnight kit, F10) ahead of the 12:30 AM go/no-go, #18 (gate edge cases, regression replay) and the new #19 (M8a coding-agent sandbox). Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). James is running a pi vs Hermes fault lab on Ishaan's six faults *(James's session)*.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent has three Romulus PRs open: #16 (M7 overnight kit, F10; runbook updated 6:48 PM) ahead of the 12:30 AM go/no-go, #18 (gate edge cases, regression replay) and #19 (M8a coding-agent sandbox). Ishaan is landing the device code (`device/`, `harness/`, `bench/`; B1). Olir's sensor pod (`firmware` branch `69fc292`) is now written up in the docs.
 
 **Recently done:**
-- Kent merged #17 (`ef7614e`, 6:39 PM): fake arms register as `sim`, an unlabelled device is never treated as `real`, and the incident chain gets readable labels (new flow test F1 device kind)
-- Kent opened #19, M8a: a `coder` image with mini-swe-agent 2.4.6, proven on a toy gripper repo with a D1-like fault; not wired into the batch or gate yet, `FakeCoder` stays the default (PR #19)
-- Ishaan's device test suite: 18 tests pass and each planted fault turns it red; oracle 6/6, baseline 0/6 (Ishaan's block). Not pushed yet
-- James built a fault lab (`prototypes/fault-lab/`, uncommitted): six faults (D1–D3, S1, S2, A5) with a hidden check the agents never see, which also catches the D2 wrong fix. Smoke test on S1: pi and Hermes both fixed it, pi in 41 s for $0.11, Hermes in 23 s. The full run (6 faults × 2 agents × 2) is going *(James's session)*
+- James's fault lab full run: pi and Hermes each fixed 12 of 12 (six faults × 2 runs), Hermes faster on 5 of 6, pi spent $1.37 of Naïve credits; neither fell for the D2 "guard only `None`" trap and both parked on A5. Results in the pi-vs-Hermes console and `docs/pi-vs-hermes.md` §7, not pushed yet *(James's session)*
+- Docs synced with Olir's `firmware` branch (`fd1f4fd`, 6:54 PM): the STM32 sensor pod (HC-SR04 + LIS3DH, self-diagnostics), the Pi daemon `podd` with triage rules and 38 heal tools, and six known-bad firmware images v1.1–v1.6 for the demo (`docs/fault-catalog.md` §A2, `docs/project-overview.md` §6)
+- Kent merged #17 (`ef7614e`, 6:39 PM): fake arms register as `sim`, unlabelled devices are never `real`, readable chain labels
+- Kent opened #19, M8a: a `coder` image with mini-swe-agent 2.4.6, proven on a toy gripper repo with a D1-like fault; not wired into the gate yet (PR #19)
 
 **Open questions:**
-- Kent is blocked on: device code in the repo (B1, Ishaan landing it), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17, also gates Fleet Doctor), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which also holds up M0's live Naïve card and LLM call (Kent's block). Olir's `firmware/toolkit/` may be the quickest fix for B8 *(inferred)*
-- The healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it (`docs/healer-benchmark-progress.md`). James's fault-lab hidden check catches it; worth reusing before the demo *(inferred)*
-- Motor layer for the arm: scripted skills (doable tomorrow), SmolVLA (~50 demos per task + ~4 h A100 training) or Instant Policy (needs a depth camera, noncommercial). A flat sheet of paper is a hard grasp for a two-finger gripper *(James's session)*
-- Hermes compaction fails because its summarizer can't load the ChatGPT (`openai-codex`) login; start `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`). Should pi drive the arm at all, and does the ultrasonic sensor go through the STM32 or Pi GPIO? Both still team calls
+- Kent is blocked on: device code in the repo (B1, Ishaan landing it), the STM32 toolchain in the sandbox (B8), the safety and visor path list from Ishaan (K17), and a Naïve key with `proxy:write` or James's RunPod endpoint (B4), which also holds up M0's live Naïve card and LLM call (Kent's block). Olir's `toolkit/` is now on the `firmware` branch and may solve B8 *(inferred)*
+- Pod triage gap: the rules check the accelerometer for frozen data but not the ultrasonic, so a frozen-echo copy of a real sample raised no finding (`docs/fault-catalog.md`). Separately, the healer's health check doesn't test that the arm lifts, so a wrong D2 fix can pass it; the fault lab's hidden check catches it
+- Two healers (Olir's firmware healer in `firmware/healer/`, Ishaan's device healer) are separate code; the demo needs one story for both *(inferred, `docs/project-overview.md`)*. Is the ultrasonic read through the STM32 pod or Pi GPIO? Should pi drive the arm at all? Team calls
+- Motor layer for the arm: scripted skills (doable tomorrow), SmolVLA (~50 demos per task + ~4 h A100) or Instant Policy (needs depth camera, noncommercial). Hermes compaction still needs `hermes gateway ensure` before the demo (`docs/pi-vs-hermes.md`)
 
 **Recent commits (all authors):**
+- `fd1f4fd` Sat 18:54 · jamesEmerson112 · Sync notes with Olir's sensor pod, podd healer tools and demo images (69fc292)
+- `a2d6676` Sat 18:49 · jamesEmerson112 · Update team status and features.txt
+- `219a00c` Sat 18:48 · Kent Gang · Update Kent status in CLAUDE.md
 - `f449f96` Sat 18:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `ef7614e` Sat 18:39 · kgang · Romulus: fake arms register as sim; readable chain labels (#17)
 - `a9a72ac` Sat 18:38 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -96,9 +99,6 @@ _Last updated: Sat Nov 7, 6:48 PM PST_
 - `7325210` Sat 18:29 · jamesEmerson112 · Update team status and features.txt
 - `fcd5bc2` Sat 18:28 · Kent Gang · Update Kent status in CLAUDE.md
 - `f177c68` Sat 18:19 · kgang · Romulus M3b: batch, gate, kill switch and worker (flows F3, F4, F5) (#12)
-- `0bf3fa7` Sat 18:19 · jamesEmerson112 · Update team status and features.txt
-- `ab1c379` Sat 18:18 · Kent Gang · Update Kent status in CLAUDE.md
-- `835c4f0` Sat 18:18 · Ishaan Ranjan · Update healer benchmark progress: final results, model pick, new layout
 
-**Branches on GitHub:** `main`, `firmware` (Olir, not merged), `cloud/m7-overnight` (#16 open), `cloud/gate-followups` (#18 open), `cloud/m8a-coder` (#19 open), `cloud/m8-coder-wip`, `cloud/m3b-followup`, `cloud/m3b-batch-gate` (#12 merged, branch not yet deleted); all Kent's
+**Branches on GitHub:** `main`, `firmware` (Olir, `69fc292`, not merged), `cloud/m7-overnight` (#16 open), `cloud/gate-followups` (#18 open), `cloud/m8a-coder` (#19 open), `cloud/m8-coder-wip`, `cloud/m3b-followup`, `cloud/m3b-batch-gate` (#12 merged, branch not yet deleted); all Kent's except `firmware`
 <!-- team-status:end -->
