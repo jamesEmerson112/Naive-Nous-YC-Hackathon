@@ -91,5 +91,7 @@ def test_f4_bad_candidate_is_rolled_back_on_the_canary(
         key=lambda i: i["occurred_at"],
     )
     story = client.get(f"/v1/incidents/{first['incident_id']}/story").json()
-    assert story["chain"].endswith("→ canary sim-2 → rolled back"), story["chain"]
+    chain = story["chain"]  # evidence uploads (M4) may interleave with the gate's steps
+    assert "→ locked in → firmware v2 → harness v2 → replay ✓ → canary sim-2 →" in chain, chain
+    assert chain.endswith("→ rolled back"), chain
     assert reason in [s for s in story["steps"] if s["kind"] == "candidate.rolled_back"][0]["why"]

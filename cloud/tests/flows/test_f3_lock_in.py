@@ -108,9 +108,11 @@ def test_f3_rules_patch_is_locked_in_canaried_and_promoted(
     assert db_session.get(Overlay, ("sim-1", overlay_id)).status == "locked_in"
 
     story = _story(client, "sim-1")
-    assert story["chain"].endswith(
-        "→ held → locked in → firmware v2 → harness v2 → replay ✓ → canary sim-2 → fleet"
-    ), story["chain"]
+    # Evidence uploads (M4) interleave as the outbox drains; the gate's steps read in order.
+    chain = story["chain"]
+    assert "→ locked in → firmware v2 → harness v2 → replay ✓ → canary sim-2 →" in chain, chain
+    assert chain.index("→ held →") < chain.index("→ locked in →")
+    assert chain.endswith("→ fleet"), chain
     promoted = [s for s in story["steps"] if s["kind"] == "candidate.promoted"]
     assert len(promoted) == 2 and "canary healthy for 120 s" in promoted[0]["why"]
 
