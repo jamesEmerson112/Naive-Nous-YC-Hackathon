@@ -6,7 +6,7 @@ docs/naive-technician/approval-in-studio.md. One Naïve session of the example a
 `technician-approval-example` gets a staged part from a Romulus case, calls `ask_operator`
 once, and parks on `stop_reason: "awaiting_answer"` with a two-button question card.
 
-    # start a session, wait for the card, then wait (<= 15 min) for someone to answer it in the Studio
+    # start a session, wait for the card, then wait (<= 15 min) for an answer in the Studio
     python3 cloud/scripts/technician_approval_example.py
 
     # the Romulus-button direction: answer the card through the API instead
@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
 import sys
 import time
 import urllib.error
@@ -66,7 +65,8 @@ def question_text(case: dict[str, Any]) -> str:
     p = case["part"]
     return (
         f"Approve spare servo for {case['device']}? {p['qty']} × {p['title']} · {p['vendor']} · "
-        f"${p['unit_usd']:.2f} (price checked live, in stock, under the ${case['gate']['cap_usd']} cap)"
+        f"${p['unit_usd']:.2f} (price checked live, in stock, "
+        f"under the ${case['gate']['cap_usd']} cap)"
     )
 
 
@@ -152,7 +152,7 @@ class Naive:
         while True:
             try:
                 return self.call(method, path, body, key=key)
-            except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
+            except (TimeoutError, urllib.error.URLError) as e:
                 code = e.code if isinstance(e, urllib.error.HTTPError) else None
                 if (code is not None and code != 429 and code < 500) or time.time() - t0 > 180:
                     raise
@@ -189,7 +189,11 @@ def start_session(n: Naive, agent_id: str, timeout_s: float) -> str:
         "agent_id": agent_id,
         "message": session_message(CASE),
         "budget_micro_usd": 500_000,  # $0.50; the agent's own cap is $1 a task, $5 a month
-        "metadata": {"romulus_case": CASE["romulus_case"], "work_order": CASE["work_order"], "run": run},
+        "metadata": {
+            "romulus_case": CASE["romulus_case"],
+            "work_order": CASE["work_order"],
+            "run": run,
+        },
     }
     key = f"tc-approval-example-{run}"
     # The platform is slow today: POST /sessions can hold the request open while it queues,
@@ -198,16 +202,19 @@ def start_session(n: Naive, agent_id: str, timeout_s: float) -> str:
     while time.time() - t0 < timeout_s:
         try:
             return n.call("POST", "/sessions", body, key=key, timeout=60)["id"]
-        except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
+        except (TimeoutError, urllib.error.URLError) as e:
             wait = delay
             if isinstance(e, urllib.error.HTTPError):
                 if e.code not in (409, 429) and e.code < 500:
                     sys.exit(f"POST /sessions failed: {http_error(e)}")
                 wait = float(e.headers.get("Retry-After") or delay)
-            print(f"  {time.strftime('%H:%M:%S')}  POST /sessions: {e!r}; retrying in {wait:.0f} s", flush=True)
+            print(
+                f"  {time.strftime('%H:%M:%S')}  POST /sessions: {e!r}; retrying in {wait:.0f} s",
+                flush=True,
+            )
             try:
                 sid = find_session(n, agent_id, run)
-            except (urllib.error.URLError, TimeoutError, socket.timeout):
+            except (urllib.error.URLError, TimeoutError):
                 sid = None
             if sid:
                 return sid
@@ -259,7 +266,9 @@ def answer(n: Naive, sid: str, row: dict[str, Any], choice: str) -> None:
     body = {"tool_call_id": row["tool_call_id"], "answers": answers}
     print(f"  POST /sessions/{sid}/answers {json.dumps(body)}", flush=True)
     try:
-        s = n.patient("POST", f"/sessions/{sid}/answers", body, key=f"answer-{sid}-{row['tool_call_id']}")
+        s = n.patient(
+            "POST", f"/sessions/{sid}/answers", body, key=f"answer-{sid}-{row['tool_call_id']}"
+        )
     except urllib.error.HTTPError as e:
         sys.exit(f"answer failed: {http_error(e)}")
     print(f"  -> {s.get('status')}, {len(questions(s))} question(s) still pending", flush=True)
@@ -322,12 +331,21 @@ def wait_for_final(n: Naive, sid: str, timeout_s: float = 120) -> None:
     t0 = time.time()
     while time.time() - t0 < timeout_s:
         s = n.get(f"/sessions/{sid}")
-        if s["status"] != "running" and not questions(s) and s.get("stop_reason") != "awaiting_answer":
+        if (
+            s["status"] != "running"
+            and not questions(s)
+            and s.get("stop_reason") != "awaiting_answer"
+        ):
             cost = s.get("consumed_micro_usd")
-            print(f"\nSession now {s['status']} / {s.get('stop_reason')}"
-                  + (f", spent ${cost / 1e6:.4f}" if isinstance(cost, int) else ""))
+            print(
+                f"\nSession now {s['status']} / {s.get('stop_reason')}"
+                + (f", spent ${cost / 1e6:.4f}" if isinstance(cost, int) else "")
+            )
             for ev in n.get(f"/sessions/{sid}/events", limit=100).get("data", [])[::-1]:
-                if ev.get("type") == "message.completed" and (ev.get("data") or {}).get("role") != "user":
+                if (
+                    ev.get("type") == "message.completed"
+                    and (ev.get("data") or {}).get("role") != "user"
+                ):
                     print("Agent's last message:", (ev["data"].get("content") or "")[:300])
                     break
             return
@@ -336,12 +354,18 @@ def wait_for_final(n: Naive, sid: str, timeout_s: float = 120) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--answer", choices=["approve", "deny"], help="answer via the API (the Romulus button)")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--answer", choices=["approve", "deny"], help="answer via the API (the Romulus button)"
+    )
     ap.add_argument("--session", help="watch an existing session instead of starting one")
     ap.add_argument("--agent-id", help=f"skip the lookup of agent {AGENT_NAME!r}")
     ap.add_argument("--queue-timeout", type=float, default=15, help="minutes to wait for the card")
-    ap.add_argument("--answer-timeout", type=float, default=15, help="minutes to wait for a Studio answer")
+    ap.add_argument(
+        "--answer-timeout", type=float, default=15, help="minutes to wait for a Studio answer"
+    )
     args = ap.parse_args()
 
     n = Naive()
@@ -358,15 +382,18 @@ def main() -> None:
     print("\nParked on awaiting_answer. The card:")
     print(f"  prompt: {q.get('prompt')}")
     for f in q.get("fields") or []:
-        print(f"  field {f.get('key')!r} ({f.get('type')}): {f.get('options')}  help: {f.get('help')}")
+        print(
+            f"  field {f.get('key')!r} ({f.get('type')}): {f.get('options')}  help: {f.get('help')}"
+        )
     print(f"  tool_call_id: {row.get('tool_call_id')}")
 
     if args.answer:
         answer(n, sid, row, args.answer)
     else:
         print(
-            f"\nAnswer it in the Naïve Studio: {STUDIO_URL} → the agent {AGENT_NAME} → its chat for\n"
-            f"session {sid} (also in the emailed 'question' link) → pick '{APPROVE}' or '{DENY}' and send.\n"
+            f"\nAnswer it in the Naïve Studio: {STUDIO_URL} → the agent {AGENT_NAME} → "
+            f"its chat for\nsession {sid} (also in the emailed 'question' link) → "
+            f"pick '{APPROVE}' or '{DENY}' and send.\n"
             f"Waiting up to {args.answer_timeout:.0f} min..."
         )
     ev = wait_for_answer(n, sid, row["tool_call_id"], args.answer_timeout * 60)
