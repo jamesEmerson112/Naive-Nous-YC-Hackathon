@@ -10,6 +10,7 @@ Every failure we plan to plant, test or demo. Use it to write faults into the fi
 
 - **The Raspberry Pi 5 (8 GB) runs everything for now:** the robot app, the healer agent and its local model. The Jetson AGX Xavier isn't set up yet. *(team)*
 - **Wired to the Pi:** the HC-SR04 ultrasonic sensor on GPIO, and a USB camera module (HBV-W20217 V22, HD 720p, 72° lens). *(team)*
+  - **Decision pending:** on Olir's `firmware` branch (`ac171dc`) the HC-SR04 is wired to the STM32 instead (TRIG on PA0, ECHO on PB0 through a 10k/18k divider), which streams CSV to the Pi on `/dev/ttyACM0`. If that wiring is kept, U1–U5 below don't apply. See `docs/project-overview.md` §5–§6.
 - **The arm** is an SO-101 (leader and follower, 6 Feetech STS3215 servos each), driven through LeRobot v0.7.0 with `robot_type` `so101_follower`. [CLAUDE.md, team status]
 - **The firmware** is bare-metal C for an STM32F042K6 on a Nucleo-F042K6 board:
   - Cortex-M0, 32 KB flash, 6 KB RAM, no HAL, no printf.
@@ -116,7 +117,7 @@ Two Cortex-M0 facts shape these bugs. It has no fault status registers, and unal
 - **Mac:** board only. A Mac and the Pi both allow unaligned reads, so the bug won't show there.
 
 **F4. Waiting for the echo with no timeout → firmware hang**
-- **Plant:** `while (!(ECHO_PORT->IDR & ECHO_PIN)) {}` with no timeout. This applies if the HC-SR04 moves to the STM32; on the Pi the same bug is a Python busy-wait.
+- **Plant:** `while (!(ECHO_PORT->IDR & ECHO_PIN)) {}` with no timeout. This applies if the HC-SR04 moves to the STM32; on the Pi the same bug is a Python busy-wait. On the `firmware` branch the HC-SR04 driver (`stm32f042k6-hcsr04/src/hcsr04.c`) captures the ECHO edges with TIM3 and gives up after `HCSR04_TIMEOUT_MS` (60 ms). To plant this bug there, remove that timeout or swap in a polling loop *(inferred)*.
 - **Trigger:** the sensor is unplugged, nothing is in range, or a hand is in the blind zone.
 - **Sees:** the heartbeat stops. If the independent watchdog (IWDG) is enabled, the chip resets and the boot banner shows `reset : iwdg` over and over, because main.c prints the reset cause [`firmware` branch].
 - **Tier 2. Outcome:** `fix-code` (a timeout plus `E code=ECHO_TIMEOUT`), then reflash.

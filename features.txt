@@ -69,9 +69,9 @@ SO-101
 Arm assembly                            <--- Olir, Andre
 Calibration with LeRobot                <--- Olir, Andre
 Camera and ultrasonic wiring            <--- Olir, Andre
-Ultrasonic distance reading             <--- Olir
+Ultrasonic distance reading (STM32 driver on firmware branch, ac171dc) <--- Olir
 STM32 firmware control loop             <--- Olir
-STM32 to Pi link
+STM32 to Pi link (STM32 side done: CSV on ttyACM0; Pi reader to do)
 STM32 toolchain in healer sandbox (B8)
 
 DEMO AND FAULTS

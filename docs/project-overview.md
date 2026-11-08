@@ -52,11 +52,12 @@ Everything we know about the project, in one place. This is a living doc, so upd
 ```mermaid
 flowchart LR
   subgraph EDGE["Edge: works offline"]
-    US[HC-SR04 ultrasonic] -->|GPIO| PI
+    US[HC-SR04 ultrasonic] -->|GPIO: original plan| PI
+    US -.->|TRIG/ECHO: firmware branch| MCU
     CAM[USB camera] -->|USB| PI
     PI[Raspberry Pi 5<br/>robot app + healer agent + local model]
     PI <-->|USB servo bus| ARM[SO-101 arm]
-    PI <-->|UART + SWD via ST-LINK| MCU[STM32 Nucleo-F042K6<br/>C firmware, role TBD]
+    PI <-->|UART + SWD via ST-LINK| MCU[STM32 Nucleo-F042K6<br/>C firmware: HC-SR04 driver, CSV at 10 Hz]
     XAV[Jetson AGX Xavier<br/>later: bigger local model] -.->|LAN| PI
   end
   PI <-.->|when online: incidents and audits up,<br/>harness bundles down| CLOUD[Cloud: Naïve agents]
@@ -82,9 +83,9 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
 |---|---|---|---|
 | Raspberry Pi 5 | 8 GB. The main edge computer; runs everything for now | — | *(team)* |
 | SO-101 arm | White leader and red follower, 6 Feetech STS3215 servos each. In LeRobot, `robot_type` is `so101_follower` | Pi, through a USB serial servo-bus adapter | `CLAUDE.md` team status |
-| HC-SR04 ultrasonic | Runs on 5V; range 2–400 cm; trigger and echo pins. ECHO needs a voltage divider down to 3.3V (gpiozero suggests 330 Ω / 470 Ω) | Pi GPIO | *(team)*; https://cdn.sparkfun.com/datasheets/Sensors/Proximity/HCSR04.pdf; https://gpiozero.readthedocs.io/en/stable/api_input.html |
+| HC-SR04 ultrasonic | Runs on 5V; range 2–400 cm; trigger and echo pins. ECHO needs a voltage divider down to 3.3V (gpiozero suggests 330 Ω / 470 Ω) | **Decision pending.** Original plan: Pi GPIO. On the `firmware` branch (`ac171dc`) it's wired to the STM32: VCC 5V, TRIG → A0 (PA0), ECHO → 10 kΩ → D3 (PB0), 18 kΩ from D3 to GND (PA0 and PB0 aren't 5V tolerant) | *(team)*; https://cdn.sparkfun.com/datasheets/Sensors/Proximity/HCSR04.pdf; https://gpiozero.readthedocs.io/en/stable/api_input.html; `firmware/README.md` on the `firmware` branch |
 | USB camera module | HBV-W20217 V22, HD 720p, 72° lens. Check its formats with `v4l2-ctl --list-formats-ext` | Pi USB | *(team)* |
-| STM32 Nucleo-F042K6 | STM32F042K6: Cortex-M0, 32 KB flash, 6 KB RAM. The on-board ST-LINK gives SWD flashing and a virtual COM port (USART2, 115200 8N1). The LED is on PB3 | The Pi, over USB: the ST-LINK's serial port for data, SWD for flashing *(team)* | `firmware/stm32f042k6-hello/` on the `firmware` branch |
+| STM32 Nucleo-F042K6 | STM32F042K6: Cortex-M0, 32 KB flash, 6 KB RAM. The on-board ST-LINK gives SWD flashing and a virtual COM port (USART2, 115200 8N1). The LED is on PB3. The on-board ST-LINK/V2-1 was reflashed to SEGGER J-Link OB firmware, so the toolkit defaults to `PROBE=jlink` (`PROBE=stlink` for stock firmware). SWD is held at 1 MHz because this probe gets parity errors at 4 MHz. The chip's original flash is backed up at `~/stm32-backup/f042k6-original-flash.bin` on the Pi | The Pi, over USB: the probe's serial port (`/dev/ttyACM0`) for data, SWD for flashing *(team)* | `firmware/README.md`, `firmware/stm32f042k6-hello/` and `firmware/stm32f042k6-hcsr04/` on the `firmware` branch |
 | Jetson AGX Xavier | 64 GB, Volta GPU (sm_72), JetPack 5.x era. Planned as a bigger local model server. Not set up | Local network (planned) | *(team)*; §13 |
 | Dev laptop | MacBook Air M5, 24 GB | — | *(team)* |
 
@@ -109,12 +110,17 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
   - Servo alarm bits never raise an exception, and `sync_write` drops packets silently, so a watchdog has to poll.
   - Only one process can open the arm's serial port.
 - **Simulation:** MuJoCo Menagerie ships an SO-101 model, `robotstudio_so101`, that runs on macOS (https://github.com/google-deepmind/mujoco_menagerie). MuJoCo 4.0.0 shipped Nov 6 (Romulus notes).
-- **Ultrasonic:** gpiozero with the `lgpio` pin factory. RPi.GPIO doesn't work on the Pi 5 (https://gpiozero.readthedocs.io/en/stable/api_pins.html; https://bugs.launchpad.net/raspbian/+bug/2058658).
+- **Ultrasonic (decision pending, see §5):**
+  - On the Pi: gpiozero with the `lgpio` pin factory. RPi.GPIO doesn't work on the Pi 5 (https://gpiozero.readthedocs.io/en/stable/api_pins.html; https://bugs.launchpad.net/raspbian/+bug/2058658).
+  - Through the STM32 (`firmware` branch): the Pi app reads CSV lines `t_ms,dist_mm,echo_us,status` from `/dev/ttyACM0` at 115200 and skips lines that start with `#`. `status` is `ok`, `out_of_range`, `no_echo` or `busy`. The arm's servo bus stays on its own serial port, so the Pi then has two serial devices, each with one owner *(inferred)*.
 - **Camera:** OpenCV, through LeRobot's `OpenCVCamera`. It accepts a device index, a device path, or a video file (`src/lerobot/cameras/opencv/configuration_opencv.py` on GitHub).
-- **Firmware** (`firmware` branch):
+- **Firmware** (`firmware` branch, by Olir; latest `ac171dc`, Sat 4:17 PM; not merged into `main`). Everything here is from `firmware/README.md` on that branch:
   - Bare-metal C on the CMSIS register headers, with no HAL.
-  - `make` builds it, OpenOCD flashes it (target `stm32f0x.cfg`), and `make check` uses `fwtool` to read the build ID and uptime back over SWD.
-  - The shared build rules (`toolkit/mk/stm32.mk`) and `fwtool` aren't on the branch yet.
+  - `toolkit/`: a portable toolchain that installs into `toolkit/opt` without root. It pins arm-none-eabi-gcc 15.2.1-1.1, OpenOCD 0.12.0-7, CMSIS 6.3.0 and the STM32F0 device headers 2.3.8, each with its SHA-256 (`toolkit/versions.env`). It runs on Linux and macOS, arm64 or x86-64. `toolkit/pack.sh` builds a ready-to-run tarball (about 150 MB) or an offline installer for other platforms. That bundle is one way to get the STM32 toolchain into the healer's sandbox (Kent's B8) *(inferred)*.
+  - Shared make targets (`toolkit/mk/stm32.mk`): `make`, `flash`, `check`, `monitor`, `gdb`, `gdbserver`, `backup`/`restore`, `reset`, `erase`, `size`, `disasm`.
+  - `make check` (`toolkit/bin/fwtool`) proves the chip runs the build just made. Each build stamps an ID (git revision and build time) into a `.fw_info` flash section. `check` reads that ID back over SWD and compares it with the ELF, confirms an uptime counter in RAM is advancing, and matches the boot banner on the serial port. That's the "reflash, then verify" step the healer needs for F1–F11 *(inferred)*.
+  - `stm32f042k6-hello/`: sanity firmware. It blinks the LED at 1 Hz, prints chip info and the reset cause, and prints `alive: uptime …` every second.
+  - `stm32f042k6-hcsr04/`: the HC-SR04 driver. TIM3 timestamps both ECHO edges in hardware at 1 µs (about 0.17 mm). Each measurement times out after 60 ms. At boot an ADC wiring self-test flags DANGER if the divider is missing and WARN if the resistors look swapped. It streams 10 measurements a second as CSV. Keys: `p` pause, `v` rerun the wiring check, `i` info, `r` reset.
 - **Healer:** a local model server (llama.cpp's `llama-server`, which speaks the OpenAI API) plus an agent harness, chosen by benchmark (§8.5, §13).
 - **Cloud:** the Naïve SDK, plus the sponsors' services (AgentMail, Mobilerun) and possibly RunPod (§9).
 
@@ -400,7 +406,7 @@ Positioning *(inferred)*: existing tools either need a cloud connection to a big
    - Which sim or fake devices act as the canary?
 
 **Other open questions**
-1. What does the STM32 do in the loop? It talks to the Pi over its USB serial port. *(team)*
+1. What does the STM32 do in the loop? On the `firmware` branch it reads the HC-SR04 and streams distance to the Pi over its USB serial port (§6). Still open: is the sensor read through the STM32 or straight from the Pi's GPIO? The answer decides which faults can be planted: U1–U5 in the fault catalog only exist on the GPIO path, while the STM32 path adds firmware faults to the F series *(inferred)*.
 2. What does the arm do in the demo? (being designed)
 3. Which agent harness and which model run on the Pi 5? (being tested)
 4. How do we reach the user beyond the dashboard? (§11)
