@@ -8,8 +8,8 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fake_device.client import DeviceClient, HashMismatch
-from fake_device.fake_cloud import V1_MANIFEST, FakeCloud
+from fake_device.client import DeviceClient, HashMismatch, InvalidPackage
+from fake_device.fake_cloud import V1_MANIFEST, FakeCloud, tarball
 from romulus_contracts import (
     CONTRACT_VERSION,
     CheckIn,
@@ -61,6 +61,22 @@ def test_pull_firmware_hash_mismatch(cloud, client):
     with pytest.raises(HashMismatch) as err:
         client.pull_firmware(1)
     assert err.value.expected == "0" * 64
+
+
+def test_pull_firmware_that_fails_validation_is_invalid(cloud, client):
+    # Hash fine, but this contracts version can't parse the manifest (a newer rule shape).
+    cloud.add_firmware({**V1_MANIFEST, "version": 2, "rules": {"r": {"signal": "x"}}})
+    with pytest.raises(InvalidPackage):
+        client.pull_firmware(2)
+
+
+def test_pull_harness_without_harness_json_is_invalid(cloud, client):
+    cloud.add_harness(2, tarball({"skills/README.md": b"no harness.json"}))
+    with pytest.raises(InvalidPackage):
+        client.pull_harness(2)
+    cloud.add_harness(3, tarball({"harness.json": b'{"version": 4, "framework": "pi"}'}))
+    with pytest.raises(InvalidPackage, match="says version 4"):
+        client.pull_harness(3)
 
 
 def test_pull_firmware_missing_is_http_error(client):

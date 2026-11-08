@@ -4,7 +4,8 @@ It takes any `httpx.Client` whose `base_url` points at the cloud, so the same co
 against the real API, FastAPI's `TestClient` (an `httpx.Client`) and `httpx.MockTransport`.
 It does no retrying and no queueing: errors surface as `httpx.TransportError` (cloud
 unreachable) or `httpx.HTTPStatusError` (the cloud answered with 4xx/5xx), and the outbox
-decides what to do with them. Downloads are hash-checked here and raise `HashMismatch`.
+decides what to do with them. Downloads are hash-checked here and raise `HashMismatch`;
+a download whose hash is fine but whose content fails validation raises `InvalidPackage`.
 
 Standard library + httpx + romulus-contracts only, Python 3.11+, so it can be copied into
 the Pi app as is.
@@ -13,17 +14,20 @@ the Pi app as is.
 from __future__ import annotations
 
 import hashlib
+import io
+import json
+import tarfile
 from typing import Any
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from romulus_contracts import (
     CONTRACT_VERSION,
     SHA256_HEADER,
     CheckIn,
     CheckInResponse,
     FirmwareManifest,
-    FirmwareResponse,
+    HarnessMeta,
     IncidentAccepted,
     IncidentReport,
     InstallResult,
@@ -44,6 +48,10 @@ class HashMismatch(Exception):
         self.actual = actual
 
 
+class InvalidPackage(Exception):
+    """The hash matched, but the manifest or package failed validation (report `invalid`)."""
+
+
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -55,7 +63,8 @@ def body(model: BaseModel) -> dict[str, Any]:
     (contracts README, proposed for I0).
     """
     data = model.model_dump(mode="json")
-    data.setdefault("contract_version", CONTRACT_VERSION)
+    if data.get("contract_version") is None:
+        data["contract_version"] = CONTRACT_VERSION
     return data
 
 
@@ -80,11 +89,17 @@ class DeviceClient:
     def pull_firmware(self, version: int) -> FirmwareManifest:
         """Fetch a manifest and check its hash over the JSON *as received* (APIs §3.2)."""
         data = self._send("GET", f"/v1/firmware/{version}").json()
-        actual = manifest_sha256(data["manifest"])
+        actual = manifest_sha256(data.get("manifest"))
         expected = str(data.get("sha256", "")).lower()
         if actual != expected:
             raise HashMismatch(f"firmware {version}", expected, actual)
-        return FirmwareResponse.model_validate(data).manifest
+        try:
+            manifest = FirmwareManifest.model_validate(data["manifest"])
+        except ValidationError as exc:
+            raise InvalidPackage(f"firmware {version}: {exc}") from exc
+        if manifest.version != version:
+            raise InvalidPackage(f"firmware {version}: manifest says version {manifest.version}")
+        return manifest
 
     def _pull_package(self, what: str, path: str) -> bytes:
         resp = self._send("GET", path)
@@ -96,8 +111,17 @@ class DeviceClient:
 
     # 3.3
     def pull_harness(self, version: int) -> bytes:
-        """The harness `.tar.gz`, checked against its `X-Sha256` header."""
-        return self._pull_package(f"harness {version}", f"/v1/harness/{version}/package")
+        """The harness `.tar.gz`, checked against its `X-Sha256` header and its `harness.json`."""
+        data = self._pull_package(f"harness {version}", f"/v1/harness/{version}/package")
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
+                member = tar.extractfile("harness.json")
+                meta = HarnessMeta.model_validate(json.load(member))
+        except (tarfile.TarError, KeyError, ValueError, TypeError) as exc:
+            raise InvalidPackage(f"harness {version}: no valid harness.json ({exc})") from exc
+        if meta.version != version:
+            raise InvalidPackage(f"harness {version}: harness.json says version {meta.version}")
+        return data
 
     # 3.3c
     def pull_code(self, rev: str) -> bytes:

@@ -5,6 +5,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from fake_device.client import DeviceClient
 from fake_device.fake_cloud import FakeCloud
@@ -133,19 +134,27 @@ def test_retry_on_5xx_stops_the_queue(tmp_path, cloud, client):
     assert len(box) == 2
 
 
-def test_permanent_4xx_is_dropped_with_a_log_line(tmp_path, cloud, client, caplog):
-    box = Outbox(tmp_path)
-    box.add_incident(incident())
-    good = incident("next")
-    cloud.fail_status = 422
-    with caplog.at_level(logging.WARNING, logger="fake_device.outbox"):
-        assert box.drain(client, T0) == 0
-    assert "dropping" in caplog.text
-    assert len(box) == 0
+def test_permanent_4xx_is_dead_lettered_and_the_queue_moves_on(tmp_path, cloud, caplog):
+    def handle(request: httpx.Request) -> httpx.Response:
+        if b'"kind":"rejected"' in request.content.replace(b" ", b""):
+            return httpx.Response(422, json={"error": "invalid_payload", "detail": "bad kind"})
+        return cloud.handle(request)
 
-    cloud.fail_status = None
+    http = httpx.Client(transport=httpx.MockTransport(handle), base_url="http://cloud")
+    client = DeviceClient(http, "sim-1")
+    box = Outbox(tmp_path)
+    bad, good = incident("rejected"), incident("next")
+    box.add_incident(bad)
+    box.add_recording(recording(bad.incident_id, b"x"), b"x")
     box.add_incident(good)
-    assert box.drain(client, T0) == 1
+    with caplog.at_level(logging.WARNING, logger="fake_device.outbox"):
+        assert box.drain(client, T0) == 2  # the recording and the good incident
+    assert "422 invalid_payload: bad kind" in caplog.text
+    assert len(box) == 0
+    assert list(cloud.incidents) == [str(good.incident_id)]
+    (dead,) = box.dead_letters()
+    assert dead["payload"]["incident_id"] == str(bad.incident_id)
+    assert dead["error"] == "422 invalid_payload: bad kind"
 
 
 def test_resend_after_lost_response_is_idempotent(tmp_path, cloud, client):
@@ -166,3 +175,4 @@ def test_corrupt_entry_is_dropped(tmp_path, cloud, client):
     box.add_incident(incident())
     assert box.drain(client, T0) == 1
     assert len(box) == 0
+    assert box.dead_letters()[0]["raw"] == "{not json"

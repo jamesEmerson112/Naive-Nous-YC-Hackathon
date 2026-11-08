@@ -67,6 +67,17 @@ def test_hash_mismatch_is_reported_and_not_installed(cloud, arm):
     assert cloud.paths().count("/v1/firmware/1") == 1
 
 
+def test_invalid_manifest_is_reported_and_not_installed(cloud, arm):
+    arm.tick(T0)
+    cloud.add_firmware({**V1_MANIFEST, "version": 2, "rules": {"r": {"signal": "x"}}})
+    cloud.assign("sim-1", firmware=2, harness=1)
+    arm.tick(T0 + timedelta(seconds=10))
+    assert installs(cloud)[-1] == ("firmware", 2, "invalid")
+    assert arm.device.firmware == 1
+    arm.tick(T0 + timedelta(seconds=20))
+    assert cloud.paths().count("/v1/firmware/2") == 1  # not retried
+
+
 def test_harness_hash_mismatch(cloud, arm):
     cloud.corrupt.add("/v1/harness/1/package")
     arm.tick(T0)

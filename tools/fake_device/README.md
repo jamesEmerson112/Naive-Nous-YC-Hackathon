@@ -31,8 +31,8 @@ Without `--scenario` the arms just check in and follow their assignments (flow F
 
 | Module | What |
 |---|---|
-| `client.py` | `DeviceClient(http, device_id)`: one method per route, contract models in and out, sha256 checks on every pull (`HashMismatch`). No retries. |
-| `outbox.py` | `Outbox(dir)`: on-disk queue of installs, incidents, overlay statuses and recordings. Retries connection errors, 5xx, 408 and 429 with backoff; drops other 4xx with a warning; strict order. |
+| `client.py` | `DeviceClient(http, device_id)`: one method per route, contract models in and out, sha256 checks on every pull (`HashMismatch`), manifest and `harness.json` validation (`InvalidPackage`). No retries. |
+| `outbox.py` | `Outbox(dir)`: on-disk queue of installs, incidents, overlay statuses and recordings. Retries connection errors, 5xx, 408 and 429 with backoff; moves any other 4xx to `dead/` with the error and carries on; strict order. |
 | `visor.py` | `Visor(client, device, outbox).tick(now)`: check in, pull → verify → install → health check → keep or roll back, honor `frozen` and `drop_overlay`, drain the outbox. Talks to the device through a 5-method `Device` protocol. |
 | `sim.py` | `SimDevice`: fake versions, overlay, health and metrics. Its reflexes run the real `romulus_contracts.evaluate` over the manifest's rules merged with the overlay. |
 | `recordings.py` | Small synthetic evidence: a real MCAP log window, a JSONL agent trace, a placeholder `lerobot_v3_tar`. |
@@ -80,4 +80,4 @@ held.run(now + timedelta(minutes=20))
 3. **Have the healer write to the same outbox:** `outbox.add_incident(...)`, then `outbox.add_recording(meta, data)` for each file, then `outbox.add_overlay_status(overlay_id, OverlayStatus(status="held"))` later. Make the incident and recording ids (`uuid.uuid4()`) when you create the report, not when you send it, so a resend is harmless.
 4. **Test it without the cloud:** `FakeCloud.seeded()` gives you an in-memory cloud with firmware v1, harness v1 and code `c0de001` assigned to `sim-1…3`, and records every request.
 
-What the visor does on its own: the hash check, the health check and rollback (D7); dropping the overlay when a new firmware or code version installs (D7); not retrying a version that failed until the cloud assigns another; installing only a move back to the last good version while `frozen`; and when the cloud is unreachable, staying on the current version with reports queued (D8).
+What the visor does on its own: the hash check (`hash_mismatch`), content validation (`invalid`), the health check and rollback (D7); dropping the overlay when a new firmware or code version installs (D7); not retrying a version that failed until the cloud assigns another; installing only a move back to the last good version while `frozen`; and when the cloud is unreachable, staying on the current version with reports queued (D8).

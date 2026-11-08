@@ -10,8 +10,9 @@ each, named by a sequence number, so the queue survives restarts and power cuts.
 - **Retry** on connection errors, timeouts, 5xx, 408 and 429, with exponential backoff
   (2, 4, 8 … up to `max_backoff_s` seconds). A resend is harmless because incident and
   recording ids are made on the device before queueing (D8).
-- **Drop** on any other 4xx (the cloud will never accept it), with a warning log line, so
-  one bad entry can't block the queue forever.
+- **Dead-letter** on any other 4xx (the cloud will never accept it): move the entry to
+  `dead/` with the error attached, log the cloud's `detail`, and carry on, so one bad entry
+  can't block the queue forever (contracts README, outbox rule).
 - **Delete** an entry only after the cloud confirms it.
 
 Standard library + httpx + romulus-contracts only, Python 3.11+, so it can be copied into
@@ -35,6 +36,17 @@ from fake_device.client import DeviceClient, body
 log = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = {408, 429}
+
+
+def _reason(exc: Exception) -> str:
+    """A short reason for the log and the dead-letter file, with the cloud's `detail`."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            err = exc.response.json()
+            return f"{exc.response.status_code} {err.get('error')}: {err.get('detail')}"
+        except ValueError:
+            return f"{exc.response.status_code} {exc.response.text[:200]}"
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _retryable(exc: Exception) -> bool:
@@ -114,8 +126,9 @@ class Outbox:
             except (httpx.TransportError, httpx.HTTPStatusError, ValueError, KeyError) as exc:
                 # ValueError covers a corrupt file and a payload the models reject.
                 if not _retryable(exc):
-                    log.warning("outbox: dropping %s, the cloud won't accept it: %s", path, exc)
-                    self._remove(path)
+                    reason = _reason(exc)
+                    log.warning("outbox: dead-lettering %s: %s", path.name, reason)
+                    self._dead_letter(path, reason)
                     continue
                 self.failures += 1
                 backoff = min(2.0**self.failures, self.max_backoff_s)
@@ -142,6 +155,24 @@ class Outbox:
             client.upload_recording(RecordingMeta.model_validate(payload), data)
         else:
             raise ValueError(f"unknown outbox entry kind {kind!r}")
+
+    def dead_letters(self) -> list[dict[str, Any]]:
+        """Entries the cloud refused for good, oldest first, each with its `error`."""
+        return [json.loads(p.read_text()) for p in sorted((self.dir / "dead").glob("*.json"))]
+
+    def _dead_letter(self, path: Path, reason: str) -> None:
+        dead = self.dir / "dead"
+        dead.mkdir(exist_ok=True)
+        try:
+            entry = json.loads(path.read_text())
+        except ValueError:
+            entry = {"raw": path.read_text(errors="replace")}
+        entry["error"] = reason
+        self._write(dead / path.name, json.dumps(entry).encode())
+        blob = path.with_suffix(".bin")
+        if blob.exists():
+            os.replace(blob, dead / blob.name)
+        path.unlink(missing_ok=True)
 
     @staticmethod
     def _remove(path: Path) -> None:

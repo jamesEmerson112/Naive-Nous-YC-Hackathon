@@ -28,6 +28,7 @@ from romulus_contracts import (
     InstallResult,
     OverlayStatus,
     RecordingMeta,
+    firmware_response,
     is_supported,
     manifest_sha256,
 )
@@ -170,10 +171,15 @@ class FakeCloud:
         manifest = self.firmware.get(int(version))
         if manifest is None:
             return _error(404, "not_found", f"no firmware {version}")
-        sha = manifest_sha256(manifest)
+        try:
+            served = firmware_response(manifest)  # what the real cloud serves
+        except ValidationError:
+            # A manifest this contracts version can't parse (e.g. a newer rule shape),
+            # served with a correct hash: the device must report `invalid`.
+            served = {"manifest": manifest, "sha256": manifest_sha256(manifest)}
         if request.url.path in self.corrupt:
-            sha = "0" * 64
-        return httpx.Response(200, json={"manifest": manifest, "sha256": sha})
+            served["sha256"] = "0" * 64
+        return httpx.Response(200, json=served)
 
     def _package(self, request, data: bytes | None):
         if data is None:

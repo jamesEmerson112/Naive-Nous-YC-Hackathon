@@ -8,8 +8,9 @@ Each `tick(now)`:
 3. For firmware, then the code package named by the assigned manifest's `code_rev`, then
    the harness: if the assigned version differs from the running one, pull it, check the
    hash, install it, run the health check, and keep it or roll back to the last good
-   version (D7). Each attempt queues an `InstallResult`: `installed`, `rolled_back` or
-   `hash_mismatch`. A version that failed is not retried until the cloud assigns another.
+   version (D7). Each attempt queues an `InstallResult`: `installed`, `rolled_back`,
+   `hash_mismatch`, or `invalid` (hash fine, content failed validation; nothing installed).
+   A version that failed is not retried until the cloud assigns another.
 4. While `frozen` (kill switch), only a move back to the last good version is installed.
 5. Drain the outbox.
 
@@ -28,7 +29,7 @@ from typing import Any, Protocol
 import httpx
 from romulus_contracts import CheckIn, CheckInResponse, FirmwareManifest, InstallResult
 
-from fake_device.client import DeviceClient, HashMismatch
+from fake_device.client import DeviceClient, HashMismatch, InvalidPackage
 from fake_device.outbox import Outbox
 
 log = logging.getLogger(__name__)
@@ -140,7 +141,7 @@ class Visor:
         if version not in self._manifests:
             try:
                 self._manifests[version] = self.client.pull_firmware(version)
-            except (HashMismatch, httpx.TransportError, httpx.HTTPStatusError):
+            except (HashMismatch, InvalidPackage, httpx.TransportError, httpx.HTTPStatusError):
                 return None
         return self._manifests[version]
 
@@ -160,10 +161,11 @@ class Visor:
             return None
         try:
             payload = self._pull(kind, version)
-        except HashMismatch as exc:
+        except (HashMismatch, InvalidPackage) as exc:
             self.rejected[kind] = version
+            result = "hash_mismatch" if isinstance(exc, HashMismatch) else "invalid"
             return InstallResult(
-                type=kind, version=version, result="hash_mismatch", detail=str(exc), occurred_at=now
+                type=kind, version=version, result=result, detail=str(exc), occurred_at=now
             )
         except (httpx.TransportError, httpx.HTTPStatusError) as exc:
             log.info("%s: pull of %s %s failed (%s); will retry", self.id, kind, version, exc)
