@@ -117,7 +117,7 @@ ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
 Naive Technician: hard failure → Naive report + actions <--- Kent
 Fleet learning: verified heal traces → training data <--- Kent
-Sunlit Workshop redesign mock (docs/impeccable-redesign) <--- Kent
+Romulus: Sunlit Workshop UI redesign, all pages + learning (docs/impeccable-redesign) <--- Kent
 
 PI 5
 Device side owner (D14)                 <--- Ishaan

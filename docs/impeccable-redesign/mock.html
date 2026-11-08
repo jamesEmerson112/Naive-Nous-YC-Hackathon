@@ -79,7 +79,7 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .icon { width: 1em; height: 1em; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.125em; }
 
 /* Mock chrome (not part of the design) */
-.mockbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px dashed var(--line-strong); }
+.mockbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px dashed var(--line-strong); }
 .mockbar b { color: var(--ink-2); font-weight: 600; }
 .mockbar .seg { margin-left: auto; display: inline-flex; gap: 4px; }
 .mockbar button { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; }
@@ -263,7 +263,22 @@ main { max-width: 72rem; margin: 0 auto; padding: 0 24px 64px; }
   .st::before { display: none; }
   .st { flex-direction: row; align-items: center; }
   .nav { display: none; }
+  .top-in, main { padding-left: 16px; padding-right: 16px; }
+  .top-in { gap: 12px; }
+  .live { margin-left: auto; }
+  .status h1 { font-size: 1.44rem; }
+  .verdict h1 { font-size: 1.728rem; }
+  .verdict h1 q::before { margin-left: 0; }
+  .nums { gap: 20px; }
+  .part-main { flex-wrap: wrap; }
+  .price { font-size: 1.728rem; }
+  .turn { grid-template-columns: auto 1fr; }
+  .turn-cta { grid-column: 1 / -1; justify-self: start; }
+  .row a { grid-template-columns: 28px minmax(0, 1fr); }
+  .row-r { grid-column: 2; flex-direction: row; align-items: center; }
+  .feed li { grid-template-columns: 1fr; gap: 0; }
 }
+body { overflow-x: clip; }
 </style>
 </head>
 <body>
