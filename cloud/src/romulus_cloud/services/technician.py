@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -136,7 +136,8 @@ def _record(
     }
     if case.naive_session_id:
         refs["naive_session"] = case.naive_session_id
-    actor = f"naive:{case.naive_session_id}" if kind != "technician.opened" else ACTOR
+    by_agent = case.naive_session_id and kind != "technician.opened"
+    actor = f"naive:{case.naive_session_id}" if by_agent else ACTOR
     actor_class = (
         "agent" if kind in ("technician.diagnosed", "technician.emailed") else "automation"
     )
@@ -191,6 +192,11 @@ def mode_problem(mode: str, settings: Settings) -> str | None:
             return "live needs NAIVE_API_KEY"
         if not settings.naive_technician_agent:
             return "live needs NAIVE_TECHNICIAN_AGENT (build-plan step 1)"
+    if mode == "fake" and not FAKE_FIXTURE.is_file():
+        return (
+            f"the fake fixture {FAKE_FIXTURE} is not here (a built image has no tests/); use "
+            "`make dev`, or copy it under data/ and open the case with ?mode=replay"
+        )
     if mode == "replay":
         if not settings.technician_replay_file:
             return "replay needs TECHNICIAN_REPLAY_FILE (a recorded session fixture)"
@@ -315,9 +321,6 @@ def open_case(
     back as it is, except a `failed` one, which a new case (say, `replay`) replaces."""
     settings = settings or get_settings()
     mode = mode or settings.technician_mode
-    problem = mode_problem(mode, settings)
-    if problem:
-        raise ApiError(409, "technician_unavailable", f"Can't open a {mode} case: {problem}.")
     order = session.get(WorkOrder, order_id)
     if order is None:
         raise ApiError(404, "unknown_work_order", f"Work order {order_id} does not exist.")
@@ -326,6 +329,9 @@ def open_case(
     ).first()
     if existing is not None and existing.status != "failed":
         return existing
+    problem = mode_problem(mode, settings)
+    if problem:
+        raise ApiError(409, "technician_unavailable", f"Can't open a {mode} case: {problem}.")
     if order.status != "needs_human":
         raise ApiError(
             409,
@@ -781,8 +787,11 @@ def _advance(
         order = session.get(WorkOrder, case.work_order_id)
         if order is not None and order.status in ("done", "denied", "stopped"):
             _set_status(case, "done" if order.status == "done" else "stopped", now)
-        if (_actions(case).get("email") or {}).get("status") == "sending":
-            _send_email(session, case, now, settings, naive)
+    if (
+        case.status in ("waiting", "done")
+        and (_actions(case).get("email") or {}).get("status") == "sending"
+    ):
+        _send_email(session, case, now, settings, naive)
 
 
 def sync(
@@ -798,9 +807,13 @@ def sync(
     settings = settings or get_settings()
     if shop is None:
         from romulus_cloud.adapters import shop  # the live store reader (public Shopify JSON)
+    sending = TechnicianCase.actions["email"]["status"].astext == "sending"
     cases = session.scalars(
         select(TechnicianCase)
-        .where(TechnicianCase.fleet_id == settings.fleet_id, TechnicianCase.status.in_(ACTIVE))
+        .where(
+            TechnicianCase.fleet_id == settings.fleet_id,
+            or_(TechnicianCase.status.in_(ACTIVE), sending),  # approved before the email went
+        )
         .order_by(TechnicianCase.created_at, TechnicianCase.id)
         .with_for_update(skip_locked=True)
     ).all()

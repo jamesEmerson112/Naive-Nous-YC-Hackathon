@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from romulus_cloud.adapters.naive import FixtureNaive
+from romulus_cloud.adapters.naive import FixtureNaive, NaiveError
 from romulus_cloud.adapters.shop import FakeShop
 from romulus_cloud.models import TechnicianCase
 from romulus_cloud.services import incidents, technician, workorders
@@ -174,7 +174,9 @@ def test_joint_stall_gets_a_diagnosis_an_email_and_a_staged_part_a_person_approv
     assert v["poll"] is False
 
 
-def test_a_catalogued_fault_gets_no_case(client, seeded, sessions, db_session, tech_settings, example):
+def test_a_catalogued_fault_gets_no_case(
+    client, seeded, sessions, db_session, tech_settings, example
+):
     naive, shop = _naive(), FakeShop({(ORIGIN, HANDLE): _product()})
     body = example("incident_park_hardware") | {
         "incident_id": str(uuid.uuid4()),
@@ -249,3 +251,30 @@ def test_manual_open_takes_a_mode_and_is_safe_to_repeat(
     assert refused.json()["id"] == first.json()["id"]  # an open case comes back as it is
     stop = client.post(f"/v1/technician/cases/{first.json()['id']}/stop", json={"by": "kent"})
     assert stop.status_code == 200 and stop.json()["status"] == "stopped"
+
+
+class _HeldPost(FixtureNaive):
+    """Naïve under load: the POST creates the session but is held open while it sits queued,
+    so the client times out (`in_flight`). The session exists and `find_session` finds it."""
+
+    def create_session(self, body, *, idempotency_key):
+        super().create_session(body, idempotency_key=idempotency_key)
+        raise NaiveError("POST /sessions timed out", code="in_flight", pending=True)
+
+
+def test_a_queued_session_is_found_by_case_id_not_created_twice(
+    client, seeded, sessions, db_session, tech_settings
+):
+    naive = _HeldPost(FIXTURES / "joint_stall_fake.json", now=lambda: T0, play_seconds=0)
+    shop = FakeShop({(ORIGIN, HANDLE): _product()})
+    incident_id = _report_incident(client, "sim-3")
+    _tick(sessions, tech_settings, naive, shop, T0)
+    order = _only_order(client, incident_id)
+    case = _case(db_session, order["id"])
+    assert case.status == "open" and case.why == "Naïve queued the session; waiting"
+    assert case.feed[-1]["text"] == "Naïve queued the session (platform busy)"
+    frozen = dict(case.request)
+    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=3))
+    case = _case(db_session, order["id"])
+    assert case.status == "diagnosing" and case.naive_session_id
+    assert case.request == frozen and list(naive.requests) == [case.id]  # one key, one body

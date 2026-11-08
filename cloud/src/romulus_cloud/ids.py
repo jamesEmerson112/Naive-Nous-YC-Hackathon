@@ -1,7 +1,8 @@
 """Server-made IDs and the one clock helper (architecture §10).
 
-Server IDs are prefixed strings (`ov_`, `cand_`, `wo_`, `rec_`, `ds_`, `exp_`, `evt_`, and the
-Fleet Doctor's `cons_` consults, `prop_` proposals and `ask_` asks, and Naïve Technician `tc_` cases).
+Server IDs are prefixed strings (`ov_`, `cand_`, `wo_`, `rec_`, `ds_`, `exp_`, `evt_`, the
+Fleet Doctor's `cons_` consults, `prop_` proposals and `ask_` asks, and the Naïve
+Technician's `tc_` cases).
 Incident and recording IDs are UUIDs made on the device, so they never come from here (D8).
 """
 
