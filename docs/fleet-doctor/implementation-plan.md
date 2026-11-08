@@ -128,6 +128,8 @@ DOCTOR_MODE=fake DOCTOR_OFFER_STUB_CHECKED=true SAFETY_PATHS_CONFIRMED=true
 
 This setup runs with `make sim` and the fake device's `consult` scenario (or the `demo` chaos profile's `doctor` kind). The incident page shows the hypothesis ledger, the stub-labeled draft and check, the proposal offered, applied and held, and then lock-in. Say on stage that the check is a stub and the model is fake. With a working LLM key, `DOCTOR_MODE=live` makes the ledger real while the draft stays fake (strategy §3).
 
+Real-mode checks (`DOCTOR_DRAFT=coder DOCTOR_CHECK=sandbox`) offer nothing unless there are held-out verify scripts for the base, or `DOCTOR_OFFER_UNVERIFIED=true` is set. Real devices ship no `verify/`, so run `make device-verify` (it writes `data/verify/device`) and set `CODER_VERIFY_DIR` to it; the lock-in gate and the Doctor both read it. The stub demo above is unaffected.
+
 ## 9. Risks specific to execution
 
 | Risk | Mitigation |

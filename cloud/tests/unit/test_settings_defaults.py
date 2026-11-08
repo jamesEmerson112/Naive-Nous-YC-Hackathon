@@ -57,6 +57,7 @@ def test_fleet_doctor_defaults_are_off_and_safe():
     assert s.doctor_mode == "off" and s.doctor_auto_consult is False
     assert (s.doctor_draft, s.doctor_check) == ("fake", "stub")
     assert s.doctor_offer_stub_checked is False and s.safety_paths_confirmed is False
+    assert s.doctor_offer_unverified is False
     assert (s.doctor_asks_per_incident, s.doctor_asks_per_device_day) == (6, 30)
     assert s.doctor_consults_per_incident == 2
     assert (s.doctor_daily_usd_cap, s.doctor_usd_per_1k_tokens) == (5.0, 0.001)
