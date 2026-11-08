@@ -76,33 +76,33 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 12:20 AM PST_
+_Last updated: Sun Nov 8, 12:30 AM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P1 minimum by 12:30 AM (a typed command moves the sim arm; a planted fault gives a spoken sentence), then P2 overnight to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), and P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). Kent's next steps: the 12:30 AM overnight go/no-go and the live Naïve card; his open PRs are #46 (B5) and #53 (replay hardening, K6). Olir has the pod healer bench runs, the bad-ultrasonic arm heal test, and a review of the new firmware doc.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P1 minimum by 12:30 AM (a typed command moves the sim arm; a planted fault gives a spoken sentence), then P2 overnight to 7 AM, where Olir's pod logs under podd are the only real data (Kent's run is the fake fleet), and P3 the real arm 7–10 AM (`features.txt`, `hub/src/content/proposal.ts`). Kent's next steps: the 12:30 AM overnight go/no-go and the live Naïve card; his open PRs are #46 (B5) and #53 (replay hardening, K6). Olir's arm heal test is merged (#54); he still has the frozen-ultrasonic rule and a review of the firmware doc.
 
 **Recently done:**
+- Olir merged #54 (12:25 AM, `d5f99d6`, `303a007`): the arm heal scenario. Bad firmware v1.7 makes the SO-101 flail (obstacle reflex, exit 4); the agent rolls back, runs the job itself and checks the motion. On the real pod and real arm, qwen3.5:4b passed all 11 checks: rollback on turn 3, its own job on turn 4, 663 of 663 frames (`firmware/harness/RESULTS.md`, 12:05 AM run). `arm/safe_replay.py` now writes a run record per job, and `arm/arm_status.py` reads live joints and a motion report
 - Kent opened #53 (12:04 AM, `cloud/replay-hardening`): code replay is hardened so a patch can't game the tests into a pass (K6), plus `e4908fb`, which refunds the Fleet Doctor's zero-token draft attempts in the batch budget. The Fleet Doctor itself is complete (#44, #52, Kent's block)
-- James pushed `235e30d` (11:50 PM): `docs/firmware-apis.md`, one cited reference (from main at `2f56e2d`) for the pod's serial lines and commands, podd's 11 socket ops and logs, triage, heal tools, flashing, the pod healer harness, the model relay, the edge bridge's mapping onto contract v0.1, the unwired seams, and the data we have; Olir to review. James's P2 now names it plus a 7 AM slice of the overnight podd logs into `samples/pod/`
-- The team got one real SO-101 arm moving (reported in James's session about 11:45 PM; nothing committed). Which driver ran it, and whether any joint data was saved, is not known yet: `arm/safe_replay.py` and `live_replay.py` record nothing, while Andre's `prims.record` writes primitive JSON on the machine that ran it
+- James pushed `235e30d` (11:50 PM): `docs/firmware-apis.md`, one cited reference for the pod's serial lines and commands, podd's socket ops and logs, triage, heal tools, flashing, the pod healer harness, the model relay and the edge bridge; Olir to review. James's P2 now names it plus a 7 AM slice of the overnight podd logs into `samples/pod/`
 - James's P1 prototypes run in simulation (local branch `james/arm-sim`, not pushed): arm host, `so101-arm` Hermes plugin with a `pre_tool_call` guard, a level-1 watchdog, a fault factory, a ChatTS level-2 test on RunPod (pod terminated). Opening its PR is his P1 line (`features.txt`)
 
 **Open questions:**
-- Fleet Doctor follow-ups (#52): keep `DOCTOR_DRAFT=coder` off on real device text until B5 (#46) merges; `SAFETY_PATHS_CONFIRMED` stays false, discarding every proposal, until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder; gate replay hardening is now open for review as #53
-- Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block). `firmware/healer/detect.py` has no frozen or `out_of_range` ultrasonic rule, only `us_no_echo`, `us_intermittent` and `us_blocked`, so a stuck distance fires nothing; porting `acc_frozen`'s zero-variance test to `us` would cover the demo fault (`docs/firmware-apis.md` section 6) *(inferred)*
-- Overlaps the notice PRs flag: Andre's arm files exist twice (his branch and a flat `arm/` on main from #36); three real-arm drivers (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, James's `prototypes/arm-sim/`); the cm-vs-mm ultrasonic and shared `/dev/ttyACM0` clash from #31. Which driver wins? *(inferred)*
+- Fleet Doctor follow-ups (#52): keep `DOCTOR_DRAFT=coder` off on real device text until B5 (#46) merges; `SAFETY_PATHS_CONFIRMED` stays false, discarding every proposal, until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder; gate replay hardening is open for review as #53
+- Pod healer: bench runs now pass with the Ollama driver (`RESULTS.md`), but `firmware/healer/detect.py` still has no frozen or `out_of_range` ultrasonic rule, so a stuck distance fires nothing; porting `acc_frozen`'s zero-variance test to `us` would cover it (`docs/firmware-apis.md` section 6) *(inferred)*. `303a007` also committed `arm/__pycache__/safe_replay.cpython-313.pyc` to main *(inferred: should be gitignored)*
+- Overlaps the notice PRs flag: Andre's arm files exist twice (his branch and a flat `arm/` on main from #36); three real-arm drivers (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, James's `prototypes/arm-sim/`); the cm-vs-mm ultrasonic and shared `/dev/ttyACM0` clash from #31. Olir's `safe_replay.py` is the one with a passing real-arm heal run; which driver wins? *(inferred)*
 - Team calls still open: Stripe is optional, only if we're ahead; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email)
 
 **Recent commits (all authors):**
+- `f623b56` Sun 00:25 · Oliravan Eswaramoorthy · Merge pull request #54 from jamesEmerson112/olir/arm-ultrasonic-heal
+- `303a007` Sun 00:24 · Olir Eswar · full passthrough test
+- `e5702a1` Sun 00:18 · jamesEmerson112 · Update team status and features.txt
+- `d5f99d6` Sun 00:09 · Olir Eswar · Arm heal scenario: bad firmware makes the arm flail; the agent fixes it, runs the job and checks the motion
 - `c987b4c` Sun 00:08 · Kent Gang · Update Kent status in CLAUDE.md
 - `9f59e95` Sun 00:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `b66d6fd` Sun 00:01 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `e8fcd2c` Sat 23:59 · jamesEmerson112 · Update team status and features.txt
 - `235e30d` Sat 23:50 · jamesEmerson112 · Firmware APIs and data: one cited reference for wiring the pod into Romulus, the harness and the arm
 - `e1e6561` Sat 23:49 · jamesEmerson112 · Update team status in CLAUDE.md
-- `a42ef74` Sat 23:49 · jamesEmerson112 · Update team status in CLAUDE.md
-- `52032cd` Sat 23:48 · Kent Gang · Update Kent status in CLAUDE.md
-- `0960a83` Sat 23:39 · jamesEmerson112 · Update team status in CLAUDE.md
-- `2f56e2d` Sat 23:31 · jamesEmerson112 · Hub: our build plan and James's features.txt lines in the Sim + control lane
 
 **Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent), `cloud/replay-hardening` (#53, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
