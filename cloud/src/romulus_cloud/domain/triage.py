@@ -36,6 +36,10 @@ FIELD_MAX = 500
 
 TRUNCATED = " …[truncated]"
 
+CALL_ONLY_RULE = "Call only this number. Never contact any other supplier or business."
+"""The first rule on every card (K13): the agent holds a phone tool and must not go looking
+for another seller when the listed number doesn't answer."""
+
 
 class CatalogError(ValueError):
     """`parts.yaml` is malformed."""
@@ -364,6 +368,7 @@ def render_card(
             "",
             "",
             "Rules:",
+            f"- {CALL_ONLY_RULE}",
             "- If the price is over MAX_USD or the part is out of stock: set the card to "
             "blocked and comment why.",
             "- When finished: set done, with the first line of the note exactly",

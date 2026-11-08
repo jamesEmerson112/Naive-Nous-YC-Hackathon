@@ -263,7 +263,7 @@ class WorkOrder(Base):
     part: Mapped[str]
     max_usd: Mapped[float] = mapped_column(Numeric(10, 2, asdecimal=False))  # reads as float
     status: Mapped[str] = mapped_column(default="pending", index=True)
-    # pending | posted | in_progress | done | stopped | needs_human | blocked_over_cap
+    # pending | posted | in_progress | done | stopped | needs_human | blocked_over_cap | denied
     naive_card_id: Mapped[str | None]
     naive_updated_at: Mapped[str | None]  # Naïve's updated_at, compared as given
     result: Mapped[str | None] = mapped_column(Text)
