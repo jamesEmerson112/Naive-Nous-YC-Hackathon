@@ -4,6 +4,7 @@ import hashlib
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -177,3 +178,60 @@ def test_corrupt_entry_is_dropped(tmp_path, cloud, client):
     assert box.drain(client, T0) == 1
     assert len(box) == 0
     assert box.dead_letters()[0]["raw"] == "{not json"
+
+
+# -- review fixes: crash safety and shared directories ------------------------------------
+
+
+def test_two_outboxes_on_one_directory_keep_every_entry_in_order(tmp_path, cloud, client):
+    visor_box, healer_box = Outbox(tmp_path), Outbox(tmp_path)  # e.g. two processes
+    a, b, c, d = (incident(k) for k in "abcd")
+    visor_box.add_incident(a)
+    healer_box.add_incident(b)
+    visor_box.add_incident(c)
+    healer_box.add_incident(d)
+    assert len(visor_box) == 4
+    assert visor_box.drain(client, T0) == 4
+    assert [i["kind"] for i in cloud.incidents.values()] == ["a", "b", "c", "d"]
+
+
+def test_recording_with_missing_blob_is_dead_lettered(tmp_path, cloud, client):
+    box = Outbox(tmp_path)
+    inc = incident()
+    box.add_recording(recording(inc.incident_id, b"x"), b"x")
+    box.add_incident(incident("after"))
+    (blob,) = tmp_path.glob("*.bin")
+    blob.unlink()  # e.g. an older version crashed between the two deletes
+    assert box.drain(client, T0) == 1
+    assert [i["kind"] for i in cloud.incidents.values()] == ["after"]
+    assert "MissingBlob" in box.dead_letters()[0]["error"]
+
+
+def test_orphan_blob_is_ignored(tmp_path, cloud, client):
+    (tmp_path / "00000000000000000001-deadbeef.recording.bin").write_bytes(b"orphan")
+    box = Outbox(tmp_path)
+    assert len(box) == 0 and box.drain(client, T0) == 0
+
+
+def test_remove_deletes_the_entry_before_the_blob(tmp_path, cloud, client, monkeypatch):
+    box = Outbox(tmp_path)
+    inc = incident()
+    box.add_recording(recording(inc.incident_id, b"x"), b"x")
+    deleted = []
+    real_unlink = Path.unlink
+
+    def spy(self, missing_ok=False):
+        deleted.append(self.suffix)
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", spy)
+    box.drain(client, T0)
+    assert deleted == [".json", ".bin"]
+
+
+def test_writes_leave_no_temp_files(tmp_path):
+    box = Outbox(tmp_path)
+    inc = incident()
+    box.add_incident(inc)
+    box.add_recording(recording(inc.incident_id, b"x"), b"x")
+    assert sorted(p.suffix for p in tmp_path.iterdir()) == [".bin", ".json", ".json"]

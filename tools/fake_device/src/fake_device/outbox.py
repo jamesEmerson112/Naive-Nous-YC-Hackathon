@@ -1,7 +1,7 @@
 """On-disk outbox for device reports: queue now, send when the cloud answers (D8, APIs §3).
 
 Installs, incidents, overlay statuses and recordings go into a directory as one JSON file
-each, named by a sequence number, so the queue survives restarts and power cuts.
+each (plus a `.bin` blob for a recording), so the queue survives restarts and power cuts.
 `drain()` sends them oldest first:
 
 - **Order.** One queue for every kind, sent strictly in order: if an entry can't be sent
@@ -10,10 +10,16 @@ each, named by a sequence number, so the queue survives restarts and power cuts.
 - **Retry** on connection errors, timeouts, 5xx, 408 and 429, with exponential backoff
   (2, 4, 8 … up to `max_backoff_s` seconds). A resend is harmless because incident and
   recording ids are made on the device before queueing (D8).
-- **Dead-letter** on any other 4xx (the cloud will never accept it): move the entry to
-  `dead/` with the error attached, log the cloud's `detail`, and carry on, so one bad entry
-  can't block the queue forever (contracts README, outbox rule).
+- **Dead-letter** on any other 4xx (the cloud will never accept it), and on an entry that
+  can't be read or a recording whose blob is missing: move it to `dead/` with the error,
+  log it, and carry on, so one bad entry can't block the queue forever.
 - **Delete** an entry only after the cloud confirms it.
+
+Crash safety: every file is written to a temp file, fsynced, then renamed into place. A
+blob is written before its JSON and deleted after it, so a crash never leaves a JSON entry
+pointing at a missing blob (at worst an orphan `.bin`, which is ignored). Entry names are
+`<time_ns>-<random>.<kind>.json`: sortable, and unique even when two processes (say the
+visor and the healer) add to the same directory. Let one process drain; any may add.
 
 Standard library + httpx + romulus-contracts only, Python 3.11+, so it can be copied into
 the Pi app as is.
@@ -24,6 +30,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -36,6 +44,28 @@ from romulus_contracts import IncidentReport, InstallResult, OverlayStatus, Reco
 log = logging.getLogger(__name__)
 
 RETRYABLE_STATUS = {408, 429}
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    """Write `data` to `path` so a crash leaves either the old file or the whole new one."""
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    try:  # make the rename itself durable (POSIX); not supported everywhere
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+class MissingBlob(ValueError):
+    """A recording entry whose `.bin` is gone: it can never be sent."""
 
 
 def _reason(exc: Exception) -> str:
@@ -65,8 +95,7 @@ class Outbox:
         self.max_backoff_s = max_backoff_s
         self.failures = 0
         self.retry_at: datetime | None = None
-        existing = [int(p.name.split(".", 1)[0]) for p in self._entries()]
-        self._next_seq = max(existing, default=0) + 1
+        self._last_ns = 0
 
     # -- queueing ---------------------------------------------------------------------
 
@@ -83,20 +112,19 @@ class Outbox:
         """Queue the metadata and keep a copy of the blob next to it until it's uploaded."""
         self._add("recording", body(meta), blob=data)
 
-    def _add(self, kind: str, payload: dict[str, Any], blob: bytes | None = None, **extra) -> None:
-        stem = f"{self._next_seq:08d}.{kind}"
-        self._next_seq += 1
-        if blob is not None:
-            # Blob first: a JSON entry never exists without its blob.
-            self._write(self.dir / f"{stem}.bin", blob)
-        entry = {"kind": kind, "payload": payload, **extra}
-        self._write(self.dir / f"{stem}.json", json.dumps(entry).encode())
+    def _stem(self, kind: str) -> str:
+        # Wall-clock nanoseconds order entries across processes; never repeat one within
+        # this process even if the clock doesn't move. The random part keeps names unique.
+        # This only names files; nothing reads it as a time.
+        self._last_ns = max(time.time_ns(), self._last_ns + 1)
+        return f"{self._last_ns:020d}-{uuid.uuid4().hex[:8]}.{kind}"
 
-    @staticmethod
-    def _write(path: Path, data: bytes) -> None:
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, path)  # atomic: readers see the whole file or nothing
+    def _add(self, kind: str, payload: dict[str, Any], blob: bytes | None = None, **extra) -> None:
+        stem = self._stem(kind)
+        if blob is not None:
+            atomic_write(self.dir / f"{stem}.bin", blob)  # blob first, then the entry
+        entry = {"kind": kind, "payload": payload, **extra}
+        atomic_write(self.dir / f"{stem}.json", json.dumps(entry).encode())
 
     # -- reading ----------------------------------------------------------------------
 
@@ -109,6 +137,10 @@ class Outbox:
 
     def __len__(self) -> int:
         return len(self._entries())
+
+    def dead_letters(self) -> list[dict[str, Any]]:
+        """Entries that can never be sent, oldest first, each with its `error`."""
+        return [json.loads(p.read_text()) for p in sorted((self.dir / "dead").glob("*.json"))]
 
     # -- sending ----------------------------------------------------------------------
 
@@ -123,8 +155,10 @@ class Outbox:
         for path in self._entries():
             try:
                 self._send(client, path)
+            except FileNotFoundError:
+                continue  # another process sent it meanwhile
             except (httpx.TransportError, httpx.HTTPStatusError, ValueError, KeyError) as exc:
-                # ValueError covers a corrupt file and a payload the models reject.
+                # ValueError covers a corrupt file, a payload the models reject, MissingBlob.
                 if not _retryable(exc):
                     reason = _reason(exc)
                     log.warning("outbox: dead-lettering %s: %s", path.name, reason)
@@ -142,7 +176,7 @@ class Outbox:
         return sent
 
     def _send(self, client: DeviceClient, path: Path) -> None:
-        entry = json.loads(path.read_text())  # a corrupt file raises ValueError -> dropped
+        entry = json.loads(path.read_text())  # a corrupt file raises ValueError
         kind, payload = entry["kind"], entry["payload"]
         if kind == "install":
             client.report_install(InstallResult.model_validate(payload))
@@ -151,14 +185,12 @@ class Outbox:
         elif kind == "overlay":
             client.report_overlay(entry["overlay_id"], OverlayStatus.model_validate(payload))
         elif kind == "recording":
-            data = path.with_suffix(".bin").read_bytes()
-            client.upload_recording(RecordingMeta.model_validate(payload), data)
+            blob = path.with_suffix(".bin")
+            if not blob.exists():
+                raise MissingBlob(f"blob {blob.name} is missing")
+            client.upload_recording(RecordingMeta.model_validate(payload), blob.read_bytes())
         else:
             raise ValueError(f"unknown outbox entry kind {kind!r}")
-
-    def dead_letters(self) -> list[dict[str, Any]]:
-        """Entries the cloud refused for good, oldest first, each with its `error`."""
-        return [json.loads(p.read_text()) for p in sorted((self.dir / "dead").glob("*.json"))]
 
     def _dead_letter(self, path: Path, reason: str) -> None:
         dead = self.dir / "dead"
@@ -167,14 +199,16 @@ class Outbox:
             entry = json.loads(path.read_text())
         except ValueError:
             entry = {"raw": path.read_text(errors="replace")}
+        except FileNotFoundError:
+            return
         entry["error"] = reason
-        self._write(dead / path.name, json.dumps(entry).encode())
+        atomic_write(dead / path.name, json.dumps(entry).encode())
+        path.unlink(missing_ok=True)  # the entry first, so it never points at a moved blob
         blob = path.with_suffix(".bin")
         if blob.exists():
             os.replace(blob, dead / blob.name)
-        path.unlink(missing_ok=True)
 
     @staticmethod
     def _remove(path: Path) -> None:
+        path.unlink(missing_ok=True)  # the entry first: a crash leaves an orphan blob at worst
         path.with_suffix(".bin").unlink(missing_ok=True)
-        path.unlink(missing_ok=True)
