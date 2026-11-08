@@ -85,33 +85,33 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 9:49 AM PST_
+_Last updated: Sun Nov 8, 9:59 AM PST_
 
-**Current focus:** P3, the real arm before the 10 AM code freeze and 11 AM stop. James has the Pi set up over SSH for the real local test, but the arm host needs `arm/prims/library/poses.json` (rest, home, above_block, pick), and Andre never committed one: his three files on the Pi are recorded motions, not poses, so Andre needs to push his `poses.json` or record the four (~5 min). Kent landed six PRs in the last 10 minutes; two remain before the freeze: #82 (cluster review service + skill lane through the gate) and #85 (Fleet page redesign). Ishaan is recording the judges' demo video; Andre is building pitch animations on `claude/hardware-buddy-animation-56b7ff`.
+**Current focus:** P3 → P4 at the 10 AM code freeze. On the Pi, James is taking the real arm to a wave-only run: a `poses.json` built from a live read of the arm's folded pose, a guard in `RealArm.goto` that refuses the pick poses before any servo command, and iPhone camera snapshots before and after each move to check the arm did what was asked. Kent's fleet learning and Sunlit Workshop redesign are fully on `main`; Andre opened **#87** (Hardware Buddy pitch animation, three styles); Ishaan is recording the judges' demo video.
 
 **Recently done:**
-- Kent merged fleet learning **#77** `0d7678a` (the `/learning` page, on the Sunlit Workshop tokens), **#78** `d7a40af` (labelled runs, standing fleet-runs dataset, `trajectories` export; `LEARNING_MODE`, off by default) and **#81** `ad0e586` (gate-promoted playbook mirrored to Naïve Skills)
-- Kent merged Sunlit Workshop lane 2 **#83** `91bef78` (Technician case redesign) and lane 4 **#84** `557896b` (incident story, heal-agent run block and Data page); lane 1 **#80** and the live-by-default Technician **#79** went in at 9:38
-- Earlier fleet learning: **#74** cluster review domain, **#75** frozen-echo probe (120/120 frozen windows caught, 0 false alarms on 410 healthy), **#76** demo data for the `learn` stack on :8001
-- Andre pushed a Hardware Buddy pitch storyboard plus animations on `claude/hardware-buddy-animation-56b7ff` `650816f` (not on `main`); Ishaan built the demo video storyboard and a 12-beat script on `ishaan/demo-video-animation` `190d776`
+- Kent merged **#82** `a6b2c2b` (cluster review service: the skill lane through the gate, a Naïve error never sticks the lane, review and Naïve Skills publish each under a savepoint) and **#86** `8be03db` (the `/learning` page wired to labelled runs, review checks and R2 events, with a Recent reviews row and a Naïve Skills chip)
+- Kent merged **#85** `dd626b1` (Fleet page redesign); the Sunlit Workshop redesign now covers Technician, incident, run, Data and Fleet (#80, #83–#85)
+- Fleet learning is merged end to end: labelled runs → `trajectories` export (#78), cluster review (#74, #82), frozen-echo probe (#75), playbook mirrored to Naïve Skills (#81), `/learning` page (#77, #86)
+- Andre opened PR **#87** from `claude/hardware-buddy-animation-56b7ff` (pitch animation, three styles)
 
 **Open questions:**
-- Andre: does a `poses.json` exist on his laptop, or can he record the four poses now? James's session will stop the arm host on the Pi to free the arm's port first. Without it the real arm can't run before the freeze *(inferred)*
+- Real arm: James is going wave only, since there's no committed `poses.json` with the pick poses; does Andre still have recorded pick poses to add after the freeze, or is the demo wave only? *(inferred)*
 - 1 PM demo: which cloud runs `main` (Kent's `tech` stack is pinned at `6e5be55`, so `cloud/src` merges don't reach it)? D30 is still a draft; Andre to confirm the STS3215 is the C018 12 V; who is the technician for the demo email (plus phone for T1)?
-- Olir: Kent asks that the P0 frozen-ultrasonic rule not land by hand before 1 PM; fleet learning will stage it with the #75 numbers for Olir to review after the demo (touches `arm/safe_replay.py`, D25)
-- Still open: which demo video is the backup for 1 PM (the "Backup demo video" line is unclaimed) *(inferred)*; the worker/manager review fixes on `james/arm-sim-ydcsss` aren't on `main`, and James's healer hasn't met a real Hermes yet (`MORNING.md`); Ishaan owes Kent the K17 safety and visor paths and the contracts review (B2, B3); #63 is still open though `full-test-2` is merged *(inferred: can be closed)*
+- Olir: Kent asks that the P0 frozen-ultrasonic rule not land by hand before 1 PM; fleet learning stages it with the #75 numbers for Olir to review after the demo (touches `arm/safe_replay.py`, D25)
+- Still open: which demo video is the backup for 1 PM (the "Backup demo video" line is unclaimed) *(inferred)*; the worker/manager review fixes on `james/arm-sim-ydcsss` aren't on `main`; Ishaan owes Kent the K17 safety and visor paths and the contracts review (B2, B3); #63 is still open though `full-test-2` is merged *(inferred: can be closed)*
 
 **Recent commits (all authors):**
-- `ad0e586` Sun 09:48 · kgang · Merge pull request #81 from jamesEmerson112/learn/naive-publish
-- `2f15e89` Sun 09:48 · Kent Gang · Merge origin/main into learn/naive-publish (after #77)
-- `c0a353b` Sun 09:48 · Kent Gang · Merge origin/main into learn/naive-publish: keep both settings blocks
-- `0d7678a` Sun 09:48 · kgang · Merge pull request #77 from jamesEmerson112/learn/page
-- `557896b` Sun 09:48 · kgang · Merge pull request #84 from jamesEmerson112/ui/incident
-- `91bef78` Sun 09:47 · kgang · Merge pull request #83 from jamesEmerson112/ui/technician
-- `0426b05` Sun 09:47 · Kent Gang · Fleet learning page: review fixes and the Sunlit Workshop tokens
-- `8bfa825` Sun 09:22 · Kent Gang · Fleet learning page: test on lane A's committed session and probe
-- `9b9607a` Sun 09:21 · Kent Gang · Fleet learning page: read lane A's recorded session as committed
-- `c15d0bb` Sun 09:19 · Kent Gang · Fleet learning: page tests for the empty, staged and promoted states
+- `8be03db` Sun 09:57 · kgang · Merge pull request #86 from jamesEmerson112/learn/page-wire
+- `f923b5c` Sun 09:57 · Kent Gang · Update Kent status in CLAUDE.md
+- `c2c4824` Sun 09:56 · Kent Gang · Fleet learning page test: date the probe before the recorded session
+- `ef68fa9` Sun 09:55 · Kent Gang · Fleet learning page: tests for the switcher, the mirror chip and runs.load evidence
+- `0ba4862` Sun 09:55 · Kent Gang · Fleet learning page: Recent reviews row, Naïve Skills chip, evidence verifiers
+- `f71fc93` Sun 09:55 · Kent Gang · Fleet learning page: wire labelled runs, review checks and R2's events
+- `a6b2c2b` Sun 09:55 · kgang · Merge pull request #82 from jamesEmerson112/learn/review-service
+- `78d28ce` Sun 09:54 · Kent Gang · learning.tick: review and the Naive Skills publish each under a savepoint, so neither can roll back the dataset step
+- `c91a9dc` Sun 09:54 · Kent Gang · Cluster review: a Naive error never sticks the lane; per-database case-id salt
+- `ccfa031` Sun 09:42 · Kent Gang · .env.example: cluster review settings and the page lane's REVIEW_FIXTURE and PROBE_DIR
 
-**Branches on GitHub:** `main`; open PRs: `learn/review-service` (#82), `ui/fleet` (#85); `claude/hardware-buddy-animation-56b7ff` (Andre's pitch animations); `ishaan/demo-video-animation` (Ishaan's demo video); merged and still on GitHub: `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PRs: `claude/hardware-buddy-animation-56b7ff` (#87, Andre's pitch animations), `main` (#63); `ishaan/demo-video-animation` (Ishaan's demo video); merged and still on GitHub: `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
