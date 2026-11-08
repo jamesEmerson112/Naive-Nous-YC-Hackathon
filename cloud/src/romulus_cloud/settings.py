@@ -231,6 +231,16 @@ class Settings(BaseSettings):
     technician_replay_file: str = ""
     technician_replay_seconds: float = 20
 
+    # Fleet learning T1 (docs/recursive-self-improvement/design.md §8 D31, §9). Off by default.
+    # After the gate promotes a skill the Naïve agent fleet-doctor proposed, mirror the fleet's
+    # healer playbook to Naïve Skills as a new version of NAIVE_SKILL_SLUG (created on first
+    # use). The worker publishes only when this is true and LEARNING_MODE is fixture or live
+    # (`review_publish.enabled`). The Skills page is a mirror, not a rollout lane.
+    review_publish: bool = False
+    naive_skill_slug: str = "romulus-healer-playbook"
+    # A card on NAIVE_BOARD_ID (the CEO's board) to comment on per published lesson; None = none.
+    review_insights_card: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:
