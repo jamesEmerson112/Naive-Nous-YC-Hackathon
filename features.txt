@@ -99,6 +99,7 @@ Bench board token (scoped MCP session)
 MODELS
 OpenAI key for bench Hermes             <--- James
 RunPod LLM endpoint (D22, optional)
+Laptop serves qwen3.5:4b to the Pi over Ethernet (server/) <--- Olir
 
 NVIDIA SIM
 NVIDIA sim on RunPod
