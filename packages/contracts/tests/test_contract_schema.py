@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import pytest
+
 from romulus_contracts.schema import MODELS, main, schemas
 from romulus_contracts.version import CONTRACT_VERSION
 

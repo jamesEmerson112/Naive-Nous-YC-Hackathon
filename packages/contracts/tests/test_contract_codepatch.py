@@ -1,6 +1,7 @@
 """The code_patch format check (APIs §2.10) and the fail-closed safety rule (K17)."""
 
 import pytest
+
 from romulus_contracts.codepatch import (
     PatchSummary,
     patch_paths,

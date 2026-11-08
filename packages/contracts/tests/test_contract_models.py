@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
+
 from romulus_contracts import (
     Assigned,
     CheckIn,
