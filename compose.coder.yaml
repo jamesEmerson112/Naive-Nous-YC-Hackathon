@@ -1,0 +1,8 @@
+# `make coder-image`: gives the coder build the firmware toolkit (setup.sh, versions.env) as the
+# named context `fwtoolkit`, so the image installs the STM32 toolchain the firmware pins (B8).
+# Kept out of compose.yaml while M8b edits the coder service; fold it in after that merges.
+services:
+  coder:
+    build:
+      additional_contexts:
+        fwtoolkit: firmware/toolkit
