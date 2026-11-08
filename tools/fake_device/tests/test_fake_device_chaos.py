@@ -215,3 +215,21 @@ def test_cli_runs_chaos_at_speed(tmp_path, monkeypatch):
     cli.main([*args.split(), "--state-dir", str(tmp_path)])
     assert len(cloud.incidents) >= 5
     assert any(r["kind"] == "episode" for r in cloud.recordings.values())
+
+
+def test_a_rollback_target_is_never_the_bad_candidate(tmp_path):
+    """Chaos can arm bad mode again while a bad candidate is still on the canary; the
+    gate's rollback to the old firmware must still install."""
+    cloud = FakeCloud.seeded()
+    canary = FakeArm(cloud.http(), "sim-2", tmp_path / "sim-2", canary=True)
+    canary.tick(T0)  # v1
+    canary.device.bad_next = "late"
+    cloud.add_firmware({**cloud.firmware[1], "version": 2})
+    cloud.assign("sim-2", firmware=2, harness=1)
+    canary.tick(T0 + timedelta(seconds=10))
+    assert canary.device.bad_versions == {2: "late"}
+    canary.device.bad_next = "install"  # armed again before the gate rolls back
+    cloud.assign("sim-2", firmware=1, harness=1)
+    canary.tick(T0 + timedelta(seconds=20))
+    assert canary.device.firmware == 1 and cloud.installs[-1][1]["result"] == "installed"
+    assert canary.device.bad_next == "install"  # still waiting for the next new version
