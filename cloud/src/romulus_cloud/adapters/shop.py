@@ -9,7 +9,10 @@ Match on the exact variant id: the WowRobo servo products also have 5-pack and 1
 
 from __future__ import annotations
 
+import json
 import re
+import urllib.error
+import urllib.request
 from typing import Any
 
 import httpx
@@ -72,16 +75,16 @@ def product(
     url = f"{origin}/products/{handle}.js"
     client = http_client or httpx.Client(follow_redirects=True)
     try:
-        resp = client.get(
-            url,
-            timeout=timeout,
-            headers={"Accept": "application/json", "User-Agent": "romulus-cloud/0.1"},
-        )
+        resp = client.get(url, timeout=timeout, headers=HEADERS)
     except httpx.HTTPError as exc:
         raise ShopError(f"GET {url} failed: {exc}") from exc
     finally:
         if http_client is None:
             client.close()
+    if resp.status_code == 429 and http_client is None:
+        # Seen live Nov 8: WowRobo's edge answered httpx 429 (Retry-After 60) while a stdlib
+        # urllib GET of the same URL, same headers, got 200. One fallback read, same timeout.
+        return normalize_product(_urllib_json(url, timeout))
     if resp.status_code != 200:
         raise ShopError(f"GET {url} answered {resp.status_code}")
     try:
@@ -89,6 +92,20 @@ def product(
     except ValueError:
         raise ShopError(f"GET {url} answered non-JSON: {resp.text[:120]!r}") from None
     return normalize_product(raw)
+
+
+HEADERS = {"Accept": "application/json", "User-Agent": "romulus-cloud/0.1"}
+
+
+def _urllib_json(url: str, timeout: float) -> Any:
+    req = urllib.request.Request(url, headers=HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (https only)
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        raise ShopError(f"GET {url} answered {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise ShopError(f"GET {url} failed: {exc}") from exc
 
 
 class FakeShop:

@@ -94,12 +94,27 @@ def test_user_message_is_not_an_agent_message():
 # --- HttpNaive -----------------------------------------------------------------------------
 
 
-def _http(handler):
+def _http(handler, **kw):
     naive = HttpNaive(
-        "sk_live_test", http_client=httpx.Client(transport=httpx.MockTransport(handler))
+        "sk_live_test", http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kw
     )
     naive._sleep = lambda s: None
     return naive
+
+
+def test_default_retry_budget_caps_the_worker_path_at_two_seconds():
+    sleeps = []
+
+    def handler(request):
+        return httpx.Response(
+            503, headers={"Retry-After": "5"}, json={"error": {"code": "unavailable"}}
+        )
+
+    naive = _http(handler)
+    naive._sleep = sleeps.append
+    with pytest.raises(NaiveError):
+        naive.get_session("ses_1")
+    assert sum(sleeps) <= 2.0
 
 
 def test_create_session_posts_body_with_key_and_user_agent():
@@ -137,7 +152,7 @@ def test_email_retries_429_with_same_key_then_succeeds():
             )
         return httpx.Response(202, json={"object": "email_send", "accepted": True})
 
-    naive = _http(handler)
+    naive = _http(handler, retry_budget_s=10.0)
     naive._sleep = sleeps.append
     naive.send_email(
         identity_id="i",
@@ -444,3 +459,26 @@ def test_fake_shop_serves_raw_or_normalized():
         }
     )
     assert norm.product(WOWROBO, HANDLE)["variants"][0]["price_cents"] == 1599
+
+
+def test_shop_429_falls_back_to_one_stdlib_read(monkeypatch):
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        shop.httpx,
+        "Client",
+        lambda **kw: real_client(transport=httpx.MockTransport(lambda r: httpx.Response(429))),
+    )
+    monkeypatch.setattr(shop, "_urllib_json", lambda url, timeout: PRODUCT_JS)
+    assert shop.product(WOWROBO, HANDLE)["variants"][0]["id"] == C018
+
+
+def test_live_fixture_replays_with_a_valid_report():
+    live = FIXTURES / "joint_stall_live.json"
+    data = json.loads(live.read_text())
+    fx = FixtureNaive(data, now=Clock())
+    s = fx.create_session(data["request"], idempotency_key="tc_replay")
+    assert s.state == "idle" and s.stop_reason == "end_turn" and s.id.startswith("ses_")
+    assert _spike().validate(s.structured_output, data["request"]["output_schema"]) == []
+    assert s.structured_output["part"]["variant_id"] == C018
+    assert 0 < s.cost_usd < 3
+    assert any(e.kind == "output" for e in fx.session_events(s.id))
