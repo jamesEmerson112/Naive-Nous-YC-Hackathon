@@ -17,8 +17,11 @@ human actions it took (target 0). Every command runs from the repo root.
 caffeinate -dims                     # its own terminal tab; leave it running all night
 
 make down                            # stop whatever runs now, fake fleet included
-make up && FORCE=1 make reset        # fresh database whose schema matches this commit
-                                     # (FORCE=1 because an old .env may set OVERNIGHT_STARTED)
+make up && FORCE=1 make reset        # WIPES the database and blobs: a fresh schema for this
+                                     # commit (FORCE=1 because an old .env may set
+                                     # OVERNIGHT_STARTED; never run this after launch)
+rm -rf data/fake_device              # old outboxes and chaos.json: otherwise the chaos would
+                                     # "resume" an earlier run's clock and skip hours
 cp .env .env.before-overnight        # keep your keys
 cp .env.overnight.example .env       # overnight values: NAIVE_MODE=fake, 1200 / 3600, ...
 rm -f .env.overnight                 # no stale override file
@@ -33,7 +36,8 @@ make overnight-check                 # every line PASS (a WARN is a judgment cal
 `NAIVE_MODE` must be **fake** all night: the chaos plants hardware faults, and a live work
 order could phone a real supplier at 3 AM (build plan K13). `make overnight-check` asks the
 running api and worker for the mode they actually resolved. Even in live mode, an order for
-a device that isn't registered as `real` is never posted (it waits for a person).
+a device that isn't registered as `real`, or whose id starts with `sim-`, is never posted
+(it waits for a person).
 
 Then Kent, at the go/no-go: commit, tag `demo-overnight`, push the tag.
 
