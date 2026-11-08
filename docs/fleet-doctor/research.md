@@ -87,7 +87,7 @@ Light research for the Fleet Doctor plans (Sat Nov 7, 2026, ~5:30 PM PST). Four 
 **Triggers, objective signals first** (source per line, or *(inferred)*):
 1. **Our own checks fail:** verify still fails after K attempts, the overlay reverts itself, or the build fails *(inferred)*.
 2. **Stalls and loops:** repeated commands, no new files touched, the step budget running out. SWE-Protégé teaches a 7B model to call the expert "when progress stalls". Before training, 31% of its runs had a stretch of more than 10 repeated actions ([arXiv 2602.22124](https://arxiv.org/html/2602.22124v1)).
-3. **Tier 3 (wrong behavior):** in RoboBugBench, frontier models fixed 66.7% of bugs judged by "the process stays alive" but only 22.2% judged by robot behavior ([NeurIPS 2026 workshop](https://neurips.cc/virtual/2026/173044), poster only).
+3. **Tier 3 (wrong behavior):** in RoboBugBench, frontier models' patches passed 66.7% of the time when graded by "the process stays alive", but only 22.2% of the time when graded by robot behavior ([NeurIPS 2026 workshop](https://neurips.cc/virtual/2026/173044), poster only). These are the same bugs graded two ways, so a cheap check overstates success. Escalating early on tier 3 is our reasoning: a small model is even more likely to hide the symptom *(inferred)*.
 4. **The patch touches safety, the visor or STM32 C** (our K17 risk) *(inferred)*.
 5. **No matching skill:** NeSy-Edge relies on past troubleshooting knowledge ([2603.21145](https://arxiv.org/pdf/2603.21145)); an unknown fault suggests escalation *(inferred)*.
 6. **Token uncertainty on the chosen action:** ReDAct defers single steps this way ([arXiv 2604.07036](https://arxiv.org/pdf/2604.07036)).
@@ -163,7 +163,7 @@ Light research for the Fleet Doctor plans (Sat Nov 7, 2026, ~5:30 PM PST). Four 
 
 ## 6. Our own repo: what already exists
 
-An audit of `origin/main` at `33def3d` (Sat ~5:35 PM). The details live in [`architecture.md`](architecture.md) §7 and §8. In short:
+An audit of `origin/main` at `33def3d` (Sat ~5:35 PM). M4 (telemetry) merged after it, and a red-team pass rechecked these claims against a later `main`. The details live in [`architecture.md`](architecture.md) §7 and §8. In short:
 - **About half of a Fleet Doctor already exists as pieces:**
   - evidence uploads (`telemetry.py`);
   - incident outcome fields and labels such as `outcome:unresolved` (`incident.py`, `labels.py`);
