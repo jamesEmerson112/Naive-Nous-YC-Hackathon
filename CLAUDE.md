@@ -85,15 +85,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 2:00 PM PST_
+_Last updated: Sun Nov 8, 2:08 PM PST_
 
-**Current focus:** P4: the 1 PM stage is on. James's chips generate-and-test (`armsim/gentest.py`, Hermes `Astra`) now focuses on `recording_2`, the motion that grips: at pan -4 it carried three bags for 20.7 s but took them home because its jaws never opened, so they now open at its dip over the box, 10 s in (`b4af785`). `--only recording_2` has Astra tune pan (small steps near -4) and speed from that motion's tries only (`70e109b`), and each full try now samples the camera every 4 s into one timed sheet Astra reads (`93dafcc`). The red bag hasn't landed in the box yet *(inferred)*. The fault stories (`a`, `b`, `stall`) haven't run on the real arm. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
+**Current focus:** P4: the 1 PM stage is on. James's chips generate-and-test (`armsim/gentest.py`, Hermes `Astra`) now focuses on `recording_2`, the motion that grips: at pan -4 it carried three bags for 20.7 s but took them home because its jaws never opened, so they now open at its dip over the box, 10 s in (`b4af785`). `--only recording_2` has Astra tune pan (small steps near -4) and speed from that motion's tries only (`70e109b`), and each full try now samples the camera every 4 s into one timed sheet Astra reads (`93dafcc`). New `--regrab` mode grabs, holds just above the pile, checks the bag is held by its edge (gripper reading + Astra), re-grabs with small base nudges, and carries only once it's held (`60e0404`). The red bag hasn't landed in the box yet *(inferred)*. The fault stories (`a`, `b`, `stall`) haven't run on the real arm. Andre is trimming the Hardware Buddy pitch animation; Kent's fleet learning is built and ran live; Ishaan is recording the judges' video.
 
 **Recently done:**
+- James: gentest `--regrab`: grab, hold above the pile, check the edge grip (gripper + Astra), re-grab with base nudges, carry only when held (`60e0404`)
 - James: gentest samples the camera every 4 s through each full try and shows Astra the timed sheet plus the last two tries' sheets; GIFs use the whole sequence (`93dafcc`)
 - James: gentest `--only recording_2` restricts Astra's choice and history to that recording (`70e109b`); every prompt sent to Astra and its raw reply is saved under `runs/gentest/astra/` (`962e18a`)
 - James: GIF of the 3-bag carry (`recording_2`, pan -4) in `media/gentest/carry-20261108-135027.gif` (`962e18a`)
-- James: `recording_2` opens its jaws over the box at frame 500 (10.0 s) instead of carrying the bags home under the 99% squeeze (`b4af785`)
 
 **Open questions:**
 - Naïve is flaky (429s and an `internal_error` this morning): go with the live board on stage, or the local fallback (Mission Control's button + the Pi's scripted dispatcher, proven at 11:10)? `armsim/hermes_file.py` (Hermes over the file board) isn't built (`HANDOFF-LOCAL.md` §4)
@@ -102,6 +102,9 @@ _Last updated: Sun Nov 8, 2:00 PM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `8b2b11b` Sun 14:06 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
+- `60e0404` Sun 14:06 · jamesEmerson112 · arm-sim: gentest --regrab: grab, hold just above the pile, check the bag is held by its edge (gripper + Astra), re-grab with base nudges, carry only when held
+- `a0c0cd0` Sun 13:58 · jamesEmerson112 · Update team status in CLAUDE.md
 - `93dafcc` Sun 13:58 · jamesEmerson112 · arm-sim: gentest samples the camera every 4 s through each full try and shows Astra the timed sheet (plus the last two tries'); GIFs use the whole sequence
 - `70e109b` Sun 13:56 · jamesEmerson112 · arm-sim: gentest --only recording_2: Astra tunes pan and speed on the motion that grips, from that motion's tries only
 - `962e18a` Sun 13:54 · jamesEmerson112 · arm-sim: GIF of the 3-bag carry (recording_2, pan -4); gentest saves every prompt sent to Astra and its raw reply
@@ -109,9 +112,6 @@ _Last updated: Sun Nov 8, 2:00 PM PST_
 - `b4af785` Sun 13:52 · jamesEmerson112 · arm-sim: recording_2 opens its jaws at its dip over the box (it carried the bags home under the 99% squeeze)
 - `7d4a6b3` Sun 13:49 · jamesEmerson112 · Update team status in CLAUDE.md
 - `672b400` Sun 13:46 · jamesEmerson112 · arm-sim: GIFs only for successful tries (the eye judged the red bag INSIDE); gentest logs the success and each verdict
-- `463168c` Sun 13:45 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
-- `fbc6f60` Sun 13:45 · jamesEmerson112 · arm-sim: README GIFs of the real-arm generate-and-test runs (grabs, probes, time-lapse) and armsim.gifs to rebuild them
-- `7d02580` Sun 13:38 · jamesEmerson112 · Update team status in CLAUDE.md
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
