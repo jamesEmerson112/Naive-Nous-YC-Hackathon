@@ -23,6 +23,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -496,6 +497,12 @@ class DoctorConsult(Base):
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime | None]
     raw: Mapped[dict[str, Any] | None] = _raw()
+
+    # One consult per attempt, so a racing tick can never open attempt N twice. Here from
+    # the start: `create_all` can't add a constraint to an existing table.
+    __table_args__ = (
+        UniqueConstraint("incident_id", "attempt", name="uq_doctor_consults_incident_attempt"),
+    )
 
 
 class DoctorProposal(Base):

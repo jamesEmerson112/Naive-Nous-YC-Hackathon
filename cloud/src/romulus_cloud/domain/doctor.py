@@ -41,6 +41,11 @@ _MAX_LIST = 40  # newest entries of log_tail, trace_tail and the like
 _MAX_STEPS = 5  # recent healer messages
 _MAX_FILES = 5
 _MAX_STR = 2000  # any one string (a log line, a file excerpt, the question)
+_MAX_KEY = 100  # any one dict key
+# The whole evidence block's JSON body. Over it, the caps tighten step by step (and the
+# prompt says the evidence was shortened).
+MAX_EVIDENCE_CHARS = 24_000
+_SHRINK = ((_MAX_LIST, _MAX_STR), (20, 1000), (10, 400), (5, 200))
 _MAX_JSON_CANDIDATES = 50  # '{' / '[' positions tried before the reply counts as prose
 
 
@@ -185,9 +190,9 @@ def admit(
 def admit_ask(
     *,
     frozen: bool,
-    asks_for_incident: int,
+    asks_for_incident: int | None,
     ask_cap: int,
-    asks_for_device_today: int,
+    asks_for_device_today: int | None,
     device_day_cap: int,
     spend: Spend,
     mode: str,
@@ -195,21 +200,29 @@ def admit_ask(
     """May an L1 ask call the LLM? Off or frozen holds (the route answers 503 or 409);
     a cap refuses as `blocked_over_cap` (429).
 
+    A count of None means its cap doesn't apply, and that cap isn't checked at all: an ask
+    that names an incident passes `asks_for_device_today=None` (DOCTOR_ASKS_PER_DEVICE_DAY is
+    for asks with no incident), and one with no incident passes `asks_for_incident=None`.
     Counts are of asks **already** made, not this one, so a count equal to its cap refuses.
-    The caller passes the counts that apply: `asks_for_device_today` counts today's asks with
-    no incident (pass 0 when this ask names one), `asks_for_incident` the incident's asks
-    (pass 0 when it names none). Bad counts fail closed.
+    A cap that applies, or a count that isn't None, fails closed when it is bad.
     """
     held = _held(mode, frozen)
     if held:
         return held
+    caps = [
+        ("this incident has had", asks_for_incident, "DOCTOR_ASKS_PER_INCIDENT", ask_cap, ""),
+        (
+            "this device has made",
+            asks_for_device_today,
+            "DOCTOR_ASKS_PER_DEVICE_DAY",
+            device_day_cap,
+            " today",
+        ),
+    ]
+    applies = [c for c in caps if c[1] is not None]
     bad = _bad(
-        {
-            "asks for this incident": asks_for_incident,
-            "DOCTOR_ASKS_PER_INCIDENT": ask_cap,
-            "asks for this device today": asks_for_device_today,
-            "DOCTOR_ASKS_PER_DEVICE_DAY": device_day_cap,
-        },
+        {f"asks ({name})": count for _, count, name, _, _ in applies}
+        | {name: cap for _, _, name, cap, _ in applies},
         _is_count,
         "a non-negative whole number",
     )
@@ -220,21 +233,14 @@ def admit_ask(
             "Blocked, can't check the ask caps: " + "; ".join(bad) + ".",
             "asks",
         )
-    if not asks_for_incident < ask_cap:
-        return Decision(
-            False,
-            BLOCKED_OVER_CAP,
-            f"Blocked: this incident has had {asks_for_incident} of its {ask_cap} asks.",
-            "asks",
-        )
-    if not asks_for_device_today < device_day_cap:
-        return Decision(
-            False,
-            BLOCKED_OVER_CAP,
-            f"Blocked: this device has made {asks_for_device_today} of its {device_day_cap} "
-            "asks today.",
-            "asks",
-        )
+    for words, count, _, cap, when in applies:
+        if not count < cap:
+            return Decision(
+                False,
+                BLOCKED_OVER_CAP,
+                f"Blocked: {words} {count} of its {cap} asks{when}.",
+                "asks",
+            )
     return check_spend(spend)
 
 
@@ -268,36 +274,37 @@ def _hypothesis(item: Any) -> dict[str, str] | None:
     return {"claim": claim, "how_to_check": check.strip()} if claim else None
 
 
-def _as_hypotheses(value: Any) -> list[dict[str, str]] | None:
-    """The hypotheses a decoded JSON value holds, or None if it isn't that shape."""
+def _as_hypotheses(value: Any) -> tuple[list[dict[str, str]], bool]:
+    """(the hypotheses a decoded JSON value holds, whether it said so explicitly with a
+    `hypotheses` key). An empty list from anything but that key means "not an answer"."""
     if isinstance(value, Mapping):
         if isinstance(value.get("hypotheses"), list):
-            return [h for h in map(_hypothesis, value["hypotheses"]) if h]
+            return [h for h in map(_hypothesis, value["hypotheses"]) if h], True
         if isinstance(value.get("claim"), str):
-            return [h for h in [_hypothesis(value)] if h]
-        return None
-    if not isinstance(value, list):
-        return None
-    found = [h for h in map(_hypothesis, value) if h]
-    # A bare list counts only if it holds hypotheses (or is empty): `[1, 2]` in prose isn't one.
-    return found if found or not value else None
+            return [h for h in [_hypothesis(value)] if h], False
+        return [], False
+    if isinstance(value, list):
+        return [h for h in map(_hypothesis, value) if h], False
+    return [], False
 
 
 def _first_json(text: str) -> list[dict[str, str]] | None:
+    """The first non-empty hypotheses in `text`; [] if the only answer was an explicit
+    `{"hypotheses": []}`; None if there was no answer (a `[]` or `[1, 2]` in prose isn't one)."""
     decoder = json.JSONDecoder()
-    tried = 0
-    for match in re.finditer(r"[\[{]", text):
-        tried += 1
-        if tried > _MAX_JSON_CANDIDATES:
+    explicit_empty = False
+    for tried, match in enumerate(re.finditer(r"[\[{]", text)):
+        if tried >= _MAX_JSON_CANDIDATES:
             break
         try:
             value, _ = decoder.raw_decode(text, match.start())
         except (ValueError, RecursionError):
             continue
-        found = _as_hypotheses(value)
-        if found is not None:
+        found, explicit = _as_hypotheses(value)
+        if found:
             return found
-    return None
+        explicit_empty |= explicit
+    return [] if explicit_empty else None
 
 
 def _clip(s: str, limit: int) -> str:
@@ -327,8 +334,10 @@ def parse_hypotheses(
 
     Takes the first JSON object or array in `text` that holds hypotheses: bare, inside prose,
     or in a code fence. `{"hypotheses": [...]}`, a bare list, or one `{"claim": ...}` all
-    count; list items may be strings. With none, the prose is one hypothesis and
-    `parsed_ok` is False. Trims to `max_items` and the `max_chars` budget (≈300 tokens).
+    count; list items may be strings. A non-empty match wins over an earlier empty one, and
+    an empty answer counts only as an explicit `{"hypotheses": []}`. With no answer, the
+    prose is one hypothesis and `parsed_ok` is False. Trims to `max_items` and the
+    `max_chars` budget (≈300 tokens).
     """
     text = text if isinstance(text, str) else ""
     found = _first_json(text)
@@ -339,18 +348,29 @@ def parse_hypotheses(
     return _trim(hyps, max_items, max_chars), False
 
 
-def filter_safety(hyps: list[dict], safety_paths: Iterable[str]) -> tuple[list[dict], int]:
-    """Drop every hypothesis whose claim or how_to_check names a safety path (case-insensitive,
-    substring, so `device/Safety/limits.py` names `safety`). → (kept, how many removed).
+def _needle(path: Any) -> str:
+    """A safety path as it would appear in text: `./device/Safety/` → `safety`."""
+    p = str(path).strip().removeprefix("./").strip("/").casefold()
+    return p.removeprefix(CODE_ROOT.casefold() + "/").strip("/")
 
-    Errs toward dropping: an empty or `.` safety path stands for the whole tree and drops all.
+
+def filter_safety(hyps: list[dict], safety_paths: Iterable[str]) -> tuple[list[dict], int]:
+    """Drop every hypothesis whose claim or how_to_check names a safety path.
+    → (kept, how many removed).
+
+    Case-insensitive, on letter-and-digit boundaries: `SAFETY`, `visor/limits.py` and
+    `safety_limits.py` name a path; `supervisor` and `advisory` don't. A leading `device/`
+    (CODE_ROOT) on an entry is ignored. Errs toward dropping: an empty, `.` or `device`
+    entry stands for the whole tree and drops all.
     """
-    needles = [str(p).strip().strip("/").removeprefix("./").casefold() for p in safety_paths]
-    whole_tree = any(n in ("", ".") for n in needles)
+    needles = [_needle(p) for p in safety_paths]
+    if any(n in ("", ".", CODE_ROOT.casefold()) for n in needles):
+        return [], len(hyps)
+    patterns = [re.compile(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])") for n in needles]
     kept = []
     for h in hyps:
         text = f"{h.get('claim', '')}\n{h.get('how_to_check', '')}".casefold()
-        if not whole_tree and not any(n in text for n in needles):
+        if not any(p.search(text) for p in patterns):
             kept.append(h)
     return kept, len(hyps) - len(kept)
 
@@ -377,26 +397,53 @@ DIAGNOSE_SYSTEM = (
 )
 
 
-def _cap(value: Any, depth: int = 0) -> Any:
-    """Bound device text before it goes into a prompt: long strings clipped, lists cut to
-    their newest entries, deep nesting flattened to a string."""
+def _cap(value: Any, max_list: int, max_str: int, depth: int = 0) -> Any:
+    """Bound device text before it goes into a prompt: long strings and dict keys clipped,
+    lists cut to their newest entries, deep nesting flattened to a string."""
     if isinstance(value, str):
-        return _clip(value, _MAX_STR)
+        return _clip(value, max_str)
     if depth > 4:
-        return _clip(json.dumps(value, default=str), _MAX_STR)
+        return _clip(json.dumps(value, default=str), max_str)
     if isinstance(value, Mapping):
-        return {str(k): _cap(v, depth + 1) for k, v in list(value.items())[:_MAX_LIST]}
+        return {
+            _clip(str(k), _MAX_KEY): _cap(v, max_list, max_str, depth + 1)
+            for k, v in list(value.items())[:max_list]
+        }
     if isinstance(value, list | tuple):
-        return [_cap(v, depth + 1) for v in list(value)[-_MAX_LIST:]]
+        return [_cap(v, max_list, max_str, depth + 1) for v in list(value)[-max_list:]]
     return value
+
+
+def _dump(data: Any, max_list: int, max_str: int) -> str:
+    body = json.dumps(
+        _cap(data, max_list, max_str), indent=1, sort_keys=True, default=str, ensure_ascii=False
+    )
+    return body.replace("</", "<\\/").replace("`", "\\u0060")
 
 
 def _evidence(data: Any) -> str:
     """`data` as JSON inside the untrusted block. `</` and backticks are escaped (`<\\/`,
-    `\\u0060`), which is still valid JSON but can't close the block or the fence."""
-    body = json.dumps(_cap(data), indent=1, sort_keys=True, default=str, ensure_ascii=False)
-    body = body.replace("</", "<\\/").replace("`", "\\u0060")
-    return f'<evidence untrusted="true">\n```json\n{body}\n```\n</evidence>'
+    `\\u0060`), which is still valid JSON but can't close the block or the fence.
+
+    The body stays under `MAX_EVIDENCE_CHARS`: the caps tighten step by step and, as a last
+    resort, the text is cut (escaping first, so a cut can't form `</` or a backtick). Either
+    way a trusted note after the block says the evidence was shortened.
+    """
+    body = ""
+    for max_list, max_str in _SHRINK:
+        body = _dump(data, max_list, max_str)
+        if len(body) <= MAX_EVIDENCE_CHARS:
+            break
+    shortened = (max_list, max_str) != _SHRINK[0]
+    if len(body) > MAX_EVIDENCE_CHARS:
+        body = body[:MAX_EVIDENCE_CHARS] + "\n…[cut]"
+    block = f'<evidence untrusted="true">\n```json\n{body}\n```\n</evidence>'
+    if shortened:
+        block += (
+            f"\n(The evidence was shortened to fit {MAX_EVIDENCE_CHARS} characters: lists keep "
+            "their newest entries, long text is clipped.)"
+        )
+    return block
 
 
 def ask_prompt(ask: dict) -> tuple[str, str]:
@@ -419,17 +466,17 @@ def ask_prompt(ask: dict) -> tuple[str, str]:
 
 def diagnose_prompt(case: dict) -> tuple[str, str]:
     """(system, user) for a consult's diagnose stage. `case` is a case file
-    (`doctor_evidence.case_file`); its notes say which evidence isn't wired yet."""
+    (`doctor_evidence.case_file`). All of it goes inside the untrusted block, `notes`
+    included (they may quote logs)."""
     case = dict(case)
     code = dict(case.get("code") or {})
     code["files"] = list(code.get("files") or [])[:_MAX_FILES]
     case["code"] = code
-    notes = [str(n) for n in case.pop("notes", None) or []]
     user = (
-        "Case file for a fault the on-device healer could not fix:\n"
+        "Case file for a fault the on-device healer could not fix (its notes say which "
+        "evidence is missing):\n"
         f"{_evidence(case)}\n"
-        + (f"Not available: {'; '.join(notes)}.\n" if notes else "")
-        + f"Reply with JSON only: {JSON_SHAPE}"
+        f"Reply with JSON only: {JSON_SHAPE}"
     )
     return DIAGNOSE_SYSTEM, user
 

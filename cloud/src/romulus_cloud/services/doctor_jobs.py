@@ -12,8 +12,11 @@ the gate and every other step. Instead `doctor.tick` submits a job under a stabl
 - `submit` is idempotent: a key that is pending or done is a no-op, a failed key runs again.
 - `poll` says `Pending`, `Done(result)`, `Failed(error)` or `Missing` (an unknown key, e.g.
   after a worker restart: resubmit it).
-- Finished results are kept until `max_finished` newer ones push them out, so a long run
-  doesn't grow without bound; an evicted key reads as `Missing`.
+- `forget` drops a key once the tick has applied its result (a running job finishes in the
+  background and its result is discarded). Call it after the tick's transaction commits.
+- Results never pile up: every `submit` and `poll` moves finished futures out of the
+  running set, and finished results are kept only until `max_finished` newer ones push
+  them out (an evicted key reads as `Missing`).
 """
 
 import threading
@@ -58,6 +61,10 @@ class Jobs(Protocol):
 
     def poll(self, key: str) -> JobState: ...
 
+    def forget(self, key: str) -> None:
+        """Drop `key` (its result, or a running job's future); then it polls `Missing`."""
+        ...
+
 
 def _error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
@@ -97,6 +104,9 @@ class InlineJobs:
     def poll(self, key: str) -> JobState:
         return self._finished.states.get(key) or Missing()
 
+    def forget(self, key: str) -> None:
+        self._finished.states.pop(key, None)
+
 
 class ThreadPoolJobs:
     """Runs jobs on a thread pool inside the worker process (the GIL is fine: jobs wait on
@@ -108,33 +118,39 @@ class ThreadPoolJobs:
         self._running: dict[str, Future[Any]] = {}
         self._finished = _Finished(max_finished)
 
-    def _settle(self, key: str) -> JobState:
-        """Move a finished future into the finished states. Call with the lock held."""
-        future = self._running.get(key)
-        if future is None:
-            return self._finished.states.get(key) or Missing()
-        if not future.done():
+    def _sweep(self) -> None:
+        """Move every finished future into the finished states. Call with the lock held."""
+        for key in [k for k, f in self._running.items() if f.done()]:
+            future = self._running.pop(key)
+            if future.cancelled():
+                state: Done | Failed = Failed("CancelledError: the job was cancelled")
+            elif (exc := future.exception()) is not None:
+                state = Failed(_error(exc))
+            else:
+                state = Done(future.result())
+            self._finished.put(key, state)
+
+    def _state(self, key: str) -> JobState:
+        self._sweep()
+        if key in self._running:
             return Pending()
-        del self._running[key]
-        if future.cancelled():
-            state: Done | Failed = Failed("CancelledError: the job was cancelled")
-        elif (exc := future.exception()) is not None:
-            state = Failed(_error(exc))
-        else:
-            state = Done(future.result())
-        self._finished.put(key, state)
-        return state
+        return self._finished.states.get(key) or Missing()
 
     def submit(self, key: str, fn: Callable[[], Any]) -> None:
         with self._lock:
-            if isinstance(self._settle(key), Pending | Done):
+            if isinstance(self._state(key), Pending | Done):
                 return
             self._finished.states.pop(key, None)
             self._running[key] = self._pool.submit(fn)
 
     def poll(self, key: str) -> JobState:
         with self._lock:
-            return self._settle(key)
+            return self._state(key)
+
+    def forget(self, key: str) -> None:
+        with self._lock:
+            self._running.pop(key, None)
+            self._finished.states.pop(key, None)
 
     def shutdown(self, wait: bool = True) -> None:
         self._pool.shutdown(wait=wait, cancel_futures=not wait)

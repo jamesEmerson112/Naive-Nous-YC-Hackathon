@@ -1,12 +1,16 @@
 """services/doctor_jobs.py: inline and thread-pool jobs, idempotent submit, poll, missing;
 and services/doctor_spend.py: the day's Doctor spend summed from events."""
 
+import math
 import threading
+from concurrent import futures
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import text
 
 from romulus_cloud import events
+from romulus_cloud.domain.doctor import Spend, check_spend
 from romulus_cloud.services import doctor_jobs
 from romulus_cloud.services.doctor_jobs import (
     Done,
@@ -101,6 +105,38 @@ def test_thread_pool_unknown_key_is_missing(pool):
     assert pool.poll("check:cons_9") == Missing()
 
 
+def test_forget_drops_a_key_so_it_reads_missing_and_can_run_again(pool):
+    inline = InlineJobs()
+    inline.submit("k", lambda: 1)
+    inline.forget("k")
+    assert inline.poll("k") == Missing()
+    inline.forget("never-seen")  # harmless
+    pool.submit("k", lambda: 1)
+    assert _wait(pool, "k") == Done(1)
+    pool.forget("k")
+    assert pool.poll("k") == Missing()
+    pool.submit("k", lambda: 2)  # a forgotten key is new again
+    assert _wait(pool, "k") == Done(2)
+
+
+def test_forget_a_running_job_discards_its_result(pool):
+    gate = threading.Event()
+    pool.submit("slow", lambda: gate.wait(5) and "late")
+    pool.forget("slow")
+    gate.set()
+    pool.poll("other")  # sweeps
+    assert pool.poll("slow") == Missing()
+
+
+def test_finished_futures_never_pile_up_in_the_running_set(pool):
+    for i in range(5):
+        pool.submit(f"job:{i}", lambda i=i: i)
+    futures.wait(list(pool._running.values()), timeout=5)  # without polling any of them
+    pool.poll("unrelated")
+    assert pool._running == {}  # one poll of any key moved every finished one out
+    assert [pool.poll(f"job:{i}") for i in range(5)] == [Done(i) for i in range(5)]
+
+
 def test_default_jobs_is_one_pool_per_process(make_settings, monkeypatch):
     monkeypatch.setattr(doctor_jobs, "_default", None)
     a = default_jobs(make_settings(doctor_job_workers=3))
@@ -143,3 +179,39 @@ def test_spent_today_sums_doctor_costs_since_local_midnight(db_session, make_set
     # In UTC the day starts at 00:00, so the 07:00 UTC spend counts too.
     utc = make_settings(fleet_timezone="UTC")
     assert spent_today(db_session, now, settings=utc) == pytest.approx(9.75)
+
+
+@pytest.mark.parametrize("odd", ["0.5", "lots", True, False, {"usd": 1}, [1], None])
+def test_a_cost_that_isnt_a_number_adds_nothing_and_breaks_nothing(db_session, settings, now, odd):
+    _spend(db_session, "doctor.advised", now, 0.25)
+    events.record(
+        db_session,
+        "fleet-doctor",
+        "agent",
+        "doctor.diagnosed",
+        {"device": "arm-1"},
+        "odd cost",
+        data={"cost_usd": odd},
+        ts=now,
+    )
+    assert spent_today(db_session, now, settings=settings) == pytest.approx(0.25)
+
+
+def test_a_negative_cost_cannot_offset_real_spend(db_session, settings, now):
+    _spend(db_session, "doctor.advised", now, 4.0)
+    _spend(db_session, "doctor.advised", now, -100.0)
+    assert spent_today(db_session, now, settings=settings) == pytest.approx(4.0)
+
+
+def test_a_huge_cost_reads_as_infinity_and_check_spend_refuses(db_session, settings, now):
+    _spend(db_session, "doctor.advised", now, 0.25)
+    evt = events.record(
+        db_session, "fleet-doctor", "agent", "doctor.diagnosed", {"device": "arm-1"}, "x", ts=now
+    )
+    db_session.execute(
+        text("UPDATE events SET data = CAST(:d AS jsonb) WHERE id = :id"),
+        {"d": '{"cost_usd": 1e400}', "id": evt.id},
+    )
+    spent = spent_today(db_session, now, settings=settings)
+    assert math.isinf(spent) and spent > 0  # no overflow error in SQL
+    assert not check_spend(Spend(spent, 5.0)).ok

@@ -66,8 +66,18 @@ def test_the_doctor_tick_is_a_step_on_its_settings_cadence(make_settings, now):
 
     (step,) = [s for s in worker.STEPS if s.name == "doctor.tick"]
     assert step.fn is doctor.tick and step.every_s == 5
-    (bound,) = [s for s in worker.steps_for(make_settings(doctor_tick_s=30)) if s.name == step.name]
+    on = make_settings(doctor_mode="fake", doctor_tick_s=30)
+    (bound,) = [s for s in worker.steps_for(on) if s.name == step.name]
     assert bound.every_s == 30 and bound.fn is doctor.tick
-    assert [s.name for s in worker.steps_for(make_settings())] == [s.name for s in worker.STEPS]
-    # Off by default, and a stub until PR 4: it does nothing.
+    assert [s.name for s in worker.steps_for(on)] == [s.name for s in worker.STEPS]
+    # A stub until PR 4: it does nothing.
     assert doctor.tick(None, now, settings=make_settings()) == {}
+
+
+def test_an_off_doctor_is_not_a_step_at_all(make_settings):
+    from romulus_cloud import worker
+
+    names = [s.name for s in worker.steps_for(make_settings())]  # DOCTOR_MODE=off
+    assert "doctor.tick" not in names
+    assert names == [s.name for s in worker.STEPS if s.name != "doctor.tick"]
+    assert worker.steps_for(make_settings())[0] is worker.STEPS[0]  # others untouched

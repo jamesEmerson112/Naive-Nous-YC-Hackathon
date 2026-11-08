@@ -48,10 +48,20 @@ class LlmTimeout(LlmError):
 
 @dataclass(frozen=True)
 class LlmReply:
+    """One reply. `usage_estimated` is True when the token counts are `len(text) // 4`
+    estimates rather than the provider's (no usage reported, or FakeLlm), so a cost never
+    reads as $0 and the spend cap can't fail open. Callers put it in event data."""
+
     text: str
     model: str
     prompt_tokens: int
     completion_tokens: int
+    usage_estimated: bool = False
+
+
+def estimate_tokens(text: str) -> int:
+    """A rough token count when the provider reports none: about 4 characters a token."""
+    return len(text) // 4
 
 
 class LlmConfigError(ValueError):
@@ -117,15 +127,16 @@ class FakeLlm:
         timeout_s: float | None = None,
     ) -> LlmReply:
         """The banner plus prose echoing the first 80 characters of `user`. Tokens are
-        `len // 4` (cut to `max_tokens`), so caps and spend can be tested."""
+        `len // 4` estimates (the reply cut to `max_tokens`), so caps and spend can be tested."""
         text = f"{FAKE_BANNER} Likely cause, from the request: {user[:80]!r}."
         if max_tokens is not None:
             text = text[: max(max_tokens, 0) * 4]
         return LlmReply(
             text=text,
             model=self.model,
-            prompt_tokens=(len(system) + len(user)) // 4,
-            completion_tokens=len(text) // 4,
+            prompt_tokens=estimate_tokens(system + user),
+            completion_tokens=estimate_tokens(text),
+            usage_estimated=True,
         )
 
 
@@ -195,7 +206,8 @@ class OpenAICompatLlm:
         timeout_s: float | None = None,
     ) -> LlmReply:
         """One chat call. A per-call `timeout_s` is a hard budget, so that call isn't retried.
-        Usage comes from `resp.usage` (0 when the provider leaves it out)."""
+        Usage comes from `resp.usage`; a count the provider leaves out is estimated from the
+        text (`usage_estimated=True`), never 0."""
         client = self._client
         if timeout_s is not None:
             client = client.with_options(timeout=timeout_s, max_retries=0)
@@ -215,12 +227,15 @@ class OpenAICompatLlm:
         text = resp.choices[0].message.content if resp.choices else None
         if not text or not text.strip():
             raise LlmError(f"LLM {self.model} returned an empty answer")
-        usage = resp.usage
+        text = text.strip()
+        prompt = getattr(resp.usage, "prompt_tokens", None)
+        completion = getattr(resp.usage, "completion_tokens", None)
         return LlmReply(
-            text=text.strip(),
+            text=text,
             model=self.model,
-            prompt_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
-            completion_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            prompt_tokens=int(prompt) if prompt else estimate_tokens(system + user),
+            completion_tokens=int(completion) if completion else estimate_tokens(text),
+            usage_estimated=not (prompt and completion),
         )
 
 

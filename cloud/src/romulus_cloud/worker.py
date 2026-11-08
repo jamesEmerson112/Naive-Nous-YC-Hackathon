@@ -58,18 +58,22 @@ STEPS += [
 # M7: keep the blob store under BLOB_BUDGET_GB (oldest unlabeled episodes first).
 STEPS.append(Step("telemetry.enforce_budget", telemetry.enforce_budget_step, every_s=600))
 
-# Fleet Doctor consults (interfaces.md §5; a stub until PR 4). It does nothing while
-# DOCTOR_MODE=off. Every DOCTOR_TICK_S: the default here, the live setting via `steps_for`.
+# Fleet Doctor consults (interfaces.md §5; a stub until PR 4). Every DOCTOR_TICK_S: the
+# default here, the live setting via `steps_for`, which also leaves it out while
+# DOCTOR_MODE=off.
 STEPS.append(
     Step("doctor.tick", doctor.tick, every_s=Settings.model_fields["doctor_tick_s"].default)
 )
 
 
 def steps_for(settings: Settings) -> list[Step]:
-    """`STEPS` with cadences that come from settings applied (importing this module never
-    reads `.env`, so they're bound when the worker starts)."""
+    """The steps the worker runs: `STEPS` with settings applied. Importing this module never
+    reads `.env`, so this happens when the worker starts (changing a setting needs a
+    restart). DOCTOR_MODE=off leaves `doctor.tick` out entirely, so an off Doctor writes no
+    step log line every few seconds; DOCTOR_TICK_S sets its cadence."""
+    steps = [s for s in STEPS if s.name != "doctor.tick" or settings.doctor_mode != "off"]
     every = {"doctor.tick": settings.doctor_tick_s}
-    return [replace(s, every_s=every[s.name]) if s.name in every else s for s in STEPS]
+    return [replace(s, every_s=every[s.name]) if s.name in every else s for s in steps]
 
 
 def run_tick(

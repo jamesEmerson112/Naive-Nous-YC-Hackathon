@@ -147,6 +147,7 @@ def test_fake_complete_is_deterministic_and_counts_tokens():
     assert USER[80:] not in reply.text
     assert reply.prompt_tokens == (len(SYSTEM) + len(USER)) // 4
     assert reply.completion_tokens == len(reply.text) // 4
+    assert reply.usage_estimated is True  # no provider counted these
 
 
 def test_fake_complete_respects_max_tokens():
@@ -188,9 +189,27 @@ def test_openai_compat_complete_defaults_and_missing_usage():
         return httpx.Response(200, json=_completion("A loose cable."))
 
     reply = _llm(handler).complete(SYSTEM, USER)
-    assert (reply.text, reply.prompt_tokens, reply.completion_tokens) == ("A loose cable.", 0, 0)
+    # No usage: estimated from the text, so the cost never reads as $0.
+    assert reply == LlmReply(
+        "A loose cable.",
+        "test-model",
+        prompt_tokens=(len(SYSTEM) + len(USER)) // 4,
+        completion_tokens=len("A loose cable.") // 4,
+        usage_estimated=True,
+    )
+    assert reply.prompt_tokens > 0 and reply.completion_tokens > 0
     assert seen["body"]["max_tokens"] == 800  # the client's default
     assert seen["timeout"]["read"] == 30  # the client's default
+
+
+def test_openai_compat_complete_estimates_only_the_missing_count():
+    body = _completion("A loose cable.") | {"usage": {"prompt_tokens": 50}}
+    reply = _llm(lambda r: httpx.Response(200, json=body)).complete(SYSTEM, USER)
+    assert (reply.prompt_tokens, reply.completion_tokens) == (50, len("A loose cable.") // 4)
+    assert reply.usage_estimated is True
+    full = _completion("x") | {"usage": _usage(50, 9)}
+    reply = _llm(lambda r: httpx.Response(200, json=full)).complete(SYSTEM, USER)
+    assert (reply.prompt_tokens, reply.completion_tokens, reply.usage_estimated) == (50, 9, False)
 
 
 def test_openai_compat_complete_errors_raise_llm_error():

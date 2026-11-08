@@ -168,7 +168,7 @@ Get the sessionmaker from `request.app.state.sessionmaker`. Two asks at the same
 ```python
 class DoctorConsult(Base):          # __tablename__ = "doctor_consults"
     id: str  (pk, "cons_…")
-    fleet_id, device_id: str, incident_id: UUID (FK incidents.id, indexed)
+    fleet_id, device_id: str, incident_id: str (FK incidents.id, indexed)   # incidents.id is a str
     origin: str                     # "device" | "cloud"
     trigger: str | None
     attempt: int                    # 1-based, per incident
@@ -179,10 +179,11 @@ class DoctorConsult(Base):          # __tablename__ = "doctor_consults"
     case_file: JSONB = {}; ledger: JSONB = []; draft: JSONB = {}; checks: JSONB = {}
     cost_usd: float = 0
     created_at, updated_at, raw: JSONB = {}
+    UniqueConstraint(incident_id, attempt)   # a racing tick can't open attempt N twice
 
 class DoctorProposal(Base):         # __tablename__ = "doctor_proposals"
     id: str  (pk, "prop_…")
-    fleet_id, device_id: str, consult_id: str (FK), incident_id: UUID
+    fleet_id, device_id: str, consult_id: str (FK), incident_id: str (indexed)
     base: JSONB                     # ProposalBase dump
     code_patch: str; repro_test: str | None; why: str; checks: JSONB
     touches_safety: bool; sha256: str | None
@@ -201,7 +202,7 @@ class DoctorProposal(Base):         # __tablename__ = "doctor_proposals"
 def tick(session, now, *, settings=None, jobs=None, llm=None, coder=None) -> dict[str, int]
 ```
 
-- **Registration:** `worker.STEPS.append(Step("doctor.tick", doctor.tick, every_s=<doctor_tick_s default, 5>))`. PR 2 appends it, with a stub tick that returns `{}`. Importing `worker` never reads `.env`, so `worker.steps_for(settings)` binds the live `DOCTOR_TICK_S` when the worker starts.
+- **Registration:** `worker.STEPS.append(Step("doctor.tick", doctor.tick, every_s=<doctor_tick_s default, 5>))`. PR 2 appends it, with a stub tick that returns `{}`. Importing `worker` never reads `.env`, so `worker.steps_for(settings)` applies settings when the worker starts: it binds `DOCTOR_TICK_S` and leaves `doctor.tick` out entirely while `DOCTOR_MODE=off`. Turning the Doctor on needs a worker restart.
 - **Injection:** `jobs`, `llm` and `coder` are injected the same way `workorders.sync` takes `naive=`. Adapters are cached per process.
 
 Each tick does five things, in order:
@@ -216,11 +217,11 @@ Each tick does five things, in order:
 
    | Stage | Does | Moves to |
    |---|---|---|
-   | `admit` | `domain.doctor.admit(...)`: caps, spend, `running.code_rev` present, safety confirmed | `gather`, or closed with `declined` / `blocked_over_cap` / `gave_up` |
+   | `admit` | `domain.doctor.admit(...)`: caps, spend, `running.code_rev` present | `gather`, or closed with `declined` / `blocked_over_cap` / `gave_up` |
    | `gather` | `doctor_evidence.case_file(session, store, consult, incident)` builds a plain dict, all evidence marked untrusted | `diagnose` |
    | `diagnose` | Submits job `diagnose:{id}`, built from the case file and `llm`. When done: ledger saved, `doctor.diagnosed` recorded with `cost_usd` | `draft` |
    | `draft` | `doctor_draft` decides: `none` closes with `advised`; `fake` uses `domain.doctor.fake_draft(case)` (a labeled stub patch); `coder` submits job `draft:{id}`. Records `doctor.drafted` | `check` |
-   | `check` | `touches_safety` closes with `discarded`. Then by `doctor_check`: `stub` records `{"stub": true}`; `sandbox` submits job `check:{id}`. Records `doctor.checked` | `offer`, or closed with `failed_checks` |
+   | `check` | `touches_safety`, or `safety_paths_confirmed` false, closes with `discarded` (`doctor.proposal_discarded`, reason `touches_safety` / `safety_paths_unknown`). Then by `doctor_check`: `stub` records `{"stub": true}`; `sandbox` submits job `check:{id}`. Records `doctor.checked` | `offer`, or closed with `failed_checks` |
    | `offer` | A stub check with `doctor_offer_stub_checked` false closes with `advised`. Otherwise `proposals.offer(...)` makes the proposal and records `doctor.proposal_offered` | `applied` (waiting on the device) |
    | `applied` | Reads the proposal and overlay status: `held` closes with `held`, `reverted` or `failed_verify` closes for a retry, and `expired`/`stale`/`rejected` close as they are | closed |
 
@@ -260,23 +261,32 @@ Imports only stdlib and `romulus_contracts`, and takes `now` as an argument.
 def check_spend(spend: Spend, *, estimate_usd: float = 0.0) -> Decision            # fails closed on NaN/negative, like triage.check_caps
 def admit(*, frozen: bool, code_rev: str | None, consults_for_incident: int, consult_cap: int,
           spend: Spend, mode: str) -> Decision
-def admit_ask(*, frozen: bool, asks_for_incident: int, ask_cap: int, asks_for_device_today: int,
-              device_day_cap: int, spend: Spend, mode: str) -> Decision
-    # Counts are of consults/asks *before* this one, so a count equal to its cap refuses. admit_ask's
-    #   caller passes 0 for a count that doesn't apply (device-day for an incident ask, and vice versa)
+def admit_ask(*, frozen: bool, asks_for_incident: int | None, ask_cap: int,
+              asks_for_device_today: int | None, device_day_cap: int, spend: Spend, mode: str) -> Decision
+    # Counts are of consults/asks *before* this one, so a count equal to its cap refuses.
+    # admit_ask: a count of None means its cap doesn't apply and isn't checked at all. An incident
+    #   ask passes asks_for_device_today=None (so DOCTOR_ASKS_PER_DEVICE_DAY=0 never blocks it); an
+    #   ask with no incident passes asks_for_incident=None. A cap that applies fails closed when bad.
 def cost_usd(prompt_tokens: int, completion_tokens: int, usd_per_1k_tokens: float) -> float
     # raises ValueError on a bad price or token count, so a bad price never counts as free
 def parse_hypotheses(text: str, *, max_items: int = 5, max_chars: int = 1200) -> tuple[list[dict], bool]
-    # → ([{claim, how_to_check}], parsed_ok). Takes the first JSON object/array; if there's none, one
-    #   hypothesis from the prose, with parsed_ok=False. Trims to the char budget (≈300 tokens).
-def filter_safety(hyps: list[dict], safety_paths: Iterable[str]) -> tuple[list[dict], int]   # drops any naming a safety path
+    # → ([{claim, how_to_check}], parsed_ok). Takes the first non-empty hypotheses in a JSON
+    #   object/array; an empty answer counts only as an explicit {"hypotheses": []} (a bare [] in
+    #   prose never wins over a later real answer). With none, one hypothesis from the prose, with
+    #   parsed_ok=False. Trims to the char budget (≈300 tokens).
+def filter_safety(hyps: list[dict], safety_paths: Iterable[str]) -> tuple[list[dict], int]
+    # drops any naming a safety path: case-insensitive, on [a-z0-9] boundaries ("SAFETY",
+    #   "visor/limits.py", "safety_limits.py" match; "supervisor", "advisory" don't). A leading
+    #   device/ on an entry is ignored; an empty, "." or "device" entry drops everything.
 def ask_prompt(ask: dict) -> tuple[str, str]                                 # (system, user); evidence wrapped as untrusted data
-def diagnose_prompt(case: dict) -> tuple[str, str]
+def diagnose_prompt(case: dict) -> tuple[str, str]                          # the whole case file, notes included, inside the block
 def fake_draft(case: dict) -> dict  # {code_patch, repro_test, why, stub: True}: adds doctor/FAKE_FIX.md, valid per summarize_code_patch
 def day_start(now: datetime, tz: str) -> datetime                           # same calendar day as workorders._day
 ```
 
 **Prompt rule:** device text (logs, traces, files, the question) goes inside a fenced `<evidence untrusted="true">` block. The system prompt says to treat it as data and answer only in the JSON shape (§6 item 6 of the architecture doc).
+- The block is JSON with `</` and backticks escaped, so it can't close the block or the fence. Strings, dict keys and lists are capped.
+- The whole body stays under `MAX_EVIDENCE_CHARS` (24,000). Over it, the caps tighten step by step, then the text is cut as a last resort, and a trusted note after the block says the evidence was shortened.
 
 ### 6.2 `services/doctor_jobs.py` (PR 2): a stand-in for M8b's shared `services/jobs.py`
 
@@ -288,12 +298,15 @@ M8b is building one generic off-tick runner, `services/jobs.py`, in this shape (
 @dataclass(frozen=True) class Failed:  error: str
 @dataclass(frozen=True) class Missing: ...                 # unknown key, e.g. after a worker restart → resubmit
 class Jobs(Protocol):
-    def submit(self, key: str, fn: Callable[[], T]) -> None: ...   # idempotent: a pending or done key is a no-op
+    def submit(self, key: str, fn: Callable[[], T]) -> None: ...   # idempotent: a pending or done key is a no-op; a failed key reruns
     def poll(self, key: str) -> Pending | Done | Failed | Missing: ...
+    def forget(self, key: str) -> None: ...                         # drop the key (result, or a running job's future) → Missing
 class ThreadPoolJobs:   # ThreadPoolExecutor(max_workers=settings.doctor_job_workers), inside the worker process
+                        # + shutdown(wait=True) for tests
 class InlineJobs:       # runs fn at submit; for tests (`.calls` lists the keys actually run)
-# A failed key reruns on submit. Finished results are kept until MAX_FINISHED (256) newer ones
-# push them out (then Missing). ThreadPoolJobs.shutdown(wait) is for tests.
+# Results never pile up: every submit and poll moves all finished futures out of the running set,
+# and finished results are kept only until MAX_FINISHED (256) newer ones push them out (then
+# Missing). The tick calls forget(key) once it has applied a result and committed.
 def default_jobs(settings) -> Jobs                         # process-wide singleton
 ```
 
@@ -304,12 +317,13 @@ def default_jobs(settings) -> Jobs                         # process-wide single
 
 ```python
 @dataclass(frozen=True) class LlmReply: text: str; model: str; prompt_tokens: int; completion_tokens: int
+                                        usage_estimated: bool = False   # True: counts are len//4 estimates; put it in event data
 class Llm(Protocol):  # existing explain / write_skill, plus:
     def complete(self, system: str, user: str, *, max_tokens: int | None = None, timeout_s: float | None = None) -> LlmReply: ...
 ```
 
-- **`OpenAICompatLlm.complete`:** one chat call, with per-call `timeout` and `max_tokens` (`client.with_options(timeout=…)`). Usage comes from `resp.usage` (0 if it's missing). Errors raise `LlmError`.
-- **`FakeLlm.complete`:** deterministic `FAKE_BANNER` plus prose that echoes the first 80 characters of `user`. Tokens are `len // 4`, so caps can be tested.
+- **`OpenAICompatLlm.complete`:** one chat call, with per-call `timeout` and `max_tokens` (`client.with_options(timeout=…)`). Usage comes from `resp.usage`. A count it leaves out is estimated as `len // 4` of the prompt or the reply (never 0, so the cost can't read as $0 and the cap can't fail open), with `usage_estimated=True`. Errors raise `LlmError`.
+- **`FakeLlm.complete`:** deterministic `FAKE_BANNER` plus prose that echoes the first 80 characters of `user`. Tokens are `len // 4` (`usage_estimated=True`), so caps can be tested.
 - **`LlmTimeout(LlmError)`** is raised when the call runs out of time, so the ask route can answer `504 doctor_timeout` rather than `502 doctor_unavailable`. A call with `timeout_s` set isn't retried (it is a hard budget).
 - `explain` and `write_skill` stay as they are.
 

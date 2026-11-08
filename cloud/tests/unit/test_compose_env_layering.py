@@ -47,6 +47,7 @@ def test_overnight_values_win_over_env(project):
         assert env["BATCH_INTERVAL_S"] == "3600" and env["LLM_MODE"] == "fake", name
         assert env["NAIVE_API_KEY"] == "real-key", name  # the key still comes from .env
         assert env["OVERNIGHT_STARTED"] == "true", name
+        assert env["DOCTOR_MODE"] == "off", name  # the Fleet Doctor stays off overnight
     assert (project / ".env").read_text().startswith("NAIVE_MODE=live")  # untouched
 
 
