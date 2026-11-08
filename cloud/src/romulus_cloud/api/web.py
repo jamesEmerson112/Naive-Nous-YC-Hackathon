@@ -1,12 +1,17 @@
-"""HTML pages (APIs §4.5, D9, D10): the incident timeline and one incident's story.
+"""HTML pages (APIs §4.5, D9, D10): the incident timeline, one incident's story, and one
+heal-agent run (APIs §3.11).
 
 Pages are built only from the event log (stories, fleet events) and the services' read
 functions; nothing here decides anything. Each page polls small partials with htmx, so a
 new incident or step shows within a few seconds without a reload. Jinja autoescapes every
 value, so device-supplied text renders inert.
+
+An incident page leads with what the device's heal agent did (its runs: outcome, requests
+for help, the firmware it flashed, its write-up and every step), then the story's steps,
+where bookkeeping steps (`story.BOOKKEEPING`) are one quiet line each.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -17,8 +22,11 @@ from fastapi.templating import Jinja2Templates
 
 from romulus_cloud import events
 from romulus_cloud.api.deps import SessionDep, SettingsDep
-from romulus_cloud.models import Event
-from romulus_cloud.services import devices, incidents
+from romulus_cloud.domain.story import AGENT_OUTCOME_STATUS, recording_name
+from romulus_cloud.errors import ApiError
+from romulus_cloud.ids import utcnow
+from romulus_cloud.models import AgentRun, Event
+from romulus_cloud.services import agent_runs, devices, incidents
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 STATIC_DIR = WEB_DIR / "static"
@@ -77,6 +85,199 @@ def doctor_flags(hypothesis: dict[str, Any]) -> list[str]:
     return flags
 
 
+def ago(seconds: float) -> str:
+    """`just now`, `12 s ago`, `3 min ago`, `2 h ago`."""
+    s = int(round(seconds))
+    if s < 3:
+        return "just now"
+    if s < 60:
+        return f"{s} s ago"
+    if s < 3600:
+        return f"{s // 60} min ago"
+    return f"{s // 3600} h ago"
+
+
+def duration(seconds: Any) -> str:
+    """`42 s`, `3 min 52 s`, `1 h 4 min`."""
+    if not isinstance(seconds, int | float) or isinstance(seconds, bool):
+        return "–"
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min {s % 60} s" if s % 60 else f"{s // 60} min"
+    return f"{s // 3600} h {(s % 3600) // 60} min"
+
+
+def tokens(n: Any) -> str:
+    """`490k`, `9.9k`, `812`."""
+    if not isinstance(n, int | float) or isinstance(n, bool):
+        return "–"
+    if n >= 10_000:
+        return f"{round(n / 1000)}k"
+    if n >= 1000:
+        return f"{n / 1000:.1f}k"
+    return str(int(n))
+
+
+def _parse_time(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        at = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
+
+
+PHASE_WORDS = {
+    "investigate": "investigate",
+    "stabilize": "stabilize",
+    "repair": "repair",
+    "verify": "verify",
+    "escalate": "ask for help",
+    "note": "note",
+}
+FIRMWARE_WORDS = {
+    "running_at_start": "on the chip at the start",
+    "flashed": "flashed",
+    "rolled_back": "rolled back to",
+    "flash_failed": "flash failed",
+    "auto_rolled_back": "auto-rollback",
+    "refused": "flash refused",
+    "not_flashed": "not flashed",
+    "built": "built",
+    "build_failed": "build failed",
+}
+
+
+def _run_view(row: AgentRun, tz: ZoneInfo, now: datetime) -> dict[str, Any]:
+    """One agent run, ready for the template: the stored report with local times and words."""
+    r = row.report or {}
+    outcome = r.get("outcome") or {}
+    status = row.status if row.status in AGENT_OUTCOME_STATUS else "unknown"
+    words, tone = AGENT_OUTCOME_STATUS[status]
+
+    def local(value: Any) -> str:
+        at = _parse_time(value)
+        return clock(at, tz) if at else ""
+
+    steps = []
+    for st in r.get("steps") or []:
+        if not isinstance(st, dict):
+            continue
+        steps.append(
+            {
+                **st,
+                "clock": local(st.get("at")),
+                "phase_word": PHASE_WORDS.get(str(st.get("phase")), str(st.get("phase") or "")),
+            }
+        )
+    firmware = [
+        {
+            **f,
+            "clock": local(f.get("at")),
+            "event_word": FIRMWARE_WORDS.get(str(f.get("event")), str(f.get("event") or "")),
+            "image": f.get("image") or {},
+        }
+        for f in r.get("firmware") or []
+        if isinstance(f, dict)
+    ]
+    help_requests = [
+        {**h, "clock": local(h.get("at"))}
+        for h in r.get("help_requests") or []
+        if isinstance(h, dict)
+    ]
+    stats = r.get("stats") or {}
+    agent = r.get("agent") or {}
+    writeup = r.get("writeup") or {}
+    summary = [p for p in writeup.get("summary") or [] if isinstance(p, dict) and p.get("text")]
+    started = _parse_time(r.get("started_at")) or row.started_at
+    return {
+        "device_id": row.device_id,
+        "run_id": row.run_id,
+        "url": f"/agent-runs/{row.device_id}/{row.run_id}",
+        "dom": "run-" + "".join(c if c.isalnum() else "-" for c in row.run_id),
+        "state": row.state,
+        "status": status,
+        "status_words": words,
+        "tone": tone,
+        "headline": outcome.get("headline") or words,
+        "reasons": outcome.get("reasons") or [],
+        "problems": outcome.get("problems") or [],
+        "caveats": outcome.get("caveats") or [],
+        "verified_by": {
+            "bench": "checked on the bench",
+            "device_check": "checked on the device after the run",
+            "agent": "from the agent's own last checks",
+        }.get(str(outcome.get("verified_by")), ""),
+        "running": outcome.get("running") or {},
+        "sim": row.sim,
+        "model": agent.get("model") or "agent",
+        "driver": agent.get("driver") or "",
+        "label": agent.get("label") or "",
+        "day": day(started, tz),
+        "clock": clock(started, tz),
+        "ended": local(r.get("ended_at")),
+        "updated_ago": ago((now - row.received_at).total_seconds()) if row.received_at else "",
+        "problem": (r.get("problem") or {}).get("text") or "",
+        "summary": summary,
+        "report": writeup.get("report") or "",
+        "stop_text": writeup.get("stop_text") or "",
+        "steps": steps,
+        "firmware": firmware,
+        "flashed": sum(1 for f in firmware if f.get("flashed")),
+        "bad_images": sum(1 for f in firmware if f.get("bad")),
+        "help_requests": help_requests,
+        "stats": {
+            "steps": len(steps),
+            "turns": stats.get("turns"),
+            "refused": stats.get("refused") or 0,
+            "duration": duration(stats.get("seconds")),
+            "tokens_in": tokens(stats.get("tokens_in")),
+            "tokens_out": tokens(stats.get("tokens_out")),
+            "flashes": stats.get("flashes"),
+            "arm_runs": stats.get("arm_runs"),
+        },
+        "incident_ids": list(row.incident_ids or []),
+    }
+
+
+def _run_badge(run: dict[str, Any]) -> dict[str, Any]:
+    """What a timeline row shows about an incident's latest run."""
+    return {
+        "status": run["status"],
+        "words": run["status_words"],
+        "tone": run["tone"],
+        "headline": run["headline"],
+        "flashed": run["flashed"],
+        "bad_images": run["bad_images"],
+        "help": len(run["help_requests"]),
+        "steps": run["stats"]["steps"],
+        "model": run["model"],
+        "url": run["url"],
+    }
+
+
+def _device_now(session, device_id: str, now: datetime) -> dict[str, Any] | None:
+    """The device as its latest check-in describes it, for "right now" panels."""
+    try:
+        d = devices.get_device(session, device_id)
+    except ApiError:
+        return None
+    seen = d.last_seen_at
+    stale = seen is None or (now - seen).total_seconds() > 60
+    return {
+        "id": d.id,
+        "health": d.health or "unknown",
+        "build": d.running_mcu_build or (f"fw {d.running_firmware}" if d.running_firmware else "–"),
+        "seen": ago((now - seen).total_seconds()) if seen else "never",
+        "stale": stale,
+    }
+
+
 def _fleet(session, fleet_id: str) -> dict[str, Any]:
     """Fleet strip: devices (services read) and whether the fleet is frozen (latest
     fleet.frozen / fleet.unfrozen event, so the page reads events, not state)."""
@@ -92,9 +293,11 @@ def _fleet(session, fleet_id: str) -> dict[str, Any]:
 
 def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
     rows = []
+    now = utcnow()
     for incident in incidents.list_incidents(session, limit=TIMELINE_LIMIT, fleet_id=fleet_id):
         _, story = incidents.story(session, incident.id)
         status, tone = story.status
+        runs = [_run_view(r, tz, now) for r in agent_runs.for_incident(session, incident.id)]
         rows.append(
             {
                 "id": incident.id,
@@ -108,13 +311,35 @@ def _timeline(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
                 "day": day(incident.occurred_at, tz),
                 "clock": clock(incident.occurred_at, tz),
                 "touches_safety": any(s.refs.get("touches_safety") for s in story.steps),
+                "agent": _run_badge(runs[-1]) if runs else None,
+                "help": sum(len(r["help_requests"]) for r in runs),
             }
         )
     return rows
 
 
+def _overview(rows: list[dict[str, Any]], fleet: dict[str, Any]) -> dict[str, int]:
+    """The numbers across the top of the timeline."""
+    agents = [r["agent"] for r in rows if r["agent"]]
+    return {
+        "devices": len(fleet["devices"]),
+        "healthy": sum(1 for d in fleet["devices"] if d.get("health") == "ok"),
+        "incidents": len(rows),
+        "fixed": sum(1 for a in agents if a["status"] == "fixed"),
+        "broken": sum(1 for a in agents if a["status"] == "broken"),
+        "working": sum(1 for a in agents if a["status"] == "working"),
+        "help": sum(r["help"] for r in rows),
+    }
+
+
+def _unlinked(session, tz: ZoneInfo, fleet_id: str) -> list[dict[str, Any]]:
+    now = utcnow()
+    return [_run_view(r, tz, now) for r in agent_runs.unlinked(session, fleet_id)]
+
+
 def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
     incident, story = incidents.story(session, incident_id)
+    now = utcnow()
     steps, previous = [], None
     for s in story.steps:
         steps.append(
@@ -133,6 +358,8 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
                 "touches_safety": bool(s.refs.get("touches_safety")),
                 "recording": s.refs.get("recording"),
                 "refs": {k: v for k, v in s.refs.items() if k not in ("touches_safety",)},
+                "quiet": s.bookkeeping,
+                "dom": f"step-{len(steps)}",
             }
         )
         previous = s.at
@@ -159,7 +386,12 @@ def _story_view(session, incident_id: str, tz: ZoneInfo) -> dict[str, Any]:
         "steps": steps,
         "touches_safety": any(st["touches_safety"] for st in steps),
         "recordings": sorted({st["recording"] for st in steps if st["recording"]}),
+        "evidence": [
+            {**ev, "name": recording_name(ev.get("kind")).capitalize()} for ev in story.evidence
+        ],
         "ledger": ledger,
+        "runs": [_run_view(r, tz, now) for r in agent_runs.for_incident(session, incident_id)],
+        "device": _device_now(session, incident.device_id, now),
     }
 
 
@@ -170,11 +402,15 @@ def _page(request: Request, name: str, **context) -> HTMLResponse:
 @router.get("/", response_class=HTMLResponse)
 def timeline(request: Request, session: SessionDep, settings: SettingsDep):
     tz = _tz(settings)
+    rows = _timeline(session, tz, settings.fleet_id)
+    fleet = _fleet(session, settings.fleet_id)
     return _page(
         request,
         "timeline.html",
-        incidents=_timeline(session, tz, settings.fleet_id),
-        fleet=_fleet(session, settings.fleet_id),
+        incidents=rows,
+        fleet=fleet,
+        overview=_overview(rows, fleet),
+        unlinked=_unlinked(session, tz, settings.fleet_id),
         tz=settings.display_tz,
     )
 
@@ -192,8 +428,21 @@ def incident_page(incident_id: str, request: Request, session: SessionDep, setti
 
 @router.get("/partials/incidents", response_class=HTMLResponse)
 def incidents_partial(request: Request, session: SessionDep, settings: SettingsDep):
+    tz = _tz(settings)
+    rows = _timeline(session, tz, settings.fleet_id)
+    return _page(
+        request,
+        "partials/incidents.html",
+        incidents=rows,
+        unlinked=_unlinked(session, tz, settings.fleet_id),
+    )
+
+
+@router.get("/partials/overview", response_class=HTMLResponse)
+def overview_partial(request: Request, session: SessionDep, settings: SettingsDep):
     rows = _timeline(session, _tz(settings), settings.fleet_id)
-    return _page(request, "partials/incidents.html", incidents=rows)
+    fleet = _fleet(session, settings.fleet_id)
+    return _page(request, "partials/overview.html", overview=_overview(rows, fleet))
 
 
 @router.get("/partials/fleet", response_class=HTMLResponse)
@@ -212,3 +461,32 @@ def story_partial(incident_id: str, request: Request, session: SessionDep, setti
     return _page(
         request, "partials/story.html", story=_story_view(session, incident_id, _tz(settings))
     )
+
+
+def _run_page_view(session, device_id: str, run_id: str, tz: ZoneInfo) -> dict[str, Any]:
+    row = agent_runs.get(session, device_id, run_id)
+    if row is None:
+        raise ApiError(404, "not_found", f"No agent run {run_id!r} on {device_id!r}.")
+    now = utcnow()
+    return {"run": _run_view(row, tz, now), "device": _device_now(session, device_id, now)}
+
+
+@router.get("/agent-runs/{device_id}/{run_id}", response_class=HTMLResponse)
+def run_page(
+    device_id: str, run_id: str, request: Request, session: SessionDep, settings: SettingsDep
+):
+    return _page(
+        request,
+        "agent_run.html",
+        **_run_page_view(session, device_id, run_id, _tz(settings)),
+        fleet=_fleet(session, settings.fleet_id),
+        tz=settings.display_tz,
+    )
+
+
+@router.get("/partials/agent-runs/{device_id}/{run_id}", response_class=HTMLResponse)
+def run_partial(
+    device_id: str, run_id: str, request: Request, session: SessionDep, settings: SettingsDep
+):
+    view = _run_page_view(session, device_id, run_id, _tz(settings))
+    return _page(request, "partials/run_page.html", **view)

@@ -1,6 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Romulus · timeline{% endblock %}
+{% block title %}Romulus · incidents{% endblock %}
 {% block content %}
+<div id="overview" hx-get="/partials/overview" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
+  {% include "partials/overview.html" %}
+</div>
 <section aria-labelledby="fleet-h">
   <h2 id="fleet-h" class="section-h">Fleet</h2>
   <div id="fleet" hx-get="/partials/fleet" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">

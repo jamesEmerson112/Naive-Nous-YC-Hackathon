@@ -90,7 +90,8 @@ def all_images():
 
 
 def resolve(ref):
-    """ref: CRC (any case, optional 0x, unique prefix ok), 'known-good', 'latest', 'deployed', or an ELF path."""
+    """ref: CRC (any case, optional 0x, unique prefix ok), 'known-good', 'latest', 'deployed', a version ('v1.0': the
+    known-good image of that version if there is one, else the only image of it), or an ELF path."""
     ref = str(ref).strip()
     imgs = all_images()
     if ref in ("known-good", "known_good"):
@@ -113,7 +114,16 @@ def resolve(ref):
     hits = [m for m in imgs if m["crc"].startswith(key)]
     if len(hits) == 1:
         return hits[0]
-    raise KeyError("no unique image matches %r (%d hits)" % (ref, len(hits)))
+    if not hits:                            # a version name, e.g. 'v1.0' (a model asks for it by name)
+        same = [m for m in imgs if str(m.get("version") or "").lower() == ref.lower()]
+        good = [m for m in same if m["status"] == "known-good"]
+        if good or len(same) == 1:
+            return (good or same)[-1]
+        if same:
+            raise KeyError("several images are version %r; name one by crc: %s"
+                           % (ref, ", ".join("%s (%s)" % (m["crc"], m["status"]) for m in same)))
+    raise KeyError("no unique image matches %r (%d hits): use a crc from fw_images or fw_build, or 'known-good'"
+                   % (ref, len(hits)))
 
 
 def set_status(ref, status, note=None):

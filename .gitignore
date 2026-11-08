@@ -13,4 +13,7 @@ __pycache__/
 .env.*
 !.env.example
 !.env.*.example
+
+# Naïve SDK client (naive/)
+naive/node_modules/
 data/

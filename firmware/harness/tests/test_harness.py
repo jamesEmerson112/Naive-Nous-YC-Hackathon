@@ -83,12 +83,30 @@ def test_calls_run_in_order_and_results_come_back_together(tmp_path):
     b = bench_with_system()
     d = ScriptedDriver([turn(("triage", {}), ("status", {}), ("note", {"text": "x"})), turn(text="done")])
     s = agent.run_agent(b, d, tmp_path, kickoff="go")
-    assert [c[0] for c in b.calls if c[0] in ("triage", "status", "note")] == ["triage", "status", "note"]
+    # the agent's three calls in order, then the harness's own device check at the end (triage, not shown to it)
+    assert [c[0] for c in b.calls if c[0] in ("triage", "status", "note")] == ["triage", "status", "note", "triage"]
     assert len(d.results) == 1 and [r[0] for r in d.results[0]] == ["c0", "c1", "c2"]
-    assert d.system.startswith("BRIEFING") and "Operating rules" in d.system
+    assert d.system.startswith("BRIEFING") and "Operating rules" in d.system and "ask_expert" in d.system
+    assert "ask_expert" in [t["name"] for t in d.tools]
     assert s["stop"] == "end_turn" and s["tool_calls"] == 3 and (tmp_path / "report.md").read_text() == "done\n"
-    types = [json.loads(line)["type"] for line in open(tmp_path / "transcript.jsonl")]
-    assert types == ["run_start", "model_turn", "tool_call", "tool_call", "tool_call", "model_turn", "run_end"]
+    recs = [json.loads(line) for line in open(tmp_path / "transcript.jsonl")]
+    assert [r["type"] for r in recs] == ["run_start", "model_turn", "tool_call", "tool_call", "tool_call",
+                                         "model_turn", "device_check", "run_end"]
+    assert "podd_incidents" in recs[0] and "chip_at_start" in recs[0]
+    assert set(recs[-2]) >= {"chip", "findings", "open_incidents"}
+
+
+def test_ask_expert_is_recorded_and_says_nobody_answers(tmp_path):
+    b = bench_with_system()
+    d = ScriptedDriver([turn(("ask_expert", {"question": "why does mm stick?", "tried": "rolled back"})),
+                        turn(("ask_expert", {})), turn(text="done")])
+    agent.run_agent(b, d, tmp_path, kickoff="go")
+    calls = [json.loads(line) for line in open(tmp_path / "transcript.jsonl")]
+    calls = [r for r in calls if r["type"] == "tool_call"]
+    assert [(c["name"], c["risk"], c["gate"]) for c in calls] == [("ask_expert", "notify", "allow")] * 2
+    assert '"answered": false' in calls[0]["result"] and not calls[0]["is_error"]
+    assert calls[1]["is_error"] and "question is required" in calls[1]["result"]
+    assert not any(c[0] == "ask_expert" for c in b.calls)       # a harness tool: never sent to the bench
 
 
 def test_flash_cap_unknown_tools_and_isolation(tmp_path):
@@ -101,7 +119,7 @@ def test_flash_cap_unknown_tools_and_isolation(tmp_path):
                              ("src_show", {"rev": "--output=/tmp/x"}),
                              ("src_read", {"path": "src/main.c"})),
                         turn(text="report")])
-    s = agent.run_agent(b, d, tmp_path, kickoff="go")
+    s = agent.run_agent(b, d, tmp_path, kickoff="go", flash_cap=3)
     assert [c[0] for c in b.calls].count("fw_flash") == 3
     assert s["flashes_allowed"] == 3 and s["invalid"] == 1 and s["forbidden"] == 5
     errors = [r for r in d.results[0] if r[3]]
@@ -251,7 +269,7 @@ def test_ollama_driver_round_trip():
         d.add_results([(t.calls[0][0], "triage", '{"findings": []}', False)])
         t2 = d.step()
         assert t2.stop == "end_turn" and t2.text == "all good"
-        assert seen[0]["think"] is True and seen[0]["options"]["num_ctx"] == 32768
+        assert seen[0]["think"] is True and seen[0]["options"]["num_ctx"] == agent.NUM_CTX == 65536
         assert seen[0]["tools"][0]["function"]["name"] == TOOLS[0]["name"]
         assert seen[1]["messages"][-1] == {"role": "tool", "tool_name": "triage", "content": '{"findings": []}'}
     finally:
@@ -412,4 +430,90 @@ def test_score_rejects_unflashed_or_wrong_fixes(tmp_path, monkeypatch):
     b, since = score_bench("GOOD", deps)
     sc = evaluate.score_run(b, "05", evaluate.SCENARIOS["05"], tmp_path, summary(), since, 0.0, 10.0)
     assert sc["fix"]["kind"] == "auto-rollback" and sc["flashes"] == {
-        "agent_flashes": 1, "failed": 1, "auto_rollbacks": 1, "unnecessary": 1}
+        "agent_flashes": 1, "failed": 1, "auto_rollbacks": 1, "stabilizing_rollback": False, "unnecessary": 1}
+
+
+def test_flash_budget_refunds_calls_that_never_reached_the_chip(tmp_path):
+    """The Nov 8 02:52 watch run: fw_flash image='v1.0' failed on the name (KeyError) and still spent a flash."""
+    b = bench_with_system()
+    b.results["fw_flash"] = lambda a: ({"ok": False, "error": "KeyError: \"no unique image matches 'v9' (0 hits)\""}
+                                       if a["image"] == "v9" else
+                                       {"ok": True, "result": "ok", "checks": [], "image": {"crc": a["image"]}})
+    d = ScriptedDriver([turn(("fw_flash", {"image": "v9"}), ("fw_flash", {"image": "v9"}), ("fw_flash", {"image": "AAAA1111"}),
+                             ("fw_flash", {"image": "BBBB2222"})), turn(text="done")])
+    s = agent.run_agent(b, d, tmp_path, kickoff="go", flash_cap=2)
+    assert [c[1]["image"] for c in b.calls if c[0] == "fw_flash"] == ["v9", "v9", "AAAA1111", "BBBB2222"]
+    assert s["flashes_allowed"] == 2 and s["forbidden"] == 0
+    assert "[harness: nothing was written to the chip" in d.results[0][0][2]
+    assert json.loads(d.results[0][0][2].split("\n[harness:")[0])["ok"] is False      # the tool's own result comes first
+
+
+def test_reflashing_what_is_already_running_is_refused_and_not_counted(tmp_path):
+    """After a verified rollback, flashing known-good again (by keyword, crc or version) changes nothing."""
+    b = bench_with_system()
+    good = {"ok": True, "result": "ok", "checks": [], "image": {"crc": "BAADB704", "version": "v1.0", "status": "known-good"}}
+    b.results["fw_rollback"] = good
+    b.results["fw_flash"] = good
+    tools = [t for t in TOOLS] + list(agent.ARM_HARNESS_TOOLS)
+    d = ScriptedDriver([turn(("fw_rollback", {"to": "known-good"})),
+                        turn(("fw_flash", {"image": "known-good"}), ("fw_flash", {"image": "baadb704"}),
+                             ("fw_flash", {"image": "v1.0"}), ("fw_rollback", {})),
+                        turn(text="done")])
+    s = agent.run_agent(b, d, tmp_path, kickoff="go", flash_cap=2, arm=agent.ArmConfig())
+    assert [c[0] for c in b.calls].count("fw_flash") == 0 and [c[0] for c in b.calls].count("fw_rollback") == 1
+    assert s["flashes_allowed"] == 1 and s["redundant"] == 4 and s["forbidden"] == 0
+    msg = d.results[1][0][2]
+    assert "already running" in msg and "not counted" in msg and "arm_run" in msg
+    assert tools                                         # (the arm tools were offered, so the advice names arm_run)
+
+
+def test_ollama_driver_drops_old_thinking_before_the_context_fills():
+    """At TRIM_AT of num_ctx the thinking of all but the last KEEP_THINKING turns goes; the tool results stay."""
+    d = agent.OllamaDriver(num_ctx=4000)
+    d.start("S", [], "go")
+    for i in range(8):
+        d.messages.append({"role": "assistant", "content": "", "thinking": "T%d " % i + "x" * 1200})
+        d.messages.append({"role": "tool", "tool_name": "triage", "content": "R%d" % i})
+    assert d._approx_ctx() > agent.TRIM_AT * d.num_ctx
+    seen = []
+    d._chat = lambda: seen.append(json.loads(json.dumps(d.messages))) or {
+        "message": {"role": "assistant", "content": "ok"}, "done_reason": "stop"}
+    t = d.step()
+    kept = [m for m in seen[0] if m.get("thinking")]
+    assert t.raw["trimmed_thinking_turns"] == 8 - agent.KEEP_THINKING and len(kept) == agent.KEEP_THINKING
+    assert kept[0]["thinking"].startswith("T%d" % (8 - agent.KEEP_THINKING))
+    assert sum(m["role"] == "tool" for m in seen[0]) == 8                  # every tool result is still there
+
+
+def test_rules_are_one_set_rollback_first_then_forward_fix():
+    """The arm run's rules and tools agree: build tools offered, rollback first, a forward fix allowed after."""
+    assert {"src_edit", "fw_build", "src_commit", "fw_flash", "fw_rollback"} <= set(agent.ARM_TOOLS)
+    rules = agent.ARM_RULES
+    assert rules.index("Stabilize: fw_rollback") < rules.index("Repair:") < rules.index("acceptable end state")
+    assert "In this run that is the fix" not in rules and "person will repair the release" not in rules
+    briefing = (agent.FIRMWARE / "healer" / "SYSTEM.md").read_text()
+    assert "No robot arm is attached" not in briefing
+    assert briefing.index("stabilize first") < briefing.index("Then repair forward")
+
+
+def test_stabilize_first_is_enforced_when_the_run_starts_on_a_bad_release(tmp_path):
+    good = {"ok": True, "result": "ok", "checks": [], "image": {"crc": "GOOD1234", "version": "v1.0", "status": "known-good"}}
+    b = bench_with_system()
+    b.results |= {"chip_status": {"crc": "REL56789"}, "fw_rollback": good,
+                  "fw_images": {"images": [{"crc": "GOOD1234", "version": "v1.0", "status": "known-good"},
+                                           {"crc": "REL56789", "version": "v1.8", "status": "candidate"}]}}
+    d = ScriptedDriver([turn(("src_edit", {"path": "src/x.c", "old": "a", "new": "b"}), ("fw_build", {}),
+                             ("fw_flash", {"image": "REL56789"}), ("src_read", {"path": "src/x.c"})),
+                        turn(("fw_rollback", {})), turn(("src_edit", {"path": "src/x.c", "old": "a", "new": "b"})),
+                        turn(text="done")])
+    s = agent.run_agent(b, d, tmp_path, kickoff="go")
+    assert s["out_of_order"] == 3 and not s["started_stable"] and s["flashes_allowed"] == 1
+    assert all("stabilize first" in r[2] for r in d.results[0][:3]) and not d.results[0][3][3]   # reads still run
+    assert [c[0] for c in b.calls if c[0] in ("src_edit", "fw_build", "fw_flash", "fw_rollback")] == ["fw_rollback", "src_edit"]
+
+
+def test_nothing_is_enforced_when_the_run_starts_on_known_good_or_unknown(tmp_path):
+    b = bench_with_system()                             # chip_status gives no crc: unknown, so not enforced
+    d = ScriptedDriver([turn(("src_edit", {"path": "src/x.c", "old": "a", "new": "b"}), ("fw_build", {})), turn(text="ok")])
+    s = agent.run_agent(b, d, tmp_path, kickoff="go")
+    assert s["out_of_order"] == 0 and s["started_stable"]

@@ -1,0 +1,9 @@
+{# The numbers across the top of the timeline. Needs `overview`. #}
+<ul class="kpis" aria-label="Overview">
+  <li class="kpi"><span class="kpi-n">{{ overview.healthy }}<span class="kpi-of">/{{ overview.devices }}</span></span><span class="kpi-l">devices healthy</span></li>
+  <li class="kpi"><span class="kpi-n">{{ overview.incidents }}</span><span class="kpi-l">incidents shown</span></li>
+  <li class="kpi kpi-good"><span class="kpi-n">{{ overview.fixed }}</span><span class="kpi-l">fixed by the agent</span></li>
+  <li class="kpi{% if overview.broken %} kpi-bad{% endif %}"><span class="kpi-n">{{ overview.broken }}</span><span class="kpi-l">still broken</span></li>
+  <li class="kpi{% if overview.help %} kpi-warn{% endif %}"><span class="kpi-n">{{ overview.help }}</span><span class="kpi-l">requests for help</span></li>
+  {% if overview.working %}<li class="kpi kpi-wait"><span class="kpi-n"><span class="pulse" aria-hidden="true"></span>{{ overview.working }}</span><span class="kpi-l">agent working now</span></li>{% endif %}
+</ul>

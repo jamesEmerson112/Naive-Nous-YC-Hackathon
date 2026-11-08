@@ -44,6 +44,9 @@ James and Kent each run a Claude session that posts what they're working on here
 - Edit only your own block. The `team-status` and `romulus-sync` blocks belong to James and Kent.
 - Before you start something big, check here that nobody else already has it.
 
+### Cloud work: use the agent run schema (from Olir, Sun Nov 8 ~5 AM)
+The real pod now sends each heal-agent run to the cloud as an **agent run report**: APIs doc §3.11, table `agent_runs`, contract `AgentRunReport`, sent by `tools/edge_bridge` (on `full-test-3` at `5ac13d7`). That's the format real agent logs arrive in. Any remaining cloud work that needs what an agent did (Fleet Doctor evidence, datasets and exports, work-order cards, the digest) reads it from `agent_runs`, not from the fake arms' `Incident.agent` or `agent_trace`. Test with real-shape run data from `edge_bridge.fake_healer`, not hand-written dicts. Details: [`cloud/CLAUDE.md`](cloud/CLAUDE.md), "Real device data". The laptop cloud holds real runs, so never `make reset` it.
+
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
 _Kent's session refreshes this every 10 min · Last synced: Sun Nov 8, 3:00 AM PST · write notes outside the markers_

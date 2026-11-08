@@ -35,6 +35,7 @@ from pydantic import BaseModel, ValidationError
 from fake_device.scenarios import D1_CODE_PATCH
 from romulus_contracts import (
     SHA256_HEADER,
+    AgentRunReport,
     CheckIn,
     DoctorAsk,
     IncidentReport,
@@ -63,6 +64,7 @@ ROUTES: list[tuple[str, re.Pattern[str], str]] = [
     ("POST", re.compile(_DEV + r"/doctor/ask"), "doctor_ask"),
     ("GET", re.compile(_DEV + r"/proposals/(?P<proposal>[^/]+)"), "proposal"),
     ("POST", re.compile(_DEV + r"/proposals/(?P<proposal>[^/]+)/result"), "proposal_result"),
+    ("PUT", re.compile(_DEV + r"/agent-runs/(?P<run>[^/]+)"), "agent_run"),
 ]
 
 
@@ -154,6 +156,9 @@ class FakeCloud:
         self.overlays: list[tuple[str, str, dict[str, Any]]] = []
         self.recordings: dict[str, dict[str, Any]] = {}
         self.blobs: dict[str, bytes] = {}
+        self.agent_runs: dict[
+            tuple[str, str], dict[str, Any]
+        ] = {}  # (device, run_id) -> newest body
 
         # Fleet Doctor
         self.advice: dict[str, Any] = dict(CANNED_ADVICE)
@@ -309,6 +314,14 @@ class FakeCloud:
         raw, _ = self._parse(request, OverlayStatus)
         self.overlays.append((device, overlay, raw))
         return httpx.Response(204)
+
+    def _agent_run(self, request, device, run):
+        raw, report = self._parse(request, AgentRunReport)
+        if report.run_id != run:
+            return _error(422, "invalid_payload", "run_id in the body doesn't match the URL")
+        created = (device, run) not in self.agent_runs
+        self.agent_runs[(device, run)] = raw
+        return httpx.Response(200, json={"run_id": run, "created": created, "stored": True})
 
     def _recordings(self, request, device):
         raw, meta = self._parse(request, RecordingMeta)

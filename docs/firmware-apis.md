@@ -366,7 +366,7 @@ POST /v1/devices {"id":"pod-1","kind":"real","device_class":"sensor_pod","by":"โ
    5. The arm resumes.
    6. The edge bridge sends the incident with `outcome fw_rollback/ops`.
    7. It shows on Romulus's timeline.
-9. **`agent_trace` carries no model messages yet.** The harness writes `transcript.jsonl` that the bridge could attach (`translate.py:66-69`).
+9. **`agent_trace` carries no model messages.** Since Nov 8 (`5ac13d7`) the bridge sends each run's `transcript.jsonl` as an agent run report instead (APIs ยง3.11), with the model's thinking per step; `agent_trace` still holds only tool calls and notes.
 
 ## 16. Data: what exists, what's coming, where it goes
 

@@ -627,7 +627,7 @@
       "properties": {
         "image": {
           "type": "string",
-          "description": "crc from fw_build/fw_images, 'known-good', 'latest'"
+          "description": "crc from fw_build/fw_images, 'known-good', 'latest', or a version such as 'v1.0'"
         },
         "watch_seconds": {
           "type": "number",
@@ -649,7 +649,7 @@
   },
   {
     "name": "fw_rollback",
-    "description": "Flash the known-good image (or another image) back, with the same verification as fw_flash.",
+    "description": "Flash the known-good image (or another image) back, with the same verification as fw_flash. Flashing the image that is already running changes nothing.",
     "risk": "flash",
     "input_schema": {
       "type": "object",

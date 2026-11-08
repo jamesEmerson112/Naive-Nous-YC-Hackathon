@@ -43,6 +43,11 @@ def main(argv: list[str] | None = None) -> None:
         help="this pod's device id in the cloud; default %(default)s",
     )
     ap.add_argument(
+        "--runs",
+        default=os.environ.get("HARNESS_RUNS"),
+        help="the heal agent's run folders ($HARNESS_RUNS, else <healer>/../harness/runs)",
+    )
+    ap.add_argument(
         "--state-dir",
         default="data/edge_bridge",
         help="state and outbox live in <state-dir>/<device-id>/; default %(default)s",
@@ -91,8 +96,15 @@ def main(argv: list[str] | None = None) -> None:
             state_dir / "state.json",
             timing,
             backfill_s=args.backfill_hours * 3600,
+            runs_dir=Path(args.runs) if args.runs else None,
         )
-        log.info("bridging %s → %s as %s", paths.var, args.url, args.device_id)
+        log.info(
+            "bridging %s and agent runs in %s → %s as %s",
+            paths.var,
+            bridge.runs_dir,
+            args.url,
+            args.device_id,
+        )
         ticks = 0
         try:
             while args.ticks is None or ticks < args.ticks:

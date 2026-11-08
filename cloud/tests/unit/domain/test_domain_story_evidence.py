@@ -53,7 +53,7 @@ def test_received_recording_is_an_evidence_step():
     assert s.chain == "camera_occluded → evidence: log window"
     step = s.steps[1]
     assert step.evidence == _ev(False)
-    assert step.line == "Evidence from arm-1: log_window (mcap, 2.0 KB)."
+    assert step.line == "Evidence from arm-1: logs around the fault (mcap, 2.0 KB)."
     assert s.steps[0].evidence is None
 
 
@@ -105,8 +105,9 @@ def test_linked_line_names_added_labels():
     )
     s = build_story([linked], INC)
     assert s.steps[0].line == (
-        "The log_window recording was linked to this incident; labels added: kind:camera_occluded."
+        "Filed logs around the fault under this incident; labels added: kind:camera_occluded."
     )
+    assert s.steps[0].bookkeeping
     assert s.chain == ""
 
 

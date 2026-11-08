@@ -1,0 +1,9 @@
+# Layered on compose.yaml by server/cloud_up.sh: publish the cloud API on loopback (for this
+# laptop: dashboard, CLI, fake devices) and on the Ethernet address the Pi reaches, but not on
+# Wi-Fi. The device API has no auth yet (architecture §10), so it stays off shared networks.
+# ETH_IP is filled in by cloud_up.sh.
+services:
+  api:
+    ports: !override
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+      - "${ETH_IP:?set ETH_IP}:${API_PORT:-8000}:8000"

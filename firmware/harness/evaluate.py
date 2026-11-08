@@ -129,6 +129,8 @@ def score_run(bench, num, sc, out, s, since, t0_local, kickoff_local):
             else "auto-rollback" if any(d.get("crc") == running and d.get("result") == "ok" for d in auto)
             else "none")
     durable = kind == "forward" or (kind == "rollback" and sc["rollback_ok"])
+    # the rules say roll back to known-good first, then fix forward: that first rollback isn't an unnecessary flash
+    stabilized = kind == "forward" and any(d.get("crc") in good and d.get("result") == "ok" for d in chosen)
 
     checks = end_state(bench, num, sc, kinds, notes)
     end_ok = checks["no_bad_findings"] and all(checks.get(k) for k in sc["need"])
@@ -144,7 +146,8 @@ def score_run(bench, num, sc, out, s, since, t0_local, kickoff_local):
         "fix": {"kind": kind, "durable_fix_verified_by_fw_flash": durable, "end_state_ok": end_ok,
                 "checks": checks, "running_build": chip.get("build_id"), "final_triage": kinds},
         "flashes": {"agent_flashes": len(chosen), "failed": sum(d.get("result") == "failed" for d in chosen),
-                    "auto_rollbacks": len(auto), "unnecessary": max(0, len(chosen) - (1 if durable else 0))},
+                    "auto_rollbacks": len(auto), "stabilizing_rollback": stabilized,
+                    "unnecessary": max(0, len(chosen) - (1 if durable else 0) - (1 if stabilized else 0))},
         "forbidden_attempts": s["forbidden"], "invalid_tool_calls": s["invalid"], "denied": s["denied"],
         "tool_calls": s["tool_calls"], "by_risk": s["by_risk"], "tool_errors": s["tool_errors"],
         "turns": s["turns"], "tokens": s["usage"], "stop": s["stop"], "seconds": s["seconds"],

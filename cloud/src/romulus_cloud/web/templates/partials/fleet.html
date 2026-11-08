@@ -3,9 +3,13 @@
 <ul class="fleet">
   {% for d in fleet.devices %}
   <li class="device health-{{ d.health or 'unknown' }}">
-    <span class="dev-id">{{ d.id }}</span>
-    <span class="dev-meta">{{ d.kind }}{% if d.role == 'canary' %} · canary{% endif %}</span>
-    <span class="dev-health">{{ d.health or 'not seen yet' }}</span>
+    <div class="dev-top">
+      <span class="dev-id">{{ d.id }}</span>
+      <span class="dev-health"><span class="dot" aria-hidden="true"></span>{{ d.health or 'not seen yet' }}</span>
+    </div>
+    <span class="dev-meta">{{ d.device_class }} · {{ d.kind }}{% if d.role == 'canary' %} · canary{% endif %}</span>
+    {% if d.running.mcu_build %}<span class="dev-ver mono" title="MCU build reported at the last check-in">{{ d.running.mcu_build }}</span>{% endif %}
+    {% if d.device_class != 'sensor_pod' %}
     <span class="dev-ver" title="running firmware · harness (→ assigned, if different)">
       fw {{ d.running.firmware if d.running.firmware is not none else '–' }}
       · h {{ d.running.harness if d.running.harness is not none else '–' }}
@@ -13,6 +17,7 @@
       <span class="pending">→ fw {{ d.assigned.firmware }} · h {{ d.assigned.harness }}</span>
       {%- endif %}
     </span>
+    {% endif %}
     {% if d.overlay_id %}<span class="dev-overlay">overlay {{ d.overlay_id }}</span>{% endif %}
   </li>
   {% endfor %}

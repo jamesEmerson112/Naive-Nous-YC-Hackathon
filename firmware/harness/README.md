@@ -14,7 +14,7 @@ on top of Olir's `heal` tools. Nothing under `healer/`, `pod/` or `demo/` is cha
 | `view.py` | Replays a saved run through the same view (`python3 view.py` for the newest; `--thinking brief`, `--delay 0.4` for an audience). |
 
 ## Drivers
-- **`ollama`** (the default): a local model, `qwen3.5:4b` with thinking on by default, 32k context, stdlib
+- **`ollama`** (the default): a local model, `qwen3.5:4b` with thinking on by default, 64k context (`--num-ctx`; old thinking is dropped from the history at 75%), stdlib
   only. `--tools core` offers 23 of the 38 tools: every tool the briefing names, plus the source, build and
   flash tools (about 2.3k tokens of schemas instead of 3.4k; the briefing adds 2.5k).
 - **`claude`**: the online fallback, `claude-opus-5-5` through the Anthropic API, effort `high`, summarized
@@ -57,23 +57,36 @@ colour, flash verification, arm jobs with their motion (reflex swings, frames pl
 any run the same way.
 
 ## The arm task (`--tools arm`)
-The robot arm depends on the pod's ultrasonic distance. `--tools arm` offers 17 `heal` tools (observe, read
-the source and history, flash, notify; no edits or builds) plus three harness tools that run `arm/` scripts on
+The robot arm depends on the pod's ultrasonic distance. `--tools arm` offers 21 `heal` tools (observe, read
+the source and history, edit, commit, build, flash, notify) plus three harness tools that run `arm/` scripts on
 the bench:
 - **`arm_run`** launches the arm's job (`safe_replay.py --on-blocked reflex`): only the start gate without
   `--arm-port`, the real motion with it. It returns the log and motion report and is capped at `--arm-cap`
-  runs (default 4).
+  runs (default 5).
 - **`arm_state`** reads the joints from the servo bus without touching torque.
 - **`arm_report`** reports what a job did against its plan.
 
 The system prompt gains the arm rules (`ARM_RULES`):
 - a real obstruction goes to a person;
-- a firmware fault gets `fw_rollback` to known-good;
-- after a fix, the agent launches the job itself and checks the motion report (exit 0, no reflex, every frame
-  played, every joint at its commanded range) before reporting.
+- a firmware fault gets `fw_rollback` to known-good first, and the arm is checked;
+- then the agent may fix the release forward (`src_edit`, `fw_build`, `fw_flash`) and check the arm again; if its
+  build fails any check it rolls back to known-good, which is always an acceptable end state;
+- the agent launches the job itself and checks the motion report (exit 0, no reflex, every frame played, every
+  joint at its commanded range) on the firmware it leaves running, before reporting.
 
-`arm/heal_test.py` is the scenario test: bad release v1.7 → the arm flails → `us_mismatch` → rollback → the
-agent's own job plays the wave. It scores from the bench; see `arm/README.md`.
+These match `healer/SYSTEM.md` "How to work" (stabilize first, then repair forward). Until Nov 8 the two
+disagreed: the briefing asked for a forward fix the arm tools couldn't make, and the small model kept switching
+between them.
+
+`arm/heal_test.py` is the scenario test. The steps:
+1. Bad release v1.8 is deployed, dormant.
+2. The arm loops; a hand comes near the ultrasonic and leaves, and the reading sticks.
+3. The arm flails, and podd opens `us_mismatch`.
+4. The agent rolls back, and its own job plays the wave.
+5. Three more loops prove the fix.
+
+It scores from the bench; see `arm/README.md`. The kickoff for that run also carries one line from the operator
+(`agent.arm_kickoff(..., note=)`).
 
 All runs also get one turn-budget notice, appended to a tool result and marked `[harness: ...]`, when a
 quarter of the turns are left (in `agent.py`, `budget_notice`).
@@ -82,7 +95,12 @@ quarter of the turns are left (in `agent.py`, `budget_notice`).
 - **Only the tools.** No shell. The model sees `system_info` (plus a few operating rules), the tool list
   and a neutral kickoff built from `heal incidents`.
 - **Gate:** `read`, `runtime`, `code` and `notify` are allowed; `flash` (`fw_flash`, `fw_rollback`) is capped
-  at 3 per run. Unknown tools are refused as invalid. Refused as forbidden: `pod_cmd inject ...`, paths
+  at 5 per run (`--flash-cap`). A flash that fails before it writes the chip (an unknown image name) is refunded;
+  a flash of the image this run already flashed and verified is refused as `redundant`, uncounted.
+- **Stabilize first, enforced:** if the run starts on an image that isn't known-good (`chip_status` against
+  `fw_images`), `code` tools and flashes of anything but known-good are refused as `out_of_order` until a
+  verified rollback to known-good, and with the arm tools until an `arm_run` passes on it. The rules alone
+  weren't enough: in the first `--sim` rehearsal qwen3.5:4b went straight to a forward fix. Unknown tools are refused as invalid. Refused as forbidden: `pod_cmd inject ...`, paths
   outside the workspace, image paths instead of crcs (they would let `fw_*` read `demo/`), and revisions
   starting with `-` (git would read them as options). Refusals go back to the model as `is_error` results.
 - **Calls:** one at a time in the model's order, 180 s timeout, results capped at 30k characters keeping

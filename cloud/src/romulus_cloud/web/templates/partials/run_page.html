@@ -1,0 +1,8 @@
+{# One agent run on its own page (no incident, or opened from a link). Needs `run`, `device`. #}
+{% if device %}
+<p class="device-now card health-{{ device.health }}{% if device.stale %} is-stale{% endif %}"><span class="dot" aria-hidden="true"></span>
+  <span><strong>{{ device.id }} right now:</strong> {{ device.health }} · running <span class="mono">{{ device.build }}</span> · last check-in {{ device.seen }}</span></p>
+{% endif %}
+{% if run.problem %}<p class="problem card"><span class="why-label">Problem</span> {{ run.problem }}</p>{% endif %}
+{% if run.incident_ids %}<p class="muted">Incident{{ 's' if run.incident_ids | length > 1 }}: {% for i in run.incident_ids %}<a href="/incidents/{{ i }}">{{ i[:8] }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+{% include "partials/run.html" %}

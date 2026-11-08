@@ -245,6 +245,14 @@ def _motion_lines(r):
         out.append(("byellow", "reflex: %s swings, %s direction changes, base %s° (home %s°)%s" % (
             x.get("swings"), x.get("direction_changes"), x.get("base_measured_range_deg"), x.get("base_home_deg"),
             ", cleared" if x.get("cleared") else ", never cleared")))
+    for p in ((r.get("watch") or {}).get("pauses") or [])[:4]:
+        out.append(("byellow" if p.get("outcome") != "cleared" else None,
+                    "paused in loop %s (%s): %s, %s" % (p.get("loop"), p.get("phase"), "object at %s mm" % p.get(
+                        "nearest_mm") if p.get("nearest_mm") is not None else p.get("state"), p.get("outcome"))))
+    lp = r.get("loops") or {}
+    if lp:
+        out.append(("bgreen" if lp.get("done") == lp.get("planned") else "bred",
+                    "loops: %s of %s" % (lp.get("done"), lp.get("planned"))))
     pb = r.get("playback") or {}
     if pb.get("frames_planned"):
         style = "bgreen" if pb.get("complete") else "bred"

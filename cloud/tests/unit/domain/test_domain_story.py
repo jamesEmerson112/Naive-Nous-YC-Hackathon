@@ -73,7 +73,7 @@ def test_lines_labels_and_chain_for_the_f2_path():
     lines = [st.line for st in s.steps]
     assert lines[0] == "arm-1 reported camera_occluded: Frames went dark"
     assert lines[1] == (
-        "The agent on arm-1 did: safe_pose, {'tool': 'patch'}. It resolved it with safe_pose; "
+        "The agent on arm-1 did: safe_pose, patch. It resolved it with safe_pose; "
         "suspected cause: software."
     )
     assert lines[2] == "The agent patched arm-1 locally as overlay ov-12: rules camera_occluded."

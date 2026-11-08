@@ -12,6 +12,7 @@
 - **Auth:** none in v0. The platform is reachable only on the bench network (D1; architecture §10).
 - **IDs:**
   - Incident and recording IDs are **UUIDs made on the device**, so a retry repeats the same request and creates nothing new (D8).
+  - Agent run IDs are also made on the device, but they're not UUIDs: the harness's run folder name, e.g. `20261108-021246-arm08-ollama` (§3.11). They're unique per device, so the key is `(device_id, run_id)`.
   - The server makes other IDs: `ov_`, `cand_`, `wo_`, `ds_`, `exp_`, `evt_`, and for the Fleet Doctor `ask_` and `prop_` (§2.11–§2.12). Overlay IDs are an exception: the device makes them and the server stores them as given.
 - **Versions:** integers that go up within each fleet. Firmware and harness versions are **never edited** (D3, D4). Retiring one hides it from new assignments.
 - **Time:** UTC ISO 8601. Each device-reported object carries `occurred_at` (or `started_at`), and the server adds `received_at`.
@@ -233,6 +234,7 @@ The STM32 sensor pod's healer doesn't call this API itself. [`tools/edge_bridge`
 - **Device:** registered once as `{"kind": "real", "device_class": "sensor_pod"}` (`POST /v1/devices`), so it's assigned no arm firmware. Check-ins send `kind: "real"`, `running.mcu_build` as `<version>@<CRC>` (e.g. `v1.1@32ACFDAF`, the healer's image registry key), metrics named `pod_*`, and `health_detail` with podd's link state and open incidents.
 - **Incidents:** one per fault, sent once it's over. `kind` is podd's triage finding (`crash`, `acc_error`, `clock_skew`, …). `overlay` is always `null`. Extra fields: `source: "podd"`, `podd_incidents` (podd's own records), `deployments` and `notifications` from the fault, `firmware_patch` (the flashed image and its source diff, evidence only) and `bridge` (`reason`: `resolved`, `handed_off` or `timed_out`).
 - **Recordings:** `log_window` and `agent_trace`, both with `format: "jsonl"`, not MCAP. Each `log_window` row is a podd log record plus `"log": "telemetry" | "health" | "events"`. Each `agent_trace` row is a heal-tool call (`"source": "audit"`) or an agent note (`"source": "note"`).
+- **Agent runs (§3.11):** one report per heal-agent run in `firmware/harness/runs/<run>/`, built from its `transcript.jsonl` and, once the bench has checked it, `score.json`. It carries the model's thinking per step, which the incident and its recordings don't. The run is tied to its incident through podd's incident ids at the run's start; a `--sim` rehearsal is tied to none.
 
 The full mapping is in the docstring of `tools/edge_bridge/src/edge_bridge/translate.py`.
 
@@ -252,10 +254,41 @@ The full mapping is in the docstring of `tools/edge_bridge/src/edge_bridge/trans
 | 3.8 | `POST /v1/devices/{device_id}/doctor/ask` | §2.11 → `200` §2.11 response | Fleet Doctor L1. A direct call, not queued; the device treats any non-200 as "no answer". `503 doctor_off` (Doctor mode off), `409 fleet_frozen`, `429 doctor_cap` (asks per incident, asks per device per day, or daily spend), `504 doctor_timeout`, `502 doctor_unavailable` (LLM) |
 | 3.9 | `GET /v1/devices/{device_id}/proposals/{proposal_id}` | → §2.12, with header `X-Sha256` over the exact body bytes | Fleet Doctor L2. `404 unknown_proposal` (also when it belongs to another device), `410 proposal_gone` (no longer offered, expired, or held back by the cloud's serve-time safety checks: Doctor off, safety paths unconfirmed or covering the patch, or a stub check not allowed), `409 fleet_frozen` |
 | 3.10 | `POST /v1/devices/{device_id}/proposals/{proposal_id}/result` | §2.13 → `204`, or `200` for an identical resend | `404 unknown_proposal`, `409 proposal_result_conflict` (a different result than the one recorded), `422` if `applied` has no `overlay_id` |
+| 3.11 | `PUT /v1/devices/{device_id}/agent-runs/{run_id}` | §3.11 → `200 {"run_id", "created", "stored"}` | One heal-agent run's whole report, sent again whenever it changes. Idempotent on `(device_id, run_id)`. `422 invalid_request` if the body's `run_id` isn't the one in the URL. Optional: a device that never sends one loses nothing |
+| 3.11r | `GET /v1/devices/{device_id}/agent-runs/{run_id}` | → the newest report, plus `device_id`, `state`, `status`, `incident_ids` and `received_at` as the cloud filed them | For operators and the pages. `404 not_found` for an unknown run |
 
-**Device rules:** everything in 3.4–3.7 and 3.10 is queued on disk and retried with backoff while the cloud is unreachable (D8). Incidents and their recordings may arrive in either order; the cloud links them (M4).
+**Device rules:** everything in 3.4–3.7 and 3.10 is queued on disk and retried with backoff while the cloud is unreachable (D8). Incidents and their recordings may arrive in either order; the cloud links them (M4). A 3.11 report isn't queued: each one is a full snapshot, so the device builds and sends it again on its next tick until it's accepted.
 
-**Errors:** a `contract_version` outside the supported list → `400 unsupported_contract_version` (required on 3.1, optional elsewhere). Routes 3.4–3.7a and 3.8 from a device that never checked in → `404 unknown_device`; the first check-in registers a device.
+**Errors:** a `contract_version` outside the supported list → `400 unsupported_contract_version` (required on 3.1, optional elsewhere). Routes 3.4–3.7a, 3.8 and 3.11 from a device that never checked in → `404 unknown_device`; the first check-in registers a device.
+
+### 3.11 Agent run report
+
+`romulus_contracts.AgentRunReport` (`packages/contracts/src/romulus_contracts/agentrun.py`). What one heal-agent run did, written for people: the incident page and the run page are built from it. It's an optional addition to v0.1, so `CONTRACT_VERSION` doesn't change (D28).
+
+**Required:** `run_id` (1–200 characters of `A-Z a-z 0-9 . _ : -`), `state` (`running` | `finished`) and `started_at`. Everything else is optional, and every object below is free-form JSON (unknown fields are kept), so the device can add detail without a contract change.
+
+| Field | What the edge bridge sends (the shape the dashboard reads) |
+|---|---|
+| `ended_at`, `updated_at` | When the run stopped; when this report was built. The cloud keeps the report with the newest `updated_at` |
+| `agent` | `model`, `driver`, `label`, `tools` (how many were offered), `arm` (what the arm tools drive) |
+| `sim` | `true` for a rehearsal (`arm/heal_test.py --sim`) |
+| `incident_ids` | The device's incident UUIDs (§2.5) this run worked on |
+| `incident_window` | `[from, to]` instead, when the device couldn't name the incident: the cloud ties the device's incidents whose `occurred_at` falls inside it, including ones that arrive later |
+| `problem` | `text` (one paragraph), `incidents` (podd's, with `kind`), `kickoff` (the first message the model got) |
+| `outcome` | `status` (`working` \| `fixed` \| `broken` \| `unknown`), `headline` (one sentence), `reasons`, `problems`, `caveats`, `verified_by` (where the status came from: `bench`, the bench's own check; `device_check`, the harness's check at the end; `agent`, the agent's own last checks), `running` (the image on the chip at the end) |
+| `writeup` | `summary`: labelled paragraphs (`Problem`, `Investigation`, `Noticed`, `Actions`, `Result`), each `{"label", "text"}`; `report` (the agent's own final words, Markdown); `stop` (`end_turn`, `max_tokens`, `context_full`, …) and `stop_text` (the same in words) |
+| `steps` | One per tool call: `n`, `turn`, `at`, `phase`, `tool`, `args`, `risk`, `gate` (`allow` or `deny`), `ok`, `action` (the call in words), `effect` (what came back, in words), `excerpt` (the start of the raw result), `thought` (the model's thinking before the call), `said` (any text it wrote), `seconds` |
+| `firmware` | Every image the run touched, in order. Each: `event` (`running_at_start`, `flashed`, `rolled_back`, `flash_failed`, `auto_rolled_back`, `built`, `build_failed`), `image` (`version`, `crc`, `status`, `origin`, `build_id`), `label`, `step`, `at`, `tool`, `reason` (the agent's), `checks` (the flash verification, each `{"check", "ok", "detail"}`), `flashed`, `error`, `bad`, `verdict`, `evidence` (later steps that showed whether it works), `running_at_end` |
+| `help_requests` | `to` (`person` \| `expert_model`), `source` (`agent`, or `harness` when a finished run left the device unfixed), `summary`, `detail`, `severity`, `step`, `at` |
+| `stats` | `turns`, `tool_calls`, `refused`, `flashes`, `arm_runs`, `tokens_in`, `tokens_out`, `seconds` |
+| `verification` | The bench's own check of the result (`score.json`), when there is one: `passed`, `checks`, and what it measured |
+| `source` | Where the report was built from, e.g. `firmware/harness transcript.jsonl + score.json` |
+
+**How the cloud stores it** (`services/agent_runs.py`, table `agent_runs`, key `(device_id, run_id)`):
+- The newest report is kept verbatim. An older one (by `updated_at`) is ignored, and so is one that would take a `finished` run back to `running`; both answer `stored: false`.
+- `status` is `working` while the run is `running`. Once it's `finished` it's `outcome.status`, or `unknown` if that's missing or invalid.
+- Incident links are only ever added, never dropped. An incident that arrives after its run (§3.5) is tied by its `incident_window`.
+- Each change writes one `agent.*` event (§5), so an incident's story reads as news, not as one line per upload.
 
 ## 4. Operator routes
 
@@ -309,8 +342,9 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 
 | Route | Page |
 |---|---|
-| `GET /` | Incident timeline (D10) |
-| `GET /incidents/{id}` | One incident's story, with evidence links |
+| `GET /` | Incident timeline (D10): counts, fleet, incidents with their agent's outcome, and agent runs tied to no incident (rehearsals, runs started with nothing open) |
+| `GET /incidents/{id}` | One incident's story, with evidence links, and a card for each agent run that worked on it (§3.11): outcome, firmware, requests for help, write-up, every step |
+| `GET /agent-runs/{device_id}/{run_id}` | One agent run on its own page, for runs tied to no incident |
 | `GET /data` | Recordings, labels, datasets (M6) |
 | `GET /versions` | Firmware, harness and candidates (P2) |
 
@@ -322,6 +356,7 @@ Every event has `actor`, `kind`, `refs` and `why` (v0 plan §4).
 |---|---|
 | Devices | `device.first_seen`, `device.registered`, `device.assigned`, `device.updated`, `device.running_changed`, `device.health_changed`, `device.overlay_changed`, `install.reported` |
 | Versions | `firmware.version_created`, `harness.version_created`, `code.version_created` |
+| Agent runs (§3.11; each carries `refs.device` and `refs.agent_run`, plus `refs.incident` once the run is tied to one, and `refs.incidents` when there are several) | `agent.run_started` (the first report of a run), `agent.help_requested` (each new request for a person or a stronger model; actor `harness` when the harness raised it), `agent.run_finished` (the run stopped, with its outcome in `data`), `agent.outcome_changed` (a later report changed a finished run's outcome, e.g. the bench checked it), `agent.run_linked` (an incident was tied to the run after its first report) |
 | Incidents | `incident.reported`, `incident.agent_acted`, `overlay.applied`, `overlay.held`, `overlay.reverted`, `overlay.superseded`, `overlay.locked_in`, `overlay.dropped` |
 | Batch and gate (events for overlays and candidates whose diff touches safety-layer or visor paths carry `touches_safety: true` in `refs`; D5a, K17) | `batch.requested`, `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.restarted` (unfrozen; back to replay), `candidate.awaiting_canary`, `candidate.awaiting_verify` (a coder or Doctor code candidate with no held-out verify scripts waits in replay; once per candidate), `candidate.unverified` (warning: passed on in-process tests alone because `CODER_ALLOW_UNVERIFIED=true`), `candidate.stale` (its base was replaced; its overlays go back to `held`), `candidate.error`, `batch.error`, `overlay.deferred` (stays held for the next batch), `overlay.requeued`, `overlay.lockin_rolled_back` and `overlay.lockin_error` (sticky cloud statuses; the device keeps its fix). A candidate folded from several incidents lists them in `refs.incidents` |
 | Coding agent (D21) | `coder.started`, `coder.drafted`, `coder.tests_passed`, `coder.tests_failed`, `code.version_created` |

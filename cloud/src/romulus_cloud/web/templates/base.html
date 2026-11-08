@@ -9,9 +9,14 @@
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="/">Romulus <span>incident timeline</span></a>
-    <a class="nav" href="/data">Data</a>
-    {% include "partials/killswitch.html" %}
+    <div class="top-inner">
+      <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>Romulus <span>self-healing fleet</span></a>
+      <nav class="nav-links" aria-label="Pages">
+        <a class="nav" href="/">Incidents</a>
+        <a class="nav" href="/data">Data</a>
+      </nav>
+      {% include "partials/killswitch.html" %}
+    </div>
   </header>
   <p id="killswitch-result" class="switch-result" role="status" aria-live="polite"></p>
   <p id="stale" class="stale" role="alert" hidden></p>
@@ -66,6 +71,19 @@
   document.body.addEventListener("htmx:responseError", markStale);
   document.body.addEventListener("htmx:afterRequest", (ev) => {
     if (ev.detail.successful) { staleSince = null; stale.hidden = true; }
+  });
+
+  // Polling swaps the HTML every 3 s; keep every section the reader opened or closed as they left it.
+  const opened = {};
+  document.addEventListener("toggle", (ev) => {
+    const d = ev.target;
+    if (d.tagName === "DETAILS" && d.id) opened[d.id] = d.open;
+  }, true);
+  document.body.addEventListener("htmx:afterSwap", () => {
+    for (const [id, open] of Object.entries(opened)) {
+      const d = document.getElementById(id);
+      if (d && d.open !== open) d.open = open;
+    }
   });
   </script>
 </body>
