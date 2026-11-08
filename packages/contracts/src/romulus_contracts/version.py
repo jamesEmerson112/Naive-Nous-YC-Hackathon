@@ -2,8 +2,13 @@
 
 Every device request carries `contract_version`. The server accepts the current
 version and the one before it, so a device one release behind keeps working.
-Bump `CONTRACT_VERSION` (and set `PREVIOUS_CONTRACT_VERSION` to the old value)
-on every contract change, and update docs/cloud-platform-planning/cloud-platform-apis.md.
+
+When to bump (D28): only breaking changes bump `CONTRACT_VERSION` (a removed or
+renamed field, a new required field, or a changed meaning); set
+`PREVIOUS_CONTRACT_VERSION` to the old value so the server keeps accepting it.
+Optional, additive changes don't bump it. Every contract change, bump or not,
+updates docs/cloud-platform-planning/cloud-platform-apis.md and gets a note to
+the device teammate.
 """
 
 CONTRACT_VERSION = "0.1"

@@ -5,9 +5,9 @@
 - **Status:** proposal v2, Sat Nov 7 ~6:20 PM PST.
   - Written from five research passes: prior art, connectivity, escalation and learning, verification and safety, and an audit of our own repo.
   - Revised once after a red-team review.
-  - Nothing is decided; the decisions requested are D23–D27 in [`strategy.md`](strategy.md) §6.
+  - **Decided Sat Nov 7 ~7:45 PM PST** (Kent; [decision log](../cloud-platform-planning/cloud-platform-decisions.md), round 3): D23–D26 accepted as proposed in [`strategy.md`](strategy.md) §6; D27 (L3 live sessions) deferred, with only the typed device-tool contract built now; D28 settles the contract version rule (strategy §7, question 3).
 - **Owners:** Kent (cloud) and Ishaan (device healer).
-- **Priority:** P2 under the cloud build plan. Nothing gets built tonight; L1 only once every P0 flow and every P1 item is done or blocked.
+- **Priority:** P2 under the cloud build plan. Kent's call supersedes the earlier gating ("nothing tonight; L1 only once every P0 flow and every P1 item is done or blocked"): L1, L2 and Teach get built now, behind `doctor_mode=off` by default, with new tables only. PRs merge to main as they're ready. Build order: [`implementation-plan.md`](implementation-plan.md); seams: [`interfaces.md`](interfaces.md).
 - **Builds on:** the healer (`docs/project-overview.md` §8), the cloud plans (`docs/cloud-platform-planning/`), and the archived Romulus "Fleet Doctor" (`~/git2/docs/archive/ARCHITECTURE.md`).
 
 ## Reading order

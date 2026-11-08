@@ -131,6 +131,6 @@ Also proposed, all declared as optional fields so they appear in the JSON Schema
 
 ## Changing the contract
 
-**Policy:** v0.1 is a draft until the I0 handshake; draft changes are additive and don't bump `CONTRACT_VERSION`; after I0, every change bumps it.
+**Policy (D28):** optional, additive changes don't bump `CONTRACT_VERSION`. Only breaking changes do: a removed or renamed field, a new required field, or a changed meaning.
 
-After I0, a change bumps `CONTRACT_VERSION` (and sets `PREVIOUS_CONTRACT_VERSION` to the old one, so the server keeps accepting it), updates the APIs doc, and goes to the device teammate. Run `uv run pytest packages/contracts` before pushing.
+A breaking change bumps `CONTRACT_VERSION` and sets `PREVIOUS_CONTRACT_VERSION` to the old one, so the server keeps accepting it. Every change, bump or not, updates the APIs doc and goes to the device teammate. Run `uv run pytest packages/contracts` before pushing.

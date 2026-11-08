@@ -14,8 +14,9 @@ v0 plan for the data model, the flows doc for what each flow test proves.
 4. **Every write records an Event** through `events.record(...)`, with a plain-English `why`,
    in the same transaction. `events.record` never commits.
 5. **The LLM never writes merged config.** It writes prose and skills only.
-6. **Contracts are shared.** A change to `romulus-contracts` bumps `CONTRACT_VERSION`, updates
-   the APIs doc, and gets a message to the device teammate.
+6. **Contracts are shared (D28).** Only a breaking change to `romulus-contracts` (removed or
+   renamed field, new required field, changed meaning) bumps `CONTRACT_VERSION`; optional
+   additions don't. Every change updates the APIs doc and gets a message to the device teammate.
 7. **Fakes first.** Every adapter works in fake mode; tests never call Naïve or an LLM.
 8. **Explain it in one sentence**, or don't commit it. Small commits; `git pull --rebase
    origin main` before pushing; no AI co-author lines.
