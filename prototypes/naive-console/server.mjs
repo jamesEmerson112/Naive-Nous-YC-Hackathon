@@ -20,7 +20,10 @@ const ORIGIN = `http://${HOST}:${PORT}`;
 const SESSION_CAP_USD = "1.00";
 const HERMES = process.env.HERMES_BIN ?? join(homedir(), ".local/bin/hermes");
 // Hermes may call Naïve's MCP tools only: no terminal, files, browser or web on this machine.
-const HERMES_TOOLSETS = "naive";
+// Hermes names an MCP server's toolset `mcp-<server>`; our server is `naive` in ~/.hermes/config.yaml.
+const HERMES_TOOLSETS = "mcp-naive";
+// `hermes chat --reasoning` levels. Naïve agents (pi) have no effort setting, so this is Hermes-only.
+const REASONING_LEVELS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const PAGE = new URL("./index.html", import.meta.url);
 
 /** Run the naive CLI with fixed args (no shell) and return parsed JSON stdout. */
@@ -153,13 +156,16 @@ async function runHermes(req, res) {
   // Optional model to match the pi agent (e.g. gpt-6-sol); otherwise Hermes's configured default.
   const model = got.body.model == null ? "" : String(got.body.model);
   if (model && !/^gpt-[0-9a-z.\-]{1,40}$/.test(model)) return send(res, 400, { error: "unsupported Hermes model" });
+  // Optional reasoning effort (Hermes's --reasoning levels); empty means Hermes's default (medium).
+  const effort = got.body.effort == null ? "" : String(got.body.effort);
+  if (effort && !REASONING_LEVELS.has(effort)) return send(res, 400, { error: "unsupported reasoning effort" });
   stream(
     req,
     res,
     HERMES,
     // --ignore-rules: no AGENTS.md, memory or skills injected, so the run is comparable.
     ["chat", "-q", got.message, "--oneshot", "--format", "stream-json", "--source", "tool", "--ignore-rules", "-t", HERMES_TOOLSETS,
-      ...(model ? ["-m", model] : [])],
+      ...(model ? ["-m", model] : []), ...(effort ? ["--reasoning", effort] : [])],
     { cwd: tmpdir() },
     (line, write) => {
       if (!line.startsWith("{")) return false;

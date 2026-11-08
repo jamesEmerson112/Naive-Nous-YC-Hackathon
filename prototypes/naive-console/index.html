@@ -67,6 +67,15 @@
   <form id="f">
     <label for="agent">Naïve agent (pi side)</label>
     <select id="agent" required></select>
+    <label for="effort">Hermes reasoning effort <span class="muted">(pi can't change it: Naïve agents always run at the model's default)</span></label>
+    <select id="effort">
+      <option value="">Default (medium)</option>
+      <option value="none">None</option>
+      <option value="low">Low</option>
+      <option value="medium">Medium</option>
+      <option value="high">High</option>
+      <option value="xhigh">Extra high</option>
+    </select>
     <label for="msg">Message</label>
     <textarea id="msg" maxlength="4000" required>Reply with exactly: hello world</textarea>
     <div class="row presets" aria-label="Test prompts">
@@ -265,11 +274,13 @@ function runHermes(message) {
   // Same brain on both sides: an `openai/<id>` pi agent makes Hermes run `<id>` on the ChatGPT plan.
   const piModel = $("agent").selectedOptions[0]?.dataset.model ?? "";
   const model = piModel.startsWith("openai/") ? piModel.slice("openai/".length) : undefined;
-  return streamTo("/api/hermes", { message, model }, (item) => {
+  const effort = $("effort").value || undefined;
+  const effortLabel = `effort ${effort ?? "default"}`;
+  return streamTo("/api/hermes", { message, model, effort }, (item) => {
     if (item.kind === "hermes") {
       const ev = item.event;
       const at = ev.timestamp ? new Date(ev.timestamp).toISOString().slice(11, 19) : "";
-      if (ev.type === "system") { c.sub(`${ev.model} · this Mac (ChatGPT plan)`); c.event("system", ev.model, at); }
+      if (ev.type === "system") { c.sub(`${ev.model} · ${effortLabel} · this Mac (ChatGPT plan)`); c.event("system", ev.model, at); }
       if (ev.type === "text") { c.reply(ev.text ?? "", started); started = true; }
       if (ev.type === "tool_use") { c.tool(ev.name); c.event("tool_use", ev.name, at); }
       if (ev.type === "tool_result") c.event("tool_result", `${ev.name} · ${ev.duration_ms} ms${ev.is_error ? " · error" : ""}`, at);
