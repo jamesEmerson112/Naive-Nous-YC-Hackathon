@@ -7,7 +7,8 @@ TESTDB      := romulus-testdb
 TESTDB_PORT := 55432
 CLI         := $(COMPOSE) exec -T api python -m romulus_cloud.cli
 
-.PHONY: up dev sim down logs test flows testdb seed reset digest export lint fmt
+.PHONY: up dev sim down logs test flows testdb seed reset digest overnight-start overnight-stop \
+	overnight-check export lint fmt
 
 up:  ## db, api, worker
 	$(COMPOSE) up --build -d db api worker
@@ -43,8 +44,17 @@ seed:  ## firmware v1, harness v1, arm-1 + sim-1..3 (M1)
 reset:  ## drop and recreate the db, clear data/ (refused after overnight start unless FORCE=1)
 	$(COMPOSE) exec -T -e FORCE=$(FORCE) api python -m romulus_cloud.cli reset
 
-digest:  ## counts since SINCE from the event log (M7)
+digest:  ## counts since SINCE (ISO or 1h / 12h; default: overnight start, else 12 h) (M7)
 	$(CLI) digest $(if $(SINCE),--since $(SINCE))
+
+overnight-start:  ## mark the overnight run as started in the db; reset then refuses (K7)
+	$(CLI) overnight start --by $(or $(BY),$(USER),operator)
+
+overnight-stop:  ## clear the overnight flag (reset allowed again)
+	$(CLI) overnight stop --by $(or $(BY),$(USER),operator)
+
+overnight-check:  ## preflight before leaving it overnight: PASS/FAIL per check (cloud/OVERNIGHT.md)
+	@bash cloud/scripts/overnight_check.sh
 
 export:  ## build requested dataset exports (M6)
 	$(CLI) export
