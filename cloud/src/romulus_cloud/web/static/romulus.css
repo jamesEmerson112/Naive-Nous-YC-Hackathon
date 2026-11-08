@@ -474,11 +474,6 @@ a.turn:hover { box-shadow: 0 0 0 2px var(--sun), 0 12px 30px color-mix(in oklch,
 .runs-more[open] > summary .icon { transform: rotate(90deg); }
 .runs-more-note { font-size: 0.833rem; margin: 4px 0 12px; }
 
-/* shared? story.html (lane 4) still uses .chain and .summary; no mono costume. */
-.chain { font-size: 0.833rem; color: var(--muted); }
-.chain .link { color: var(--ink-2); }
-.summary { color: var(--ink-2); }
-
 @media (max-width: 52rem) {
   .fleet { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .status-h { font-size: 1.44rem; }
