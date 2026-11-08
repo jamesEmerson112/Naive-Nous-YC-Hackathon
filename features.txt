@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sun Nov 8, 5:00 AM PST from CLAUDE.md, commits and docs/.
+Updated Sun Nov 8, 5:10 AM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -83,6 +83,7 @@ fleet-ops agent: work orders (by 11:30 PM)
 Mobilerun bearer in Naive vault
 Hire Operator, Insights, Roboticist (on hold, N1)
 Naive company agents setup
+Naive TS SDK client + read-only check (naive/) <--- Olir
 Order intake (inbox or form)
 Stripe payment for jobs
 Daily digest and budgets
