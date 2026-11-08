@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -171,3 +172,30 @@ def app(settings, engine, sessions, test_database_url) -> FastAPI:
 def client(app) -> Iterator[TestClient]:
     with TestClient(app) as c:
         yield c
+
+
+# Hop-by-hop or length headers the bridge must not copy; httpx sets its own.
+_BRIDGE_SKIP = {"host", "content-length", "transfer-encoding", "connection", "content-encoding"}
+
+
+@pytest.fixture
+def device_http(client) -> Iterator[httpx.Client]:
+    """A plain `httpx.Client` whose requests reach the real app (via `client`).
+
+    Starlette's TestClient is not built on the `httpx` the fake device imports, so its
+    errors aren't `httpx.HTTPStatusError` and the device's outbox can't handle them. This
+    bridge forwards each request through the TestClient and returns a real
+    `httpx.Response`, so `fake_device`'s DeviceClient, visor and outbox run unmodified.
+    """
+
+    def forward(request: httpx.Request) -> httpx.Response:
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in _BRIDGE_SKIP}
+        path = request.url.raw_path.decode()
+        resp = client.request(request.method, path, content=request.read(), headers=headers)
+        out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in _BRIDGE_SKIP}
+        return httpx.Response(
+            resp.status_code, headers=out_headers, content=resp.content, request=request
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(forward), base_url="http://cloud") as http:
+        yield http

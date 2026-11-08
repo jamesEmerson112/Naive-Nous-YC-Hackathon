@@ -6,7 +6,11 @@ import shutil
 import sys
 from pathlib import Path
 
+from sqlalchemy.orm import Session
+
 from romulus_cloud import db
+from romulus_cloud.adapters.blobstore import build_blobstore
+from romulus_cloud.services.seed import seed as seed_fleet
 from romulus_cloud.settings import Settings, get_settings
 
 
@@ -50,6 +54,21 @@ def reset(settings: Settings, force: bool) -> int:
     return 0
 
 
+def seed(settings: Settings) -> int:
+    """Create code c0de001, firmware v1, harness v1 and the demo devices; safe to repeat."""
+    engine = db.make_engine(settings.database_url)
+    try:
+        db.create_all(engine)
+        with Session(engine) as session:
+            result = seed_fleet(session, build_blobstore(settings.blob_dir), settings.fleet_id)
+            session.commit()
+    finally:
+        engine.dispose()
+    print(f"seed: created {', '.join(result.created) or 'nothing'}", end="")
+    print(f"; already there: {', '.join(result.existing)}." if result.existing else ".")
+    return 0
+
+
 def main(argv: list[str] | None = None, settings: Settings | None = None) -> int:
     parser = argparse.ArgumentParser(prog="romulus_cloud.cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -64,7 +83,7 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> int
         force = os.environ.get("FORCE", "") == "1"
         return reset(settings or get_settings(), force=force)
     if args.command == "seed":
-        return _not_yet("seed", "M1")
+        return seed(settings or get_settings())
     if args.command == "digest":
         return _not_yet("digest", "M7")
     return _not_yet("export", "M6")

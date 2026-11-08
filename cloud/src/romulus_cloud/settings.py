@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     coder_agent: str = ""
     coder_image: str = ""
 
+    # Paths under device/ that count as the safety layer or visor (D5a, K17). A code_patch
+    # touching any of them is flagged `touches_safety`. Placeholder until Ishaan's list.
+    safety_paths: list[str] = ["safety", "visor"]
+
     # Gate and batch timing (demo values; overnight uses 1200 / 3600)
     canary_window_s: int = 120
     batch_interval_s: int = 120

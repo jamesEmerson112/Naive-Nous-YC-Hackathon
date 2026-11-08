@@ -161,6 +161,7 @@ class InstallReport(Base):
     version: Mapped[str]  # int for firmware/harness, rev for code; stored as text
     result: Mapped[str]  # installed | rolled_back | hash_mismatch
     detail: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime | None]  # device clock; with the rest, the retry dedupe key
     received_at: Mapped[datetime]
     raw: Mapped[dict[str, Any] | None] = _raw()
 
@@ -213,7 +214,8 @@ class Overlay(Base):
     diff: Mapped[dict[str, Any] | None]  # rules/params diff
     code_patch: Mapped[str | None] = mapped_column(Text)  # unified diff against base_code_rev
     touches_safety: Mapped[bool] = mapped_column(default=False)  # D5a, K17
-    status: Mapped[str] = mapped_column(default="active")  # active|held|reverted|locked_in|dropped
+    # active | held | reverted | locked_in | dropped | superseded (a new version replaced it)
+    status: Mapped[str] = mapped_column(default="active")
     status_reason: Mapped[str | None] = mapped_column(Text)
     candidate_id: Mapped[str | None]  # set when locked in
     occurred_at: Mapped[datetime | None]
