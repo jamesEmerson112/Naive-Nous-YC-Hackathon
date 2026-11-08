@@ -14,6 +14,7 @@ normalizers (tests and the stage replay).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -88,6 +89,36 @@ class NaiveClient(Protocol):
     def list_comments(self, card_id: str) -> list[dict[str, Any]]:
         """The card's comments, oldest first."""
         ...
+
+
+class SkillPublisher(Protocol):
+    """Fleet learning T1 (docs/recursive-self-improvement/design.md §8-§9): mirror the
+    gate-promoted healer playbook to Naïve Skills, and comment on a board card. `N:<n>` is a
+    line in docs/raw/naive-llms-full.txt."""
+
+    def get_skill(self, slug: str) -> dict[str, Any] | None:
+        """The skill object, or None when the org has no such skill (404)."""
+        ...
+
+    def create_skill(
+        self, *, slug: str, content: str, description: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Create the skill; the create is its first push. Answers a skill version object."""
+        ...
+
+    def push_skill_version(
+        self, skill_id: str, *, content: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Push a new SKILL.md; identical bytes mint nothing. Answers a skill version object."""
+        ...
+
+    def comment_on_card(self, card_id: str, body: str, *, idempotency_key: str) -> dict[str, Any]:
+        """Comment on a card of this client's board. Answers the comment object."""
+        ...
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _check_card(title: str, body: str) -> None:
@@ -298,6 +329,64 @@ class HttpNaive:
             headers={"Idempotency-Key": idempotency_key},
         )
 
+    # --- Fleet learning T1: Naïve Skills and card comments (SkillPublisher) ---
+    # Scope `agents:write` for writes, `agents:read` for reads (N:10707, N:2173). Every mutating
+    # POST takes an Idempotency-Key: same key + same body replays the response (N:9432-9442).
+
+    def get_skill(self, slug: str) -> dict[str, Any] | None:
+        """`GET /v1/skills/{id}` (N:10634-10638); the slug resolves like an id (N:10703, and
+        `push-version` takes "id or slug", N:19026). A 404 `not_found` means no such skill."""
+        try:
+            return self._request_retrying("GET", f"/skills/{slug}")
+        except NaiveError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def create_skill(
+        self, *, slug: str, content: str, description: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """`POST /v1/skills` (N:10591-10632): `{slug, description, content, sha256}`. 201 for a
+        new slug; 200 when the slug exists, applied as a new version. Answers the skill
+        version object `{id, slug, version, sha256, size_bytes, created_at}` (N:10565-10589)."""
+        return self._request_retrying(
+            "POST",
+            "/skills",
+            json={
+                "slug": slug,
+                "description": description,
+                "content": content,
+                "sha256": _sha256(content),
+            },
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
+    def push_skill_version(
+        self, skill_id: str, *, content: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """`POST /v1/skills/{id}/versions` (N:10643-10675): `{content, sha256}`. Identical bytes
+        to the current version mint nothing and answer 200 (N:10645)."""
+        return self._request_retrying(
+            "POST",
+            f"/skills/{skill_id}/versions",
+            json={"content": content, "sha256": _sha256(content)},
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
+    def comment_on_card(self, card_id: str, body: str, *, idempotency_key: str) -> dict[str, Any]:
+        """`POST /v1/boards/{id}/cards/{cid}/comments` → 201 with the comment object
+        (N:2498-2513). `{body}` only, 1-20,000 characters: an `author` field is a 400; the
+        server signs the comment with our key's principal (N:2506). The board may be addressed
+        by the coordinator's `agt_` id (N:2163)."""
+        if not 1 <= len(body) <= BODY_MAX:
+            raise ValueError(f"comment body must be 1-{BODY_MAX} characters, got {len(body)}")
+        return self._request_retrying(
+            "POST",
+            f"/boards/{self.board_id}/cards/{card_id}/comments",
+            json={"body": body},
+            headers={"Idempotency-Key": idempotency_key},
+        )
+
 
 def _error_from(resp: httpx.Response, method: str, path: str) -> NaiveError:
     # Naïve errors are {error: {type, code, message, request_id, param}} (api/errors);
@@ -356,6 +445,8 @@ class FakeNaive:
         self._polls: dict[str, int] = {}
         self._outcomes: dict[str, str] = {}
         self._tick = 0
+        self.skills: dict[str, dict[str, Any]] = {}  # by slug; "versions" holds each SKILL.md
+        self.skill_calls: list[tuple[str, dict[str, Any]]] = []
 
     def _now(self) -> str:
         self._tick += 1
@@ -437,6 +528,78 @@ class FakeNaive:
         if card_id not in self.cards:
             raise NaiveError(f"fake Naïve: no card {card_id}", status=404, code="not_found")
         return [dict(c) for c in self.comments[card_id]]
+
+    # --- Fleet learning T1 (SkillPublisher): skills by slug, every write in `skill_calls` ---
+
+    def get_skill(self, slug: str) -> dict[str, Any] | None:
+        self.skill_calls.append(("get_skill", {"slug": slug}))
+        skill = self.skills.get(slug)
+        if skill is None:
+            return None
+        return {k: skill[k] for k in ("id", "name", "description", "latest_version", "created_at")}
+
+    def _version(self, skill: dict[str, Any], n: int) -> dict[str, Any]:
+        content = skill["versions"][n - 1]
+        return {
+            "id": skill["id"],
+            "slug": skill["name"],
+            "version": n,
+            "sha256": _sha256(content),
+            "size_bytes": len(content.encode()),
+            "created_at": skill["created_at"],
+        }
+
+    def _push(self, skill: dict[str, Any], content: str) -> dict[str, Any]:
+        if not skill["versions"] or skill["versions"][-1] != content:
+            skill["versions"].append(content)  # identical bytes mint nothing (N:10645)
+        skill["latest_version"] = len(skill["versions"])
+        return self._version(skill, skill["latest_version"])
+
+    def create_skill(
+        self, *, slug: str, content: str, description: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        self.skill_calls.append(
+            ("create_skill", {"slug": slug, "content": content, "key": idempotency_key})
+        )
+        skill = self.skills.get(slug)
+        if skill is None:  # an existing slug takes the push as a new version (N:10593)
+            skill = self.skills[slug] = {
+                "id": f"skl_fake{len(self.skills) + 1:04d}",
+                "name": slug,
+                "description": description,
+                "latest_version": 0,
+                "created_at": self._now(),
+                "versions": [],
+            }
+        return self._push(skill, content)
+
+    def push_skill_version(
+        self, skill_id: str, *, content: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        self.skill_calls.append(
+            ("push_skill_version", {"id": skill_id, "content": content, "key": idempotency_key})
+        )
+        skill = next((s for s in self.skills.values() if skill_id in (s["id"], s["name"])), None)
+        if skill is None:
+            raise NaiveError(f"fake Naïve: no skill {skill_id}", status=404, code="not_found")
+        return self._push(skill, content)
+
+    def comment_on_card(self, card_id: str, body: str, *, idempotency_key: str) -> dict[str, Any]:
+        """Any card id is accepted (the INSIGHTS card was not made through this fake)."""
+        self.skill_calls.append(
+            ("comment_on_card", {"card_id": card_id, "body": body, "key": idempotency_key})
+        )
+        thread = self.comments.setdefault(card_id, [])
+        comment = {
+            "id": f"bcm_fake{sum(len(c) for c in self.comments.values()) + 1:04d}",
+            "object": "board_comment",
+            "card_id": card_id,
+            "author": "key_fake",
+            "body": body,
+            "created_at": self._now(),
+        }
+        thread.append(comment)
+        return dict(comment)
 
 
 def build_naive(
