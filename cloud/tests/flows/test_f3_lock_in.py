@@ -185,3 +185,31 @@ def test_llm_error_falls_back_to_templated_text_and_says_so(
         events = client.get(f"/v1/candidates/{c['id']}").json()["events"]
         (created,) = [e for e in events if e["kind"] == "candidate.created"]
         assert "LLM unavailable (proxy returned 502); used templated text instead" in created["why"]
+
+
+def test_an_overlay_already_on_the_canary_does_not_fail_an_unrelated_candidate(
+    client, arms, tick_arms, work, now, count_events
+):
+    """Review finding 3: `bad` on sim-2 rolls its install back, so sim-2 keeps its own
+    overlay. A later, unrelated fix from sim-1 canaries on sim-2 and must still pass."""
+    _start(tick_arms, now)
+    for i, step in enumerate(SCENARIOS["bad"](arms["sim-2"], 0)):
+        step.run(now + (20 + i) * S)
+    tick_arms(now + 30 * S)
+    work(now + 40 * S)
+    work(now + 41 * S)
+    for t in (50, 60, 70):
+        tick_arms(now + t * S)
+        work(now + t * S + S)
+    assert arms["sim-2"].device.overlay is not None  # still there, from its own incident
+    assert count_events("candidate.rolled_back") == 2  # firmware (real) + harness (sibling)
+
+    _held(arms, "code", "sim-1", now + 200 * S)
+    client.post("/v1/batch/run", json={"by": "kent"})
+    for t in range(210, 420, 10):
+        tick_arms(now + t * S)
+        work(now + t * S + S)
+    cands = {c["type"]: c for c in client.get("/v1/candidates").json() if c["version"] == 3}
+    assert cands["harness"]["status"] == "promoted", cands["harness"]["verdict"]
+    assert cands["code"]["status"] == "awaiting_canary"
+    assert count_events("candidate.rolled_back") == 2  # nothing new rolled back

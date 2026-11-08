@@ -4,13 +4,22 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import event as sa_event
 from sqlalchemy import func, select
 
 from romulus_cloud import worker
 from romulus_cloud.adapters.blobstore import build_blobstore
 from romulus_cloud.adapters.coder import FakeCoder
 from romulus_cloud.adapters.llm import FakeLlm
-from romulus_cloud.models import Candidate, Device, Event, FleetState, Incident, Overlay
+from romulus_cloud.models import (
+    Candidate,
+    Device,
+    Event,
+    FirmwareVersion,
+    FleetState,
+    Incident,
+    Overlay,
+)
 from romulus_cloud.services import batch, devices, fleet, gate, registry
 from romulus_cloud.services.seed import FIRMWARE_V1, seed
 from romulus_contracts import CheckIn
@@ -244,10 +253,183 @@ def test_a_waiting_candidate_built_on_an_old_version_goes_stale(db, tools, setti
     for d in devices.list_devices(db):  # what promoting the first one does
         d.assigned_firmware = first.version
     gate.tick(db, T0 + timedelta(seconds=2), settings=settings)
-    assert second.status == "rolled_back"
+    assert second.status == "stale"  # not a failure: the base moved
     assert second.verdict["why"].startswith("stale: built on firmware 1, but the so101 fleet")
+    (ov,) = [db.get(Overlay, (r["device_id"], r["overlay_id"])) for r in second.from_overlays]
+    assert ov.status == "held" and ov.candidate_id is None  # re-batches on the new base
+    assert _count(db, "overlay.requeued") >= 1 and _count(db, "candidate.stale") >= 1
+    made = batch.run(db, T0 + timedelta(seconds=3), tools).candidates
+    fw = next(c for c in made if c.type == "firmware")
+    assert db.get(FirmwareVersion, ("default", fw.version)).parent_version == first.version
 
 
 def test_worker_runs_the_gate_before_the_batch():
     names = [s.name for s in worker.STEPS]
     assert names.index("gate.tick") < names.index("batch.maybe_run")
+
+
+# --- review fixes (PR #12 comment 6715876333) ----------------------------------------------
+
+
+def test_held_overlays_fold_into_one_candidate_per_kind(db, tools):
+    """Finding 4: compatible overlays share one firmware and one harness candidate."""
+    a = _held(db, device="sim-1")
+    b = _held(db, device="sim-3", diff={"params": {"max_speed": 0.5}})
+    made = batch.run(db, T0, tools).candidates
+    assert sorted(c.type for c in made) == ["firmware", "harness"]
+    fw = next(c for c in made if c.type == "firmware")
+    keys = {(r["device_id"], r["overlay_id"]) for r in fw.from_overlays}
+    assert keys == {("sim-1", a.id), ("sim-3", b.id)}
+    manifest = db.get(FirmwareVersion, ("default", fw.version)).manifest
+    assert manifest["rules"]["camera_occluded"]["below"] == 0.35
+    assert manifest["params"]["max_speed"] == 0.5
+    assert a.status == b.status == "locked_in"
+    # Both incidents' stories show the shared candidate (refs `incidents`).
+    from romulus_cloud.services import incidents
+
+    for ov in (a, b):
+        _, story = incidents.story(db, ov.incident_id)
+        assert "candidate.created" in [s.kind for s in story.steps]
+
+
+def test_an_overlay_conflicting_with_another_in_the_run_stays_held(db, tools):
+    """Finding 4: two fixes to the same rule; the second waits for the next run."""
+    _held(db, device="sim-1")
+    _held(db, device="sim-3", diff={"rules": {"camera_occluded": {"below": 0.3}}})
+    result = batch.run(db, T0, tools)
+    (deferred,) = result.deferred
+    ov = db.get(Overlay, deferred)
+    assert ov.status == "held" and ov.candidate_id is None
+    (ev,) = db.scalars(select(Event).where(Event.kind == "overlay.deferred")).all()
+    assert "conflicts with" in ev.why and "rules.camera_occluded" in ev.why
+
+
+def test_a_failed_candidate_marks_its_overlays_lockin_rolled_back(db, tools, settings):
+    """Finding 5: sticky, with the reason; never re-batched; the device keeps its fix."""
+    ov = _held(db, signals={"brightness": [0.9, 0.8]})  # replay can't fire the fix
+    batch.run(db, T0, tools)
+    gate.tick(db, T0, settings=settings)
+    assert ov.status == "lockin_rolled_back" and "replay failed" in ov.status_reason
+    assert not batch.run(db, T0 + timedelta(seconds=200), tools).candidates
+    db.get(Device, "sim-1").overlay_id = ov.id
+    body = CheckIn.model_validate(
+        {"running": None, "health": "ok", "contract_version": "0.1", "overlay_id": ov.id}
+    )
+    assert devices.check_in(db, "sim-1", body, {}, T0).drop_overlay is False
+
+
+def _capture(engine):
+    """Collect every SQL statement the engine runs (whitespace collapsed)."""
+    seen: list[str] = []
+
+    def capture(conn, cursor, statement, *args):
+        seen.append(" ".join(statement.split()))
+
+    return seen, capture
+
+
+def _locks_fleet_state(statement: str) -> bool:
+    return "fleet_state" in statement and ("FOR UPDATE" in statement or "UPDATE " in statement)
+
+
+def test_batch_never_locks_fleet_state_before_its_llm_calls(db, tools, engine):
+    """Finding 6: the kill switch must not wait on the LLM."""
+    seen, capture = _capture(engine)
+    marks: list[int] = []
+
+    class Recording(FakeLlm):
+        def write_skill(self, incident):
+            marks.append(len(seen))
+            return super().write_skill(incident)
+
+    fleet.request_batch(db, "kent", T0)
+    db.flush()
+    _held(db)
+    sa_event.listen(engine, "before_cursor_execute", capture)
+    try:
+        batch.run(db, T0, batch.Tools(tools.settings, Recording(), tools.coder, tools.store))
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", capture)
+    assert marks
+    assert not [s for s in seen[: marks[-1]] if _locks_fleet_state(s)]
+    assert any(_locks_fleet_state(s) for s in seen[marks[-1] :])
+
+
+@pytest.mark.parametrize("action", ["gate.tick", "fleet.freeze"])
+def test_gate_tick_and_freeze_lock_fleet_state(db, settings, engine, action):
+    """Finding 6: both take SELECT … FOR UPDATE, so a freeze can't land mid-tick."""
+    seen, capture = _capture(engine)
+    sa_event.listen(engine, "before_cursor_execute", capture)
+    try:
+        if action == "gate.tick":
+            gate.tick(db, T0, settings=settings)
+        else:
+            fleet.freeze(db, "kent", "test", T0)
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", capture)
+    assert any("FROM fleet_state" in s and s.endswith("FOR UPDATE") for s in seen), seen
+
+
+def test_one_bad_class_in_the_batch_does_not_stop_the_others(db, tools):
+    """Finding 7: a class with nothing assigned fails alone, is marked, and isn't retried."""
+    calls: list[str] = []
+
+    class Counting(FakeLlm):
+        def explain(self, incident):
+            calls.append(incident["id"])
+            return super().explain(incident)
+
+    devices.register(db, "odd-1", device_class="so100", actor="human:t", actor_class="human")
+    bad = _held(db, device="odd-1")
+    good = _held(db, device="sim-1")
+    t = batch.Tools(tools.settings, Counting(), tools.coder, tools.store)
+    result = batch.run(db, T0, t)
+    assert {c.type for c in result.candidates} == {"firmware", "harness"}
+    assert good.status == "locked_in"
+    db.refresh(bad)
+    assert bad.status == "lockin_error" and "class so100" in bad.status_reason
+    assert _count(db, "batch.error") == 1
+    calls.clear()
+    batch.run(db, T0 + timedelta(seconds=200), t)
+    assert calls == []  # the failed overlay isn't sent to the LLM again
+
+
+def test_one_bad_candidate_in_the_gate_does_not_stall_the_others(db, tools, settings, monkeypatch):
+    """Finding 7: the candidate that raises is stopped with a why; the rest move."""
+    _held(db)
+    made = {c.type: c for c in batch.run(db, T0, tools).candidates}
+    real = gate._replay
+
+    def flaky(session, c):
+        if c.type == "harness":
+            raise RuntimeError("blob store unreachable")
+        return real(session, c)
+
+    monkeypatch.setattr(gate, "_replay", flaky)
+    gate.tick(db, T0, settings=settings)
+    assert db.get(Candidate, made["firmware"].id).status == "canary"
+    hv = db.get(Candidate, made["harness"].id)
+    assert hv.status == "error" and "blob store unreachable" in hv.verdict["why"]
+    assert _count(db, "candidate.error") == 1
+
+
+def test_a_safety_candidate_never_canaries_on_a_real_arm(db, make_settings):
+    """Finding 8 (K17): touches_safety + a real canary → awaiting_canary, with why."""
+    settings = make_settings(safety_paths=["camera_occluded"])
+    tools = batch.Tools(settings, FakeLlm(), FakeCoder(), build_blobstore(settings.blob_dir))
+    db.get(Device, "sim-2").kind = "real"
+    _held(db)
+    fw = next(c for c in batch.run(db, T0, tools).candidates if c.type == "firmware")
+    assert fw.touches_safety
+    gate.tick(db, T0, settings=settings)
+    assert fw.status == "awaiting_canary"
+    assert db.get(Device, "sim-2").assigned_firmware == 1
+    (ev,) = db.scalars(
+        select(Event).where(
+            Event.kind == "candidate.awaiting_canary", Event.refs.contains({"candidate": fw.id})
+        )
+    ).all()
+    assert "only canary is a real arm" in ev.why and "K17" in ev.why
+    db.get(Device, "sim-2").kind = "sim"
+    gate.tick(db, T0 + timedelta(seconds=1), settings=settings)
+    assert fw.status == "canary"

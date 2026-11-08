@@ -6,6 +6,8 @@ event lands in the same transaction as the change it explains, or not at all.
 Standard `refs` keys (values are ids as strings):
     device      "arm-1"
     incident    the device's incident UUID
+    incidents   a list of incident UUIDs, on events about a candidate folded from several
+                (`incident` then names the first); match with {"incidents": [id]}
     overlay     the device's overlay id; always together with `device` (ids are per device)
     candidate   "cand_…"
     work_order  "wo_…"

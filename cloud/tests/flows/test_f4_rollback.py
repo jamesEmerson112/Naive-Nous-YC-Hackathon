@@ -12,6 +12,7 @@ from datetime import timedelta
 import pytest
 
 from fake_device.scenarios import SCENARIOS
+from romulus_cloud.models import Overlay
 
 S = timedelta(seconds=1)
 
@@ -28,7 +29,7 @@ def _devices(client):
     ],
 )
 def test_f4_bad_candidate_is_rolled_back_on_the_canary(
-    scenario, reason, client, arms, tick_arms, work, now, count_events
+    scenario, reason, client, arms, tick_arms, work, now, count_events, db_session
 ):
     tick_arms(now)
     tick_arms(now + 10 * S)
@@ -64,9 +65,16 @@ def test_f4_bad_candidate_is_rolled_back_on_the_canary(
     # The harness from the same overlay goes with it.
     hv = client.get(f"/v1/candidates/{cands['harness']['id']}").json()
     assert hv["status"] == "rolled_back"
-    assert "firmware v2 from the same overlay was rolled back" in hv["why"] or any(
-        "firmware v2 from the same overlay was rolled back" in e["why"] for e in hv["events"]
+    assert any(
+        "withdrawn: firmware v2 from the same overlay(s) was rolled back" in e["why"]
+        for e in hv["events"]
     )
+    # The overlay is never re-batched, and the device keeps its local fix (sticky state).
+    overlay_id = fw["from_overlays"][0]["overlay_id"]
+    overlay = db_session.get(Overlay, ("sim-2", overlay_id))
+    db_session.refresh(overlay)
+    assert overlay.status == "lockin_rolled_back"
+    assert "firmware v2 was rolled back" in overlay.status_reason
 
     devs = _devices(client)
     assert devs["sim-2"]["assigned"] == {"firmware": 1, "harness": 1}
@@ -95,3 +103,8 @@ def test_f4_bad_candidate_is_rolled_back_on_the_canary(
     assert "→ locked in → firmware v2 → harness v2 → replay ✓ → canary sim-2 →" in chain, chain
     assert chain.endswith("→ rolled back"), chain
     assert reason in [s for s in story["steps"] if s["kind"] == "candidate.rolled_back"][0]["why"]
+    kept = [s for s in story["steps"] if s["kind"] == "overlay.lockin_rolled_back"]
+    assert kept and "the device keeps its local fix" in kept[0]["why"]
+    if scenario == "bad":  # the rolled-back install left the overlay on the canary
+        assert arms["sim-2"].device.overlay is not None
+        assert arms["sim-2"].tick(now + 400 * S).response.drop_overlay is False

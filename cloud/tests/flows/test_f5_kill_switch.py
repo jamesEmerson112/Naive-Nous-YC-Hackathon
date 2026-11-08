@@ -44,8 +44,13 @@ def test_f5_freeze_mid_canary_then_unfreeze_starts_a_fresh_window(
     frozen = db_session.query(Event).filter(Event.kind == "fleet.frozen").one()
     assert frozen.actor == "human:kent" and frozen.actor_class == "human"
     pinned = _assigned(client)
-    for name, d in _devices(client).items():
-        if d["last_good"]["firmware"] is not None:
+    devs = _devices(client)
+    # The canary installed v2, so its last good is v2; it goes back to what it had before.
+    assert devs["sim-2"]["last_good"]["firmware"] == 2
+    assert devs["sim-2"]["assigned"] == {"firmware": 1, "harness": 1}
+    assert {p["device"] for p in body["pinned"]} == {"sim-2"}
+    for name, d in devs.items():
+        if name != "sim-2" and d["last_good"]["firmware"] is not None:
             assert d["assigned"] == d["last_good"], name
     work(now + 100 * S)
     for c in client.get("/v1/candidates").json():
@@ -88,3 +93,35 @@ def test_f5_freeze_mid_canary_then_unfreeze_starts_a_fresh_window(
     work(restart + 121 * S)
     assert client.get(f"/v1/candidates/{fw_id}").json()["status"] == "promoted"
     assert count_events("fleet.unfrozen") == 1
+
+
+def test_freeze_right_after_a_promotion_does_not_split_the_fleet(
+    client, arms, tick_arms, work, now, clock
+):
+    """Review finding 2: v2 is promoted, only sim-1 installs it, then freeze/unfreeze.
+    Unfreeze puts every device back on the promoted release, so the fleet converges."""
+    tick_arms(now)
+    tick_arms(now + 10 * S)
+    for i, step in enumerate(SCENARIOS["rules"](arms["sim-1"], 0)):
+        step.run(now + (20 + i) * S)
+    work(now + 40 * S)
+    work(now + 41 * S)
+    for t in (50, 80, 110, 150):
+        tick_arms(now + t * S)
+    work(now + 165 * S)
+    assert {c["status"] for c in client.get("/v1/candidates").json()} == {"promoted"}
+    clock.at(now + 170 * S)
+    arms["sim-1"].tick(now + 170 * S)  # only sim-1 installs before the freeze
+
+    frozen = client.post("/v1/fleet/freeze", json={"by": "kent", "why": "x"}).json()
+    assert _assigned(client)["sim-3"] == {"firmware": 1, "harness": 1}  # its last good
+    assert {p["device"] for p in frozen["pinned"]} >= {"sim-3"}
+    resp = client.post("/v1/fleet/unfreeze", json={"by": "kent", "why": "x"}).json()
+    assert "Back on the promoted release" in resp["why"]
+    assert all(a == {"firmware": 2, "harness": 2} for a in _assigned(client).values())
+    for t in range(200, 260, 10):
+        tick_arms(now + t * S)
+        work(now + t * S + S)
+    devs = _devices(client)
+    for name in arms:
+        assert devs[name]["running"]["firmware"] == devs[name]["running"]["harness"] == 2

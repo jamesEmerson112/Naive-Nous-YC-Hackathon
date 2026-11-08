@@ -307,6 +307,18 @@ LINES.update(
         "candidate.restarted": lambda e: f"{_cand(e).capitalize()} restarts from replay.",
         "candidate.promoted": lambda e: f"{_cand(e).capitalize()} went to the fleet.",
         "candidate.rolled_back": lambda e: f"{_cand(e).capitalize()} was rolled back.",
+        "candidate.stale": lambda e: (
+            f"{_cand(e).capitalize()} went stale; its overlays wait for the next batch."
+        ),
+        "candidate.error": lambda e: f"The gate stopped {_cand(e)} after an error.",
+        "overlay.lockin_rolled_back": lambda e: (
+            f"Overlay {e.refs.get('overlay')} stays on {_device(e)} only: its fleet candidate "
+            "was rolled back, and it is never re-batched."
+        ),
+        "overlay.lockin_error": _overlay_line("could not be locked in (error)"),
+        "overlay.requeued": _overlay_line("is held again for the next batch"),
+        "overlay.deferred": _overlay_line("waits for the next batch"),
+        "batch.error": _overlay_line("could not be locked in (batch error)"),
     }
 )
 LABELS.update(
@@ -319,6 +331,14 @@ LABELS.update(
         "candidate.restarted": lambda e: "unfrozen",
         "candidate.promoted": lambda e: "fleet",
         "candidate.rolled_back": lambda e: "rolled back",
+        "candidate.stale": lambda e: "re-queued",
+        "candidate.error": lambda e: "gate error",
+        # Follow-ups of the candidate step just before them: steps, not chain links.
+        "overlay.lockin_rolled_back": lambda e: "",
+        "overlay.lockin_error": lambda e: "",
+        "overlay.requeued": lambda e: "",
+        "overlay.deferred": lambda e: "deferred",
+        "batch.error": lambda e: "batch error",
     }
 )
 
@@ -343,6 +363,10 @@ STATUS: dict[str, tuple[str, str]] = {
     "candidate.created": ("candidate", "wait"),
     "candidate.canary_started": ("on canary", "wait"),
     "candidate.restarted": ("restarting from replay", "wait"),
+    "candidate.stale": ("re-queued for the next batch", "wait"),
+    "candidate.error": ("gate error", "bad"),
+    "overlay.deferred": ("held for the next batch", "wait"),
+    "batch.error": ("lock-in failed", "bad"),
 }
 # A work-order event's `refs.status` says more than its kind, so it picks the badge (M5).
 WORK_ORDER_STATUS: dict[str, tuple[str, str]] = {
@@ -383,6 +407,11 @@ STAGE: dict[str, int] = {
     "candidate.restarted": 74,
     "candidate.rolled_back": 75,
     "candidate.promoted": 75,
+    "candidate.stale": 75,
+    "candidate.error": 75,
+    "overlay.lockin_rolled_back": 76,
+    "overlay.lockin_error": 76,
+    "overlay.requeued": 76,
 }
 _DEFAULT_STAGE = 50
 

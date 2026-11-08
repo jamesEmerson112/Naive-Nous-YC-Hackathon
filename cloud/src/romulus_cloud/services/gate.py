@@ -1,26 +1,32 @@
 """The gate's worker step: move each live candidate one state forward (v0 plan §7.4, D6).
 
-`tick(session, now)` loads each candidate's inputs, asks `domain.gate.next_state`, and
-applies the answer with an Event that says why:
+`tick(session, now)` locks `fleet_state` (so a freeze can't land mid-tick), then, in one
+savepoint per candidate, loads its inputs, asks `domain.gate.next_state` and applies the
+answer with an Event that says why. A candidate that raises is marked `error` with the
+reason and the rest go on.
 
-- **replay** (computed once per run of `replaying`): firmware candidates replay their rules
-  against the triggering incident's signals (P0); harness and code candidates get a stub
-  replay that says so.
-- **canary** (`start_canary`): assign the candidate to the class's `role = canary` device,
-  remember what that device was assigned before (`canary_prev_version`), and set
-  `canary_started_at = now`. Observations are that device's check-ins
-  (`canary_checkins`), install reports and incidents received at or after that instant,
-  all on the server's clock.
+- **stale:** a waiting candidate built on a version its class has since moved past would
+  undo that version's fix. It is withdrawn as `stale` (not a failure) and its overlays go
+  back to `held`, so the next batch folds them onto the new base.
+- **replay** (once per run of `replaying`): firmware candidates replay their rules against
+  every folded incident's signals (P0); harness and code candidates get a labeled stub.
+- **canary** (`start_canary`): assign the class's `role = canary` device, remember what it
+  had (`canary_prev_version`), set `canary_started_at = now`. Evidence is that device's
+  check-ins (`canary_checkins`), install reports and incidents received since then, on the
+  server clock. An overlay counts only if it is new since the run started. A
+  `touches_safety` candidate never uses a canary whose kind is `real` (K17).
 - **promote:** assign the candidate to every device of its class.
-- **roll back:** give the canary back its previous assignment (not `last_good`, which can
-  already be the bad candidate in F4's late path). Candidates locked in from the same
-  overlay roll back with it: a skill describing a fix the fleet refused is not news.
+- **roll back** (a real replay or canary failure): give the canary back its previous
+  assignment (not `last_good`, which can already be the bad candidate in F4's late path),
+  withdraw live candidates sharing its overlays, and mark the failed candidate's overlays
+  `lockin_rolled_back`: sticky, never re-batched, and the device keeps its local fix.
 - **freeze:** while the kill switch is on nothing moves; frozen candidates restart from
   replay on unfreeze, with a fresh canary window (F5).
 
-No LLM is called here. Each step is idempotent: everything it needs is in the DB.
+No LLM is called here.
 """
 
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -37,12 +43,18 @@ from romulus_cloud.models import (
     HarnessVersion,
     Incident,
     InstallReport,
+    Overlay,
 )
 from romulus_cloud.services import fleet, registry
+from romulus_cloud.services.fleet import install_type
 from romulus_cloud.settings import Settings, get_settings
 
+log = logging.getLogger(__name__)
+
 ACTOR = "gate"
-LIVE = ("replaying", "awaiting_canary", "canary", "frozen")
+LIVE = fleet.LIVE
+LOCKIN_ROLLED_BACK = "lockin_rolled_back"
+LOCKIN_ERROR = "lockin_error"
 TRANSITION_KINDS = {
     "canary": "candidate.canary_started",
     "awaiting_canary": "candidate.awaiting_canary",
@@ -51,11 +63,10 @@ TRANSITION_KINDS = {
     "frozen": "candidate.frozen",
     "replaying": "candidate.restarted",
 }
-
-
-def install_type(c: Candidate) -> str:
-    """What the canary installs: a code candidate arrives as a firmware manifest."""
-    return "harness" if c.type == "harness" else "firmware"
+K17_WAIT = (
+    "it touches the safety layer or visor and the only canary is a real arm; safety patches "
+    "go to a simulated canary first (K17)"
+)
 
 
 def label(c: Candidate) -> str:
@@ -93,13 +104,28 @@ def list_candidates(session: Session, fleet_id: str = "default") -> list[Candida
     return list(session.scalars(stmt.order_by(Candidate.created_at.desc(), Candidate.type)))
 
 
-def _refs(c: Candidate, **extra: Any) -> dict[str, Any]:
+def _overlays(session: Session, c: Candidate) -> list[Overlay]:
+    rows = (session.get(Overlay, (r["device_id"], r["overlay_id"])) for r in c.from_overlays or [])
+    return [o for o in rows if o is not None]
+
+
+def _incident_ids(session: Session, c: Candidate) -> list[str]:
+    ids = [c.incident_id] if c.incident_id else []
+    ids += [o.incident_id for o in _overlays(session, c) if o.incident_id]
+    return list(dict.fromkeys(ids))
+
+
+def _refs(session: Session, c: Candidate, device: str | None = None) -> dict[str, Any]:
+    """`incident` is the first incident; `incidents` lists every folded one, so each of
+    their stories shows the gate's steps."""
     refs: dict[str, Any] = {"candidate": c.id, install_type(c): c.version}
-    if c.incident_id:
-        refs["incident"] = c.incident_id
+    ids = _incident_ids(session, c)
+    if ids:
+        refs["incident"], refs["incidents"] = ids[0], ids
     if c.touches_safety:
         refs["touches_safety"] = True
-    refs.update({k: v for k, v in extra.items() if v is not None})
+    if device:
+        refs["device"] = device
     return refs
 
 
@@ -109,7 +135,7 @@ def _record(session: Session, c: Candidate, kind: str, why: str, now: datetime, 
         ACTOR,
         "automation",
         kind,
-        _refs(c, device=kw.pop("device", None)),
+        _refs(session, c, kw.pop("device", None)),
         why,
         data={"type": c.type, "version": c.version, "code_rev": c.code_rev, **kw},
         ts=now,
@@ -132,8 +158,8 @@ def _canary(session: Session, c: Candidate) -> Device | None:
     return session.scalars(stmt.order_by(Device.id)).first()
 
 
-def _canary_busy(session: Session, c: Candidate, device: Device) -> str | None:
-    """Another candidate of the same install type already on this canary, if any."""
+def _canary_busy(session: Session, c: Candidate, device: Device) -> bool:
+    """Another candidate of the same install type is already on this canary."""
     others = session.scalars(
         select(Candidate).where(
             Candidate.fleet_id == c.fleet_id,
@@ -142,15 +168,12 @@ def _canary_busy(session: Session, c: Candidate, device: Device) -> str | None:
             Candidate.id != c.id,
         )
     )
-    for other in others:
-        if install_type(other) == install_type(c):
-            return label(other)
-    return None
+    return any(install_type(o) == install_type(c) for o in others)
 
 
 def _incidents(session: Session, c: Candidate) -> list[Incident]:
-    ids = {c.incident_id} if c.incident_id else set()
-    return [i for i in (session.get(Incident, x) for x in ids) if i is not None]
+    rows = (session.get(Incident, i) for i in _incident_ids(session, c))
+    return [i for i in rows if i is not None]
 
 
 def _replay(session: Session, c: Candidate) -> g.ReplayResult:
@@ -175,10 +198,10 @@ def _version(c: Candidate, firmware: int | None, harness: int | None) -> int | N
 def _already_installed(session: Session, c: Candidate, started: datetime) -> g.InstallObs | None:
     """An install observation at `started` when the canary already runs the candidate.
 
-    After a freeze pins the canary to its last good version, that can be the candidate
-    itself (it installed it during the first run). The re-run's fresh window then sees no
-    new install, so the earlier `installed` report counts as of `started`; the health
-    check-ins must still all be fresh (F5).
+    After an unfreeze the canary can still run the candidate from its first run: while
+    frozen the device only moves to its own last good version, and it may not check in
+    between the restart and the new canary. Then the earlier `installed` report counts as
+    of `started`; every health check-in must still be fresh (F5).
     """
     device = session.get(Device, c.canary_device) if c.canary_device else None
     kind = install_type(c)
@@ -197,9 +220,23 @@ def _already_installed(session: Session, c: Candidate, started: datetime) -> g.I
     return g.InstallObs(started, "installed", c.version, kind, detail)
 
 
+def _overlay_at_start(session: Session, device: str | None, started: datetime) -> str | None:
+    """The overlay the canary had when this run started (its last check-in before)."""
+    return session.scalar(
+        select(CanaryCheckin.overlay_id)
+        .where(CanaryCheckin.device_id == device, CanaryCheckin.at < started)
+        .order_by(CanaryCheckin.at.desc())
+        .limit(1)
+    )
+
+
 def _observations(session: Session, c: Candidate, started: datetime) -> list[g.CanaryObs]:
     """The canary's check-ins, installs and incidents since `started` (server clock)."""
     device = c.canary_device
+    # An overlay already there at the start belongs to something else (e.g. its own fix
+    # from an earlier incident); only one that appears during the run says the candidate
+    # needed patching.
+    before = _overlay_at_start(session, device, started)
     obs: list[g.CanaryObs] = []
     for ck in session.scalars(
         select(CanaryCheckin).where(CanaryCheckin.device_id == device, CanaryCheckin.at >= started)
@@ -209,7 +246,7 @@ def _observations(session: Session, c: Candidate, started: datetime) -> list[g.C
                 at=ck.at,
                 health=ck.health,
                 version=_version(c, ck.firmware, ck.harness),
-                overlay_id=ck.overlay_id,
+                overlay_id=None if ck.overlay_id == before else ck.overlay_id,
                 device_id=device or "",
             )
         )
@@ -237,13 +274,15 @@ def _observations(session: Session, c: Candidate, started: datetime) -> list[g.C
 
 def _inputs(
     session: Session, c: Candidate, settings: Settings, frozen: bool, replay: g.ReplayResult | None
-) -> g.GateInputs:
+) -> tuple[g.GateInputs, bool]:
+    """The domain's inputs, and whether K17 is what keeps the candidate off the canary."""
     canary = _canary(session, c)
     available = canary is not None
-    if canary is not None and c.status != "canary" and _canary_busy(session, c, canary):
+    k17 = bool(canary and c.touches_safety and canary.kind == "real" and c.status != "canary")
+    if k17 or (canary is not None and c.status != "canary" and _canary_busy(session, c, canary)):
         available = False
     started = c.canary_started_at
-    return g.GateInputs(
+    inputs = g.GateInputs(
         frozen=frozen,
         kind=c.type,
         replay=replay,
@@ -259,6 +298,7 @@ def _inputs(
         repeat_kinds=frozenset(i.kind for i in _incidents(session, c)),
         touches_safety=c.touches_safety,
     )
+    return inputs, k17
 
 
 # --- applying a transition -----------------------------------------------------------
@@ -276,7 +316,7 @@ def _start_canary(session: Session, c: Candidate, now: datetime) -> Device:
     canary = _canary(session, c)
     assert canary is not None  # next_state only starts a canary when one is available
     current = _assigned(canary, c)
-    if current != c.version:  # after a freeze the canary may already be pinned to it
+    if current != c.version:
         c.canary_prev_version = current
     _assign(canary, c, c.version)
     c.canary_device, c.canary_started_at = canary.id, now
@@ -306,40 +346,149 @@ def _promote(session: Session, c: Candidate) -> list[str]:
     return moved
 
 
+def _with_overlay(session: Session, ref: dict, statuses) -> list[Candidate]:
+    return list(
+        session.scalars(
+            select(Candidate).where(
+                Candidate.from_overlays.contains([ref]), Candidate.status.in_(statuses)
+            )
+        )
+    )
+
+
 def _siblings(session: Session, c: Candidate) -> list[Candidate]:
     """Live candidates locked in from any of the same overlays."""
-    found: dict[str, Candidate] = {}
-    for ref in c.from_overlays or []:
-        stmt = select(Candidate).where(
-            Candidate.from_overlays.contains([ref]),
-            Candidate.status.in_(LIVE),
-            Candidate.id != c.id,
-        )
-        found.update({s.id: s for s in session.scalars(stmt)})
+    found = {s.id: s for ref in c.from_overlays or [] for s in _with_overlay(session, ref, LIVE)}
+    found.pop(c.id, None)
     return list(found.values())
 
 
-def _roll_back(session: Session, c: Candidate, why: str, now: datetime) -> None:
+def _close(session: Session, c: Candidate, status: str, kind: str, why: str, now) -> None:
     where = _restore_canary(session, c)
-    c.status, c.updated_at = "rolled_back", now
-    c.verdict = {"status": "fail", "why": why}
+    c.status, c.updated_at = status, now
+    c.verdict = {"status": "fail" if status == "rolled_back" else status, "why": why}
+    verb = {"rolled_back": "rolled back", "stale": "withdrawn as stale", "error": "stopped"}
     _record(
         session,
         c,
-        "candidate.rolled_back",
-        f"{label(c).capitalize()} rolled back: {why}; {where}.",
+        kind,
+        f"{label(c).capitalize()} {verb[status]}: {why}; {where}.",
         now,
         device=c.canary_device,
         restored=c.canary_prev_version,
     )
 
 
+def _settle_overlays(
+    session: Session,
+    closed: list[Candidate],
+    now: datetime,
+    *,
+    failed: set[tuple[str, str]],
+    failed_status: str,
+    cause: str,
+) -> None:
+    """After `closed` candidates end without promotion: overlays in `failed` get the sticky
+    `failed_status`; the others go back to `held` (re-batched) unless another live or
+    promoted candidate still carries them."""
+    closing = {c.id for c in closed}
+    seen: set[tuple[str, str]] = set()
+    for c in closed:
+        for ref in c.from_overlays or []:
+            key = (ref["device_id"], ref["overlay_id"])
+            ov = session.get(Overlay, key)
+            if key in seen or ov is None or ov.status != "locked_in":
+                continue
+            seen.add(key)
+            refs: dict[str, Any] = {"device": ov.device_id, "overlay": ov.id, "candidate": c.id}
+            if ov.incident_id:
+                refs["incident"] = ov.incident_id
+            if key in failed:
+                ov.status, ov.status_reason, ov.updated_at = failed_status, cause, now
+                what = "lock-in rolled back" if failed_status == LOCKIN_ROLLED_BACK else "error"
+                events.record(
+                    session,
+                    ACTOR,
+                    "automation",
+                    f"overlay.{failed_status}",
+                    refs,
+                    f"Overlay {ov.id} on {ov.device_id}: {what} ({cause}). It is never "
+                    "re-batched; the device keeps its local fix.",
+                    ts=now,
+                    fleet_id=ov.fleet_id,
+                )
+                continue
+            others = [
+                o for o in _with_overlay(session, ref, (*LIVE, "promoted")) if o.id not in closing
+            ]
+            if others:
+                continue
+            ov.status, ov.candidate_id, ov.updated_at = "held", None, now
+            ov.status_reason = f"re-queued: {cause}"
+            events.record(
+                session,
+                ACTOR,
+                "automation",
+                "overlay.requeued",
+                refs,
+                f"Overlay {ov.id} on {ov.device_id} is held again for the next batch: {cause}.",
+                ts=now,
+                fleet_id=ov.fleet_id,
+            )
+    session.flush()
+
+
+def _fail(session: Session, c: Candidate, why: str, now: datetime) -> None:
+    """A real replay or canary failure."""
+    _close(session, c, "rolled_back", "candidate.rolled_back", why, now)
+    siblings = _siblings(session, c)
+    for s in siblings:
+        _close(
+            session,
+            s,
+            "rolled_back",
+            "candidate.rolled_back",
+            f"withdrawn: {label(c)} from the same overlay(s) was rolled back",
+            now,
+        )
+    failed = {(r["device_id"], r["overlay_id"]) for r in c.from_overlays or []}
+    _settle_overlays(
+        session,
+        [c, *siblings],
+        now,
+        failed=failed,
+        failed_status=LOCKIN_ROLLED_BACK,
+        cause=f"{label(c)} was rolled back: {why}",
+    )
+
+
+def _go_stale(session: Session, c: Candidate, why: str, now: datetime) -> None:
+    """Not a failure: the base moved. Its overlays re-batch onto the new base."""
+    _close(session, c, "stale", "candidate.stale", why, now)
+    siblings = _siblings(session, c)
+    for s in siblings:
+        _close(
+            session,
+            s,
+            "stale",
+            "candidate.stale",
+            f"withdrawn with {label(c)}: its overlays re-batch onto the new base",
+            now,
+        )
+    _settle_overlays(
+        session,
+        [c, *siblings],
+        now,
+        failed=set(),
+        failed_status=LOCKIN_ROLLED_BACK,
+        cause=f"{label(c)} went stale ({why})",
+    )
+
+
 def _apply(session: Session, c: Candidate, t: g.Transition, now: datetime) -> None:
     old = c.status
     if t.state == "rolled_back":
-        _roll_back(session, c, t.why, now)
-        for s in _siblings(session, c):
-            _roll_back(session, s, f"{label(c)} from the same overlay was rolled back", now)
+        _fail(session, c, t.why, now)
         return
     c.status, c.updated_at = t.state, now
     kind = TRANSITION_KINDS[t.state]
@@ -389,36 +538,69 @@ def _stale(session: Session, c: Candidate) -> str | None:
         return None
     return (
         f"stale: built on {kind} {row.parent_version}, but the {c.device_class} fleet now "
-        f"runs {kind} {current}; promoting it would undo that version's fix"
+        f"runs {kind} {current}"
     )
+
+
+def _step(session: Session, c: Candidate, settings: Settings, frozen: bool, now) -> bool:
+    """Move one candidate one step. Returns whether its state changed."""
+    if c.status in ("replaying", "awaiting_canary") and not frozen:
+        stale = _stale(session, c)
+        if stale:
+            _go_stale(session, c, stale, now)
+            return True
+    replay = g.ReplayResult.from_json(c.replay)
+    if c.status == "replaying" and replay is None and not frozen:
+        replay = _replay(session, c)
+        c.replay = replay.to_json()
+        if replay.stub and "replay" not in (c.stub_stages or []):
+            c.stub_stages = [*(c.stub_stages or []), "replay"]
+        _record(session, c, "candidate.replayed", replay.why, now, replay=c.replay)
+    inputs, k17 = _inputs(session, c, settings, frozen, replay)
+    t = g.next_state(c.status, inputs, now)
+    if t.state == c.status:
+        return False
+    if k17 and t.state == "awaiting_canary":
+        t = t._replace(why=t.why.replace("no canary device is available", K17_WAIT))
+    _apply(session, c, t, now)
+    return True
+
+
+def _error(session: Session, candidate_id: str, exc: Exception, now: datetime) -> None:
+    """Stop a candidate whose step raised, with the reason; its overlays get `lockin_error`."""
+    try:
+        with session.begin_nested():
+            c = session.get(Candidate, candidate_id)
+            if c is None or c.status not in LIVE:
+                return
+            why = f"gate error: {exc!r}"
+            _close(session, c, "error", "candidate.error", why, now)
+            failed = {(r["device_id"], r["overlay_id"]) for r in c.from_overlays or []}
+            _settle_overlays(
+                session, [c], now, failed=failed, failed_status=LOCKIN_ERROR, cause=why
+            )
+    except Exception:  # the row itself is broken; leave it for a person, keep going
+        log.exception("gate: could not mark candidate %s as error", candidate_id)
 
 
 def tick(session: Session, now: datetime, *, settings: Settings | None = None) -> list[str]:
     """The worker step. Returns the ids of candidates that changed state."""
     settings = settings or get_settings()
-    frozen = fleet.is_frozen(session, settings.fleet_id)
-    stmt = select(Candidate).where(
+    frozen = fleet.state(session, settings.fleet_id, lock=True).frozen
+    stmt = select(Candidate.id).where(
         Candidate.fleet_id == settings.fleet_id, Candidate.status.in_(LIVE)
     )
     changed = []
-    for c in session.scalars(stmt.order_by(Candidate.created_at, Candidate.type)).all():
-        if c.status not in LIVE:  # a sibling rolled back earlier in this tick
+    for cid in session.scalars(stmt.order_by(Candidate.created_at, Candidate.type)).all():
+        c = session.get(Candidate, cid)
+        if c is None or c.status not in LIVE:  # closed with a sibling earlier in this tick
             continue
-        stale = _stale(session, c) if c.status in ("replaying", "awaiting_canary") else None
-        if stale and not frozen:
-            _apply(session, c, g.Transition("rolled_back", stale), now)
-            changed.append(c.id)
-            continue
-        replay = g.ReplayResult.from_json(c.replay)
-        if c.status == "replaying" and replay is None and not frozen:
-            replay = _replay(session, c)
-            c.replay = replay.to_json()
-            if replay.stub and "replay" not in (c.stub_stages or []):
-                c.stub_stages = [*(c.stub_stages or []), "replay"]
-            _record(session, c, "candidate.replayed", replay.why, now, replay=c.replay)
-        t = g.next_state(c.status, _inputs(session, c, settings, frozen, replay), now)
-        if t.state != c.status:
-            _apply(session, c, t, now)
-            changed.append(c.id)
+        try:
+            with session.begin_nested():
+                if _step(session, c, settings, frozen, now):
+                    changed.append(cid)
+        except Exception as exc:  # one bad candidate must not stall the others
+            _error(session, cid, exc, now)
+            changed.append(cid)
     session.flush()
     return changed
