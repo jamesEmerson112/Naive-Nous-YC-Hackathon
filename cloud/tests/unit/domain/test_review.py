@@ -325,6 +325,38 @@ def test_settings_safety_paths_count():
     assert r.outcome == "accepted"
 
 
+@pytest.mark.parametrize(
+    "md",
+    [
+        "For safety, park the arm and let the visor pull the last good version.",
+        "Safety first: SAFETY limits stay as they are; the Visor keeps running.",
+        "Restart supervisor.py, then check arm/live_replay.py and config/arm.yaml.",
+    ],
+)
+def test_prose_words_alone_do_not_stage_a_skill(md):
+    assert do_check(with_(SKILL, "proposal.markdown", md)).outcome == "accepted"
+
+
+@pytest.mark.parametrize(
+    "md,owner",
+    [
+        ("Check `safe_replay.py` sees the echo move.", "Olir"),
+        ("See arm/safe_replay.py:66-75 before resuming.", "Olir"),
+        ("Restart visor.py.", "Kent"),
+        ("Tune device/safety/limits.py.", rv.DEFAULT_OWNER),
+        ("Tune firmware/safety.h.", rv.DEFAULT_OWNER),
+    ],
+)
+def test_path_tokens_stage_a_skill(md, owner):
+    r = do_check(with_(SKILL, "proposal.markdown", md))
+    assert r.outcome == "staged" and r.owner == owner
+
+
+def test_path_tokens():
+    text = "Run `arm/safe_replay.py:66-75`, then setup.sh; read README. For safety, see a.yaml."
+    assert rv.path_tokens(text) == ["arm/safe_replay.py", "a.yaml"]
+
+
 def test_a_safety_touching_proposal_that_fails_a_check_is_rejected():
     r = do_check(with_(RULE, "applies_to", ["toaster"]))
     assert r.outcome == "rejected" and r.touches_safety and r.owner is None

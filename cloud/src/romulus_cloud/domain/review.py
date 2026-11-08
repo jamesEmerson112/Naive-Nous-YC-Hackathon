@@ -62,6 +62,8 @@ DEFAULT_OWNER = "Olir"  # the device side's owner, for a path no prefix names *(
 
 _URL = re.compile(r"\b[a-z][a-z0-9+.-]*://|\bwww\.", re.IGNORECASE)
 _FENCE = re.compile(r"```|~~~")
+_TOKEN = re.compile(r"[\w.\-/]+")
+PATH_SUFFIXES = (".py", ".c", ".h", ".yaml", ".yml")
 
 
 class RunLike(Protocol):
@@ -481,6 +483,25 @@ def safety_hits(text: str, needles: Sequence[tuple[str, str]]) -> list[str]:
     return _unique(path for needle, path in needles if _names(text, needle))
 
 
+def path_tokens(text: str) -> list[str]:
+    """The path-like tokens in prose: containing `/`, or ending in a source or config
+    extension (`device/safety/limits.py`, `safe_replay.py`, `arm.yaml`). A bare word such as
+    "safety" is not one."""
+    out = []
+    for raw in _TOKEN.findall(text):
+        token = raw.rstrip(".,;:")
+        if "/" in token.strip("/") or token.lower().endswith(PATH_SUFFIXES):
+            out.append(token)
+    return _unique(out)
+
+
+def skill_safety_hits(markdown: str, needles: Sequence[tuple[str, str]]) -> list[str]:
+    """The safety paths a skill names. Only path-like tokens count, so prose that says
+    "for safety" or "the visor" doesn't stage a skill, but `device/safety/limits.py`,
+    `safe_replay.py` or `visor.py` does."""
+    return _unique(h for token in path_tokens(markdown) for h in safety_hits(token, needles))
+
+
 def owner_for(path: str, owners: Mapping[str, str] = DEFAULT_OWNERS) -> str:
     """The owner of the longest prefix of `path` in `owners`, else `DEFAULT_OWNER`."""
     p = path.strip().removeprefix("./")
@@ -513,9 +534,10 @@ def check(
        and adds no false alarms. Its targets are the probe's `port.to`.
     5. Skill: the slug is new; the markdown has no URLs and no code fences (its length is
        capped by the schema).
-    6. Safety (D25): a rule touches safety when a target names a safety path, a skill when
-       its markdown does. Safety paths are `default_safety` plus `safety_paths`, matched the
-       way the Doctor matches them. Safety-touching → staged for its owner.
+    6. Safety (D25): a rule touches safety when a target names a safety path, a skill when a
+       path-like token in its markdown does (`path_tokens`; a bare "safety" in prose doesn't
+       count). Safety paths are `default_safety` plus `safety_paths`, matched the way the
+       Doctor matches them. Safety-touching → staged for its owner.
     """
     case_probes = [p["id"] for p in case_file.get("probes") or ()]
     errors = validate_proposal(output, case_probes)
@@ -567,7 +589,7 @@ def check(
             failures.append("The skill's markdown contains a URL.")
         if _FENCE.search(markdown):
             failures.append("The skill's markdown contains a code fence.")
-        hits = safety_hits(markdown, needles)
+        hits = skill_safety_hits(markdown, needles)
         touches = bool(hits)
         named = hits[0] if hits else ""
         owner = owner_for(named, owners) if hits else None
