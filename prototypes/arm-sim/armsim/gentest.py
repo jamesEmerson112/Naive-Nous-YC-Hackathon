@@ -149,7 +149,42 @@ def probe(rec, pan, speed=1.0):
 
 
 # ---- on the Pi: one candidate on the real arm -----------------------------------------------------------
-def trial(rec, pan, speed=1.0):
+LIFT_FRAMES = 35        # 0.7 s of the recording after the jaws close: lifted a few cm, still over the pile
+HOLD_MIN = 8.0          # gripper position under a ~closed command: jaws stopped this far open = something between them
+NUDGES = (1.5, -1.5, 3.0)   # base nudges (degrees, from the planned pan) for each re-grab, along the bag's edge
+VERDICT = "/tmp/gentest-verdict"   # the Mac writes Astra's grab verdict here (yes / no) while the arm holds
+
+
+def gripping(arm, seconds=0.6):
+    """Hold the pose for `seconds`: True when the jaws stay stopped open (the bag between them) under a ~closed
+    command for most of it. Also returns the gripper position and load at the end."""
+    n, hits = max(1, round(seconds * arm.fps)), 0
+    for _ in range(n):
+        arm.send(arm._goal)
+        arm.tick()
+        if float(arm._q[5]) > HOLD_MIN and float(arm._goal[5]) <= 5:
+            hits += 1
+    return hits >= 0.7 * n, round(float(arm._q[5]), 1), round(float(arm._load[5]), 2)
+
+
+def wait_verdict(arm, seconds):
+    """Keep holding while the Mac asks Astra; returns 'yes', 'no' or 'timeout'. The squeeze eases to 94% while
+    waiting (the bag still blocks the jaws) so a long hold doesn't overload the gripper servo."""
+    Path(VERDICT).unlink(missing_ok=True)
+    goal = arm._goal.copy()
+    goal[5] = max(goal[5], 6.0)
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        if Path(VERDICT).exists():
+            v = Path(VERDICT).read_text().strip().lower()
+            Path(VERDICT).unlink(missing_ok=True)
+            return v if v in ("yes", "no") else "timeout"
+        arm.send(goal)
+        arm.tick()
+    return "timeout"
+
+
+def trial(rec, pan, speed=1.0, regrab=0, confirm_wait=0.0):
     from .real import RealArm
     prim = json.loads((LIB / f"{rec}.json").read_text())
     prim = {**prim, "frames": squeezed([[f[0] + pan, *f[1:]] for f in prim["frames"]], rec)}
@@ -179,8 +214,43 @@ def trial(rec, pan, speed=1.0):
 
     arm.hooks.append(watch)
     t0 = time.time()
+    attempts, carried, nudge = [], None, 0.0
     try:
-        r = arm.play(prim, speed=speed)
+        if not regrab:
+            r = arm.play(prim, speed=speed)
+        else:
+            frames = prim["frames"]
+            k = grasp_index(frames)
+            hold = min(len(frames) - 1, k + LIFT_FRAMES)
+            pre = max(0, k - PROBE_EARLY)
+            r = arm.play({**prim, "frames": frames[:hold + 1]}, speed=speed)       # approach, grab, lift a little
+            for a in range(regrab + 1):
+                ok, gpos, gload = gripping(arm)
+                print("LIFTED", flush=True)
+                verdict = None
+                if ok and confirm_wait:
+                    print("CHECK", flush=True)                        # the Mac snaps and asks Astra
+                    verdict = wait_verdict(arm, confirm_wait)
+                    ok = verdict != "no"
+                attempts.append({"attempt": a, "nudge": nudge, "gripper_pos": gpos, "gripper_load_nm": gload,
+                                 "astra": verdict, "held": ok})
+                if ok or a == regrab:
+                    break
+                nudge = max(-10.0 - pan, min(10.0 - pan, NUDGES[a]))      # stay inside the taught +-10 degrees
+                at = lambda f, g: [f[0] + nudge, *f[1:5], g]
+                arm.goto(at(frames[hold], DROP_OPEN), duration=0.5)        # open in the air: let go of a face pinch
+                arm.goto(at(frames[pre], DROP_OPEN), duration=1.0)         # back above the grab, jaws open
+                arm.goto(at(frames[k], DROP_OPEN), duration=0.6)           # down to the grab point
+                arm.goto(at(frames[k], SQUEEZE), duration=0.6)             # close
+                arm.goto(at(frames[hold], SQUEEZE), duration=0.8)          # lift a little again
+            carried = bool(attempts and attempts[-1]["held"])
+            if carried:                                                   # carry to the box and drop
+                rest_of = [[f[0] + nudge, *f[1:]] for f in frames[hold:]]
+                r = arm.play({**prim, "frames": rest_of}, speed=speed)
+            else:                                                         # give up: open, back out the way it came
+                arm.goto([frames[hold][0] + nudge, *frames[hold][1:5], DROP_OPEN], duration=0.5)
+                back_out = [[f[0] + nudge, *f[1:5], DROP_OPEN] for f in frames[:pre + 1]][::-1]
+                arm.play({**prim, "frames": back_out}, speed=1.0)
     finally:
         arm.hooks.remove(watch)
     back = arm.goto(rest, duration=1.5)
@@ -189,7 +259,8 @@ def trial(rec, pan, speed=1.0):
            "holding_s": round(seen["holding_s"], 2), "widest_hold": round(seen["widest_hold"], 1),
            "peak_grip_load_nm": round(seen["peak_grip_load_nm"], 2), "alarms": arm.status(),
            "back_at_rest": back.get("arrived"), "close_at": seen["close_at"], "open_at": seen["open_at"],
-           "points": "measured", "squeeze_pct": round(100 - SQUEEZE)}
+           "points": "measured", "squeeze_pct": round(100 - SQUEEZE),
+           **({"regrab": attempts, "carried": carried, "nudge": nudge} if regrab else {})}
     arm.disconnect()                                   # torque off, folded on its stops
     return out
 
@@ -512,7 +583,7 @@ def plan_lean(history, before, after, close=None):
 SEQ_EVERY = 4.0        # seconds between camera samples during a full try (the capture writes a frame a second)
 
 
-def trial_streamed(args, mark, tag, timeout=240, sample=False):
+def trial_streamed(args, mark, tag, timeout=240, sample=False, on_line=None):
     """Run `gentest trial <args>` on the Pi, streaming its output; when it prints `mark` (PAUSED for a probe,
     CLOSING when the jaws close on a full try), snap the camera 1 s later (the capture is 1 fps, so that frame
     is from after the event). With sample, also copy the camera frame every SEQ_EVERY seconds for the whole try.
@@ -534,6 +605,8 @@ def trial_streamed(args, mark, tag, timeout=240, sample=False):
         th.start()
     for line in p.stdout:
         line = line.strip()
+        if on_line:
+            on_line(line)
         if line == mark and image is None:
             time.sleep(1.0)
             image = snap(tag)
@@ -581,6 +654,26 @@ def run_probe(n, tag):
                           f"{tag}-probe", timeout=180)[:2]
 
 
+def grab_check(image):
+    """Astra on a frame taken while the arm holds just after the grab: is the red bag held by its edge or side?"""
+    image = gridded(image, width=640)
+    q = (f"Use your vision tool on the image file {image}. The robot arm has just closed its jaws on {GOAL} (it has "
+         "white labels; they are part of it) and lifted a few centimetres, and is holding still. " + GRID_NOTE +
+         "Is the red bag held in the jaws by its EDGE or SIDE (one jaw on each side of the bag's edge, the bag "
+         "coming up with the jaws)? Say yes only for that. Say no if the jaws pinch only the bag's face, hold a "
+         "different bag, hold nothing, or the red bag is still lying flat on the pile. Reply with ONE JSON object only: "
+         '{"held": true or false, "jaws_cell": "cell", "why": "one sentence: what the jaws are holding and where"}.')
+    t0 = time.time()
+    try:
+        r = subprocess.run(["hermes", "chat", "--oneshot", *HERMES_MODEL, "-t", "vision", "-q", q], capture_output=True,
+                           text=True, timeout=60)
+        keep("grab", q, r.stdout)
+        reply = last_json(r.stdout) or {}
+    except subprocess.TimeoutExpired:
+        reply = {}
+    return reply.get("held") is True, str(reply.get("why") or "no reply")[:200], round(time.time() - t0, 1)
+
+
 def probe_check(image, bag):
     """Astra on the probe frame: do the open jaws straddle the bag's edge?"""
     image = gridded(image, width=640 if LEAN else None)
@@ -610,7 +703,7 @@ def probe_check(image, bag):
     return bool(reply.get("go") is True), str(reply.get("why") or "no reply")[:300], round(time.time() - t0, 1), cells
 
 
-def guided(max_trials, probe_first=False, efforts=()):
+def guided(max_trials, probe_first=False, efforts=(), regrab=0):
     """One Hermes-designed test per trial until the eye says INSIDE (or the cap, or a servo alarm). With
     probe_first, each test is first probed (jaws open at the closing point, a camera check by Astra) and only
     run in full on a go; a no-go is logged as a probe try for the next plan."""
@@ -683,8 +776,19 @@ def guided(max_trials, probe_first=False, efforts=()):
                     after, close = image, None
                     continue
                 before = snap(f"g{i}-before")
-            res, close_img, seq = trial_streamed(f"--rec {n['recording']} --pan {n['pan']} --speed {n['speed']}",
-                                                 "CLOSING", f"g{i}-close", sample=True)
+            checks = []
+
+            def answer(line, tid=f"g{i}"):
+                if line != "CHECK":
+                    return
+                img = snap(f"{tid}-grab{len(checks) + 1}")
+                held, why, secs = grab_check(img)
+                ssh(f"echo {'yes' if held else 'no'} > {VERDICT}", timeout=20)
+                checks.append({"image": str(img), "held": held, "why": why, "check_s": secs})
+                print(f"  grab check {len(checks)}: {'HELD by the edge' if held else 'NOT held'} ({secs} s): {why}", flush=True)
+            extra = f" --regrab {regrab} --confirm-wait 30" if regrab else ""
+            res, close_img, seq = trial_streamed(f"--rec {n['recording']} --pan {n['pan']} --speed {n['speed']}{extra}",
+                                                 "CLOSING", f"g{i}-close", timeout=420, sample=True, on_line=answer)
             if "error" in res:
                 print(f"test {i} failed to run: {res['error']}", flush=True)
                 break
@@ -692,7 +796,7 @@ def guided(max_trials, probe_first=False, efforts=()):
             after = snap(f"g{i}-after")
             close = close_img
             row = {"try": f"g{i}", **res, "plan": n, "effort": effort, "plan_s": p["plan_s"], "before": str(before), "after": str(after),
-                   "close_image": str(close_img) if close_img else None, "sequence": [str(f) for f in seq],
+                   "close_image": str(close_img) if close_img else None, "grab_checks": checks, "sequence": [str(f) for f in seq],
                    "sequence_sheet": str(sheet(seq, OUT / f"{time.strftime('%H%M%S')}-g{i}-sheet.jpg") or "") or None,
                    "ts": time.time()}
             history.append(row)
@@ -723,10 +827,13 @@ def main():
     t.add_argument("--pan", type=float, default=0.0)
     t.add_argument("--speed", type=float, default=1.0)
     t.add_argument("--probe", action="store_true", help="stop with the jaws open at the closing point, hold, back out")
+    t.add_argument("--regrab", type=int, default=0, help="grab, check it holds, re-grab up to N times before the carry")
+    t.add_argument("--confirm-wait", type=float, default=0.0, help="hold up to N s for Astra's verdict on each grab")
     r = sub.add_parser("run")
     r.add_argument("--max-trials", type=int, default=6)
     r.add_argument("--guide", choices=["fixed", "hermes"], default="fixed")
     r.add_argument("--probe", action="store_true", help="probe each test first; run it in full only on Astra's go")
+    r.add_argument("--regrab", type=int, default=0, help="each full try: grab, check it holds (gripper + Astra), re-grab up to N times, then carry")
     r.add_argument("--only", choices=RECORDINGS, default=None, help="Astra may choose only this recording (and sees only its tries)")
     r.add_argument("--probe-once", action="store_true", help="the first try of the run is a probe that only measures; every later try runs in full")
     r.add_argument("--lean", action="store_true", help="short context for speed: 12 compact tries, one 640 px frame, compact prompt")
@@ -738,7 +845,8 @@ def main():
             raise SystemExit("pan shift capped at 10 degrees")
         if not SPEEDS[0] <= a.speed <= SPEEDS[1]:
             raise SystemExit(f"speed must be {SPEEDS[0]}-{SPEEDS[1]}")
-        print(json.dumps((probe if a.probe else trial)(a.rec, a.pan, a.speed)), flush=True)
+        print(json.dumps(probe(a.rec, a.pan, a.speed) if a.probe else
+                         trial(a.rec, a.pan, a.speed, regrab=a.regrab, confirm_wait=a.confirm_wait)), flush=True)
     else:
         global LEAN
         LEAN = a.lean
@@ -747,7 +855,7 @@ def main():
             raise SystemExit(f"reasoning must be from {EFFORTS}")
         global ONLY
         ONLY = a.only
-        guided(a.max_trials, probe_first="once" if a.probe_once else a.probe, efforts=efforts) if a.guide == "hermes" else run(a.max_trials)
+        guided(a.max_trials, probe_first="once" if a.probe_once else a.probe, efforts=efforts, regrab=a.regrab) if a.guide == "hermes" else run(a.max_trials)
 
 
 if __name__ == "__main__":
