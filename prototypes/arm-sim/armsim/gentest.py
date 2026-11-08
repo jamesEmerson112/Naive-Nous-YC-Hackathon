@@ -208,6 +208,38 @@ def snap(tag):
     return p
 
 
+GRID_COLS, GRID_ROWS = 12, 9          # A-L across, 1-9 down: 80 px cells on the 960 x 720 frame
+GRID_NOTE = ("Every image has a labelled grid: columns A-L left to right, rows 1-9 top to bottom, each cell's label "
+             "in its top-left corner. Name positions by cell (e.g. F6). The camera stays put between tries, so a cell "
+             "is the same spot on every try; cells are image positions, not metres. ")
+
+
+def gridded(path):
+    """A copy of a camera frame with the labelled grid drawn on it (<name>-grid.jpg); the original stays as is."""
+    import cv2
+    path = Path(path)
+    im = cv2.imread(str(path))
+    if im is None:
+        return path
+    h, w = im.shape[:2]
+    cw, ch = w / GRID_COLS, h / GRID_ROWS
+    lines = im.copy()
+    for c in range(1, GRID_COLS):
+        cv2.line(lines, (round(c * cw), 0), (round(c * cw), h), (255, 255, 255), 1)
+    for r in range(1, GRID_ROWS):
+        cv2.line(lines, (0, round(r * ch)), (w, round(r * ch)), (255, 255, 255), 1)
+    im = cv2.addWeighted(lines, 0.6, im, 0.4, 0)
+    scale = max(0.4, cw / 160)
+    for c in range(GRID_COLS):
+        for r in range(GRID_ROWS):
+            label, org = f"{chr(65 + c)}{r + 1}", (round(c * cw) + 3, round(r * ch) + round(32 * scale))
+            cv2.putText(im, label, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(im, label, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1, cv2.LINE_AA)
+    out = path.with_name(f"{path.stem}-grid.jpg")
+    cv2.imwrite(str(out), im)
+    return out
+
+
 def judge(image):
     """Hermes's vision on one camera frame: INSIDE / NOT / UNSURE."""
     q = (f"Use your vision tool on the image file {image}. Is a bag of chips inside the open cardboard box? "
@@ -291,11 +323,14 @@ def last_json(text):
 
 def plan(history, before, after, close=None):
     """Hermes debugs the last try and designs the next test. The code clamps whatever it asks for."""
+    before, after = gridded(before), gridded(after)
+    close = gridded(close) if close else None
     tries = []
     for h in history[-12:]:
         row = {k: h.get(k) for k in ("try", "probe", "go", "probe_check", "recording", "pan_offset", "speed",
                                      "squeeze_pct", "grasped", "holding_s",
-                                     "widest_hold", "peak_grip_load_nm", "arrived", "eye", "debug", "bag_estimate")}
+                                     "widest_hold", "peak_grip_load_nm", "arrived", "eye", "debug", "bag_estimate",
+                                     "jaws_cell", "edge_cell")}
         if h.get("close_at") or h.get("open_at"):
             row.update(gripper_closed_at=h.get("close_at"), gripper_opened_at=h.get("open_at"), points="measured")
         else:
@@ -320,7 +355,9 @@ def plan(history, before, after, close=None):
          f"Use your vision tool on the camera images of the last try: BEFORE {before} and AFTER {after}"
          + (f", and CLOSE {close}, taken the moment the jaws closed on the grasp: it shows the jaws and the bag in the same picture, so read the miss from it directly (both jaws on top of the bag, short of its edge, past it, or to its left or right as seen in the image, and roughly how far) and correct the next test by that" if close else "")
          + ". The camera "
-         "faces the arm from the front at about table height, so it may not see inside the box. "
+         "faces the arm from the front at about table height, so it may not see inside the box. " + GRID_NOTE +
+         "Use the cells to aim: compare where the jaws were (jaws_cell) with the edge (edge_cell) on each try, and how "
+         "each change of pan or recording moved the jaws' cell, then pick the test that moves the jaws onto the edge's cell. "
          "The grip: tries with squeeze_pct 99 squeezed the gripper to 99% closed while grasping. Tries without it "
          "squeezed as recorded: wave to 99%, recording_2 only to ~69% and recording_3 to ~80%, so a short hold with "
          "those two may have been too loose a grip rather than a wrong grasp point. "
@@ -349,7 +386,8 @@ def plan(history, before, after, close=None):
          'JSON object and nothing else: {"verdict": "INSIDE" or "NOT" or "UNSURE" (is ' + GOAL + ' inside the box '
          'in the AFTER image: it counts as INSIDE when it sits within the box walls, even if part of it sticks out '
          'above the rim), "bag": {"size_cm": [length, width, thickness], "centre_m": [x, y], '
-         '"near_edge_m": [x, y], "confidence": "high" or "medium" or "low"}, '
+         '"near_edge_m": [x, y], "edge_cell": "grid cell of the red bag\'s edge nearest the arm", "jaws_cell": "grid cell '
+         'where the jaws were on the last try (in CLOSE if given, else the probe or AFTER image)", "confidence": "high" or "medium" or "low"}, '
          '"debug": "one or two sentences: what happened on the last try and why", '
          '"next": {"recording": "wave" or "recording_2" or "recording_3", "pan": number, "speed": number, '
          '"why": "one sentence"}}. Use the coordinates: say where the grasp point was relative to where the bag '
@@ -410,12 +448,14 @@ def run_probe(n, tag):
 
 def probe_check(image, bag):
     """Astra on the probe frame: do the open jaws straddle the bag's edge?"""
+    image = gridded(image)
     q = (f"Use your vision tool on the image file {image}. The robot arm has stopped with its gripper jaws OPEN at "
          f"the exact point where it will close them to grab {GOAL} (the red bag has white labels on it; they are "
          "part of it). The camera faces the arm from the front at about table height. Your last estimate of the "
          f"bag: {json.dumps(bag)} (arm frame, metres). Bags of chips are slippery: a grip only holds when the open "
-         "jaws straddle the bag's edge, one jaw under it and one over it, so closing clamps the edge. Do they? "
-         'Reply with ONE JSON object and nothing else: {"go": true or false, "why": "one sentence: where the open '
+         "jaws straddle the bag's edge, one jaw under it and one over it, so closing clamps the edge. Do they? " + GRID_NOTE +
+         'Reply with ONE JSON object and nothing else: {"go": true or false, "jaws_cell": "grid cell of the open jaws", '
+         '"edge_cell": "grid cell of the red bag\'s edge nearest them", "why": "one sentence: where the open '
          'jaws are relative to the bag\'s edge (straddling it, both on top, short of it, past it, left or right '
          'of it as seen in the image) and roughly how far"}.')
     t0 = time.time()
@@ -425,7 +465,8 @@ def probe_check(image, bag):
         reply = last_json(r.stdout) or {}
     except subprocess.TimeoutExpired:
         reply = {}
-    return bool(reply.get("go") is True), str(reply.get("why") or "no reply")[:300], round(time.time() - t0, 1)
+    cells = {k: str(reply.get(k))[:6] for k in ("jaws_cell", "edge_cell") if reply.get(k)}
+    return bool(reply.get("go") is True), str(reply.get("why") or "no reply")[:300], round(time.time() - t0, 1), cells
 
 
 def guided(max_trials, probe_first=False):
@@ -478,14 +519,14 @@ def guided(max_trials, probe_first=False):
                 if "error" in pr or image is None:
                     print(f"probe {i} failed: {pr.get('error', 'no pause seen')}", flush=True)
                     break
-                go, why, check_s = probe_check(image, p["bag"])
-                prow = {"try": f"p{i}", **pr, "close_at": pr["open_jaws_at"], "grasped": None, "go": go,
+                go, why, check_s, cells = probe_check(image, p["bag"])
+                prow = {"try": f"p{i}", **pr, "close_at": pr["open_jaws_at"], "grasped": None, "go": go, **cells,
                         "probe_check": why, "plan": n, "before": str(before), "after": str(image), "ts": time.time()}
                 history.append(prow)
                 with open(PLAN_LOG, "a") as f:
                     f.write(json.dumps({**prow, "hermes_debug_before": p["debug"], "hermes_bag_before": p["bag"]}) + "\n")
                 print(f"  probe {i}: jaws open at {pr['open_jaws_at']['tip_m']} -> {'GO' if go else 'NO-GO'} "
-                      f"({check_s} s): {why} | alarms {pr['alarms']}", flush=True)
+                      f"(jaws {cells.get('jaws_cell', '?')}, edge {cells.get('edge_cell', '?')}; {check_s} s): {why} | alarms {pr['alarms']}", flush=True)
                 if any(pr["alarms"]):
                     print("stopping: a servo reported an alarm", flush=True)
                     break
