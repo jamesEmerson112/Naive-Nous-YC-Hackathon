@@ -216,13 +216,16 @@ GRID_NOTE = ("Every image has a labelled grid: columns A-L left to right, rows 1
              "is the same spot on every try; cells are image positions, not metres. ")
 
 
-def gridded(path):
-    """A copy of a camera frame with the labelled grid drawn on it (<name>-grid.jpg); the original stays as is."""
+def gridded(path, width=None):
+    """A copy of a camera frame with the labelled grid drawn on it (<name>-grid.jpg); the original stays as is.
+    width scales the copy down first (the same grid, fewer pixels for the model to read)."""
     import cv2
     path = Path(path)
     im = cv2.imread(str(path))
     if im is None:
         return path
+    if width and im.shape[1] > width:
+        im = cv2.resize(im, (width, round(im.shape[0] * width / im.shape[1])), interpolation=cv2.INTER_AREA)
     h, w = im.shape[:2]
     cw, ch = w / GRID_COLS, h / GRID_ROWS
     lines = im.copy()
@@ -237,7 +240,7 @@ def gridded(path):
             label, org = f"{chr(65 + c)}{r + 1}", (round(c * cw) + 3, round(r * ch) + round(32 * scale))
             cv2.putText(im, label, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 3, cv2.LINE_AA)
             cv2.putText(im, label, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), 1, cv2.LINE_AA)
-    out = path.with_name(f"{path.stem}-grid.jpg")
+    out = path.with_name(f"{path.stem}-grid{width or ''}.jpg")
     cv2.imwrite(str(out), im)
     return out
 
@@ -325,6 +328,8 @@ def last_json(text):
 
 def plan(history, before, after, close=None):
     """Hermes debugs the last try and designs the next test. The code clamps whatever it asks for."""
+    if LEAN:
+        return plan_lean(history, before, after, close)
     before, after = gridded(before), gridded(after)
     close = gridded(close) if close else None
     tries = []
@@ -395,6 +400,11 @@ def plan(history, before, after, close=None):
          '"why": "one sentence"}}. Use the coordinates: say where the grasp point was relative to where the bag '
          'appears in the images, and move it toward the bag. Design the next test to fix what went wrong; do not repeat a try that failed '
          "the same way.")
+    return ask_plan(q)
+
+
+def ask_plan(q):
+    """Send a planning prompt to Astra and parse (and clamp) its reply."""
     t0 = time.time()
     try:
         r = subprocess.run(["hermes", "chat", "--oneshot", *HERMES_MODEL, "-t", "vision", "-q", q], capture_output=True, text=True,
@@ -415,6 +425,45 @@ def plan(history, before, after, close=None):
             "next": None if rec is None or pan is None else {"recording": rec, "pan": round(pan, 1),
                                                               "speed": round(speed, 2), "why": str(nxt.get("why", ""))[:200]},
             "plan_s": round(time.time() - t0, 1)}
+
+
+LEAN = False            # --lean: the short context (fewer tries, one smaller frame, a compact prompt) for speed
+
+
+def plan_lean(history, before, after, close=None):
+    """The same job as plan() with a short context, for speed: the last 12 tries with only the aiming fields,
+    one 640 px frame (CLOSE, else the latest AFTER or probe frame), and a compact prompt."""
+    image = gridded(close or after, width=640)
+    tries = []
+    for h in history[-12:]:
+        tip = (h.get("close_at") or {}).get("tip_m")
+        if tip is None:
+            tip = (planned_points(h["recording"], float(h.get("pan_offset") or 0.0)).get("close_at") or {}).get("tip_m")
+        bag = h.get("bag_estimate") or {}
+        tries.append({"try": h.get("try"), "probe": h.get("probe"), "go": h.get("go"), "recording": h.get("recording"),
+                      "pan": h.get("pan_offset"), "speed": h.get("speed"), "grasped": h.get("grasped"),
+                      "holding_s": h.get("holding_s"), "jaws_tip_m": tip,
+                      "jaws_cell": h.get("jaws_cell") or bag.get("jaws_cell"),
+                      "edge_cell": h.get("edge_cell") or bag.get("edge_cell"),
+                      "note": str(h.get("probe_check") or h.get("debug") or "")[:140]})
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / "context.json").write_text(json.dumps({"lean": True, "tries": tries}, indent=1) + "\n")
+    q = (f"Robot arm debugging. Goal: pick up {GOAL} (it has white labels; they are part of it) and put it in the "
+         "open box. You can only choose: recording (wave closes its jaws about 6 cm above the table; recording_2 and "
+         "recording_3 about 2 cm), pan (-10 to +10 degrees, a base rotation; positive pan has moved the jaws "
+         "camera-left and to smaller y), and speed (0.5 to 1.0). The bag is slippery: a grip holds only when the open "
+         "jaws straddle its edge, one jaw under it and one over it; both jaws on top just pinch its face. "
+         "Tries, oldest first (probe = the arm stopped with open jaws at the closing point and did not grasp; "
+         "jaws_tip_m is where the jaws were, metres from the arm base: x forward, y left, z up):\n"
+         + json.dumps(tries) + "\n"
+         f"Use your vision tool on {image}: the latest frame, with a labelled grid (columns A-L left to right, rows "
+         "1-9 top to bottom; cells are image positions, the same spot on every try). Find the jaws' cell and the "
+         "cell of the red bag's edge nearest them, and choose the test that moves the jaws onto that edge, at its "
+         "height. Don't repeat a try that failed the same way. Reply with ONE JSON object only: "
+         '{"verdict": "INSIDE" or "NOT" or "UNSURE" (is the red bag inside the box), "bag": {"edge_cell": "cell", '
+         '"jaws_cell": "cell"}, "debug": "one sentence: what the last try missed", "next": {"recording": "wave" or '
+         '"recording_2" or "recording_3", "pan": number, "speed": number, "why": "one sentence"}}.')
+    return ask_plan(q)
 
 
 def trial_streamed(args, mark, tag, timeout=240):
@@ -450,12 +499,17 @@ def run_probe(n, tag):
 
 def probe_check(image, bag):
     """Astra on the probe frame: do the open jaws straddle the bag's edge?"""
-    image = gridded(image)
+    image = gridded(image, width=640 if LEAN else None)
     q = (f"Use your vision tool on the image file {image}. The robot arm has stopped with its gripper jaws OPEN at "
          f"the exact point where it will close them to grab {GOAL} (the red bag has white labels on it; they are "
          "part of it). The camera faces the arm from the front at about table height. Your last estimate of the "
-         f"bag: {json.dumps(bag)} (arm frame, metres). Bags of chips are slippery: a grip only holds when the open "
-         "jaws straddle the bag's edge, one jaw under it and one over it, so closing clamps the edge. Do they? " + GRID_NOTE +
+         f"bag: {json.dumps(bag)} (arm frame, metres). Bags of chips are slippery: a grip holds when the open "
+         "jaws straddle the bag's edge, one jaw tucked under the edge and the other on the other side of the bag, "
+         "so closing clamps the edge. The person at the bench says that position is GOOD and should be grabbed. The "
+         "camera is at table height, so a jaw tucked under the edge is often hidden: if the jaws are AT the red bag's "
+         "edge (within about half a grid cell) and low enough to reach under it, say go true. Say go false only when "
+         "both jaws are plainly on top of the bag's face, clearly away from the red bag (more than about one cell), or "
+         "on a different bag. Do they straddle or reach the red bag's edge? " + GRID_NOTE +
          'Reply with ONE JSON object and nothing else: {"go": true or false, "jaws_cell": "grid cell of the open jaws", '
          '"edge_cell": "grid cell of the red bag\'s edge nearest them", "why": "one sentence: where the open '
          'jaws are relative to the bag\'s edge (straddling it, both on top, short of it, past it, left or right '
@@ -581,6 +635,7 @@ def main():
     r.add_argument("--max-trials", type=int, default=6)
     r.add_argument("--guide", choices=["fixed", "hermes"], default="fixed")
     r.add_argument("--probe", action="store_true", help="probe each test first; run it in full only on Astra's go")
+    r.add_argument("--lean", action="store_true", help="short context for speed: 12 compact tries, one 640 px frame, compact prompt")
     r.add_argument("--reasoning", default="", help="Astra's reasoning effort; a comma list rotates test by test "
                    "(e.g. none,low,medium); empty = the Hermes profile's")
     a = ap.parse_args()
@@ -591,6 +646,8 @@ def main():
             raise SystemExit(f"speed must be {SPEEDS[0]}-{SPEEDS[1]}")
         print(json.dumps((probe if a.probe else trial)(a.rec, a.pan, a.speed)), flush=True)
     else:
+        global LEAN
+        LEAN = a.lean
         efforts = tuple(e for e in a.reasoning.split(",") if e)
         if any(e not in EFFORTS for e in efforts):
             raise SystemExit(f"reasoning must be from {EFFORTS}")
