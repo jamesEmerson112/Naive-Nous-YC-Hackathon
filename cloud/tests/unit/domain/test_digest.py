@@ -236,3 +236,39 @@ def test_action_kinds_exclude_intake():
 def test_render_ends_with_newline_and_shows_window():
     text = render_text(summarize([], T0, None))
     assert text.endswith("\n") and "2026-11-08 00:30 UTC → now" in text
+
+
+def test_device_agent_acting_and_budget_pruning_count_as_actions():
+    events = [
+        ev("incident.reported", "automation", "device:sim-1"),
+        ev("incident.agent_acted", "agent", "device:sim-1"),
+        ev("overlay.applied", "agent", "device:sim-1"),  # the same act; not counted twice
+        ev("recording.blobs_pruned", "automation", "automation:telemetry"),
+    ]
+    d = summarize(events, T0, T1)
+    assert d.actions == 2 and d.actions_by_class["agent"] == 1
+    assert d.actions_by_class["automation"] == 1 and d.no_human_share == 1.0
+
+
+def test_headline_reads_like_a_slide():
+    events = [
+        ev("incident.reported"),
+        ev("incident.agent_acted", "agent"),
+        ev("overlay.held", "automation"),
+        ev("candidate.promoted"),
+    ]
+    text = render_text(summarize(events, T0, T1))
+    headline = text.splitlines()[1]
+    assert headline == (
+        "In 6.0 h: 1 incidents, 1 healed on the device, 1 fleet fixes promoted, 0 rolled back, "
+        "0 work orders; 0 human actions (100% of 2 actions with no human)."
+    )
+
+
+def test_render_in_a_time_zone_and_open_window_uses_now():
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("America/Los_Angeles")
+    text = render_text(summarize([], T0), tz, now=T0 + timedelta(hours=7))
+    assert "2026-11-07 16:30 PST → now" in text and "In 7.0 h:" in text
+    assert "Since then:" in render_text(summarize([], T0))

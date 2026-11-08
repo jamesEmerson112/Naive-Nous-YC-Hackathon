@@ -65,6 +65,10 @@ class FleetState(Base):
     frozen_reason: Mapped[str | None] = mapped_column(Text)
     batch_requested: Mapped[bool] = mapped_column(default=False)
     batch_last_run_at: Mapped[datetime | None]
+    # Set by `cli overnight start`; `reset` refuses while it is set (build plan K7, M7).
+    # Added in M7: on a database made before it, run
+    # ALTER TABLE fleet_state ADD COLUMN IF NOT EXISTS overnight_started_at TIMESTAMPTZ;
+    overnight_started_at: Mapped[datetime | None]
     updated_at: Mapped[datetime] = _created()
 
 

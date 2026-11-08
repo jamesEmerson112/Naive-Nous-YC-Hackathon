@@ -48,7 +48,7 @@ def test_reset_with_force_after_overnight_start(
         assert session.scalar(select(func.count()).select_from(Event)) == 0
 
 
-@pytest.mark.parametrize("command,milestone", [("digest", "M7"), ("export", "M6")])
+@pytest.mark.parametrize("command,milestone", [("export", "M6")])
 def test_unbuilt_commands_say_so(command, milestone, settings, capsys):
     assert cli.main([command], settings=settings) == 1
     err = capsys.readouterr().err
