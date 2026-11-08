@@ -79,33 +79,33 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sun Nov 8, 7:50 AM PST_
+_Last updated: Sun Nov 8, 8:20 AM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P3 is on: the team is on the real arm 7–10 AM (Pi with Andre: pin serial ports, teach Andre's four poses, `demo/up.sh --real`), with the 10 AM code freeze and 11 AM stop ahead. James's overnight sim work is now on main (`james/arm-sim-ydcsss` merged at about 7:38 AM, no PR); his steps this morning are in [`MORNING.md`](prototypes/arm-sim/MORNING.md) (revert the Hermes compaction setting, set up the Hermes manager profile, run the loop with the real manager). Kent is on the **Naïve Technician** v2 (`docs/naive-technician/`, claimed in `features.txt`): nothing built yet; gates G0 test email 8:15, G1 spike 8:45, go or break-glass 9:00, guaranteed sim clip 9:15, arm slot 9:30.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. P3 is on: the team is on the real arm 7–10 AM (Pi with Andre: pin serial ports, teach Andre's four poses, `demo/up.sh --real`), with the 10 AM code freeze and 11 AM stop ahead. James's morning steps are in [`MORNING.md`](prototypes/arm-sim/MORNING.md) (revert the Hermes compaction setting, set up the Hermes manager profile, run the loop with the real manager); no James commits since 7:49. Kent is building **Naïve Technician** T0: the case page (#65), the Studio approval example (#66) and the Naïve session + shop adapters with a live spike (#67) are merged; the backend is open as #68 (`tech/backend`). Gates: G1 spike 8:45, go or break-glass 9:00, guaranteed sim clip 9:15, arm slot 9:30.
 
 **Recently done:**
-- James's session merged **`james/arm-sim-ydcsss` into main** (`2549ff6`, `28eb894`, `433b399`, `0fc85ab`): Mission Control UI round 2 (worker → manager exchange row, wrong-move story, plant-wrong-move button, three looks with screenshots in `prototypes/arm-sim/docs/looks/`), dispatcher review fixes (SIGINT first, order cards only, per-arm lock and claim token), final worker benchmark (`workerbench/RESULTS.md`: `lfm3:1.7b` as the laptop worker, `qwen3.5:4b` the fallback, no model opens incidents alone; ~$2.13 on a Runpod L40S, all pods terminated). The hub plan checklist marks items 8, Soak, 9, UI, WM, C2 and WB done; 112 tests pass per `MORNING.md`; 8 James lines moved to FINISHED in `features.txt`
-- Kent pushed **Naïve Technician v2** after a three-lens review (`46a247b`, new `review.md`): reframed as "some faults need hands" (the servo is a spare); approval goes through the existing `workorders.resolve` instead of a second approval path; the trigger reads the work-order row (`needs_human`, part `(none)`); Kent runs his own cloud stack (`COMPOSE_PROJECT_NAME=tech`), never Olir's laptop; the elbow is locked both ways so the stall doesn't self-resolve
-- Olir merged **#64** (`full-test-3`) and **#62** (`full-test-2`) earlier: heal-agent run reports reach the cloud as `AgentRunReport` (table `agent_runs`, APIs doc §3.11). Read what an agent did from `agent_runs`, test with `edge_bridge.fake_healer`, never `make reset` the laptop cloud
-- Ishaan refreshed his block at 7:42 AM: no change; the pod healer loop still waits on Olir for bench runs
+- Kent merged **#65 Naïve Technician T0 case page** (`3bdd637`, `f994212`, `2d30c76`): verdict, part card with one-click approve, email card and live feed (`cloud/src/romulus_cloud/web/templates/technician.html`, `partials/technician_case.html`, tests in `cloud/tests/unit/web/test_technician_template.py`); polling pauses during approve, source links are https-only
+- Kent merged **#66 approval in the Naïve Studio** (`60a7790`, `e66f69b`, `53cbdf1`): a working example of approving the staged part in the Studio (`cloud/scripts/technician_approval_example.py`, [`approval-in-studio.md`](docs/naive-technician/approval-in-studio.md))
+- Kent merged **#67 Naïve session + shop adapters, live spike** (`cb3372c`…`46217e0`, `070becb`): `cloud/src/romulus_cloud/adapters/naive.py` and `shop.py`, `cloud/scripts/technician_spike.py`, recorded sessions in `cloud/tests/fixtures/technician/`. The first live session fixture is sonnet-5.5, 29.6 s, $0.072, with a valid report (`a17e257`), inside G1's ≤ 10 min run
+- Kent opened **#68 Naïve Technician T0: backend** (`tech/backend`: APIs §4.4/§4.5/§5 rows, D30 draft, F14 flow test, email after a quick approve); not merged yet
 
 **Open questions:**
-- Naïve Technician: Kent's five calls are open per its README (D30 a person checks out, servo variant C001 7.4 V or C018 12 V, the technician teammate, OK for the live Naïve writes, which cloud runs the 1 PM demo). Kent asks Andre for the servo variant and the team for a technician (email, plus phone for T1). The arm is needed for one slot near 9:30
-- James's worker → manager healer is built and tested with a fake manager only; it hasn't run against a real Hermes yet (`MORNING.md`, "Known gaps"). Wrong moves don't show on the heal timeline; Level 3 is not in the loop (L3b)
-- Fleet Doctor follow-ups (#52): `SAFETY_PATHS_CONFIRMED` stays false until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder. Frozen ultrasonic still has no rule in `firmware/healer/detect.py`. Who drives the real arm (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, `RealArm` in `prototypes/arm-sim/`) is still to settle *(team status)*
-- Team calls still open: Stripe is optional; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo. #63 (main → `full-test-2`) is still open though `full-test-2` is merged *(inferred: can be closed)*
+- Naïve Technician: Kent's five calls are still open (D30 a person checks out, servo variant C001 7.4 V or C018 12 V, the technician teammate, OK for the live Naïve writes, which cloud runs the 1 PM demo). Kent asks Andre for the servo variant and the team for a technician (email, plus phone for T1)
+- James's worker → manager healer has run against a fake manager only, not a real Hermes yet (`MORNING.md`, "Known gaps"). Wrong moves don't show on the heal timeline; Level 3 is not in the loop (L3b)
+- Ishaan's pod healer loop (#41) still waits on Olir for bench runs (SSH to the pod, API key); Ishaan still owes Kent the K17 safety and visor path list and the contracts review (B2, B3), so `SAFETY_PATHS_CONFIRMED` stays false
+- Team calls still open: Stripe is optional; Monid's job; owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email); live vs fake work orders for the demo; who drives the real arm. #63 (main → `full-test-2`) is still open though `full-test-2` is merged *(inferred: can be closed)*
 
 **Recent commits (all authors):**
-- `3a64674` Sun 07:47 · Kent Gang · Update Kent status in CLAUDE.md
-- `4968697` Sun 07:47 · Kent Gang · Claim Naive technician in features.txt
-- `46a247b` Sun 07:44 · Kent Gang · naive technician docs
-- `78fdaae` Sun 07:42 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `0fc85ab` Sun 07:38 · Claude (James's session) · Plan checklist: the manager runs with the scripted commander
-- `433b399` Sun 07:36 · Claude (James's session) · Morning brief, README and plan checklist: overnight loop, Mission Control looks, worker/manager healer, wrong-action redo, benchmark; finished features moved
-- `28eb894` Sun 07:33 · Claude (James's session) · Merge remote-tracking branch 'origin/main' into james/arm-sim-ydcsss
-- `2549ff6` Sun 07:33 · Claude (James's session) · Mission Control UI round 2, dispatcher review fixes, worker benchmark results from Runpod
-- `5fdfa43` Sun 07:32 · jamesEmerson112 · Update team status in CLAUDE.md
-- `5657970` Sun 07:30 · Kent Gang · Update Kent status in CLAUDE.md
+- `070becb` Sun 08:18 · kgang · Naïve Technician T0: Naïve session + shop adapters, live spike (#67)
+- `46217e0` Sun 08:18 · Kent Gang · Technician: second live fixture (agent v3, caption verdict, visible research); spike verdict maxLength 80
+- `81fda0b` Sun 08:17 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
+- `102167e` Sun 08:16 · Kent Gang · Update Kent status in CLAUDE.md
+- `53cbdf1` Sun 08:16 · kgang · Naïve Technician: approval in the Naïve Studio example (#66)
+- `a17e257` Sun 08:15 · Kent Gang · Technician: live session fixture (sonnet-5.5, 29.6 s, $0.072, valid report); shop falls back to a stdlib read on 429
+- `60a7790` Sun 08:14 · Kent Gang · Naive Technician: example of approving the staged part in the Naive Studio
+- `2d30c76` Sun 08:12 · kgang · Naïve Technician T0: case page (#65)
+- `f994212` Sun 08:11 · Kent Gang · Technician page: pause polling during approve, https-only source links, None-safe lists
+- `bda616c` Sun 08:10 · Kent Gang · Naive adapter: retry budget is a parameter (2 s wall time by default for the worker); wrap long spike lines
 
-**Branches on GitHub:** `main`; the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `james/arm-sim-ydcsss` (now 0 commits ahead of main), `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; `tech/backend` (Kent, #68 open); `test-4` (no commits of its own); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `tech/adapters` (#67), `tech/page` (#65), `james/arm-sim-ydcsss`, `full-test-3` (#64), `full-test-2` (#62; #63 still open), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
