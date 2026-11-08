@@ -14,7 +14,7 @@ from romulus_cloud.api.web import templates
 SAMPLES = json.loads(
     (Path(__file__).parents[2] / "fixtures" / "technician" / "view_sample.json").read_text()
 )
-STATES = ["diagnosing", "waiting", "done"]
+STATES = ["diagnosing", "waiting", "done", "replay"]
 
 
 def page(v: dict) -> str:
@@ -42,7 +42,8 @@ def test_every_state_renders_the_header_stages_and_numbers(state):
         assert v["duration_label"] in html and v["cost_label"] in html
         assert "human click" in html
         for stage in v["stages"]:
-            assert stage["label"] in html
+            if stage["state"] not in ("skipped", "failed"):  # those read "email not sent" etc.
+                assert stage["label"] in html
         assert v["feed"][-1]["text"] in html
         assert v["studio_url"] in html
 
@@ -104,14 +105,56 @@ def test_buttons_follow_can_approve_and_can_deny():
     assert 'data-tech-action="approve"' not in html and 'data-tech-action="deny"' in html
 
 
-def test_replay_badge_is_on_every_card_and_pinned_on_screen():
-    v = sample("waiting")
-    v.update(mode="replay", badge="Recorded Naïve session ses_01jcx9e3qv7k · 09:31")
-    html = partial(v)
+def test_replay_badge_is_in_the_header_and_on_every_card_never_floating():
+    html = partial(sample("replay"))
     assert "live session" not in html
-    assert html.count("Recorded Naïve session ses_01jcx9e3qv7k · 09:31") >= 2  # header + pinned
-    assert 'class="tc-rec-fixed"' in html
+    assert 'class="tc-badge-rec">● Recorded Naïve session ses_01jcx9e3qv7k · 09:31<' in html
+    assert "tc-rec-fixed" not in html  # nothing pinned over the content
     assert html.count('class="tc-rec-tag"') == 4  # verdict, part, email, feed
+
+
+def test_a_skipped_email_never_reads_as_sent():
+    v = sample("replay")
+    html = partial(v)
+    assert "Email not sent" in html and "Technician emailed" not in html
+    assert "✓ sent" not in html and "sent 07:44" not in html and " · not sent" in html
+    assert "replay: not sent (the recorded run&#39;s email went to the technician)" in html
+    # The banner's email stage shows as not sent, not done.
+    assert '<li class="st-skipped">' in html and "email not sent" in html
+    assert "technician emailed" not in html
+
+
+def test_failed_email_and_failed_stage():
+    v = sample("waiting")
+    v["stages"][2]["state"] = "failed"
+    v["email"].update(status="failed", error="Naïve outbound mail answered 501")
+    html = partial(v)
+    assert '<li class="st-failed">' in html and "email failed" in html
+    assert "✕ Email failed" in html and "✓ sent" not in html
+
+
+def test_staged_chip_only_when_the_gate_staged_the_part():
+    v = sample("waiting")
+    assert "✓ spare part staged" in partial(v)
+    v["part"]["staged"] = False
+    html = partial(v)
+    assert "spare part staged" not in html and "spare suggested" in html
+    v["part"] = None
+    html = partial(v)
+    assert "spare part staged" not in html and "spare suggested" in html
+    v["part_needed"] = "no"
+    assert "spare suggested" not in partial(v)
+
+
+def test_an_unpriced_part_never_shows_none():
+    v = sample("waiting")
+    v["part"].update(
+        staged=False, unit_usd=None, total_usd=None, cart_url=None, blocked_reason="no price"
+    )
+    v["can_approve"] = False
+    html = partial(v)
+    assert "None" not in html
+    assert "not checked yet" in html
 
 
 def test_blocked_part_and_failed_email():

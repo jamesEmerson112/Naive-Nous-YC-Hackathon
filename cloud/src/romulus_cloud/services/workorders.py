@@ -50,6 +50,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from romulus_cloud import events
 from romulus_cloud.adapters.naive import NaiveClient, NaiveError, build_naive
@@ -67,7 +68,7 @@ from romulus_cloud.domain.triage import (
 from romulus_cloud.errors import ApiError
 from romulus_cloud.ids import new_id
 from romulus_cloud.log import log_line
-from romulus_cloud.models import Device, FleetState, Incident, WorkOrder
+from romulus_cloud.models import Device, FleetState, Incident, TechnicianCase, WorkOrder
 from romulus_cloud.settings import Settings, get_settings
 from romulus_contracts import IncidentReport, Outcome
 
@@ -326,12 +327,14 @@ def _record(
     actor_class: Literal["agent", "automation", "human"] = "automation",
     before: str | None = None,
     data: dict[str, Any] | None = None,
+    extra_refs: dict[str, Any] | None = None,
 ) -> None:
     refs: dict[str, Any] = {
         "incident": order.incident_id,
         "device": order.device_id,
         "work_order": order.id,
         "status": status,
+        **(extra_refs or {}),
     }
     if before is not None:
         refs["from"], refs["to"] = before, status
@@ -351,6 +354,7 @@ def _set_status(
     actor: str = ACTOR,
     actor_class: Literal["agent", "automation", "human"] = "automation",
     data: dict[str, Any] | None = None,
+    extra_refs: dict[str, Any] | None = None,
 ) -> None:
     before = order.status
     order.status = status
@@ -367,6 +371,7 @@ def _set_status(
         actor_class=actor_class,
         before=before,
         data=data,
+        extra_refs=extra_refs,
     )
 
 
@@ -646,6 +651,24 @@ def _poll(session: Session, order: WorkOrder, now: datetime, naive: NaiveClient)
 # --- a person resolves an order (D19b) --------------------------------------------------
 
 
+def _technician_settled(session: Session, order: WorkOrder, status: str, now: datetime) -> None:
+    """A Naïve Technician case waiting on this order follows the person's decision (the
+    order's own event says why). A case still diagnosing is stopped by its next sync, which
+    also cancels the session."""
+    case = session.scalars(
+        select(TechnicianCase).where(TechnicianCase.work_order_id == order.id)
+    ).first()
+    if case is not None and case.status == "waiting":
+        case.status = status
+        case.updated_at = now
+        email = dict((case.actions or {}).get("email") or {})
+        if status == "stopped" and email.get("status") == "sending":
+            email.update(status="skipped", error="case stopped before send")
+            case.actions = {**(case.actions or {}), "email": email}
+            flag_modified(case, "actions")
+        session.flush()
+
+
 def resolve(
     session: Session,
     order_id: str,
@@ -695,6 +718,7 @@ def resolve(
             )
         order.result = f"Denied by {by}: {why}"
         _set_status(session, order, "denied", say, now, actor=actor, actor_class="human")
+        _technician_settled(session, order, "stopped", now)
         return order
     if order.status not in WAITING:
         raise ApiError(
@@ -720,6 +744,29 @@ def resolve(
             actor=actor,
             actor_class="human",
         )
+        return order
+    staged = raw.get("technician_part")
+    if isinstance(staged, dict) and staged.get("cart_url"):
+        # Naïve Technician (D30): the part was checked in code; the person checks out on the
+        # vendor's page, which shows the live price, so there is no second check here.
+        result = (
+            f"Approved by {by}: {staged.get('qty')} × {staged.get('title')} at "
+            f"{staged.get('origin')}, ${staged.get('unit_usd')} each "
+            f"(cart {staged.get('cart_url')})"
+        )
+        order.result = result
+        _set_status(
+            session,
+            order,
+            "done",
+            f"{result}. {why}.",
+            now,
+            actor=actor,
+            actor_class="human",
+            data={"technician_part": staged},
+            extra_refs={"technician_case": staged.get("case")} if staged.get("case") else None,
+        )
+        _technician_settled(session, order, "done", now)
         return order
     if order.part == NO_PART:
         raise ApiError(

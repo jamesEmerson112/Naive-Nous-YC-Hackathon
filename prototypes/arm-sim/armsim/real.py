@@ -113,6 +113,12 @@ class RealArm:
         return np.array(pose, dtype=float)
 
     def send(self, action):
+        # The host sets taught_poses from Andre's library; {} means poses.json is missing, and
+        # host.Skills then falls back to the sim's poses, which don't match this arm's zero.
+        if self.taught_poses is not None and not self.taught_poses:
+            raise RuntimeError("no taught poses on the real arm (arm/prims/library/poses.json is missing): "
+                               "teach them with Andre first: arm/bin/prim-record.sh --pose rest home "
+                               "above_block pick")
         if not self._torque_on:
             self.robot.bus.enable_torque()
             self._torque_on = True

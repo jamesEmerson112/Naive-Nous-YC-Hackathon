@@ -191,6 +191,46 @@ class Settings(BaseSettings):
     doctor_evidence_file_bytes: int = 4000  # per file named in the log or trace
     doctor_evidence_code_bytes: int = 16000  # all code excerpts together
 
+    # Naïve Technician (docs/naive-technician/design.md §10; D30). Off by default. A
+    # `needs_human` work order with no catalogued part opens a case: one Naïve session writes
+    # a typed report, Romulus emails TECHNICIAN_EMAIL and stages a checked cart a person
+    # approves. off | fake (recorded test fixture) | live (HttpNaive); replay is per case.
+    technician_mode: Literal["off", "fake", "live"] = "off"
+    naive_technician_agent: str = ""
+    naive_technician_identity: str = ""
+    naive_technician_inbox: str = ""
+    # The one recipient, a consenting teammate; never taken from the model. Empty = no email.
+    technician_email: str = ""
+    # Vendors the agent may pick a part from: [{origin, handle, variant_id, label}]. The
+    # variant id must be exact (the WowRobo product also sells 5- and 10-packs). The case
+    # file lists only the entries matching ARM_SERVO_VARIANT (by its prefix, e.g. C018).
+    # `label` is "<vendor> · <part title>": the page and the approval show those words.
+    technician_vendors: list[dict[str, str]] = [
+        {
+            "origin": "https://shop.wowrobo.com",
+            "handle": "feetech-sts3215-servo-12v-30kg-high-torque-servo-for-so-arm100",
+            "variant_id": "48037575033049",
+            "label": "WowRobo · Feetech STS3215 C018 12V",
+        },
+        {
+            "origin": "https://shop.wowrobo.com",
+            "handle": "feetech-sts3215-c001-servo-7-4v-19-5kg-high-torque-servo-for-so-arm100-101",
+            "variant_id": "48037674090713",
+            "label": "WowRobo · Feetech STS3215 C001 7.4V",
+        },
+    ]
+    arm_servo_variant: str = "C018-12V"  # confirm on the arm
+    technician_session_usd: float = 3
+    technician_daily_usd_cap: float = 10
+    technician_timeout_s: float = 600
+    # Only orders this new open a case on their own: turning the Technician on never
+    # backfills a session (and an email) for every old part-less order.
+    technician_max_age_s: float = 900
+    # A recorded session (fixture JSON) that `?mode=replay` plays back over N seconds; empty
+    # = the bundled demo recording (cloud/tests/fixtures/technician/joint_stall_live2.json).
+    technician_replay_file: str = ""
+    technician_replay_seconds: float = 20
+
 
 @lru_cache
 def get_settings() -> Settings:

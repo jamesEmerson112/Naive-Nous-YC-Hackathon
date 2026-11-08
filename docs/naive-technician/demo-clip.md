@@ -6,7 +6,7 @@ _What the beat has to land, in order:_
 3. _It touched the real world: a technician's inbox and a real web store._
 4. _A person stepped in exactly once, to spend money._
 
-_Anything that doesn't serve those four gets cut. Numbers on screen are **measured** in the spike or the live run, never typed in. The figures below (2 min, $0.41) are placeholders._
+_Anything that doesn't serve those four gets cut. Numbers on screen are **measured** in the spike or the live run, never typed in. Measured this morning on the live agent (`claude-sonnet-5.5`): sessions take 26–33 s and cost $0.07–$0.08 (spike runs and the 8:44 rehearsal). Re-read the numbers off the case you film._
 
 ## The story: "Some faults need hands"
 The fault is a jammed elbow, and that should be visible on camera. Nobody needs it explained that a robot can't pull out its own jam, so the jam makes "can't fix itself" obvious at once. It also sets up the honest verdict: *"Elbow blocked or servo failing: needs hands."*
@@ -43,9 +43,9 @@ Say "Naïve" in the first 3 s: the Naïve SDK is required and the judges are the
 |---|---|---|---|
 | 0–3 | **Arm**: the locked elbow strains and the arm parks; the story banner flips to "healer gave up → Naïve technician" | Some faults need hands | the real arm, or labelled footage (see the honesty rules below) |
 | 3–5 | **Naïve Studio**: the technician session's chat, with tool calls scrolling (`web_search`, `web_fetch shop.wowrobo.com/…`) | Naïve agent on the case | the same live session as shot 3 |
-| 5–7 | **Romulus page, zoomed**: the verdict lands under the "NAÏVE AGENT · technician" header | Diagnosed in 2 min | the measured duration. Say the speed-up on screen if it's sped up (2 min into 2 s is about 60×) |
+| 5–7 | **Romulus page, zoomed**: the verdict lands under the "NAÏVE AGENT · technician" header | Diagnosed in 27 s | the measured duration. Say the speed-up on screen if it's sped up (27 s into 2 s is about 14×) |
 | 7–10 | **Phone filling the frame**, with the email open. From: "Romulus Technician (Naïve agent)". Subject: `arm-1 down: clear elbow jam, spare servo ready` (45 characters at most, so it reads on a lock screen) | Technician emailed | the real email arrived in a teammate's inbox. Film the phone with another phone |
-| 10–15 | **Spare-part card** with four ticks → the cursor clicks **Approve & open cart** → the **real WowRobo cart**, held 1.5 s → overlay `2 min · $0.41 · 1 human click` | You approve. That's it. | the cart link was built and price-checked by Romulus; the overlay numbers come from the case |
+| 10–15 | **Spare-part card** with four ticks → the cursor clicks **Approve & open cart** → the **real WowRobo cart**, held 1.5 s → overlay `27 s · $0.08 · 1 human click` | You approve. That's it. | the cart link was built and price-checked by Romulus; the overlay numbers come from the case |
 
 **Why this order.** Each shot is one idea with one big thing to read: a jam, a transcript, a verdict, a phone, a cart. The two "proof of the real world" frames, the phone and the cart, get at least 3 s each.
 - **Shot 2 is new in v2.** It shows the run in Naïve's own UI: the strongest single frame for "this is really Naïve."
@@ -82,7 +82,7 @@ These are acceptance criteria, not polish (`design.md` §8):
 5. **Logistics:** bring a hotspot, since the Naïve API, the email and WowRobo all need internet. Don't use sound: a Twilio trial reads a notice first.
 
 **Line for the business story, using measured numbers only:**
-> That's a field-service dispatcher's job, done by a Naïve agent in two minutes for forty cents. Every arm in the fleet gets it.
+> That's a field-service dispatcher's job, done by a Naïve agent in under thirty seconds for eight cents. Every arm in the fleet gets it.
 
 ## What not to show
 - **Naïve's browser live view.** It can't be embedded, because it answers only a signed-in Studio session (F:20086), and the T0 agent has no browser anyway.

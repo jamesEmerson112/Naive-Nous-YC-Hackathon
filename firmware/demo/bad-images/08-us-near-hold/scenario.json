@@ -2,7 +2,7 @@
   "version": "v1.8",
   "date": "2026-11-07T15:00:00+00:00",
   "commit": "us: hold near readings for 500 ms so the arm's gate can't miss a passing hand",
-  "title": "Ultrasonic latches the nearest reading: right until something comes within 25 cm, then it never lets go (the near-object hold keeps itself alive), so the arm flails after the hand is gone",
+  "title": "Ultrasonic latches the nearest reading: right until something comes within 20 cm, then it never lets go (the near-object hold has no release: HCSR04_HOLD_MS is never used), so the arm flails after the hand is gone",
   "trigger": {
     "kind": "physical",
     "how": "Dormant from boot: distances are right. Hold a hand 5-15 cm in front of the HC-SR04 for about a second, then take it away: the reported distance stays at the hand's until the pod is reset or reflashed. arm/heal_test.py runs it with the arm looping its job."

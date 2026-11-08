@@ -37,6 +37,7 @@ from romulus_cloud.services import (
     datasets,
     doctor,
     gate,
+    technician,
     telemetry,
     workorders,
 )
@@ -86,12 +87,25 @@ STEPS.append(
 )
 
 
+# Naïve Technician (docs/naive-technician/design.md §6): open a case for each needs_human
+# order with no part (every 5 s), and advance open cases (every 3 s). `steps_for` leaves
+# both out while TECHNICIAN_MODE=off.
+TECHNICIAN_STEPS = ("technician.open", "technician.sync")
+STEPS += [
+    Step("technician.open", technician.open_cases, every_s=5),
+    Step("technician.sync", technician.sync, every_s=3),
+]
+
+
 def steps_for(settings: Settings) -> list[Step]:
     """The steps the worker runs: `STEPS` with settings applied. Importing this module never
     reads `.env`, so this happens when the worker starts (changing a setting needs a
     restart). DOCTOR_MODE=off leaves `doctor.tick` out entirely, so an off Doctor writes no
-    step log line every few seconds; DOCTOR_TICK_S sets its cadence."""
+    step log line every few seconds; DOCTOR_TICK_S sets its cadence. TECHNICIAN_MODE=off
+    leaves out both technician steps the same way."""
     steps = [s for s in STEPS if s.name != "doctor.tick" or settings.doctor_mode != "off"]
+    if settings.technician_mode == "off":
+        steps = [s for s in steps if s.name not in TECHNICIAN_STEPS]
     every = {"doctor.tick": settings.doctor_tick_s}
     return [replace(s, every_s=every[s.name]) if s.name in every else s for s in steps]
 

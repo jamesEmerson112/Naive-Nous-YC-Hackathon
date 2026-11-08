@@ -1,6 +1,6 @@
 # Naïve Technician: some faults need hands
 
-_Kent, Sun Nov 8, 7:45 AM PST. A sprint plan for the hours before the 10:00 freeze and the 11:00 stop (`docs/hackathons.md:39`). Status: **v2 proposal after a three-lens review**; nothing built yet._
+_Kent, Sun Nov 8, 7:45 AM PST. A sprint plan for the hours before the 10:00 freeze and the 11:00 stop (`docs/hackathons.md:39`). Status: **T0 built and merged** (#65–#71, plus the Studio approval example #66/#69). Live rehearsal on Kent's `tech` stack, 8:44 AM: incident → `waiting` in 38 s, a 27 s Naïve session at $0.08, real email sent, the C018 spare staged at $15.99 (measured). Run it with [`runbook.md`](runbook.md)._
 
 ## The idea
 Romulus heals software faults on the arm and across the fleet. Hardware faults hit a **dead end** today:

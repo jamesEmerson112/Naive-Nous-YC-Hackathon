@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en" data-theme="day">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Romulus · Sunlit Workshop mock</title>
+<!--
+  Static mock of the "Sunlit Workshop" redesign (docs/impeccable-redesign/README.md).
+  Two screens, Fleet and Technician case, in Day (default) and Night. The data is illustrative:
+  the technician numbers come from the 8:44 rehearsal (docs/naive-technician/runbook.md); the
+  other fleet rows are invented to show each state. Tokens match DESIGN.md. No network.
+-->
+<style>
+:root, [data-theme="day"] {
+  --ground: oklch(97.4% 0.009 150);
+  --surface: oklch(99.4% 0.004 150);
+  --well: oklch(95.2% 0.013 150);
+  --line: oklch(90.5% 0.014 150);
+  --line-strong: oklch(84% 0.018 150);
+  --ink: oklch(24% 0.025 160);
+  --ink-2: oklch(38% 0.022 160);
+  --muted: oklch(51% 0.02 158);
+  --leaf: oklch(58% 0.145 150);
+  --leaf-ink: oklch(44% 0.11 152);
+  --leaf-wash: oklch(94.5% 0.04 150);
+  --on-leaf: oklch(99% 0.01 150);
+  --sun: oklch(82% 0.155 82);
+  --sun-ink: oklch(48% 0.11 68);
+  --sun-wash: oklch(96% 0.05 90);
+  --sky: oklch(62% 0.12 235);
+  --sky-ink: oklch(47% 0.11 240);
+  --sky-wash: oklch(95.5% 0.025 230);
+  --clay: oklch(57% 0.155 35);
+  --clay-ink: oklch(49% 0.15 33);
+  --clay-wash: oklch(95.5% 0.03 40);
+  --shadow: 0 1px 2px oklch(24% 0.03 160 / 0.06), 0 4px 14px oklch(24% 0.03 160 / 0.05);
+  --focus: 0 0 0 3px oklch(58% 0.145 150 / 0.35);
+}
+[data-theme="night"] {
+  --ground: oklch(17.5% 0.016 165);
+  --surface: oklch(21% 0.017 165);
+  --well: oklch(15.5% 0.014 165);
+  --line: oklch(28.5% 0.018 165);
+  --line-strong: oklch(36% 0.02 165);
+  --ink: oklch(95% 0.012 120);
+  --ink-2: oklch(85% 0.014 130);
+  --muted: oklch(70% 0.016 145);
+  --leaf: oklch(72% 0.15 150);
+  --leaf-ink: oklch(80% 0.13 150);
+  --leaf-wash: oklch(30% 0.05 152);
+  --on-leaf: oklch(18% 0.03 155);
+  --sun: oklch(84% 0.15 85);
+  --sun-ink: oklch(86% 0.13 85);
+  --sun-wash: oklch(31% 0.05 80);
+  --sky: oklch(72% 0.11 235);
+  --sky-ink: oklch(80% 0.09 235);
+  --sky-wash: oklch(29% 0.04 240);
+  --clay: oklch(70% 0.14 38);
+  --clay-ink: oklch(79% 0.12 40);
+  --clay-wash: oklch(30% 0.05 35);
+  --shadow: 0 1px 2px oklch(0% 0 0 / 0.3), 0 6px 20px oklch(0% 0 0 / 0.25);
+}
+
+* { box-sizing: border-box; }
+html { font-size: 17px; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  line-height: 1.5; -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums;
+  accent-color: var(--leaf); caret-color: var(--leaf); scrollbar-color: var(--line-strong) transparent;
+}
+::selection { background: var(--sun-wash); color: var(--ink); }
+:focus-visible { outline: none; box-shadow: var(--focus); border-radius: 8px; }
+a { color: var(--leaf-ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+p { margin: 0; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.88em; }
+.muted { color: var(--muted); }
+.icon { width: 1em; height: 1em; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.125em; }
+
+/* Mock chrome (not part of the design) */
+.mockbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px dashed var(--line-strong); }
+.mockbar b { color: var(--ink-2); font-weight: 600; }
+.mockbar .seg { margin-left: auto; display: inline-flex; gap: 4px; }
+.mockbar button { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.mockbar button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.screen[hidden] { display: none; }
+
+/* Shell */
+.top { background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+.top-in { max-width: 72rem; margin: 0 auto; padding: 0 24px; height: 60px; display: flex; align-items: center; gap: 28px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 650; font-size: 1rem; letter-spacing: -0.01em; }
+.brand svg { width: 22px; height: 22px; }
+.nav { display: flex; gap: 4px; margin-right: auto; }
+.nav a { color: var(--ink-2); text-decoration: none; font-size: 1rem; font-weight: 520; padding: 6px 12px; border-radius: 999px; }
+.nav a:hover { background: var(--well); color: var(--ink); }
+.nav a[aria-current="page"] { background: var(--well); color: var(--ink); font-weight: 620; }
+.live { display: inline-flex; align-items: center; gap: 7px; font-size: 0.833rem; color: var(--muted); }
+.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--leaf); }
+.freeze { font: inherit; font-size: 0.833rem; font-weight: 600; color: var(--clay-ink); background: transparent; border: 1px solid color-mix(in oklch, var(--clay) 45%, var(--line)); padding: 6px 14px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: background-color .15s cubic-bezier(.16,1,.3,1); }
+.freeze:hover { background: var(--clay-wash); }
+main { max-width: 72rem; margin: 0 auto; padding: 0 24px 64px; }
+
+/* Shared atoms */
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 0.833rem; font-weight: 600; padding: 3px 11px; border-radius: 999px; white-space: nowrap; }
+.pill .icon { font-size: 0.95em; }
+.t-good { background: var(--leaf-wash); color: var(--leaf-ink); }
+.t-you  { background: var(--sun-wash);  color: var(--sun-ink); }
+.t-work { background: var(--sky-wash);  color: var(--sky-ink); }
+.t-bad  { background: var(--clay-wash); color: var(--clay-ink); }
+.t-quiet { background: var(--well); color: var(--muted); }
+.card { background: var(--surface); border-radius: 16px; box-shadow: var(--shadow); }
+.btn { font: inherit; font-weight: 620; border-radius: 12px; padding: 12px 22px; font-size: 1rem; cursor: pointer; border: 1px solid transparent; display: inline-flex; align-items: center; gap: 8px; transition: background-color .15s cubic-bezier(.16,1,.3,1), transform .15s cubic-bezier(.16,1,.3,1); }
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: var(--leaf-ink); color: var(--on-leaf); }
+[data-theme="night"] .btn-primary { background: var(--leaf); }
+.btn-primary:hover { background: color-mix(in oklch, var(--leaf-ink) 88%, black); }
+.btn-secondary { background: transparent; color: var(--ink); border-color: var(--line-strong); }
+.btn-secondary:hover { background: var(--well); }
+.h2 { font-size: 1.2rem; font-weight: 650; letter-spacing: -0.01em; margin: 40px 0 12px; display: flex; align-items: baseline; gap: 10px; }
+.h2 small { font-size: 0.833rem; font-weight: 450; color: var(--muted); }
+
+/* Signature move: the heal line */
+.line { list-style: none; margin: 0; padding: 0; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.st { position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.st::before { content: ""; position: absolute; top: 10px; left: 0; right: 0; height: 3px; border-radius: 3px; background: var(--line); }
+.st:first-child::before { left: 11px; }
+.st:last-child::before { right: auto; width: 11px; }
+.st.done::before { background: var(--leaf); }
+.st.you::before { background: linear-gradient(90deg, var(--leaf), var(--sun) 40%); }
+.st .node { position: relative; width: 23px; height: 23px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid var(--line-strong); color: var(--on-leaf); }
+.st.done .node { background: var(--leaf); border-color: var(--leaf); }
+.st.you .node { background: var(--sun); border-color: var(--sun); color: oklch(30% 0.06 70); }
+.st.you .node::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid color-mix(in oklch, var(--sun) 55%, transparent); animation: ring 2.4s cubic-bezier(.16,1,.3,1) infinite; }
+.st .node .icon { font-size: 13px; stroke-width: 3; }
+.st .lab { font-size: 1rem; font-weight: 600; color: var(--ink-2); padding-right: 8px; }
+.st.todo .lab { color: var(--muted); font-weight: 500; }
+.st.you .lab { color: var(--sun-ink); }
+@keyframes ring { 0% { transform: scale(0.8); opacity: 1; } 70%, 100% { transform: scale(1.35); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .st.you .node::after { animation: none; opacity: .6; } }
+
+.mini { display: inline-flex; align-items: center; gap: 0; }
+.mini i { width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
+.mini i + i { margin-left: 14px; position: relative; }
+.mini i + i::before { content: ""; position: absolute; right: 9px; top: 3.5px; width: 14px; height: 2px; background: inherit; }
+.mini .d { background: var(--leaf); }
+.mini .y { background: var(--sun); }
+.mini .w { background: var(--sky); }
+.mini .b { background: var(--clay); }
+.mini-lab { font-size: 0.833rem; color: var(--muted); margin-left: 10px; }
+
+/* ---------- Fleet (home) ---------- */
+.status { padding: 44px 0 8px; }
+.status h1 { font-size: 2.074rem; font-weight: 700; letter-spacing: -0.022em; line-height: 1.15; }
+.status h1 .you { color: var(--sun-ink); }
+.status p { font-size: 1.2rem; color: var(--ink-2); margin-top: 8px; max-width: 46rem; }
+.today { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 16px; font-size: 1rem; color: var(--muted); }
+.today b { color: var(--ink); font-weight: 650; }
+
+.turn { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 18px; margin-top: 28px; padding: 18px 22px; background: var(--surface); border-radius: 16px; box-shadow: 0 0 0 1.5px var(--sun), 0 8px 24px oklch(82% 0.155 82 / 0.22); color: var(--ink); text-decoration: none; transition: box-shadow .2s cubic-bezier(.16,1,.3,1); }
+.turn:hover { box-shadow: 0 0 0 2px var(--sun), 0 12px 30px oklch(82% 0.155 82 / 0.3); }
+.turn-mark { width: 44px; height: 44px; border-radius: 50%; background: var(--sun-wash); color: var(--sun-ink); display: grid; place-items: center; }
+.turn-mark .icon { font-size: 22px; }
+.turn-t { font-size: 1.2rem; font-weight: 650; }
+.turn-s { color: var(--ink-2); margin-top: 2px; }
+.turn-cta { display: inline-flex; align-items: center; gap: 8px; font-weight: 620; color: var(--ink); background: var(--sun); padding: 10px 18px; border-radius: 12px; }
+[data-theme="night"] .turn-cta { color: oklch(22% 0.04 70); }
+
+.fleet { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.dev { padding: 14px 16px; }
+.dev-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dev-id { font-weight: 650; font-size: 1rem; }
+.health { display: inline-flex; align-items: center; gap: 7px; font-size: 0.833rem; font-weight: 600; }
+.health i { width: 8px; height: 8px; border-radius: 50%; }
+.h-ok { color: var(--leaf-ink); } .h-ok i { background: var(--leaf); }
+.h-park { color: var(--clay-ink); } .h-park i { background: var(--clay); }
+.h-none { color: var(--muted); } .h-none i { background: transparent; border: 1.5px solid var(--line-strong); }
+.dev-meta { color: var(--muted); font-size: 0.833rem; margin-top: 2px; }
+
+.rows { list-style: none; margin: 0; padding: 0; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; }
+.row a { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 16px 20px; color: inherit; text-decoration: none; transition: background-color .15s cubic-bezier(.16,1,.3,1); }
+.row + .row a { border-top: 1px solid var(--line); }
+.row a:hover { background: color-mix(in oklch, var(--well) 60%, transparent); }
+.glyph { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }
+.glyph .icon { font-size: 15px; stroke-width: 2.4; }
+.row-t { font-size: 1rem; }
+.row-t b { font-weight: 650; }
+.row-s { color: var(--ink-2); margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.row-l { margin-top: 8px; display: flex; align-items: center; }
+.row-r { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.row-r time { font-size: 0.833rem; color: var(--muted); }
+
+/* ---------- Technician case ---------- */
+.case-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 40px; padding: 36px 0 28px; }
+.who { font-size: 1.44rem; font-weight: 680; letter-spacing: -0.015em; line-height: 1.25; display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; }
+.who .naive { letter-spacing: 0.06em; font-weight: 760; }
+.who .sep { color: var(--line-strong); font-weight: 400; }
+.who .livepill { font-size: 0.833rem; font-weight: 600; display: inline-flex; align-items: center; gap: 7px; color: var(--leaf-ink); background: var(--leaf-wash); padding: 3px 12px; border-radius: 999px; letter-spacing: 0; }
+.who .livepill i { width: 7px; height: 7px; border-radius: 50%; background: var(--leaf); }
+.sub { color: var(--ink-2); margin-top: 6px; font-size: 1rem; }
+.nums { display: flex; gap: 36px; margin: 0; }
+.nums div { display: flex; flex-direction: column-reverse; }
+.nums dt { font-size: 0.833rem; color: var(--muted); }
+.nums dd { margin: 0; font-size: 1.728rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.nums .human dd { color: var(--sun-ink); }
+
+.verdict { margin-top: 36px; }
+.verdict h1 { font-size: 2.488rem; font-weight: 700; letter-spacing: -0.024em; line-height: 1.12; max-width: 30ch; }
+.verdict h1 q { quotes: "“" "”"; }
+.verdict h1 q::before { margin-left: -0.42em; }
+.verdict-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; align-items: center; }
+
+.cards { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; margin-top: 32px; }
+.part { padding: 22px 24px; box-shadow: 0 0 0 1.5px var(--sun), 0 10px 28px oklch(82% 0.155 82 / 0.2); }
+.part-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.part h2 { font-size: 1.44rem; font-weight: 680; letter-spacing: -0.015em; line-height: 1.2; }
+.part .src { color: var(--ink-2); margin-top: 4px; }
+.price { font-size: 2.074rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
+.ticks { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.ticks li { display: inline-flex; align-items: center; gap: 7px; font-size: 1rem; font-weight: 600; color: var(--leaf-ink); background: var(--leaf-wash); padding: 5px 12px 5px 8px; border-radius: 999px; }
+.ticks .tick { width: 20px; height: 20px; border-radius: 50%; background: var(--leaf); color: var(--on-leaf); display: grid; place-items: center; }
+.ticks .tick .icon { font-size: 12px; stroke-width: 3.2; }
+.actions { display: flex; gap: 10px; margin-top: 22px; align-items: center; }
+.fine { color: var(--muted); font-size: 0.833rem; margin-top: 12px; }
+.fine button { font: inherit; color: var(--leaf-ink); background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+.mail { padding: 22px 24px; }
+.mail-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mail h2 { font-size: 1.2rem; font-weight: 650; line-height: 1.3; margin-top: 14px; letter-spacing: -0.01em; }
+.mail .to { color: var(--ink-2); margin-top: 6px; }
+.mail .from { color: var(--muted); font-size: 0.833rem; margin-top: 10px; }
+.mail-ico { color: var(--sky-ink); font-size: 26px; }
+
+.feed { margin-top: 16px; padding: 18px 24px 14px; }
+.feed-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.feed-h h2 { font-size: 1rem; font-weight: 650; }
+.feed ol { list-style: none; margin: 10px 0 0; padding: 0; }
+.feed li { display: grid; grid-template-columns: 5.2rem 1fr; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); color: var(--ink-2); font-size: 1rem; }
+.feed li:first-child { border-top: 0; }
+.feed time { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.833rem; color: var(--muted); padding-top: 2px; }
+.feed li:last-child { color: var(--ink); font-weight: 600; }
+
+/* The one authored moment: approval. In the app, a tiny afterSwap helper adds .is-changed to any
+   [data-live] element whose value changed, so these play once, on the real change only. */
+.part { transition: box-shadow .25s cubic-bezier(.16,1,.3,1); }
+.part.is-approved { box-shadow: 0 0 0 1.5px var(--leaf), 0 10px 28px oklch(58% 0.145 150 / 0.16); }
+.resolved { display: none; margin-top: 22px; align-items: center; gap: 10px; font-size: 1.2rem; font-weight: 650; color: var(--leaf-ink); }
+.resolved a { font-size: 1rem; font-weight: 600; }
+.part.is-approved .actions, .part.is-approved .fine { display: none; }
+.part.is-approved .resolved { display: flex; }
+.nums dd { border-radius: 8px; }
+.is-changed { animation: tick .6s cubic-bezier(.16,1,.3,1); }
+@keyframes tick { 0% { transform: translateY(35%); opacity: 0; background: var(--sun-wash); } 45% { transform: none; opacity: 1; background: var(--sun-wash); } 100% { background: transparent; } }
+.st.you.done-human .node { background: var(--sun); border-color: var(--sun); }
+.st.you.done-human .node::after { animation: none; opacity: 0; }
+.st.you.done-human::before { background: linear-gradient(90deg, var(--leaf), var(--sun) 40%); }
+@media (prefers-reduced-motion: reduce) { .is-changed { animation-duration: .01s; } .part { transition: none; } }
+
+@media (max-width: 52rem) {
+  .fleet { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cards { grid-template-columns: 1fr; }
+  .line { grid-auto-flow: row; gap: 12px; }
+  .st::before { display: none; }
+  .st { flex-direction: row; align-items: center; }
+  .nav { display: none; }
+  .top-in, main { padding-left: 16px; padding-right: 16px; }
+  .top-in { gap: 12px; }
+  .live { margin-left: auto; }
+  .status h1 { font-size: 1.44rem; }
+  .verdict h1 { font-size: 1.728rem; }
+  .verdict h1 q::before { margin-left: 0; }
+  .nums { gap: 20px; }
+  .part-main { flex-wrap: wrap; }
+  .price { font-size: 1.728rem; }
+  .turn { grid-template-columns: auto 1fr; }
+  .turn-cta { grid-column: 1 / -1; justify-self: start; }
+  .row a { grid-template-columns: 28px minmax(0, 1fr); }
+  .row-r { grid-column: 2; flex-direction: row; align-items: center; }
+  .feed li { grid-template-columns: 1fr; gap: 0; }
+}
+body { overflow-x: clip; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V5.5a1.5 1.5 0 013 0V11m0-1.5v-6a1.5 1.5 0 013 0V11m0-5.5a1.5 1.5 0 013 0V13m0-4.5a1.5 1.5 0 013 0V15a6 6 0 01-6 6h-1.2a6 6 0 01-4.6-2.15L4.6 15.6a1.6 1.6 0 012.4-2.1L8 14.5"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8M18 14v4a1 1 0 01-1 1H6a1 1 0 01-1-1V7a1 1 0 011-1h4"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6.5v11M15 6.5v11"/></symbol>
+  <symbol id="i-mark" viewBox="0 0 24 24"><path d="M2.5 17.5h19" stroke-width="2"/><path d="M6.5 17.5a5.5 5.5 0 0111 0" stroke-width="2"/><path d="M12 5.5v2.2M5 8.6l1.5 1.5M19 8.6l-1.5 1.5" stroke-width="2"/></symbol>
+</svg>
+
+<div class="mockbar"><b>Mock</b> Sunlit Workshop redesign · illustrative data · not the live app
+  <span class="seg" role="group" aria-label="Screen"><button data-screen="fleet" aria-pressed="true">Fleet</button><button data-screen="case" aria-pressed="false">Technician case</button></span>
+  <span class="seg" role="group" aria-label="Theme"><button data-theme-set="day" aria-pressed="true">Day</button><button data-theme-set="night" aria-pressed="false">Night</button></span>
+</div>
+
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="#"><svg class="icon" style="color:var(--leaf-ink)"><use href="#i-mark"/></svg>Romulus</a>
+    <nav class="nav" aria-label="Pages"><a href="#" data-nav="fleet" aria-current="page">Fleet</a><a href="#" data-nav="case">Technician</a><a href="#">Data</a></nav>
+    <span class="live" title="Updates every 3 s"><i></i>Live</span>
+    <button class="freeze" type="button">Freeze fleet</button>
+  </div>
+</header>
+
+<!-- ================= FLEET ================= -->
+<main class="screen" id="fleet">
+  <section class="status">
+    <h1><span class="you">1 arm needs you.</span> The rest are healthy.</h1>
+    <p>sim-1’s elbow stalled and its healer parked it. A Naïve technician diagnosed it and staged a spare servo for you to approve.</p>
+    <p class="today"><span><b>3</b> incidents today</span><span><b>2</b> healed by agents</span><span><b>0</b> still broken</span><span><b>1</b> waiting on a person</span></p>
+  </section>
+
+  <a class="turn" href="#" data-nav="case">
+    <span class="turn-mark"><svg class="icon"><use href="#i-hand"/></svg></span>
+    <span><p class="turn-t">sim-1 · Joint stall</p><p class="turn-s">Approve a spare servo: Feetech STS3215 C018 12V, $15.99 at WowRobo</p></span>
+    <span class="turn-cta">Review<svg class="icon"><use href="#i-arrow"/></svg></span>
+  </a>
+
+  <h2 class="h2">Fleet <small>4 arms</small></h2>
+  <ul class="fleet" style="list-style:none;margin:0;padding:0">
+    <li class="card dev"><div class="dev-top"><span class="dev-id">arm-1</span><span class="health h-ok"><i></i>healthy</span></div><p class="dev-meta">SO-101 · real · fw 3 · harness 2</p></li>
+    <li class="card dev"><div class="dev-top"><span class="dev-id">sim-1</span><span class="health h-park"><i></i>parked</span></div><p class="dev-meta">SO-101 · sim · fw 3 · harness 2</p></li>
+    <li class="card dev"><div class="dev-top"><span class="dev-id">sim-2</span><span class="health h-ok"><i></i>healthy</span></div><p class="dev-meta">SO-101 · sim · canary · fw 3 · harness 3</p></li>
+    <li class="card dev"><div class="dev-top"><span class="dev-id">sim-3</span><span class="health h-none"><i></i>no check-in yet</span></div><p class="dev-meta">SO-101 · sim · waiting for its first report</p></li>
+  </ul>
+
+  <h2 class="h2">Incidents <small>newest first</small></h2>
+  <ol class="rows">
+    <li class="row"><a href="#" data-nav="case">
+      <span class="glyph t-you"><svg class="icon"><use href="#i-hand"/></svg></span>
+      <span><p class="row-t"><b>sim-1</b> · Joint stall</p><p class="row-s">elbow_flex stalled: commanded 92°, holding at 61° with load at its limit; two retries failed, arm parked with torque off</p>
+        <span class="row-l"><span class="mini"><i class="d"></i><i class="d"></i><i class="d"></i><i class="y"></i></span><span class="mini-lab">Healer gave up · Naïve took over · technician emailed · <b style="color:var(--sun-ink);font-weight:600">waiting on you</b></span></span></span>
+      <span class="row-r"><span class="pill t-you">Waiting on you</span><time>8:44 AM</time></span>
+    </a></li>
+    <li class="row"><a href="#">
+      <span class="glyph t-good"><svg class="icon"><use href="#i-check"/></svg></span>
+      <span><p class="row-t"><b>sim-2</b> · Camera covered</p><p class="row-s">Frames went black mid-pick; the healer parked, waited for light and resumed the job</p>
+        <span class="row-l"><span class="mini"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i></span><span class="mini-lab">Broke · parked · healed · resumed</span></span></span>
+      <span class="row-r"><span class="pill t-good"><svg class="icon"><use href="#i-check"/></svg>Healed</span><time>8:12 AM</time></span>
+    </a></li>
+    <li class="row"><a href="#">
+      <span class="glyph t-good"><svg class="icon"><use href="#i-check"/></svg></span>
+      <span><p class="row-t"><b>arm-1</b> · Bad policy pushed</p><p class="row-s">Grip force out of range on harness 3; the canary caught it and the fleet rolled back to harness 2</p>
+        <span class="row-l"><span class="mini"><i class="d"></i><i class="d"></i><i class="d"></i></span><span class="mini-lab">Broke · rolled back · held</span></span></span>
+      <span class="row-r"><span class="pill t-good"><svg class="icon"><use href="#i-check"/></svg>Rolled back</span><time>7:58 AM</time></span>
+    </a></li>
+  </ol>
+</main>
+
+<!-- ================= TECHNICIAN CASE ================= -->
+<main class="screen" id="case" hidden>
+  <section class="case-head">
+    <div>
+      <p class="who"><span class="naive">NAÏVE AGENT</span><span class="sep">·</span><span>technician</span><span class="livepill"><i></i>live session</span></p>
+      <p class="sub">sim-1 · Joint stall · elbow_flex stalled at 61° with load at its limit</p>
+    </div>
+    <dl class="nums" aria-label="Measured from the case">
+      <div><dt>Naïve session</dt><dd>27 s</dd></div>
+      <div><dt>cost</dt><dd>$0.08</dd></div>
+      <div class="human"><dt data-clicks-label>human clicks</dt><dd data-live="clicks">0</dd></div>
+    </dl>
+  </section>
+
+  <ol class="line" aria-label="Heal path">
+    <li class="st done"><span class="node"><svg class="icon"><use href="#i-check"/></svg></span><span class="lab">Healer gave up</span></li>
+    <li class="st done"><span class="node"><svg class="icon"><use href="#i-check"/></svg></span><span class="lab">Naïve took over</span></li>
+    <li class="st done"><span class="node"><svg class="icon"><use href="#i-check"/></svg></span><span class="lab">Technician emailed</span></li>
+    <li class="st you" data-you><span class="node"></span><span class="lab">Waiting on you</span></li>
+  </ol>
+
+  <section class="verdict" aria-live="polite">
+    <h1><q>Elbow jammed or servo failing; can’t tell yet</q></h1>
+    <p class="verdict-meta"><span class="pill t-quiet">Verdict · medium confidence</span><span class="pill t-quiet mono">elbow_flex</span><span class="pill t-good"><svg class="icon"><use href="#i-check"/></svg>spare part staged</span></p>
+  </section>
+
+  <div class="cards">
+    <section class="card part" aria-label="Spare part">
+      <div class="part-main">
+        <div><h2>Feetech STS3215 C018 12V</h2><p class="src">Spare part · WowRobo · shop.wowrobo.com · qty 1</p></div>
+        <p class="price">$15.99</p>
+      </div>
+      <ul class="ticks" aria-label="Gate checks">
+        <li><span class="tick"><svg class="icon"><use href="#i-check"/></svg></span>allowlisted vendor</li>
+        <li><span class="tick"><svg class="icon"><use href="#i-check"/></svg></span>in stock</li>
+        <li><span class="tick"><svg class="icon"><use href="#i-check"/></svg></span>price checked</li>
+        <li><span class="tick"><svg class="icon"><use href="#i-check"/></svg></span>≤ $50</li>
+      </ul>
+      <p class="resolved"><svg class="icon"><use href="#i-check"/></svg>Approved by kent<a href="#">open the cart again<svg class="icon" style="margin-left:4px"><use href="#i-out"/></svg></a></p>
+      <div class="actions"><button class="btn btn-primary" type="button" data-approve>Approve &amp; open cart<svg class="icon"><use href="#i-out"/></svg></button><button class="btn btn-secondary" type="button">Deny</button></div>
+      <p class="fine">Opens the WowRobo cart in a new tab; nothing is bought until a person checks out. Recorded as <b>kent</b> · <button type="button">change name</button></p>
+    </section>
+    <section class="card mail" aria-label="Technician email">
+      <div class="mail-top"><span class="pill t-good"><svg class="icon"><use href="#i-check"/></svg>Technician emailed · 08:44</span><svg class="icon mail-ico"><use href="#i-mail"/></svg></div>
+      <h2>sim-1 down: elbow stuck, spare servo staged</h2>
+      <p class="to">to <b>kent.y.gang@gmail.com</b></p>
+      <p class="from">From Romulus Technician (Naïve agent), sent through the Naïve Technician’s inbox</p>
+    </section>
+  </div>
+
+  <section class="card feed">
+    <div class="feed-h"><h2>Agent’s work</h2><span class="muted" style="font-size:.833rem">9 steps · Naïve session <span class="mono">ses_0s1zke…977w</span></span></div>
+    <ol>
+      <li><time>08:44:22</time><span>Searched “Feetech STS3215 stall overload protection overheating servo”</span></li>
+      <li><time>08:44:22</time><span>Read shop.wowrobo.com/products/feetech-sts3215-servo-12v-30kg</span></li>
+      <li><time>08:44:26</time><span>Read feetechrc.com/2020-05-13_56655.html</span></li>
+      <li><time>08:44:36</time><span>Submitted the typed report</span></li>
+      <li><time>08:44:44</time><span>Romulus checked shop.wowrobo.com: $15.99, in stock</span></li>
+      <li><time>08:44:50</time><span>Romulus emailed the technician: sim-1 down: elbow stuck, spare servo staged</span></li>
+    </ol>
+  </section>
+</main>
+
+<script>
+(() => {
+  const show = (name) => {
+    document.querySelectorAll(".screen").forEach((s) => { s.hidden = s.id !== name; });
+    document.querySelectorAll("[data-screen]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.screen === name)));
+    document.querySelectorAll(".nav [data-nav]").forEach((a) => { if (a.dataset.nav === name) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+    window.scrollTo(0, 0);
+  };
+  document.addEventListener("click", (ev) => {
+    const s = ev.target.closest("[data-screen]"); if (s) { show(s.dataset.screen); return; }
+    const n = ev.target.closest("[data-nav]"); if (n) { ev.preventDefault(); show(n.dataset.nav); return; }
+    const t = ev.target.closest("[data-theme-set]");
+    if (t) {
+      document.documentElement.dataset.theme = t.dataset.themeSet;
+      document.querySelectorAll("[data-theme-set]").forEach((b) => b.setAttribute("aria-pressed", String(b === t)));
+    }
+  });
+  // Mock of the approve moment (the real page keeps its own handler: cart first, then the POST).
+  document.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-approve]"); if (!b) return;
+    b.disabled = true; b.firstChild.textContent = "Approving… ";
+    setTimeout(() => {
+      document.querySelector(".part").classList.add("is-approved");
+      const n = document.querySelector('[data-live="clicks"]'); n.textContent = "1"; n.classList.add("is-changed");
+      document.querySelector("[data-clicks-label]").textContent = "human click";
+      const st = document.querySelector("[data-you]"); st.classList.add("done-human");
+      st.querySelector(".node").innerHTML = '<svg class="icon" style="color:oklch(30% 0.06 70)"><use href="#i-check"/></svg>';
+      st.querySelector(".lab").textContent = "Approved by kent"; st.querySelector(".lab").classList.add("is-changed");
+    }, 450);
+  });
+  const q = new URLSearchParams(location.search);
+  if (q.get("screen")) show(q.get("screen"));
+  if (q.get("theme") === "night") document.querySelector('[data-theme-set="night"]').click();
+  if (q.get("approved")) document.querySelector("[data-approve]").click();
+})();
+</script>
+</body>
+</html>

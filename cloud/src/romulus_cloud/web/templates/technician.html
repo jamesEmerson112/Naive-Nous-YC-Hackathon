@@ -51,8 +51,11 @@
   .tc-stages .st-active { border-color: var(--accent); color: var(--accent); animation: tc-beat 2s ease-in-out infinite; }
   .tc-stages .st-active .tc-st-mark { border: 2px solid currentColor; opacity: 1; }
   .tc-stages .st-active .tc-st-mark::after { content: ""; position: absolute; inset: 22%; border-radius: 50%; background: currentColor; animation: tc-breathe 1s ease-in-out infinite; }
-  .tc-stages .st-denied { border-color: var(--bad); color: var(--bad); }
-  .tc-stages .st-denied .tc-st-mark { background: var(--bad); border: 0; color: var(--surface); opacity: 1; }
+  .tc-stages .st-denied, .tc-stages .st-failed { border-color: var(--bad); color: var(--bad); }
+  .tc-stages .st-denied .tc-st-mark, .tc-stages .st-failed .tc-st-mark { background: var(--bad); border: 0; color: var(--surface); opacity: 1; }
+  .tc-stages .st-skipped { border-top-style: dashed; color: var(--muted); }
+  .tc-stages .st-skipped .tc-st-mark { border-style: solid; opacity: 0.8; }
+  .tc-st-off { flex: none; font-size: 0.68rem; letter-spacing: 0.08em; padding: 0.05rem 0.45rem; border-radius: 999px; border: 1px solid currentColor; }
   .tc-st-now { flex: none; font-size: 0.68rem; letter-spacing: 0.08em; padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--accent); color: var(--surface); }
 
   /* Verdict: the largest text on the page (≥ 36 px at any zoom) */
@@ -91,10 +94,11 @@
   .tc-part.is-staged { border-top: 5px solid var(--good); }
   .tc-part.is-blocked { border-top: 5px solid var(--bad); }
   .tc-part-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-  .tc-part-name { min-width: 0; }
-  .tc-part-title { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.015em; line-height: 1.2; margin: 0; }
+  .tc-part-name { min-width: 0; flex: 1 1 auto; }
+  .tc-part-title { font-size: 1.55rem; font-weight: 800; letter-spacing: -0.015em; line-height: 1.2; margin: 0; overflow-wrap: anywhere; text-wrap: balance; }
   .tc-part-vendor { color: var(--text-2); font-size: 1.02rem; margin-top: 0.2rem; }
-  .tc-price { margin: 0; font-size: 2.2rem; font-weight: 850; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; text-align: right; }
+  .tc-price { margin: 0; flex: none; white-space: nowrap; font-size: 2.2rem; font-weight: 850; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1; text-align: right; }
+  .tc-price-none { font-size: 1.3rem; color: var(--muted); }
   .tc-price small { display: block; font-size: 0.85rem; font-weight: 550; color: var(--muted); margin-top: 0.3rem; letter-spacing: 0; }
   .tc-checks { list-style: none; padding: 0; margin: 0.9rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
   .tc-checks li {
@@ -128,8 +132,12 @@
   .tc-email.is-sent { border-top: 5px solid var(--automation); }
   .tc-email.is-failed { border-top: 5px solid var(--bad); }
   .tc-email.is-sending { border-top: 5px solid var(--wait); }
+  .tc-email.is-skipped { border-top: 5px dashed var(--line-strong); }
+  .tc-draft { font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 999px; padding: 0.05rem 0.45rem; vertical-align: 0.25em; }
+  .tc-via-strong { color: var(--text-2); font-size: 0.98rem; font-weight: 600; margin-top: 0.4rem; }
+  .tc-note { margin-top: 0.6rem; padding: 0.45rem 0.75rem; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); border: 1px solid var(--line); font-size: 0.92rem; }
   .tc-envelope { position: absolute; top: 1rem; right: 1.1rem; width: 2.5rem; height: 2.5rem; color: var(--automation); opacity: 0.9; }
-  .is-pending .tc-envelope, .tc-email.is-skipped .tc-envelope { color: var(--muted); opacity: 0.5; }
+  .is-pending .tc-envelope, .tc-email.is-skipped .tc-envelope, .tc-email.is-failed .tc-envelope { color: var(--muted); opacity: 0.5; }
   .tc-email-to { font-size: 1.05rem; color: var(--text-2); overflow-wrap: anywhere; }
   .tc-email-to b { color: var(--text); }
   .tc-subject { font-size: 1.3rem; font-weight: 750; line-height: 1.3; margin-top: 0.4rem; letter-spacing: -0.01em; overflow-wrap: anywhere; }
@@ -168,15 +176,9 @@
   .tc-ids { margin-top: 1rem; color: var(--muted); font-size: 0.86rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; }
   .tc-studio { margin-left: auto; font-size: 0.9rem; }
 
-  /* Replay honesty: the badge stays on screen in every frame, not only in the header */
+  /* Replay honesty: the recorded badge sits in the header and atop every card, never over content */
   .tc-rec-tag { text-transform: uppercase; font-size: 0.7rem; font-weight: 850; letter-spacing: 0.06em; background: var(--tc-rec); color: var(--tc-rec-ink); padding: 0.08rem 0.45rem; border-radius: 999px; }
-  .tc-rec-fixed {
-    position: fixed; right: 1rem; bottom: 1rem; z-index: 20; margin: 0; max-width: calc(100vw - 2rem);
-    background: var(--tc-rec); color: var(--tc-rec-ink); font-weight: 800; font-size: 0.85rem;
-    padding: 0.3rem 0.8rem; border-radius: 999px; box-shadow: var(--shadow-lg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
 
-  .tc.is-recorded-page { padding-bottom: 2.5rem; }
   .tc-toast {
     position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 30; max-width: min(36rem, calc(100vw - 2rem));
     background: var(--text); color: var(--bg); padding: 0.6rem 1.1rem; border-radius: 12px; font-weight: 650; box-shadow: var(--shadow-lg);
