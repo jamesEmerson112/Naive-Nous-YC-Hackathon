@@ -104,13 +104,33 @@ def test_ask_is_lenient_about_nulls_numbers_and_extras():
 
 
 @pytest.mark.parametrize(
+    ("budget", "expected"),
+    [
+        (20, 20),
+        (7.5, 7.5),
+        ("15", 15),
+        (0, 3),
+        (-5, 3),
+        (500, 120),
+        (None, 20),
+        ("soon", 20),
+        (float("nan"), 20),
+        (float("inf"), 20),
+        (True, 20),
+        ([5], 20),
+    ],
+)
+def test_ask_budget_defaults_and_clamps(budget, expected):
+    assert DoctorAsk.model_validate({"trigger": "T4", "budget_s": budget}).budget_s == expected
+
+
+@pytest.mark.parametrize(
     "body",
     [
         {},
         {"trigger": None},
         {"trigger": True},
         {"trigger": "T4", "incident_id": "not-a-uuid"},
-        {"trigger": "T4", "budget_s": "soon"},
     ],
 )
 def test_ask_rejects(body):
@@ -146,10 +166,24 @@ def test_incident_consult_bool_is_shorthand(value, wanted):
     assert IncidentReport.model_validate(incident_body(consult=value)).consult.wanted is wanted
 
 
-@pytest.mark.parametrize("value", [None, "yes", [1], 7, {"wanted": "please"}])
-def test_malformed_consult_reads_as_none_and_keeps_the_incident(value):
+@pytest.mark.parametrize("value", [None, "yes", [1], 7])
+def test_consult_that_isnt_an_object_reads_as_none_and_keeps_the_incident(value):
     inc = IncidentReport.model_validate(incident_body(consult=value))
     assert inc.consult is None and str(inc.incident_id) == INCIDENT_ID
+
+
+@pytest.mark.parametrize(
+    ("consult", "expected"),
+    [
+        ({"wanted": True, "trigger": True}, (True, None, None)),
+        ({"wanted": True, "trigger": ["T2"], "attempts": 2}, (True, None, 2)),
+        ({"wanted": "please", "trigger": "T2", "attempts": 2}, (False, "T2", 2)),
+        ({"wanted": True, "trigger": "T2", "attempts": "two"}, (True, "T2", None)),
+    ],
+)
+def test_bad_consult_field_nulls_only_that_field(consult, expected):
+    c = IncidentReport.model_validate(incident_body(consult=consult)).consult
+    assert (c.wanted, c.trigger, c.attempts) == expected
 
 
 # --- older payloads without the new fields --------------------------------------------
@@ -179,7 +213,7 @@ def test_checkin_response_carries_a_pointer():
                 "proposal_id": "prop_1",
                 "incident_id": INCIDENT_ID,
                 "expires_at": "2026-11-08T04:20:00",
-                "sha256": "ignored",
+                "priority": "ignored",
             }
         }
     )
@@ -189,7 +223,36 @@ def test_checkin_response_carries_a_pointer():
         "proposal_id": "prop_1",
         "incident_id": INCIDENT_ID,
         "expires_at": "2026-11-08T04:20:00Z",
+        "sha256": None,
     }
+
+
+@pytest.mark.parametrize(
+    "pointer",
+    [
+        {"proposal_id": "prop_1", "incident_id": INCIDENT_ID},  # no expires_at
+        {"proposal_id": "prop_1", "incident_id": "nope", "expires_at": "2026-11-08T04:20:00Z"},
+        {"incident_id": INCIDENT_ID, "expires_at": "2026-11-08T04:20:00Z"},  # no proposal_id
+        "prop_1",
+        ["prop_1"],
+        42,
+    ],
+)
+def test_malformed_pointer_reads_as_none_and_keeps_frozen(pointer):
+    # A device that can't parse its check-in would lose `frozen`, the kill switch.
+    resp = CheckInResponse.model_validate(
+        {"assigned": {"firmware": 2, "harness": 1}, "frozen": True, "proposal": pointer}
+    )
+    assert resp.proposal is None and resp.frozen is True and resp.assigned.firmware == 2
+
+
+def test_pointer_sha256_matches_the_served_body():
+    body, sha = proposal_body_and_sha256(proposal_body())
+    raw = proposal_body()
+    pointer = ProposalPointer.model_validate(
+        {k: raw[k] for k in ("proposal_id", "incident_id", "expires_at")} | {"sha256": sha}
+    )
+    assert pointer.sha256 == hashlib.sha256(body).hexdigest()
 
 
 # --- ProposalResult ------------------------------------------------------------------
@@ -212,6 +275,21 @@ def test_applied_with_overlay():
 def test_applied_needs_overlay_id(overlay):
     with pytest.raises(ValidationError, match="overlay_id"):
         ProposalResult.model_validate({"result": "applied"} | overlay)
+
+
+def test_result_is_lenient_about_reason_overlay_id_and_time():
+    r = ProposalResult.model_validate(
+        {"result": "applied", "overlay_id": 12, "reason": {"why": "ok"}, "occurred_at": "soon"}
+    )
+    assert r.overlay_id == "12" and r.reason == "{'why': 'ok'}" and r.occurred_at is None
+    r = ProposalResult.model_validate({"result": "stale", "overlay_id": [1], "reason": 3})
+    assert r.overlay_id is None and r.reason == "3"
+
+
+@pytest.mark.parametrize("overlay_id", [[1], {"id": 1}, True])
+def test_applied_with_an_unusable_overlay_id_still_fails(overlay_id):
+    with pytest.raises(ValidationError, match="overlay_id"):
+        ProposalResult.model_validate({"result": "applied", "overlay_id": overlay_id})
 
 
 @pytest.mark.parametrize("result", ["held", "Applied", None])

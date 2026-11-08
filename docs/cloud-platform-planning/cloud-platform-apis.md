@@ -66,7 +66,7 @@ Response:
 {"assigned": {"firmware": 8, "harness": 4}, "drop_overlay": false, "frozen": false, "proposal": null}
 ```
 
-- `proposal` (optional, Fleet Doctor L2; no version bump, D28) is `{"proposal_id", "incident_id", "expires_at"}` when a checked fix is waiting for this device (§2.12), and `null` otherwise. It is always `null` while `frozen`. A device on an older contract ignores it.
+- `proposal` (optional, Fleet Doctor L2; no version bump, D28) is `{"proposal_id", "incident_id", "expires_at", "sha256"}` when a checked fix is waiting for this device (§2.12), and `null` otherwise. It is always `null` while `frozen`. `sha256` (optional) is the hash of the exact body route 3.9 will serve, so the device can check the pulled bytes against the check-in as well as the response header. A device on an older contract ignores the field, and a malformed pointer reads as `null`: a device that can't parse its check-in would lose `frozen`, the kill switch.
 
 ### 2.4 Install result
 
@@ -103,8 +103,8 @@ Response:
 - `suspected_cause` is `software`, `hardware` or `unknown`.
 - `signals` is the small, inline sample that replay uses (§2.7).
 - `recordings` lists the IDs of the bigger evidence files, which are uploaded separately (§3.7).
-- `overlay` is `null` if the agent didn't patch anything. `overlay.proposal_id` (optional, D28) names the Fleet Doctor proposal the overlay came from (§2.12); it is `null` for the healer's own patches.
-- `consult` (optional, Fleet Doctor L2, D28): `{"wanted": true, "trigger": "T2", "attempts": 2}` asks the cloud to work on an unresolved incident. `trigger` is the device's escalation trigger (T1–T7, D26) and `attempts` is how many patches the healer tried. Send `running.code_rev` with it: without one the cloud declines the consult (an event, never a `422`). `true` is shorthand for `{"wanted": true}`, and a malformed `consult` reads as `null` rather than rejecting the incident. The cloud also starts consults on its own for unresolved incidents whose `suspected_cause` isn't `hardware`, within the caps (D25, D26).
+- `overlay` is `null` if the agent didn't patch anything. `overlay.proposal_id` (optional, D28) is provenance only. A Fleet Doctor proposal overlay reaches the cloud through its proposal result (§2.13), from which the cloud creates the overlay row, never inside an incident. The device sets `proposal_id` on a *later* incident when the overlay active at that time came from a proposal (for example, the fault recurred under it), and the cloud keeps it in `raw`. It is `null` for the healer's own patches.
+- `consult` (optional, Fleet Doctor L2, D28): `{"wanted": true, "trigger": "T2", "attempts": 2}` asks the cloud to work on an unresolved incident. `trigger` is the device's escalation trigger (T1–T7, D26) and `attempts` is how many patches the healer tried. Send `running.code_rev` with it: without one the cloud declines the consult (an event, never a `422`). `true` is shorthand for `{"wanted": true}`. A bad sub-field reads as its default without touching the others (`{"wanted": true, "trigger": true}` → `wanted: true, trigger: null`), and a `consult` that isn't an object reads as `null`; neither rejects the incident. The cloud also starts consults on its own for unresolved incidents whose `suspected_cause` isn't `hardware`, within the caps (D25, D26).
 
 ### 2.6 Overlay status
 
@@ -189,7 +189,7 @@ Response (`DoctorAdvice`):
 ```
 
 - `incident_id` is optional, because the healer may ask before it reports the incident. `trigger` is an open string; the known values are T1–T7 (D26). Every `context` field is optional, and `recent_steps` holds the healer's last ≤5 messages.
-- `budget_s` (default 20) is how long the device waits. The cloud's LLM timeout is shorter: `min(DOCTOR_ASK_TIMEOUT_S, budget_s − 2)`.
+- `budget_s` (default 20) is how long the device waits. The contract clamps it to 3–120 s and reads a non-numeric, non-finite or null value as 20. The cloud's LLM timeout is shorter: `min(DOCTOR_ASK_TIMEOUT_S, budget_s − 2)`.
 - The answer is hypotheses, each with how to check it, never a patch. It stays at about 300 tokens in total, which the cloud enforces. A hypothesis that names a safety or visor path is dropped (D25).
 - This is a direct call, not the outbox. Any non-200 means "no answer", and the device's circuit breaker skips the rest of that heal's asks (D26).
 
@@ -209,8 +209,8 @@ When a consult's fix passes the cloud's checks, the cloud offers it as a proposa
 
 - `code_patch` uses the §2.10 format against `base.code_rev` and includes the reproduction test. `repro_test` names that test (a path or pytest node id): it failed on the base and passes with the patch. `checks` is open and informational.
 - `base` is what must be running. The device applies the proposal only when all of these hold: the arm is parked with no task running; `firmware`, `code_rev` (and `mcu_build`, for STM32 patches) match; the active overlay is `base.overlay_id`, which the proposal replaces; and `expires_at` hasn't passed. Otherwise it reports `stale` or `rejected` (§2.13).
-- The body is served with `X-Sha256`, the sha256 of the exact body bytes (canonical JSON, as in §3.2). The device checks it before applying. The cloud builds the body with `proposal_body_and_sha256`.
-- The device applies it as an overlay whose `proposal_id` is this proposal (§2.5), under a mark-good timer (D24). Overlay statuses (§2.6) then follow as usual.
+- The body is served with `X-Sha256`, the sha256 of the exact body bytes (canonical JSON, as in §3.2). Before applying, the device checks that the hash of the bytes it received equals `X-Sha256`, and equals the check-in pointer's `sha256` when one was sent. The cloud computes both with `proposal_body_and_sha256` on each request, from the same stored proposal, and never serves a stored hash next to a re-dumped body.
+- The device applies it as an overlay under a mark-good timer (D24) and reports the result (§2.13). The cloud creates the overlay row from an `applied` result, and overlay statuses (§2.6) then follow as usual.
 - A patch that touches the safety layer is never offered, and nothing is offered while the safety paths are unconfirmed (D25).
 
 ### 2.13 Proposal result
@@ -221,7 +221,8 @@ When a consult's fix passes the cloud's checks, the cloud offers it as a proposa
 ```
 
 - `result` is `applied`, `rejected` (the device declined it: not parked, expired or a hash mismatch), `stale` (the base no longer matches what's running) or `failed_verify` (applied, failed verify and rolled back).
-- `applied` must carry `overlay_id`, or the request gets a `422`. The cloud creates that overlay row itself, because proposal overlays never arrive inside an incident, and incidents are write-once.
+- **The one strict rule:** `applied` must carry a non-blank `overlay_id`, or the request gets a `422`. This result is how a proposal overlay reaches the cloud: the cloud creates the overlay row from it (incidents are write-once and never carry it), so a lost `applied` means no overlay row and no lock-in. Afterwards, an incident reported while that overlay is active carries `overlay.proposal_id` as provenance (§2.5).
+- Everything else is lenient, so the result is never dead-lettered: a numeric `overlay_id` reads as a string, a non-string `reason` is stringified (`null` reads as `""`), and a malformed `occurred_at` reads as `null`.
 - It is queued in the outbox like an overlay status. The proposal ID is in the URL.
 
 ## 3. Device-facing routes

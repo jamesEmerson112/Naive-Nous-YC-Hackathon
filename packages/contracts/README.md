@@ -44,7 +44,13 @@ python -m romulus_contracts.schema            # all models
 python -m romulus_contracts.schema CheckIn    # one model
 ```
 
-**Tolerance rules.** Models for payloads the device sends keep unknown fields (`extra="allow"`), and the cloud stores every payload raw. Add fields freely; they won't be rejected and they won't be lost. Models for cloud responses ignore unknown fields, so a newer cloud won't break an older device. Timestamps without an offset are read as UTC, and `null` lists/objects read as empty. Open strings: recording `kind`/`format`, signal names, rule actions, incident `kind`, `outcome.suspected_cause` (known: `software`/`hardware`/`unknown`), `outcome.category` (known: `fix-code`/`fix-config`/`ops`/`park`), Doctor `trigger` (known: `T1`–`T7`; a number reads as a string). `outcome` itself is optional, and `agent.actions` may hold strings or dicts. A malformed `IncidentReport.consult` reads as null instead of rejecting the incident (`true` is shorthand for `{"wanted": true}`). Fixed sets: `health` (`ok`/`degraded`/`failing`), install `type` and `result`, overlay `status`, proposal `result` (`applied`/`rejected`/`stale`/`failed_verify`). Strict on purpose: `incident_id` and recording ids are UUIDs (idempotency, D8), and an `applied` proposal result must name its `overlay_id` (the cloud creates that overlay row).
+**Tolerance rules.** Models for payloads the device sends keep unknown fields (`extra="allow"`), and the cloud stores every payload raw. Add fields freely; they won't be rejected and they won't be lost. Models for cloud responses ignore unknown fields, so a newer cloud won't break an older device. Timestamps without an offset are read as UTC, and `null` lists/objects read as empty. Open strings: recording `kind`/`format`, signal names, rule actions, incident `kind`, `outcome.suspected_cause` (known: `software`/`hardware`/`unknown`), `outcome.category` (known: `fix-code`/`fix-config`/`ops`/`park`), Doctor `trigger` (known: `T1`–`T7`; a number reads as a string). `outcome` itself is optional, and `agent.actions` may hold strings or dicts. Fleet Doctor fields read a bad optional value as its default instead of failing the payload:
+- In `IncidentReport.consult`, a bad sub-field nulls only that field, a consult that isn't an object reads as null, and `true` is shorthand for `{"wanted": true}`.
+- A malformed `CheckInResponse.proposal` reads as null, so a device never loses `frozen` over it.
+- `DoctorAsk.budget_s` is clamped to 3–120 s; a non-numeric, non-finite or null value reads as 20.
+- In `ProposalResult`, a numeric `overlay_id` reads as a string, a non-string `reason` is stringified, and a malformed `occurred_at` reads as null.
+
+Fixed sets: `health` (`ok`/`degraded`/`failing`), install `type` and `result`, overlay `status`, proposal `result` (`applied`/`rejected`/`stale`/`failed_verify`). Strict on purpose: `incident_id` and recording ids are UUIDs (idempotency, D8). **The one strict Doctor rule:** an `applied` proposal result must name a non-blank `overlay_id`, because the cloud creates that overlay row from it. A lost `applied` would mean no overlay row and no lock-in.
 
 ## Routes (device-facing)
 
@@ -62,7 +68,7 @@ Base URL `http://<laptop-LAN-IP>:8000`, JSON, no auth on the bench network. Full
 | `POST /v1/devices/{device_id}/recordings` | `RecordingMeta` → `201` `RecordingAccepted` (`upload`: `needed`/`exists`) |
 | `PUT /v1/recordings/{recording_id}/blob` | raw bytes + `X-Sha256` → `204`, or `409 sha256_mismatch` |
 | `POST /v1/devices/{device_id}/doctor/ask` | `DoctorAsk` → `DoctorAdvice`. A direct call that gives up after `budget_s`, not the outbox; any non-200 means "no answer" |
-| `GET /v1/devices/{device_id}/proposals/{proposal_id}` | → `Proposal`, with `X-Sha256` over the exact body bytes; `410 proposal_gone` once expired or withdrawn |
+| `GET /v1/devices/{device_id}/proposals/{proposal_id}` | → `Proposal`, with `X-Sha256` over the exact body bytes (also sent as the check-in pointer's `sha256`); `410 proposal_gone` once expired or withdrawn |
 | `POST /v1/devices/{device_id}/proposals/{proposal_id}/result` | `ProposalResult` → `204` (`200` for an identical resend); `applied` needs `overlay_id` |
 
 Errors are `{"error": "<code>", "detail": "<sentence>"}` (`ErrorResponse`).
