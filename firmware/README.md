@@ -17,7 +17,11 @@ firmware/
 │   ├── src/newlib_stubs.c    weak syscall stubs (override _write for printf)
 │   └── bin/fwtool            serial console + "is my build running?" check
 ├── stm32f042k6-hello/        sanity firmware for the STM32F042K6
-└── stm32f042k6-hcsr04/       HC-SR04 ultrasonic distance, streamed as CSV
+├── stm32f042k6-hcsr04/       HC-SR04 ultrasonic distance, streamed as CSV
+├── pod/                      sensor pod firmware: HC-SR04 + LIS3DH + self-diagnostics (pod/README.md)
+├── healer/                   Pi-side logging, triage and repair tools for an LLM (healer/README.md)
+├── demo/                     known-bad firmware images + operator script for the demo (docs/DEMO.md)
+└── docs/                     PLAN.md (the plan), DEMO.md (every demo problem and how the tools solve it)
 ```
 
 ## Quick start (this Pi)

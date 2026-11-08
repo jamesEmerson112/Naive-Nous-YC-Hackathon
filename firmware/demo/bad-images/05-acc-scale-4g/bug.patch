@@ -1,0 +1,22 @@
+diff --git a/src/lis3dh.h b/src/lis3dh.h
+index 7a9686b..e1d2cc0 100644
+--- a/src/lis3dh.h
++++ b/src/lis3dh.h
+@@ -1,7 +1,7 @@
+ /* LIS3DH 3-axis accelerometer on I2C1 (address 0x18: SDO/SA0 tied to GND).
+  *
+  * Configuration: 100 Hz output data rate, high-resolution (12-bit) mode,
+- * +-2 g full scale, block data update. In HR mode at +-2 g one digit is 1 mg
++ * +-4 g full scale, block data update. In HR mode at +-2 g one digit is 1 mg
+  * (LIS3DH datasheet, Table 4 "Mechanical characteristics": 1 / 2 / 4 / 12
+  * mg/digit at +-2 / 4 / 8 / 16 g). Samples are left-justified 16-bit, so a
+  * 12-bit reading is the raw value >> 4.
+@@ -39,7 +39,7 @@
+ 
+ #define ACC_ODR            CTRL1_ODR_100HZ
+ #define ACC_CTRL1_VALUE    (ACC_ODR | CTRL1_XYZ_EN)
+-#define ACC_CTRL4_VALUE    (CTRL4_BDU | CTRL4_HR | CTRL4_FS_2G)
++#define ACC_CTRL4_VALUE    (CTRL4_BDU | CTRL4_HR | CTRL4_FS_4G)   /* +-4 g: impacts no longer clip */
+ #define ACC_MG_PER_DIGIT   1        /* HR mode, +-2 g */
+ 
+ typedef struct {

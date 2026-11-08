@@ -1,0 +1,15 @@
+{
+  "version": "v1.3",
+  "date": "2026-11-04T16:45:00+00:00",
+  "commit": "acc: drop the once-a-second config readback (halves I2C traffic)",
+  "title": "Accelerometer silently resets and never recovers (no config readback)",
+  "trigger": {
+    "kind": "inject",
+    "commands": [
+      "inject acc_glitch"
+    ],
+    "after_s": 5,
+    "how": "Simulates a supply glitch that resets only the LIS3DH: its registers go back to power-on values (power-down mode)."
+  },
+  "name": "03-acc-no-scrub"
+}

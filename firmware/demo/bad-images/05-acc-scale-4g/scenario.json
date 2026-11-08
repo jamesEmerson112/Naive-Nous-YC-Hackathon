@@ -1,0 +1,11 @@
+{
+  "version": "v1.5",
+  "date": "2026-11-06T10:05:00+00:00",
+  "commit": "acc: use +-4 g full scale so impacts don't clip",
+  "title": "Accelerometer reads 0.5 g at rest (range changed, sensitivity not)",
+  "trigger": {
+    "kind": "none",
+    "how": "Broken from boot; keep the board still so the 1 g check applies."
+  },
+  "name": "05-acc-scale-4g"
+}

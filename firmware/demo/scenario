@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Operator tool for the self-healing demo. NOT an LLM tool: don't give the agent access to demo/.
+
+  scenario setup            create the source workspace (tag v1.0 = firmware/pod) and register v1.0 as known-good
+  scenario build-images     build every known-bad image into demo/bad-images/<name>/image/
+  scenario list             list scenarios
+  scenario start <name>     put the workspace at that release (v1.0 + the bad commit), flash its prebuilt image
+  scenario trigger <name>   perform the scenario's trigger (fault injection), if it has one
+  scenario reset            workspace back to v1.0, flash known-good, clear injected faults
+
+The workspace history after `start` is what a real team would have: v1.0 (known-good) followed by one release
+commit. Commits use fixed authors and dates, so the commit hash (and so the build ID's version) is identical
+every time and matches the prebuilt image.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "healer"))
+from healer import client, config, images, swd  # noqa: E402
+
+BAD = HERE / "bad-images"
+TEAM = {"GIT_AUTHOR_NAME": "Pod Team", "GIT_AUTHOR_EMAIL": "team@pod.local",
+        "GIT_COMMITTER_NAME": "Pod Team", "GIT_COMMITTER_EMAIL": "team@pod.local"}
+V10_DATE = "2026-11-01T10:00:00+00:00"
+V10_MSG = "v1.0: sensor pod firmware (HC-SR04 + LIS3DH, self-diagnostics, command interface)"
+
+
+def sh(*args, cwd=None, env=None, check=True):
+    p = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=(os.environ | env) if env else None)
+    if check and p.returncode != 0:
+        raise SystemExit("command failed: %s\n%s" % (" ".join(map(str, args)), p.stdout + p.stderr))
+    return p.stdout
+
+
+def git(repo, *args, date=None, check=True):
+    env = dict(TEAM)
+    if date:
+        env |= {"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}
+    return sh("git", "-C", str(repo), *args, env=env, check=check)
+
+
+def scenarios():
+    return {d.name: json.loads((d / "scenario.json").read_text()) for d in sorted(BAD.iterdir()) if (d / "scenario.json").exists()}
+
+
+def make(repo):
+    out = sh("make", "-C", str(repo), "TOOLKIT_DIR=" + str(config.TOOLKIT))
+    if "warning:" in out:
+        print("  (build warnings)\n" + "\n".join(l for l in out.splitlines() if "warning:" in l))
+    return Path(repo) / "build" / "pod.elf"
+
+
+def init_repo(repo):
+    """repo := firmware/pod as commit v1.0 (deterministic)."""
+    if repo.exists():
+        shutil.rmtree(repo)
+    repo.mkdir(parents=True)
+    for item in ("Makefile", "stm32f042k6.ld", "src"):
+        src = config.GOLDEN_SRC / item
+        (shutil.copytree if src.is_dir() else shutil.copy2)(src, repo / item)
+    (repo / ".gitignore").write_text("build/\n")
+    sh("git", "init", "-q", "-b", "main", str(repo))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", V10_MSG, date=V10_DATE)
+    git(repo, "tag", "-a", "v1.0", "-m", "v1.0 release", date=V10_DATE)
+
+
+def apply_release(repo, sc):
+    git(repo, "apply", str(BAD / sc["name"] / "bug.patch"))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", sc["commit"], date=sc["date"])
+    git(repo, "tag", "-a", "-f", sc["version"], "-m", sc["version"] + " release", date=sc["date"])
+    return git(repo, "rev-parse", "--short", "HEAD").strip()
+
+
+def podd_cmd(line, timeout=3):
+    try:
+        return client.call("cmd", line=line, timeout=timeout + 3)
+    except client.PoddUnavailable:
+        print("  (podd not running; skipped '%s')" % line)
+        return None
+
+
+def podd_baud_default():
+    try:
+        st = client.call("status", timeout=3)
+        if st["link"]["baud"] != config.BAUD:
+            client.call("set_baud", baud=config.BAUD)
+    except client.PoddUnavailable:
+        pass
+
+
+def cmd_setup(_):
+    config.ensure_dirs()
+    init_repo(config.WORKSPACE)
+    elf = make(config.WORKSPACE)
+    meta = images.register(elf, status="known-good", origin="release", source_rev="v1.0",
+                           note="v1.0 release, built from firmware/pod", src_dir=config.WORKSPACE / "src")
+    images.set_status(meta["crc"], "known-good", "release baseline")
+    print("workspace: %s (tag v1.0)\nknown-good image: %s  %s" % (config.WORKSPACE, meta["crc"], meta["build_id"]))
+
+
+def cmd_build_images(_):
+    for name, sc in scenarios().items():
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "pod"
+            init_repo(repo)
+            rev = apply_release(repo, sc)
+            elf = make(repo)
+            out = BAD / name / "image"
+            out.mkdir(exist_ok=True)
+            shutil.copy2(elf, out / "pod.elf")
+            sh(config.gcc_tool("objcopy"), "-O", "binary", str(out / "pod.elf"), str(out / "pod.bin"))
+            bid = images.elf_build_id(out / "pod.elf")
+            (out / "build.json").write_text(json.dumps({"build_id": bid, "crc": images.crc_of(bid), "commit": rev,
+                                                        "version": sc["version"]}, indent=2) + "\n")
+            print("%-22s %s  crc %s  commit %s" % (name, bid, images.crc_of(bid), rev))
+
+
+def cmd_list(_):
+    for name, sc in scenarios().items():
+        built = (BAD / name / "image" / "pod.elf").exists()
+        print("%-22s %s  %s%s" % (name, sc["version"], sc["title"], "" if built else "   [not built]"))
+        print("%-22s       trigger: %s" % ("", sc["trigger"]["how"]))
+
+
+def find(name):
+    scs = scenarios()
+    hits = [n for n in scs if n == name or n.startswith(name) or n.split("-", 1)[0] == name]
+    if len(hits) != 1:
+        raise SystemExit("unknown scenario %r; see 'scenario list'" % name)
+    return scs[hits[0]]
+
+
+def workspace_to_v10():
+    ws = config.WORKSPACE
+    if not (ws / ".git").exists():
+        raise SystemExit("no workspace: run 'scenario setup' first")
+    git(ws, "checkout", "-q", "-f", "main")
+    git(ws, "reset", "-q", "--hard", "v1.0")
+    git(ws, "clean", "-qfdx")
+    for t in git(ws, "tag").split():
+        if t != "v1.0":
+            git(ws, "tag", "-d", t)
+
+
+def cmd_start(args):
+    sc = find(args[0])
+    img = BAD / sc["name"] / "image"
+    if not (img / "pod.elf").exists():
+        raise SystemExit("image not built: run 'scenario build-images'")
+    build = json.loads((img / "build.json").read_text())
+    podd_cmd("inject clear")
+    workspace_to_v10()
+    rev = apply_release(config.WORKSPACE, sc)
+    if rev != build["commit"]:
+        print("WARNING: workspace commit %s != prebuilt image commit %s (pod/ changed? rerun setup + build-images)"
+              % (rev, build["commit"]))
+    meta = images.register(img / "pod.elf", status="candidate", origin="release", source_rev=sc["version"],
+                           note="%s release" % sc["version"], src_dir=config.WORKSPACE / "src")
+    podd_baud_default()
+    try:
+        client.call("note", ev="deploy", fields={"version": sc["version"], "crc": meta["crc"], "by": "operator"}, timeout=3)
+    except client.PoddUnavailable:
+        pass
+    print("flashing %s (%s) ..." % (sc["version"], meta["build_id"]))
+    swd.flash_elf(meta["elf"])
+    images.record_deployment(meta["crc"], "unverified", build_id=meta["build_id"], reason="operator deploy %s" % sc["version"])
+    print("\nscenario %s: %s\ntrigger: %s" % (sc["name"], sc["title"], sc["trigger"]["how"]))
+    if sc["trigger"].get("commands"):
+        print("run:     demo/scenario trigger %s   (after ~%d s)" % (sc["name"].split("-")[0], sc["trigger"].get("after_s", 5)))
+
+
+def cmd_trigger(args):
+    sc = find(args[0])
+    for c in sc["trigger"].get("commands", []):
+        r = podd_cmd(c)
+        print("%s -> %s" % (c, "ok" if r and r.get("ok") else r))
+    if not sc["trigger"].get("commands"):
+        print("no trigger: %s" % sc["trigger"]["how"])
+
+
+def cmd_reset(_):
+    workspace_to_v10()
+    meta = images.resolve("known-good")
+    podd_baud_default()
+    print("flashing known-good %s ..." % meta["build_id"])
+    swd.flash_elf(meta["elf"])
+    images.record_deployment(meta["crc"], "unverified", build_id=meta["build_id"], reason="operator reset to known-good")
+    time.sleep(1.5)
+    podd_cmd("inject clear")
+    podd_cmd("crash clear")
+    try:
+        client.call("note", ev="deploy", fields={"version": "v1.0", "crc": meta["crc"], "by": "operator"}, timeout=3)
+    except client.PoddUnavailable:
+        pass
+    print("reset done: workspace at v1.0, known-good flashed, injected faults cleared")
+
+
+def main():
+    cmds = {"setup": cmd_setup, "build-images": cmd_build_images, "list": cmd_list, "start": cmd_start,
+            "trigger": cmd_trigger, "reset": cmd_reset}
+    if len(sys.argv) < 2 or sys.argv[1] not in cmds:
+        print(__doc__)
+        return 1
+    cmds[sys.argv[1]](sys.argv[2:])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

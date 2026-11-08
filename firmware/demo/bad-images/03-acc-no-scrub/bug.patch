@@ -1,0 +1,42 @@
+diff --git a/src/main.c b/src/main.c
+index df35cb0..ed203a0 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -144,29 +144,6 @@ static void acc_task(uint32_t now)
+     }
+ }
+ 
+-/* Read the configuration back; if the LIS3DH reset itself (brownout, ESD,
+- * loose VCC) it's back in power-down mode and must be reconfigured. */
+-static void acc_check_task(uint32_t now)
+-{
+-    diag_cp(CP_ACC_CHECK);
+-    uint8_t c1 = 0, c4 = 0;
+-    int rc = lis3dh_check_config(&c1, &c4);
+-    if (rc < 0) {
+-        acc_error(rc);
+-    } else if (rc == 1) {
+-        g_app.acc_cfg_lost++;
+-        tl_begin('E');
+-        tl_u("t", now);
+-        tl_s("ev", "acc_cfg_lost");
+-        tl_x("ctrl1", c1, 2);
+-        tl_x("ctrl4", c4, 2);
+-        tl_x("want_ctrl1", ACC_CTRL1_VALUE, 2);
+-        tl_x("want_ctrl4", ACC_CTRL4_VALUE, 2);
+-        tl_end();
+-        app_acc_reinit("config_lost");
+-    }
+-}
+-
+ static void frame_task(uint32_t now)
+ {
+     diag_cp(CP_FRAME);
+@@ -358,7 +335,6 @@ int main(void)
+ 
+         if ((int32_t)(now - next_sec) >= 0) {
+             next_sec += 1000u;
+-            if (g_app.sensors_on && g_app.acc_state != ACC_ERR) acc_check_task(now);
+             if (g_app.sensors_on) frame_task(now);
+             diag_cp(CP_HEALTH);
+             app_emit_health();
