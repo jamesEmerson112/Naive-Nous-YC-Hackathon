@@ -72,6 +72,7 @@ What healthy looks like (`heal telemetry_stats seconds=5`):
 | 5 | v1.5 | accelerometer reads 0.5 g at rest | `acc_gravity` | `pod_cmd "acc regs"` (FS bits) | code: mg/digit = 2 for ±4 g |
 | 6 | v1.6 | missing sensor → hang → watchdog loop → safe mode | `watchdog`, `reboot_loop` | boot `last_cp`, `chip_halt_sample` | code: restore I2C timeouts, then a human replugs |
 | 7 | v1.7 | ultrasonic reads 0–32 mm whatever is in front; the arm never starts | `us_mismatch` (critical) | `telemetry_recent kind=D` (us vs mm), `src_diff rev_a=v1.0` | arm task: `fw_rollback` to known-good, then the agent's own `arm_run` plays the wave; later code: drop the cast |
+| 8 | v1.8 | ultrasonic right until a hand comes within 25 cm, then stuck at the hand's distance; the looping arm flails | `us_mismatch` (critical), only after the hand | `telemetry_recent kind=D` (us vs mm), `src_diff rev_a=v1.0` | arm task: `fw_rollback`, `arm_run`; later code: the keep-alive tests `mm`, not `held_mm` |
 | P1 | v1.0 | ultrasonic covered | `us_blocked` | `telemetry_stats` | none needed: wait / human |
 | P2 | v1.0 | loose ECHO wire | `us_intermittent` (+ motion) | `pod_cmd "us check"` | human reseats the wire |
 | P3 | v1.0 | LIS3DH unplugged | `acc_error` (nack) | `pod_cmd "i2c scan"` | human reconnects; firmware keeps running |
@@ -367,8 +368,9 @@ instructions. That's the trust story: it knows what it can't fix.
 
 ## 7. v1.7: "us: tidy the distance conversion" (the arm never starts)
 
-**Start:** `demo/scenario start 07`, with the HC-SR04 pointed at open space more than 200 mm away. The whole
-loop, arm included, is `python3 arm/heal_test.py` (see `arm/README.md`, "Self-healing test").
+**Start:** `demo/scenario start 07`, with the HC-SR04 pointed at open space more than 200 mm away. Drive it
+by hand with the steps in `arm/README.md` ("Step by step", with `start 07`); `arm/heal_test.py` now runs v1.8
+(section 8), which needs a hand to trigger.
 
 **The bug:** one misplaced cast in `hcsr04.c`:
 ```c
@@ -407,6 +409,63 @@ plays the whole wave: 663 of 663 frames, no reflex, every joint at about 0.97–
 The deterministic rule tells "something is close" apart from "the firmware can't do arithmetic" by checking
 the pod's two numbers against each other, with no model. The model then only has to read one diff and decide
 to roll back.
+
+---
+
+## 8. v1.8: "us: hold near readings for 500 ms so the arm's gate can't miss a passing hand" (latched distance)
+
+**Start:** `demo/scenario start 08`. The bug is dormant until something comes near, so it needs a hand: the
+whole loop, arm included, is `python3 arm/heal_test.py` (see `arm/README.md`, "Self-healing test"). The arm
+loops its wave while watching the sensor; after the first loop, hold a hand 5–15 cm in front of the HC-SR04 for
+about a second and take it away.
+
+**The feature:** at 10 pings a second, a hand moving through the beam can fall between two pings and the arm's
+gate would miss it. So v1.8 holds a near reading (under `HCSR04_HOLD_NEAR_MM`, 250 mm) and reports the nearest
+distance until nothing has been near for `HCSR04_HOLD_MS` (500 ms). The status is judged on the reported
+distance, so a held hand in front of open space is `ok`, not `out_of_range`.
+
+**The bug:** the keep-alive tests the held distance instead of the new reading:
+```c
+if (mm < held_mm || now_ms - held_ms >= HCSR04_HOLD_MS)
+    held_mm = mm;                   /* nearer, or the hold ran out: take the new reading */
+if (held_mm < HCSR04_HOLD_NEAR_MM)  /* v1.8; meant: if (mm < HCSR04_HOLD_NEAR_MM) */
+    held_ms = now_ms;               /* something near: keep holding */
+```
+Once anything has been held, `held_ms` is refreshed on every ping, so the 500 ms never runs out and
+`held_mm` only ever goes down. What it looks like:
+- **Nothing near:** readings above 250 mm pass straight through, so every distance is right. That includes the
+  arm passing through the beam at about 338 mm (the closest it came in podd's log of a wave on Nov 8, 00:13).
+- **The hand:** seen right, since the nearest of its pings agrees with its echo.
+- **After the hand leaves:** the distance stays at the hand's until the pod is reset or reflashed.
+
+The echo time is untouched, so after the hand each `D` line contradicts itself: `us=5250` means 900 mm, but
+`mm=78`. A bench test that only checks "does it see a hand" passes. The commit message describes the feature,
+and the code comments describe what was meant. Nothing in the release names the mistake.
+`arm/tests/test_near_hold.py` compiles `near_hold()` from the patch with gcc, and the fix too, and checks both
+ping for ping against the simulator.
+
+**What the logs show** (from about 2 s after the hand leaves):
+```
+critical us_mismatch - Ultrasonic distance disagrees with its own echo time: echo 5258 us means ~902 mm,
+                       but the firmware reports 78 mm (40 of 40 samples wrong)
+```
+The arm's job (`arm/safe_replay.py --loops 20 --watch --on-blocked reflex`) pauses when the hand comes, which
+is correct. The way never reads clear again, so after `--hold-s` (3 s) the arm backs off to its rest pose and
+its obstacle reflex makes it flail for 8 s. Then it gives up (exit 4).
+
+**Investigation:** the same as v1.7. The echo says ~900 mm, so nothing is close. `src_log` shows v1.8, and
+`src_diff rev_a=v1.0` shows the hold. A `pod_cmd reset` clears the reading until the next hand, which is a
+clue (state in RAM that only gets worse), but not a fix: the bench check wants the known-good image running.
+
+**Fix (arm task):** `fw_rollback` to known-good, then `arm_run` to launch the job and check its motion report.
+The forward fix (test `mm` in the keep-alive) is a person's follow-up.
+
+**Verify:** `chip_status` shows the known-good build, `us_mismatch` is gone, and the agent's own `arm_run` plays
+the whole wave. Then `heal_test.py` loops the job three more times, still watching the sensor.
+
+**Talking point:** the firmware works on every test you'd think to run, and it fails only after the thing it
+was written for: a hand came near. The same deterministic rule catches it without knowing anything about holds,
+because the pod's two numbers stop agreeing.
 
 ---
 
