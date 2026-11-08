@@ -238,6 +238,11 @@ class Settings(BaseSettings):
     # is taken whenever labelled pass/fail runs grew by LEARNING_MIN_NEW since the last one.
     learning_mode: Literal["off", "data", "fixture", "live"] = "off"
     learning_min_new: int = 1
+    # Fleet learning page (/learning; docs/recursive-self-improvement/design.md §9). Until a
+    # `review.*` event exists, the page shows this recorded cluster-review session (fixture
+    # JSON); empty = an empty state. Probe scorecards are read from PROBE_DIR.
+    review_fixture: str | None = None
+    probe_dir: str = "/data/learning/probes"
 
 
 @lru_cache
