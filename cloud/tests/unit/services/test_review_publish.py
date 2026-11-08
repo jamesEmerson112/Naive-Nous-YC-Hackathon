@@ -177,7 +177,7 @@ def test_comment_only_when_the_card_is_set(db_session, make_settings):
     )
     [comment] = naive.comments[CARD]
     assert comment["body"] == (
-        "Fleet learning: Slow the gripper on glossy blocks shipped to every so101 arm after the "
+        "Fleet learning: “Slow the gripper on glossy blocks” shipped to every so101 arm after the "
         "canary held · proposed by Naïve agent fleet-doctor · 0 human clicks · "
         "Naïve skill romulus-healer-playbook v3"
     )
