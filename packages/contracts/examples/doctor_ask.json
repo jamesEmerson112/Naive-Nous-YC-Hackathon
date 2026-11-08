@@ -1,0 +1,32 @@
+{
+  "incident_id": "6d0a4c2e-9b1f-4e3a-8c5d-7f2e1a0b9c84",
+  "trigger": "T4",
+  "question": "Lowering RELEASE_THRESHOLD_MM keeps moving where the gripper opens instead of stopping it. What am I missing?",
+  "context": {
+    "tier": 3,
+    "code_rev": "c0de001",
+    "signals": {
+      "dist_mm": [212, 140, 64, 31, 18, 12],
+      "gripper_closed": [1, 1, 1, 1, 1, 0]
+    },
+    "log_tail": [
+      "T t=90412 raw_us=70 dist_mm=12 valid=1 state=HOLDING goal=[0,12,40,88,0,35]",
+      "S HOLDING->RELEASE reason=dist_lt_threshold dist_mm=12"
+    ],
+    "recent_steps": [
+      "patch control/hold.py: RELEASE_THRESHOLD_MM 40 -> 25",
+      "verify d1_hand_trace: FAIL, released at dist_mm=18",
+      "patch control/hold.py: RELEASE_THRESHOLD_MM 25 -> 15",
+      "verify d1_hand_trace: FAIL, released at dist_mm=12",
+      "patch control/hold.py: RELEASE_THRESHOLD_MM 15 -> 10"
+    ],
+    "files": [
+      {
+        "path": "control/hold.py",
+        "excerpt": "RELEASE_THRESHOLD_MM = 10\n\n\ndef step(state, dist_mm, cmd):\n    \"\"\"One control step: distance in, gripper command out (see SPEC.md).\"\"\"\n    if state == State.HOLDING:\n        if dist_mm is not None and dist_mm < RELEASE_THRESHOLD_MM:\n            log_state(State.HOLDING, State.RELEASE, reason=\"dist_lt_threshold\", dist_mm=dist_mm)\n            return State.RELEASE, cmd.open_gripper()\n        return State.HOLDING, cmd.hold()\n"
+      }
+    ]
+  },
+  "budget_s": 20,
+  "contract_version": "0.1"
+}

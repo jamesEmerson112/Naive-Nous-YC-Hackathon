@@ -12,7 +12,7 @@
 - **Auth:** none in v0. The platform is reachable only on the bench network (D1; architecture §10).
 - **IDs:**
   - Incident and recording IDs are **UUIDs made on the device**, so a retry repeats the same request and creates nothing new (D8).
-  - The server makes other IDs: `ov_`, `cand_`, `wo_`, `ds_`, `exp_`, `evt_`. Overlay IDs are an exception: the device makes them and the server stores them as given.
+  - The server makes other IDs: `ov_`, `cand_`, `wo_`, `ds_`, `exp_`, `evt_`, and for the Fleet Doctor `ask_` and `prop_` (§2.11–§2.12). Overlay IDs are an exception: the device makes them and the server stores them as given.
 - **Versions:** integers that go up within each fleet. Firmware and harness versions are **never edited** (D3, D4). Retiring one hides it from new assignments.
 - **Time:** UTC ISO 8601. Each device-reported object carries `occurred_at` (or `started_at`), and the server adds `received_at`.
 - **Errors:** `{"error": "<code>", "detail": "<sentence>"}` with the right HTTP status.
@@ -63,8 +63,10 @@ Request:
 
 Response:
 ```json
-{"assigned": {"firmware": 8, "harness": 4}, "drop_overlay": false, "frozen": false}
+{"assigned": {"firmware": 8, "harness": 4}, "drop_overlay": false, "frozen": false, "proposal": null}
 ```
+
+- `proposal` (optional, Fleet Doctor L2; no version bump, D28) is `{"proposal_id", "incident_id", "expires_at"}` when a checked fix is waiting for this device (§2.12), and `null` otherwise. It is always `null` while `frozen`. A device on an older contract ignores it.
 
 ### 2.4 Install result
 
@@ -101,7 +103,8 @@ Response:
 - `suspected_cause` is `software`, `hardware` or `unknown`.
 - `signals` is the small, inline sample that replay uses (§2.7).
 - `recordings` lists the IDs of the bigger evidence files, which are uploaded separately (§3.7).
-- `overlay` is `null` if the agent didn't patch anything.
+- `overlay` is `null` if the agent didn't patch anything. `overlay.proposal_id` (optional, D28) names the Fleet Doctor proposal the overlay came from (§2.12); it is `null` for the healer's own patches.
+- `consult` (optional, Fleet Doctor L2, D28): `{"wanted": true, "trigger": "T2", "attempts": 2}` asks the cloud to work on an unresolved incident. `trigger` is the device's escalation trigger (T1–T7, D26) and `attempts` is how many patches the healer tried. Send `running.code_rev` with it: without one the cloud declines the consult (an event, never a `422`). `true` is shorthand for `{"wanted": true}`, and a malformed `consult` reads as `null` rather than rejecting the incident. The cloud also starts consults on its own for unresolved incidents whose `suspected_cause` isn't `hardware`, within the caps (D25, D26).
 
 ### 2.6 Overlay status
 
@@ -161,6 +164,66 @@ Every `lerobot_v3_tar` recording uses the same LeRobot features (schema **v0.1**
 - **Code packages:** a code version is a `.tar.gz` of `device/` at that version, with a sha256. The device pulls it like a harness package (§3.3c) and installs it with hash check, health check and rollback (D7).
 - **`code_patch`** in an overlay (§2.5) is a **unified diff** against the overlay's base `code_rev`, with paths relative to the `device/` root, for example `--- a/control/gripper.py`. It is `null` if the agent only changed rules or params. It changes regular text files only: symlinks and submodules (git modes `120000` and `160000`, read as octal in any spelling, e.g. `0120000`), binary changes and paths outside `device/` are reported as problems, and the patch is treated as touching the safety layer (fail closed, K17). Safety paths are matched case-insensitively after normalization (`SAFETY/x.py` and `./safety/x.py` count as `safety/x.py`), because macOS and Docker Desktop mounts are case-insensitive.
 
+### 2.11 Doctor ask and advice (Fleet Doctor L1)
+
+§2.11–§2.13 are optional additions, so `CONTRACT_VERSION` stays `0.1` (D28). The design is in [`fleet-doctor/architecture.md`](../fleet-doctor/architecture.md) §4–5 and the decisions are D23–D26.
+
+Request (`DoctorAsk`, route 3.8):
+```json
+{"incident_id": "6d0a4c2e-…", "trigger": "T4",
+ "question": "Lowering RELEASE_THRESHOLD_MM keeps moving where the gripper opens instead of stopping it. What am I missing?",
+ "context": {"tier": 3, "code_rev": "c0de001",
+             "signals": {"dist_mm": [212, 140, 64, 31, 18, 12]},
+             "log_tail": ["S HOLDING->RELEASE reason=dist_lt_threshold dist_mm=12"],
+             "recent_steps": ["patch control/hold.py: RELEASE_THRESHOLD_MM 25 -> 15", "verify d1_hand_trace: FAIL, released at dist_mm=12"],
+             "files": [{"path": "control/hold.py", "excerpt": "…"}]},
+ "budget_s": 20, "contract_version": "0.1"}
+```
+
+Response (`DoctorAdvice`):
+```json
+{"ask_id": "ask_5b9e…",
+ "hypotheses": [{"claim": "The threshold isn't the bug: SPEC.md says never open the gripper because of the ultrasonic reading while holding.",
+                 "how_to_check": "Remove the release branch in step() and run d1_hand_trace: the gripper should stay closed."}],
+ "model": "…"}
+```
+
+- `incident_id` is optional, because the healer may ask before it reports the incident. `trigger` is an open string; the known values are T1–T7 (D26). Every `context` field is optional, and `recent_steps` holds the healer's last ≤5 messages.
+- `budget_s` (default 20) is how long the device waits. The cloud's LLM timeout is shorter: `min(DOCTOR_ASK_TIMEOUT_S, budget_s − 2)`.
+- The answer is hypotheses, each with how to check it, never a patch. It stays at about 300 tokens in total, which the cloud enforces. A hypothesis that names a safety or visor path is dropped (D25).
+- This is a direct call, not the outbox. Any non-200 means "no answer", and the device's circuit breaker skips the rest of that heal's asks (D26).
+
+### 2.12 Proposal (Fleet Doctor L2)
+
+When a consult's fix passes the cloud's checks, the cloud offers it as a proposal, and the next check-in points at it (§2.3 `proposal`). The device pulls it with route 3.9:
+
+```json
+{"proposal_id": "prop_8c2e…", "incident_id": "6d0a4c2e-…",
+ "base": {"firmware": 1, "harness": 1, "code_rev": "c0de001", "mcu_build": null, "overlay_id": null},
+ "code_patch": "--- a/control/hold.py\n+++ b/control/hold.py\n@@ -18,6 +18,5 @@ …",
+ "repro_test": "tests/test_hold_proximity.py::test_hand_near_while_holding_keeps_gripper_closed",
+ "why": "SPEC.md forbids opening the gripper on the ultrasonic reading while holding; this removes the rule and adds a regression test.",
+ "checks": {"stub": false, "fails_before": true, "passes_after": true},
+ "expires_at": "2026-11-08T04:20:00Z"}
+```
+
+- `code_patch` uses the §2.10 format against `base.code_rev` and includes the reproduction test. `repro_test` names that test (a path or pytest node id): it failed on the base and passes with the patch. `checks` is open and informational.
+- `base` is what must be running. The device applies the proposal only when all of these hold: the arm is parked with no task running; `firmware`, `code_rev` (and `mcu_build`, for STM32 patches) match; the active overlay is `base.overlay_id`, which the proposal replaces; and `expires_at` hasn't passed. Otherwise it reports `stale` or `rejected` (§2.13).
+- The body is served with `X-Sha256`, the sha256 of the exact body bytes (canonical JSON, as in §3.2). The device checks it before applying. The cloud builds the body with `proposal_body_and_sha256`.
+- The device applies it as an overlay whose `proposal_id` is this proposal (§2.5), under a mark-good timer (D24). Overlay statuses (§2.6) then follow as usual.
+- A patch that touches the safety layer is never offered, and nothing is offered while the safety paths are unconfirmed (D25).
+
+### 2.13 Proposal result
+
+```json
+{"result": "applied", "overlay_id": "ov-d1-0002", "reason": "parked, base matched, sha256 ok; verify d1_hand_trace passed",
+ "occurred_at": "2026-11-08T03:41:10Z", "contract_version": "0.1"}
+```
+
+- `result` is `applied`, `rejected` (the device declined it: not parked, expired or a hash mismatch), `stale` (the base no longer matches what's running) or `failed_verify` (applied, failed verify and rolled back).
+- `applied` must carry `overlay_id`, or the request gets a `422`. The cloud creates that overlay row itself, because proposal overlays never arrive inside an incident, and incidents are write-once.
+- It is queued in the outbox like an overlay status. The proposal ID is in the URL.
+
 ## 3. Device-facing routes
 
 | # | Route | Body → response | Notes |
@@ -174,10 +237,13 @@ Every `lerobot_v3_tar` recording uses the same LeRobot features (schema **v0.1**
 | 3.6 | `POST /v1/devices/{device_id}/overlays/{overlay_id}` | §2.6 → `204`, or `200 {"status": "already_received"}` for a resend | `superseded` is terminal. After the cloud sets `locked_in`/`dropped`, device statuses are recorded but don't change it. One exception: a `held` overlay (never locked in, so the new version wasn't built from it) stays `held` on `superseded`, since the cloud keeps its diff and re-batches it on the new base; the report is still recorded, and later device statuses don't move it. `superseded` on an `active` overlay is terminal. A status may arrive before its incident |
 | 3.7a | `POST /v1/devices/{device_id}/recordings` | §2.8 → `201 {"recording_id", "upload": "needed" \| "exists"}`, or `200` if already received | If a blob with that `sha256` is already stored, no upload is needed. Idempotent on `recording_id`; the incident may arrive before or after (M4) |
 | 3.7b | `PUT /v1/recordings/{recording_id}/blob` | raw bytes + `X-Sha256` → `204`, or `409 sha256_mismatch`, or `413 blob_too_large` (over `RECORDING_MAX_BYTES`, default 200 MB) | Idempotent; nothing is kept on a mismatch. Resumable chunked upload is a later improvement ([telemetry](cloud-platform-telemetry.md) §3) |
+| 3.8 | `POST /v1/devices/{device_id}/doctor/ask` | §2.11 → `200` §2.11 response | Fleet Doctor L1. A direct call, not queued; the device treats any non-200 as "no answer". `503 doctor_off` (Doctor mode off), `409 fleet_frozen`, `429 doctor_cap` (asks per incident, asks per device per day, or daily spend), `504 doctor_timeout`, `502 doctor_unavailable` (LLM) |
+| 3.9 | `GET /v1/devices/{device_id}/proposals/{proposal_id}` | → §2.12, with header `X-Sha256` over the exact body bytes | Fleet Doctor L2. `404 unknown_proposal` (also when it belongs to another device), `410 proposal_gone` (no longer offered, or expired), `409 fleet_frozen` |
+| 3.10 | `POST /v1/devices/{device_id}/proposals/{proposal_id}/result` | §2.13 → `204`, or `200` for an identical resend | `404 unknown_proposal`, `409 proposal_result_conflict` (a different result than the one recorded), `422` if `applied` has no `overlay_id` |
 
-**Device rules:** everything in 3.4–3.7 is queued on disk and retried with backoff while the cloud is unreachable (D8). Incidents and their recordings may arrive in either order; the cloud links them (M4).
+**Device rules:** everything in 3.4–3.7 and 3.10 is queued on disk and retried with backoff while the cloud is unreachable (D8). Incidents and their recordings may arrive in either order; the cloud links them (M4).
 
-**Errors:** a `contract_version` outside the supported list → `400 unsupported_contract_version` (required on 3.1, optional elsewhere). Routes 3.4–3.7a from a device that never checked in → `404 unknown_device`; the first check-in registers a device.
+**Errors:** a `contract_version` outside the supported list → `400 unsupported_contract_version` (required on 3.1, optional elsewhere). Routes 3.4–3.7a and 3.8 from a device that never checked in → `404 unknown_device`; the first check-in registers a device.
 
 ## 4. Operator routes
 

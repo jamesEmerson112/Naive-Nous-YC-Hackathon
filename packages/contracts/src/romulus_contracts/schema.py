@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from romulus_contracts.common import ErrorResponse
 from romulus_contracts.device import CheckIn, CheckInResponse, InstallResult
+from romulus_contracts.doctor import DoctorAdvice, DoctorAsk, Proposal, ProposalResult
 from romulus_contracts.incident import IncidentAccepted, IncidentReport, OverlayStatus
 from romulus_contracts.manifest import FirmwareManifest, FirmwareResponse, HarnessMeta
 from romulus_contracts.telemetry import RecordingAccepted, RecordingMeta
@@ -26,11 +27,15 @@ MODELS: dict[str, type[BaseModel]] = {
     "IncidentReport": IncidentReport,
     "OverlayStatus": OverlayStatus,
     "RecordingMeta": RecordingMeta,
+    "DoctorAsk": DoctorAsk,
+    "ProposalResult": ProposalResult,
     # cloud -> device
     "CheckInResponse": CheckInResponse,
     "FirmwareResponse": FirmwareResponse,
     "IncidentAccepted": IncidentAccepted,
     "RecordingAccepted": RecordingAccepted,
+    "DoctorAdvice": DoctorAdvice,
+    "Proposal": Proposal,
     "ErrorResponse": ErrorResponse,
     # artifacts the device pulls
     "FirmwareManifest": FirmwareManifest,

@@ -11,6 +11,8 @@ therefore lenient wherever the APIs doc allows: `outcome` may be missing,
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+from pydantic import ValidationError, ValidatorFunctionWrapHandler, WrapValidator
+
 from romulus_contracts.common import (
     CloudModel,
     DeviceModel,
@@ -19,6 +21,7 @@ from romulus_contracts.common import (
     Running,
     UtcDatetime,
 )
+from romulus_contracts.doctor import ConsultRequest
 
 SuspectedCause = str
 """Open string; the known values are `SUSPECTED_CAUSES`."""
@@ -53,11 +56,14 @@ class Overlay(DeviceModel):
       to `device/` (APIs §2.10), or null. Kept as raw text; check it with
       `codepatch.summarize_code_patch`, which reports problems instead of rejecting the
       incident. Decide `touches_safety` with `codepatch.touches_safety` (fails closed).
+    - `proposal_id` (optional, Fleet Doctor L2, D28): the Doctor proposal this overlay came
+      from, or null when the device's own healer wrote it.
     """
 
     overlay_id: str
     diff: OpenDict = {}
     code_patch: str | None = None
+    proposal_id: str | None = None
 
 
 class Outcome(DeviceModel):
@@ -74,6 +80,18 @@ class Outcome(DeviceModel):
     category: str | None = None
 
 
+def _lenient_consult(value: Any, handler: ValidatorFunctionWrapHandler) -> ConsultRequest | None:
+    # `"consult": true` is shorthand for `{"wanted": true}`. A malformed consult reads as no
+    # request instead of rejecting the incident: the cloud keeps the raw payload and applies
+    # its own consult rule (fleet-doctor architecture §3).
+    if isinstance(value, bool):
+        value = {"wanted": value}
+    try:
+        return handler(value)
+    except ValidationError:
+        return None
+
+
 class IncidentReport(DeviceModel):
     """`POST /v1/devices/{device_id}/incidents` (APIs §2.5). Idempotent on `incident_id`.
 
@@ -84,6 +102,10 @@ class IncidentReport(DeviceModel):
 
     Proposed optional fields (not in APIs §2.5 yet): `tier` (health tier 1-3),
     `log_tail` (recent log lines, as text or JSON-lines objects), `contract_version`.
+
+    `consult` (optional, Fleet Doctor L2, D28) asks the cloud to work on this incident; send
+    `running.code_rev` with it, or the cloud declines. `true` reads as `{"wanted": true}`, and
+    a malformed value reads as null instead of rejecting the incident.
     """
 
     incident_id: UUID
@@ -98,6 +120,7 @@ class IncidentReport(DeviceModel):
     recordings: Annotated[list[UUID], NullAsEmpty] = []
     tier: int | str | None = None
     log_tail: Annotated[list[str | dict[str, Any]], NullAsEmpty] = []
+    consult: Annotated[ConsultRequest | None, WrapValidator(_lenient_consult)] = None
     contract_version: str | None = None
 
 

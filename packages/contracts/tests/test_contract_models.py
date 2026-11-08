@@ -10,11 +10,20 @@ from romulus_contracts import (
     Assigned,
     CheckIn,
     CheckInResponse,
+    ConsultRequest,
+    DoctorAdvice,
+    DoctorAsk,
+    DoctorContext,
     ErrorResponse,
+    Hypothesis,
     IncidentAccepted,
     IncidentReport,
     InstallResult,
     OverlayStatus,
+    Proposal,
+    ProposalBase,
+    ProposalPointer,
+    ProposalResult,
     RecordingAccepted,
     RecordingMeta,
     Running,
@@ -94,13 +103,35 @@ def apis_recording():
 
 
 def test_device_models_keep_extra_fields():
-    for model in (CheckIn, IncidentReport, InstallResult, OverlayStatus, RecordingMeta, Running):
+    for model in (
+        CheckIn,
+        IncidentReport,
+        InstallResult,
+        OverlayStatus,
+        RecordingMeta,
+        Running,
+        DoctorAsk,
+        DoctorContext,
+        ConsultRequest,
+        ProposalResult,
+    ):
         assert issubclass(model, DeviceModel), model
         assert model.model_config["extra"] == "allow"
 
 
 def test_cloud_models_ignore_extra_fields():
-    for model in (CheckInResponse, Assigned, IncidentAccepted, RecordingAccepted, ErrorResponse):
+    for model in (
+        CheckInResponse,
+        Assigned,
+        IncidentAccepted,
+        RecordingAccepted,
+        ErrorResponse,
+        Hypothesis,
+        DoctorAdvice,
+        ProposalPointer,
+        ProposalBase,
+        Proposal,
+    ):
         assert issubclass(model, CloudModel), model
     resp = CheckInResponse.model_validate(
         {"assigned": {"firmware": 8, "harness": 4}, "drop_overlay": False, "frozen": False, "x": 1}
@@ -201,6 +232,7 @@ def test_checkin_response_example_and_defaults():
         "assigned": {"firmware": None, "harness": None},
         "drop_overlay": False,
         "frozen": False,
+        "proposal": None,
     }
 
 

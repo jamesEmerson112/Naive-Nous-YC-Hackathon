@@ -13,6 +13,7 @@ from romulus_contracts.common import (
     UtcDatetime,
     Version,
 )
+from romulus_contracts.doctor import ProposalPointer
 
 Health = Literal["ok", "degraded", "failing"]
 """Coarse device health (APIs §2.3). Tier detail goes in `health_detail` or `metrics`."""
@@ -57,11 +58,15 @@ class CheckInResponse(CloudModel):
 
     The code version to run is the assigned firmware manifest's `code_rev` (APIs §2.10).
     `frozen` means the kill switch is on: the device stays on its assigned version.
+    `proposal` (optional, Fleet Doctor L2, D28) points at a checked fix waiting for this
+    device (pull it with `GET /v1/devices/{id}/proposals/{proposal_id}`); null when there
+    is none, and always null while `frozen`.
     """
 
     assigned: Assigned
     drop_overlay: bool = False
     frozen: bool = False
+    proposal: ProposalPointer | None = None
 
 
 InstallType = Literal["firmware", "harness", "code"]

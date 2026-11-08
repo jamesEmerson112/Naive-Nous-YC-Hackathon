@@ -1,0 +1,7 @@
+{
+  "result": "applied",
+  "overlay_id": "ov-d1-0002",
+  "reason": "parked, base matched, sha256 ok; verify d1_hand_trace passed",
+  "occurred_at": "2026-11-08T03:41:10Z",
+  "contract_version": "0.1"
+}

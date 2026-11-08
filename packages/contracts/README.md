@@ -20,8 +20,9 @@ Pin a commit instead of `main` once v0.1 is agreed. From a checkout of this repo
 
 | Module | What |
 |---|---|
-| `device` | `CheckIn`, `CheckInResponse`, `InstallResult` |
-| `incident` | `IncidentReport` (+ `Agent`, `Overlay`, `Outcome`), `IncidentAccepted`, `OverlayStatus` |
+| `device` | `CheckIn`, `CheckInResponse` (+ optional `proposal`), `InstallResult` |
+| `incident` | `IncidentReport` (+ `Agent`, `Overlay`, `Outcome`; optional `consult` and `Overlay.proposal_id`), `IncidentAccepted`, `OverlayStatus` |
+| `doctor` | Fleet Doctor, optional additions with no version bump (D28): `DoctorAsk` (+ `DoctorContext`) → `DoctorAdvice` (+ `Hypothesis`); `ConsultRequest` (`IncidentReport.consult`); `ProposalPointer` (`CheckInResponse.proposal`), `Proposal` (+ `ProposalBase`), `ProposalResult`; `proposal_body_and_sha256()` |
 | `manifest` | `FirmwareManifest`, `FirmwareResponse`, `HarnessMeta`, `firmware_response()`, `manifest_sha256()` |
 | `telemetry` | `RecordingMeta`, `RecordingAccepted`, `RecordingKind`, `FLEET_FEATURES` (dataset schema v0.1) |
 | `codepatch` | `summarize_code_patch()`, `validate_code_patch()`, `patch_paths()`, `touches_safety()` (fails closed) for the `code_patch` format |
@@ -43,7 +44,7 @@ python -m romulus_contracts.schema            # all models
 python -m romulus_contracts.schema CheckIn    # one model
 ```
 
-**Tolerance rules.** Models for payloads the device sends keep unknown fields (`extra="allow"`), and the cloud stores every payload raw. Add fields freely; they won't be rejected and they won't be lost. Models for cloud responses ignore unknown fields, so a newer cloud won't break an older device. Timestamps without an offset are read as UTC, and `null` lists/objects read as empty. Open strings: recording `kind`/`format`, signal names, rule actions, incident `kind`, `outcome.suspected_cause` (known: `software`/`hardware`/`unknown`), `outcome.category` (known: `fix-code`/`fix-config`/`ops`/`park`). `outcome` itself is optional, and `agent.actions` may hold strings or dicts. Fixed sets: `health` (`ok`/`degraded`/`failing`), install `type` and `result`, overlay `status`. Strict on purpose: `incident_id` and recording ids are UUIDs (idempotency, D8).
+**Tolerance rules.** Models for payloads the device sends keep unknown fields (`extra="allow"`), and the cloud stores every payload raw. Add fields freely; they won't be rejected and they won't be lost. Models for cloud responses ignore unknown fields, so a newer cloud won't break an older device. Timestamps without an offset are read as UTC, and `null` lists/objects read as empty. Open strings: recording `kind`/`format`, signal names, rule actions, incident `kind`, `outcome.suspected_cause` (known: `software`/`hardware`/`unknown`), `outcome.category` (known: `fix-code`/`fix-config`/`ops`/`park`), Doctor `trigger` (known: `T1`–`T7`; a number reads as a string). `outcome` itself is optional, and `agent.actions` may hold strings or dicts. A malformed `IncidentReport.consult` reads as null instead of rejecting the incident (`true` is shorthand for `{"wanted": true}`). Fixed sets: `health` (`ok`/`degraded`/`failing`), install `type` and `result`, overlay `status`, proposal `result` (`applied`/`rejected`/`stale`/`failed_verify`). Strict on purpose: `incident_id` and recording ids are UUIDs (idempotency, D8), and an `applied` proposal result must name its `overlay_id` (the cloud creates that overlay row).
 
 ## Routes (device-facing)
 
@@ -60,10 +61,13 @@ Base URL `http://<laptop-LAN-IP>:8000`, JSON, no auth on the bench network. Full
 | `POST /v1/devices/{device_id}/overlays/{overlay_id}` | `OverlayStatus` → `204` |
 | `POST /v1/devices/{device_id}/recordings` | `RecordingMeta` → `201` `RecordingAccepted` (`upload`: `needed`/`exists`) |
 | `PUT /v1/recordings/{recording_id}/blob` | raw bytes + `X-Sha256` → `204`, or `409 sha256_mismatch` |
+| `POST /v1/devices/{device_id}/doctor/ask` | `DoctorAsk` → `DoctorAdvice`. A direct call that gives up after `budget_s`, not the outbox; any non-200 means "no answer" |
+| `GET /v1/devices/{device_id}/proposals/{proposal_id}` | → `Proposal`, with `X-Sha256` over the exact body bytes; `410 proposal_gone` once expired or withdrawn |
+| `POST /v1/devices/{device_id}/proposals/{proposal_id}/result` | `ProposalResult` → `204` (`200` for an identical resend); `applied` needs `overlay_id` |
 
 Errors are `{"error": "<code>", "detail": "<sentence>"}` (`ErrorResponse`).
 
-**Outbox rule.** Queue installs, incidents, overlay statuses and recordings on disk and send them in order; send an incident before its recordings.
+**Outbox rule.** Queue installs, incidents, overlay statuses, proposal results and recordings on disk and send them in order; send an incident before its recordings.
 - **Retry with backoff** on connection errors, timeouts, `5xx`, `408` and `429`.
 - **Dead-letter on any other `4xx`** (e.g. `422`): move the item to a dead-letter file, log the error `detail`, and carry on with the next item. A payload the cloud rejected once will be rejected forever, and must not block everything queued behind it.
 
@@ -102,6 +106,9 @@ Pure, stdlib-only, deterministic. It runs on the device and in the cloud gate's 
 | `incident_rules_patch.json` | `IncidentReport` | the APIs §2.5 camera-occlusion example: a `rules` overlay (fake fleet path) |
 | `overlay_status_held.json`, `overlay_status_reverted.json` | `OverlayStatus` | held; reverted |
 | `recording_incident_window.json`, `recording_agent_trace.json`, `recording_episode.json` | `RecordingMeta` | D1's LeRobot window and agent trace; a sampled normal episode |
+| `incident_consult_wanted.json` | `IncidentReport` | Fleet Doctor: two threshold patches failed verify, so the healer parked and asked for a consult (`consult: {wanted, trigger: "T2", attempts: 2}`, with `running.code_rev`) |
+| `doctor_ask.json`, `doctor_advice.json` | `DoctorAsk`, `DoctorAdvice` | L1: the healer loops on the threshold (T4) and asks; the advice is two hypotheses, each with how to check it |
+| `proposal.json`, `proposal_result.json` | `Proposal`, `ProposalResult` | L2: the checked fix for that incident (D1's patch plus its repro test, base `c0de001`); the device reports it `applied` as `ov-d1-0002` |
 
 File paths in the D1 patch (`control/hold.py`, `tests/…`) and incident kinds (`unexpected_release`, `servo_absent`) are illustrative until the device layout and kind names are agreed.
 

@@ -122,9 +122,11 @@ def proposal_body_and_sha256(p: Proposal) -> tuple[bytes, str]:
 - `incident.Overlay` gets `proposal_id: str | None = None`.
 
 **Wiring:**
-- Register every new model in `schema.MODELS` and `__init__.__all__`.
-- Add examples `examples/doctor_ask.json`, `doctor_advice.json`, `proposal.json`, `proposal_result.json` with `MODEL_BY_PREFIX` entries.
+- Export every new model from `__init__.__all__`. Register the four top-level messages (`DoctorAsk`, `ProposalResult`, `DoctorAdvice`, `Proposal`) in `schema.MODELS`; the sub-models appear in their `$defs`, as `Overlay` and `Running` already do.
+- Add examples `examples/doctor_ask.json`, `doctor_advice.json`, `proposal.json`, `proposal_result.json` with `MODEL_BY_PREFIX` entries, plus `incident_consult_wanted.json` (an `IncidentReport` with `consult`, a fixture for F12). All five tell one story: the same incident, base `c0de001`.
 - Add README rows.
+
+**Leniency (as built in PR 1):** `IncidentReport.consult` accepts `true` as `{"wanted": true}`, and a malformed value reads as `null` instead of rejecting the incident. `ConsultRequest.attempts` reads anything that isn't a whole number as `null`. A numeric `trigger` reads as a string. `null` text, lists, `context` and `budget_s` read as their defaults. `repro_test` is the path or pytest node id of the test inside `code_patch`.
 
 **APIs doc** (`docs/cloud-platform-planning/cloud-platform-apis.md`):
 - PR 1 adds the payloads (§2) and the three routes (§3).

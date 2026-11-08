@@ -1,0 +1,22 @@
+{
+  "proposal_id": "prop_8c2e4a6b0d1f4e3a9b7c5d2e1f0a3b4c",
+  "incident_id": "6d0a4c2e-9b1f-4e3a-8c5d-7f2e1a0b9c84",
+  "base": {
+    "firmware": 1,
+    "harness": 1,
+    "code_rev": "c0de001",
+    "mcu_build": null,
+    "overlay_id": null
+  },
+  "code_patch": "--- a/control/hold.py\n+++ b/control/hold.py\n@@ -18,6 +18,5 @@ def step(state, dist_mm, cmd):\n     \"\"\"One control step: distance in, gripper command out (see SPEC.md).\"\"\"\n     if state == State.HOLDING:\n-        if dist_mm is not None and dist_mm < RELEASE_THRESHOLD_MM:\n-            log_state(State.HOLDING, State.RELEASE, reason=\"dist_lt_threshold\", dist_mm=dist_mm)\n-            return State.RELEASE, cmd.open_gripper()\n+        # SPEC.md: while holding, never open the gripper because of the ultrasonic reading.\n+        # The proximity release rule is removed (fault D1).\n         return State.HOLDING, cmd.hold()\n--- /dev/null\n+++ b/tests/test_hold_proximity.py\n@@ -0,0 +1,9 @@\n+from control.hold import State, step\n+from tests.fakes import FakeCommand\n+\n+\n+def test_hand_near_while_holding_keeps_gripper_closed():\n+    state = State.HOLDING\n+    for _ in range(60):  # hand at 3 cm for 2 s at 30 Hz\n+        state, command = step(state, 30, FakeCommand())\n+        assert state == State.HOLDING and command.gripper == \"closed\"\n",
+  "repro_test": "tests/test_hold_proximity.py::test_hand_near_while_holding_keeps_gripper_closed",
+  "why": "SPEC.md forbids opening the gripper on the ultrasonic reading while holding. The healer tuned RELEASE_THRESHOLD_MM, which only moved the release point; this removes the rule and adds a regression test from the recorded hand trace.",
+  "checks": {
+    "stub": false,
+    "fails_before": true,
+    "passes_after": true,
+    "device_tests": "passed",
+    "touches_safety": false
+  },
+  "expires_at": "2026-11-08T04:20:00Z"
+}
