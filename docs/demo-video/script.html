@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardware Buddy script</title>
+<style>
+  :root { --bg:#fff8ee; --ink:#121214; --muted:#6b6b72; --line:#eadfcd; --card:#ffffff;
+          --andre:#d9480f; --ishaan:#6d5df6; --kent:#0b7285; --olir:#2b8a3e; --none:#868e96; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e0f12; --ink:#eceef1; --muted:#9aa1ab; --line:#252a31; --card:#16191e;
+            --andre:#ff8a4c; --ishaan:#a99cff; --kent:#4fc3d4; --olir:#69db7c; --none:#adb5bd; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:20px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 40px 16px 80px; }
+  h1 { font-size: 40px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  .part { margin: 36px 0 12px; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .beat { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 22px; margin: 12px 0; }
+  .head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+  .t { font: 600 16px ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); }
+  .name { font-weight: 700; font-size: 22px; }
+  .who { font-weight: 700; font-size: 16px; padding: 2px 10px; border-radius: 999px; color: #fff; }
+  .andre { background: var(--andre); } .ishaan { background: var(--ishaan); } .kent { background: var(--kent); }
+  .olir { background: var(--olir); } .none { background: var(--none); }
+  .quote { font-size: 27px; line-height: 1.4; margin: 12px 0 6px; font-weight: 500; }
+  .do { color: var(--muted); font-size: 18px; margin: 6px 0 0; }
+  .do b { color: var(--ink); }
+  .tips { border-left: 4px solid var(--ishaan); padding: 4px 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hardware Buddy · script</h1>
+  <p class="sub">Judges' video, 1:56. Animated intro (0:00–0:42) → real demo (0:42–1:44) → close (1:44–1:56).</p>
+
+  <div class="tips">
+    Record voice lines afterwards as phone voice memos in a quiet corner, one file per line, named like <b>vo-08-ishaan</b>.
+    During the demo: keep the camera rolling, start 3 s before each action and stop 3 s after. The heal takes about 2 minutes; it gets sped up in the edit.
+  </div>
+
+  <div class="part">Part 1 · Animated intro (Andre's scenes)</div>
+
+  <div class="beat"><div class="head"><span class="t">0:00–0:07</span><span class="name">1 · Downtime</span><span class="who andre">Andre</span></div>
+    <p class="quote">"The world's biggest companies lose 1.4 trillion dollars a year to unplanned downtime."</p>
+    <p class="do">On screen: arm freezes, RUNNING → DOWN, counter to $1.4T (Siemens, 2024).</p></div>
+
+  <div class="beat"><div class="head"><span class="t">0:07–0:18</span><span class="name">2 · Out of reach</span><span class="who andre">Andre</span></div>
+    <p class="quote">[Andre's own line: satellites · Guam · a short contact window · no internet · millions lost]</p>
+    <p class="do">On screen: Earth curve, GUAM antenna, contact window, the link breaks.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">0:18–0:23</span><span class="name">3 · Reveal</span><span class="who ishaan">Ishaan</span></div>
+    <p class="quote">"So we built Hardware Buddy: a self-healing OS for robotics and manufacturing."</p>
+    <p class="do">On screen: the Buddy chip draws in, blinks, wordmark.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">0:23–0:30</span><span class="name">4 · Onboarding</span><span class="who kent">Kent</span></div>
+    <p class="quote">"Naïve agents find hardware companies and set them up autonomously, with coding agents."</p>
+    <p class="do">On screen: envelope → factory; terminal ticks connect machines, install local model, link to cloud.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">0:30–0:39</span><span class="name">5 · Two parts</span><span class="who olir">Olir</span></div>
+    <p class="quote">"A local model on the device works offline. The cloud syncs when it's back online."</p>
+    <p class="do">On screen: Local and Cloud cards; the link drops, local keeps pulsing, the link returns.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">0:39–0:42</span><span class="name">6 · Demo bridge</span><span class="who none">no voice</span></div>
+    <p class="do">On screen: LIVE DEMO · SO-101 arm · ultrasonic · STM32 firmware.</p></div>
+
+  <div class="part">Part 2 · Real demo (filmed now)</div>
+
+  <div class="beat"><div class="head"><span class="t">0:42–0:46</span><span class="name">7 · The fault</span><span class="who none">no voice</span></div>
+    <p class="do"><b>Do:</b> flash v1.7, run the arm job. The arm flails and gives up (exit 4). Keep rolling.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">0:46–1:08</span><span class="name">8 · It heals itself</span><span class="who ishaan">Ishaan</span></div>
+    <p class="quote">"That's a firmware bug in the distance sensor, and there's no internet. The local model on the device takes over with heal tools we built. It rolls the firmware back, re-runs the job, checks every joint, then finds the root cause: a 16-bit overflow on line 122. Nobody touched it."</p>
+    <p class="do"><b>Do:</b> start the agent, hands off until the arm runs clean, hold on the arm 5 s. Screen-record the terminal. Afterwards send transcript.jsonl, report.md, score.json.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">1:08–1:25</span><span class="name">9 · When it needs hands</span><span class="who kent">Kent</span></div>
+    <p class="quote">"Some faults need hands. The healer can't clear this jam, so a Naïve agent takes the case: diagnoses it, emails a technician what to check, and puts a spare servo in a cart. Our one step: approve."</p>
+    <p class="do"><b>Do:</b> zip-tie the elbow both ways, run the job, the arm parks. Screen-record the Naïve session and the case page, film the phone with the email, click Approve, the cart opens.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">1:25–1:33</span><span class="name">10 · Sync</span><span class="who olir">Olir</span></div>
+    <p class="quote">"Back online, every incident and every fix syncs to the cloud."</p>
+    <p class="do"><b>Do:</b> reconnect; screen-record the run report landing in Romulus and the incident timeline.</p></div>
+
+  <div class="beat"><div class="head"><span class="t">1:33–1:44</span><span class="name">11 · The fleet learns</span><span class="who ishaan">Ishaan</span></div>
+    <p class="quote">"Fixes that hold are replayed, tested on a simulated twin, and shipped to every robot. What one robot learns, every robot gets."</p>
+    <p class="do"><b>Do:</b> screen-record the gate page: replay → sim canary → promote.</p></div>
+
+  <div class="part">Part 3 · Close</div>
+
+  <div class="beat"><div class="head"><span class="t">1:44–1:56</span><span class="name">12 · Closing</span><span class="who andre">Andre</span></div>
+    <p class="quote">"Software is automating everything. Hardware has to get smarter. That's Hardware Buddy."</p>
+    <p class="do">On screen: Buddy mark, wordmark, Built on Naïve, the team.</p></div>
+</main>
+</body>
+</html>
