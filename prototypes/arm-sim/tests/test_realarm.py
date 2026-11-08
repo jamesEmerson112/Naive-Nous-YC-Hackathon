@@ -9,7 +9,7 @@ import numpy as np
 
 from armsim import level1
 from armsim.arm import JOINTS
-from armsim.host import Skills, lift
+from armsim.host import Skills, lift, romulus_identity
 from armsim.mockrobot import MockRobot
 from armsim.real import STALL_NM, RealArm
 
@@ -88,6 +88,13 @@ def test_approach_steps_in_joint_space_on_the_sensor():
         stop.set()
     assert r.get("mode") == "joint" and r["arrived"] and r["switched_at_mm"] <= 75, r
     assert not arm.use_ik and arm.predicted_mm() is None   # no prediction until calibrated
+
+
+def test_the_romulus_device_follows_the_arm_not_the_pod():
+    assert romulus_identity("real") == ("real", "arm-1")
+    assert romulus_identity("sim") == ("sim", "arm-twin-1")     # also with --pod real: still the MuJoCo arm
+    assert romulus_identity("sim", "arm-twin-9") == ("sim", "arm-twin-9")
+    assert romulus_identity("real", "arm-7") == ("real", "arm-7")
 
 
 if __name__ == "__main__":

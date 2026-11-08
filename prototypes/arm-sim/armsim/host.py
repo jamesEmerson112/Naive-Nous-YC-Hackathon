@@ -564,6 +564,15 @@ def start_podd(port, var):
                             stdout=out, stderr=subprocess.STDOUT)
 
 
+def romulus_identity(arm_kind, device_id=None):
+    """(kind, device_id) the arm reports to Romulus as. The kind follows the arm, not the pod: the
+    MuJoCo arm next to the real pod (--arm sim --pod real) is still a sim device. A real device's
+    unresolved stall is what Romulus's live Naïve Technician turns into a paid session and an email
+    (docs/naive-technician/runbook.md), so a sim arm must never report as the real arm-1."""
+    kind = "real" if arm_kind == "real" else "sim"
+    return kind, device_id or ("arm-1" if kind == "real" else "arm-twin-1")
+
+
 def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romulus=None, device_id=None,
           arm_kind="sim"):
     """pod=None: plain sim (distance from the sim itself). pod="sim": a virtual pod on a pty, read by
@@ -614,8 +623,7 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
     reporter = None
     if romulus:
         from .romulus import ArmReporter
-        kind = "real" if pod == "real" else "sim"
-        device_id = device_id or ("arm-1" if kind == "real" else "arm-twin-1")
+        kind, device_id = romulus_identity(arm_kind, device_id)
         reporter = ArmReporter(romulus, device_id, kind=kind, state_dir=ROOT.parents[1] / "data" / "armsim",
                                arm=arm, dog=dog).start()
         print(f"reporting to Romulus at {romulus} as {device_id} ({kind})", flush=True)
@@ -834,7 +842,7 @@ if __name__ == "__main__":
     ap.add_argument("--romulus", default=os.environ.get("ARMSIM_ROMULUS"),
                     help="Romulus's URL, e.g. http://localhost:8000 (check-ins and incident reports)")
     ap.add_argument("--device-id", default=os.environ.get("ARMSIM_DEVICE_ID"),
-                    help="the arm's id in Romulus (default arm-twin-1 in sim, arm-1 with --pod real)")
+                    help="the arm's id in Romulus (default arm-twin-1 for the sim arm, arm-1 with --arm real)")
     ap.add_argument("--arm", choices=["sim", "real"], default="sim",
                     help="real: the SO-101 through Andre's prims (arm/arm.env sets ARM_PORT); needs --pod real")
     a = ap.parse_args()

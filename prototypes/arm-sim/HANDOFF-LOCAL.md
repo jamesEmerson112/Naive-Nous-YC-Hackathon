@@ -50,9 +50,10 @@ _From James's cloud session, Sun Nov 8, ~9 AM PST. For a Claude Code session on 
 5. Teach the poses with Andre: `arm/bin/prim-record.sh --pose rest home above_block pick`.
 
 **R1. The Mac:**
-1. Romulus: `make up && make seed`.
-2. Revert the Hermes test setting: `hermes config set compression.threshold_tokens null`.
-3. Leave the manager profile (`hermes-manager/`) alone until the cloud session's fixes are on `main`.
+1. **Before `make up`, set `TECHNICIAN_MODE=off` in the repo root's `.env`.** Since Kent's #79, the default is `live` (`cloud/src/romulus_cloud/settings.py:199`). In live mode, every unresolved stall from a real device (`arm-1`, `pod-1`) opens a Naïve Technician case. With Kent's Naïve keys in `.env`, each case is a paid session (up to $3) plus a real email; without them, it is a failed case that says "Naïve technician failed" on the incident. Turn it back on only for Kent's Technician beat (`docs/naive-technician/runbook.md`). With nothing set, each stall test would open a case.
+2. Romulus: `make up && make seed`.
+3. Revert the Hermes test setting: `hermes config set compression.threshold_tokens null`.
+4. Leave the manager profile (`hermes-manager/`) alone until the cloud session's fixes are on `main`.
 
 **R2. Start the arm** on the Pi:
 ```
@@ -73,6 +74,8 @@ ssh -N -L "$TMPDIR/armsim.sock:/tmp/armsim.sock" pi@<pi>
 
 - **The stall needs the elbow blocked both ways.** Use a zip tie or the unplugged cable. With foam, or a hand that only blocks the reach, the checked move home still arrives, `verify` counts the stall fixed, and no work order opens (`docs/naive-technician/demo-clip.md`, "How to jam it").
 - **Limit the stall to 2 takes, 2 minutes apart.** The servo heats up while stalled (same doc).
+- **Which Romulus gets the stall decides whether Kent's Technician runs.** Kent's own stack runs live, and his runbook points the Pi at it (`ARMSIM_ROMULUS=http://<kent-ip>:8000`, `runbook.md`); there, each stall take is a Naïve session and a real email. For plain bench tests, point the Pi at your Mac with `TECHNICIAN_MODE=off`.
+- **The sim arm next to the real pod (`--arm sim --pod real`) reports as `arm-twin-1`, kind sim.** It used to report as the real `arm-1`; fixed on `main` (`armsim/host.py`, `romulus_identity`).
 - **What an unplugged cable does is untested.** The host may report a missing servo rather than a stall *(inferred)*. Try it once, and write down what happens.
 
 **R4. Mission Control** on the Pi:
