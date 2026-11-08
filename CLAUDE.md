@@ -45,7 +45,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 4:28 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
+_Kent's local Claude session refreshes this block about every 10 min. Last synced: Sat Nov 7, 4:37 PM PST. Write your own notes outside the markers. The full research (7 reports) is in Kent's local `~/git2/docs`, which isn't pushed yet; ask Kent._
 
 **The idea:** what the arm company sells is uptime. Romulus runs one loop at three scales:
 - **Arm:** detect → diagnose → act → verify → learn, as on-bench reflexes.
@@ -79,7 +79,12 @@ _Kent's local Claude session refreshes this block about every 10 min. Last synce
 
 **Kent's status (code goes in through PRs from `cloud/*` branches; the plans are in `docs/cloud-platform-planning/`):**
 - **Now:** coding M0, due 5:15 PM. That means contracts v0.1 for Ishaan, `make up` serving `/healthz`, one real Naïve card and one real LLM call through the Naïve proxy. The overnight run launches at 12:30 AM and the code freeze is Sun 10 AM ([build plan](docs/cloud-platform-planning/cloud-platform-build-plan.md) §2).
-- **Just merged — PR #1 (`8eb532f`, from `cloud/m0-workspace`):** the uv workspace skeleton. It has three members: `packages/contracts` (`romulus-contracts`, shared with the device side), `cloud/` (`romulus-cloud`) and `tools/fake_device/`. It pins Python 3.12, with the library set from architecture §7 in `uv.lock`.
+- **Just merged — PR #2 (`87d4e41`, 4:34 PM, from `cloud/m0-adapters`):** the M0 adapters in `cloud/src/romulus_cloud/adapters/`, each with a fake and unit tests.
+  - A content-addressed blob store that checks sha256 while streaming.
+  - `OpenAICompatLlm`, one client for both the Naïve proxy and RunPod vLLM (D22).
+  - `HttpNaive`, which posts cards with an `Idempotency-Key` and retries 409s that are safe to retry. Its fake walks cards to RESULT or STOPPED.
+  - `FakeCoder`, the stand-in for the M8 coding agent.
+- **Earlier — PR #1 (`8eb532f`):** the uv workspace skeleton: `packages/contracts` (`romulus-contracts`, shared with the device side), `cloud/` and `tools/fake_device/`, on Python 3.12. Still to do for M0: contracts v0.1, `make up` serving `/healthz`, and the live Naïve card and LLM call *(inferred from the build plan)*.
 - **Decisions locked (D0–D22):** Docker Compose, Postgres 17, FastAPI, Jinja + htmx (D17, D18). Naïve is outbound only, with caps in our code and over-cap orders blocked (D19, D19b). LLM access goes through the Naïve proxy or RunPod, with a swappable `Coder` for code patches (D21, D22). D5a is accepted, with its risk logged as K17 ([decision log](docs/cloud-platform-planning/cloud-platform-decisions.md)).
 - **Blocked on Ishaan and James:** the device code and tests need to be in `device/` (B1), the code-package and `code_patch` formats need agreement (B2, B3), the STM32 toolchain has to go in the sandbox (B8), and Ishaan has to supply the list of safety and visor paths (K17). Either a Naïve key with `proxy:write` or James's RunPod endpoint is needed (B4) (build plan §3, M8). Ishaan's test bed lives in `edge/`, while the contracts expect `device/`, so the two need to agree on one folder *(inferred)*.
 <!-- romulus-sync:end -->
