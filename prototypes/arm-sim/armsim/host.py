@@ -450,7 +450,9 @@ class Watchdog:
         sev = finding.get("severity") if finding.get("severity") in ("info", "warn", "critical") else "warn"
         kind = str(finding.get("kind") or "person_needed")[:40]
         summary = " ".join(str(finding.get("summary") or reason or kind).split())[:300]
-        inc = self._open({"kind": kind, "severity": sev, "summary": summary, "src": str(finding.get("src") or "healer")[:40],
+        inc = self._open({"kind": kind, "severity": sev, "summary": summary, "evidence": {}, "hypotheses": [],
+                          "next_steps": ["a person checks the arm, then the check at home (repair verify)"],
+                          "src": str(finding.get("src") or "healer")[:40],     # the shape of a level-1 finding (_f)
                           **({"of": str(finding["of"])[:64]} if finding.get("of") else {})})
         return {**self.handoff(inc["id"], reason), "held": "opened for a person"}
 

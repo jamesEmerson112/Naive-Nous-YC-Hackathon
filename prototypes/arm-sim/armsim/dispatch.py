@@ -28,8 +28,9 @@ How it works, one card at a time (there is one arm):
    names another arm is that arm's dispatcher's, and is left alone.
 2. While idle it lists the todo cards that orders.place made (an ARM JOB card with an order id,
    armsim/orders.py), oldest first; a story's "ARM JOB: ..." card has no order id and is never taken.
-   Before claiming one it reads the arm host's status: an incident handed off to a person, or a host that
-   doesn't answer, means wait (said once in the event log, not once per poll).
+   Before claiming one it reads the arm host's status: an incident handed off to a person, a hand-off the
+   host hasn't taken yet (ScriptedExecutor.holds, delivered first), or a host that doesn't answer, means
+   wait (said once in the event log, not once per poll).
 3. Claim: the card moves to doing only if it is still in todo (`move(expect="todo")`), then gets a
    `CLAIMED: ... (claim <token> on arm <host>:<socket>)` comment. The job starts only once the latest
    `CLAIMED:` on the card is ours; a later one means another dispatcher won, and the card is left to it.

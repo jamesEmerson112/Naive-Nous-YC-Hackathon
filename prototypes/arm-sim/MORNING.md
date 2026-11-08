@@ -34,12 +34,12 @@ All 88 shots (every state, at 1920 and 1280) are in `runs/media/r2-<look>-<state
 ## Your steps this morning (on the Mac)
 1. **Pull:** `git pull origin main`.
 2. **Revert Hermes's compaction test setting:** `hermes config set compression.threshold_tokens null`.
-3. **Manager profile (about 20 min):** follow `hermes-manager/README.md` (`./setup.sh a 127.0.0.1`, merge `config.manager.yaml`, `./check.sh`, then one `./ask.sh samples/esc-us_frozen.json`). The model is ChatGPT 6 sol at default reasoning, through your ChatGPT login.
+3. **Manager profile (about 20 min):** follow `hermes-manager/README.md` (`./setup.sh a 127.0.0.1`, which applies `config.manager.yaml`; then `./check.sh`, which applies the worker's own toolset rule and names anything it won't accept; then one `./ask.sh samples/esc-us_frozen.json`). The worker only asks a manager whose `/v1/toolsets` shows delegation on and nothing but memory and skills beside it. The model is ChatGPT 6 sol at default reasoning, through your ChatGPT login.
 4. **The loop with the real manager:** `armsim.dispatch --board naive --exec scripted --manager hermes --manager-url http://127.0.0.1:8642/p/manager --wrong-action redo` (drop `/p/manager` if you took setup branch b), and Mission Control beside it. For the Hermes-commander demo instead, run `--exec hermes` without `--manager`.
 5. **Optional worker model:** `ollama pull lfm3:1.7b`, then add `--worker-lm ollama --worker-model lfm3:1.7b` to the dispatcher.
 
 ## Known gaps
-- Wrong moves are not host incidents, so they don't show on the heal timeline or in "Faults healed".
+- Wrong moves are not host incidents while the redo runs, so they don't show on the heal timeline or in "Faults healed". One the redo gives up on becomes a host incident handed to a person (`grasp_missed`), so the next order waits until "a person fixed it" (key 7).
 - The manager's "Unreachable" wording on Mission Control has never been on screen; it was only matched from the dispatcher's error text.
 - The worker model is off by default: plain code builds the escalation packet, and with `--worker-lm ollama` the model adds its own answer (kind, evidence, message) to it. Plain code still checks the manager's plan.
 - Level 3 is not in the loop yet (L3b).
