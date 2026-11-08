@@ -486,10 +486,20 @@ def main(argv: list[str] | None = None) -> int:
     print(f"schema: {schema_src}\ncase file: {len(body['message'])} chars, servo {variant}\n")
 
     t0 = time.monotonic()
-    try:
-        state: SessionState = naive.create_session(body, idempotency_key=case_id)
-    except NaiveError as exc:
-        print(f"create_session failed: {exc} (status={exc.status} code={exc.code})")
+    # Under load the POST can outlive the 5 s timeout; the same key + body replays the first
+    # result once it settles (409 idempotency_conflict until then), so keep retrying patiently.
+    state: SessionState | None = None
+    for attempt in range(40):
+        try:
+            state = naive.create_session(body, idempotency_key=case_id)
+            break
+        except NaiveError as exc:
+            print(f"create_session attempt {attempt + 1}: {exc} (status={exc.status} code={exc.code})")
+            if not exc.retryable:
+                return 1
+            time.sleep(5)
+    if state is None:
+        print("create_session never settled")
         return 1
     print(f"session {state.id} created ({state.raw.get('status')}); studio_url={state.studio_url}")
 
