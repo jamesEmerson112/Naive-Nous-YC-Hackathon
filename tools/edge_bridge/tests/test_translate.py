@@ -83,7 +83,9 @@ def _fault_and_evidence(pod, t, now):
     ev = translate.Evidence(
         lo=lo,
         hi=hi,
-        logs={n: podd.read_window(pod.paths.log(n), lo, hi) for n in ("telemetry", "health", "events")},
+        logs={
+            n: podd.read_window(pod.paths.log(n), lo, hi) for n in ("telemetry", "health", "events")
+        },
         audit=podd.read_window(pod.paths.log("audit"), lo, hi),
         notifications=[n for n in podd.read_all(pod.paths.notifications) if lo <= n["ts"] <= hi],
         deployments=deployments,

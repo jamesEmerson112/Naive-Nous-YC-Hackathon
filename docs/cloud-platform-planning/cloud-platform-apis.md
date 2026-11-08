@@ -225,6 +225,16 @@ When a consult's fix passes the cloud's checks, the cloud offers it as a proposa
 - Everything else is lenient, so the result is never dead-lettered: a numeric `overlay_id` reads as a string, a non-string `reason` is stringified (`null` reads as `""`), and a malformed `occurred_at` reads as `null`.
 - It is queued in the outbox like an overlay status. The proposal ID is in the URL.
 
+### 2.14 The sensor pod, through the edge bridge (D29)
+
+The STM32 sensor pod's healer doesn't call this API itself. [`tools/edge_bridge`](../../tools/edge_bridge/README.md) runs next to it on the Pi, reads its records and sends standard v0.1 payloads. What's specific to the pod:
+
+- **Device:** registered once as `{"kind": "real", "device_class": "sensor_pod"}` (`POST /v1/devices`), so it's assigned no arm firmware. Check-ins send `kind: "real"`, `running.mcu_build` as `<version>@<CRC>` (e.g. `v1.1@32ACFDAF`, the healer's image registry key), metrics named `pod_*`, and `health_detail` with podd's link state and open incidents.
+- **Incidents:** one per fault, sent once it's over. `kind` is podd's triage finding (`crash`, `acc_error`, `clock_skew`, …). `overlay` is always `null`. Extra fields: `source: "podd"`, `podd_incidents` (podd's own records), `deployments` and `notifications` from the fault, `firmware_patch` (the flashed image and its source diff, evidence only) and `bridge` (`reason`: `resolved`, `handed_off` or `timed_out`).
+- **Recordings:** `log_window` and `agent_trace`, both with `format: "jsonl"`, not MCAP. Each `log_window` row is a podd log record plus `"log": "telemetry" | "health" | "events"`. Each `agent_trace` row is a heal-tool call (`"source": "audit"`) or an agent note (`"source": "note"`).
+
+The full mapping is in the docstring of `tools/edge_bridge/src/edge_bridge/translate.py`.
+
 ## 3. Device-facing routes
 
 | # | Route | Body → response | Notes |

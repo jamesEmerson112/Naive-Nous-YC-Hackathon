@@ -86,8 +86,10 @@ def test_workspace_log_shows_commits_in_the_window(tmp_path):
     ws.mkdir(parents=True)
 
     def git(*args, at=T0):
-        env = os.environ | {"GIT_AUTHOR_DATE": f"@{int(at)} +0000",
-                            "GIT_COMMITTER_DATE": f"@{int(at)} +0000"}  # fmt: skip
+        env = os.environ | {
+            "GIT_AUTHOR_DATE": f"@{int(at)} +0000",
+            "GIT_COMMITTER_DATE": f"@{int(at)} +0000",
+        }
         cmd = ["git", "-c", "user.name=healer-agent", "-c", "user.email=h@pod", *args]
         subprocess.run(cmd, cwd=ws, env=env, check=True, capture_output=True)
 

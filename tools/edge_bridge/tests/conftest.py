@@ -6,11 +6,10 @@ import pytest
 
 from edge_bridge.bridge import Bridge
 from edge_bridge.fake_healer import FakeSocket, PoddVar
-from edge_bridge.faults import Timing
+from edge_bridge.faults import DEFAULT_TIMING, Timing
 from fake_device.client import DeviceClient
 from fake_device.fake_cloud import FakeCloud
 from fake_device.outbox import Outbox
-
 
 # -- fixtures ------------------------------------------------------------------------------
 
@@ -35,7 +34,7 @@ def make_bridge(pod, sock, cloud, tmp_path):
     """A bridge on `pod`'s var/, talking to `cloud`; the same state dir every time, so a
     second one is the first after a restart."""
 
-    def make(http=None, timing: Timing = Timing(), backfill_s: float = 0.0) -> Bridge:
+    def make(http=None, timing: Timing = DEFAULT_TIMING, backfill_s: float = 0.0) -> Bridge:
         state = tmp_path / "state" / "pod-1"
         return Bridge(
             pod.paths,

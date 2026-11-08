@@ -8,13 +8,26 @@ T = 1000.0
 
 
 def opened(kind, ts, severity="critical"):
-    return {"ts": ts, "status": "open", "id": f"{kind}-{int(ts)}", "kind": kind,
-            "opened": ts, "severity": severity, "summary": kind, "first_evidence": {}}  # fmt: skip
+    return {
+        "ts": ts,
+        "status": "open",
+        "id": f"{kind}-{int(ts)}",
+        "kind": kind,
+        "opened": ts,
+        "severity": severity,
+        "summary": kind,
+        "first_evidence": {},
+    }
 
 
 def resolved(kind, opened_at, ts):
-    return {"ts": ts, "status": "resolved", "id": f"{kind}-{int(opened_at)}", "kind": kind,
-            "duration_s": ts - opened_at}  # fmt: skip
+    return {
+        "ts": ts,
+        "status": "resolved",
+        "id": f"{kind}-{int(opened_at)}",
+        "kind": kind,
+        "duration_s": ts - opened_at,
+    }
 
 
 def test_one_fault_opens_several_incidents_and_is_reported_once_settled():

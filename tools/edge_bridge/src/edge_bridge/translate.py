@@ -3,19 +3,27 @@
 Pure: no I/O, no clock. podd's records keep their own shape; this module only decides
 what each one means to the cloud. In one place:
 
-| The healer wrote | The cloud gets |
-|---|---|
-| podd `status`: link state, open incidents | check-in `health`: `failing` if podd is unreachable, the link is down, silent or garbled, or a critical incident is open; `degraded` for a warning; else `ok` |
-| the last boot record (`E ev=boot build=… crc=…`) | `running.mcu_build`, e.g. `v1.1@32ACFDAF` (version from the build id, plus the CRC the image registry is keyed by) |
-| podd `status` and `stats` numbers | check-in `metrics`, all prefixed `pod_` |
-| one fault's podd incidents (see `faults.py`) | one incident: `kind` and `summary` from the most severe one, `occurred_at` when the first opened |
-| heal-tool calls that change something (`tools.json` risk other than `read`) | `agent.actions`; agent notes (`ev=agent_note`) become `agent.reasoning` |
-| a verified flash (`deployments.jsonl` result `ok`) | resolved by `fw_flash` (an image built from the workspace: `fix-code`) or `fw_rollback` (any other image: `ops`) |
-| a runtime tool (`pod_cmd`, `chip_reset`, …) with no flash | resolved by that tool: `ops` |
-| `notify_human` with instructions for a person | `suspected_cause: hardware`. If the fault is still unresolved, the cloud opens a work order |
-| the flashed image's source diff and the workspace commits | `firmware_patch`, as evidence only: never an `overlay`, so the gate and the coding agent never try to roll a pod patch out to the arms |
-| telemetry, health and event logs around the fault | a `log_window` recording (JSONL) |
-| the heal-tool calls and notes during the fault | an `agent_trace` recording (JSONL; tool calls and arguments, no model messages) |
+- **Check-in health** from podd `status`: `failing` if podd is unreachable, the link is
+  down, silent or garbled, or a critical incident is open; `degraded` for a warning; else
+  `ok`. The pod is real hardware, so it says `kind: real` (K17).
+- **`running.mcu_build`** from the last boot record (`E ev=boot build=… crc=…`), e.g.
+  `v1.1@32ACFDAF`: the version from the build id, plus the CRC the image registry uses.
+- **Check-in metrics** from podd `status` and `stats`, all named `pod_*`.
+- **One incident per fault** (`faults.py` groups podd's incidents): `kind` and `summary`
+  from the most severe incident, `occurred_at` when the first one opened.
+- **`agent.actions`**: heal-tool calls whose `tools.json` risk isn't `read`.
+  **`agent.reasoning`**: the agent's notes (`ev=agent_note`).
+- **`outcome`:**
+  - a verified flash (`deployments.jsonl` result `ok`) resolves it by `fw_flash` when the
+    image was built from the workspace (`fix-code`), else by `fw_rollback` (`ops`);
+  - otherwise a runtime tool (`pod_cmd`, `chip_reset`, …) resolves it (`ops`);
+  - `notify_human` with instructions for a person means `suspected_cause: hardware`, and a
+    fault still unresolved with that cause becomes a work order in the cloud.
+- **`firmware_patch`**: the flashed image's source diff and the workspace commits, as
+  evidence only. Never an `overlay`, so the gate and the coding agent never try to roll a
+  pod patch out to the arms (D29).
+- **Recordings:** a `log_window` (telemetry, health and event logs around the fault) and an
+  `agent_trace` (the heal-tool calls and notes during it; no model messages), both JSONL.
 
 Ids are UUIDv5s of podd's own ids, so a resent report or recording is harmless (D8).
 """
@@ -435,7 +443,12 @@ def _elide(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     if len(rows) <= limit:
         return rows
     keep = limit // 2
-    gap = {"log": "edge_bridge", "ts": rows[keep]["ts"], "ev": "elided", "count": len(rows) - 2 * keep}
+    gap = {
+        "log": "edge_bridge",
+        "ts": rows[keep]["ts"],
+        "ev": "elided",
+        "count": len(rows) - 2 * keep,
+    }
     return rows[:keep] + [gap] + rows[-keep:]
 
 

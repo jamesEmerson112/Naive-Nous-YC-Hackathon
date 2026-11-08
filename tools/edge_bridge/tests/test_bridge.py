@@ -14,8 +14,14 @@ from edge_bridge.faults import Timing
 
 
 def _boot(version, crc):
-    return {"type": "E", "t": 1, "ev": "boot", "build": f"pod {version} x", "crc": f"0x{crc}",
-            "ts": T0}  # fmt: skip
+    return {
+        "type": "E",
+        "t": 1,
+        "ev": "boot",
+        "build": f"pod {version} x",
+        "crc": f"0x{crc}",
+        "ts": T0,
+    }
 
 
 def test_an_idle_pod_checks_in_as_real_hardware(make_bridge, sock, cloud):
@@ -138,6 +144,10 @@ def test_an_open_fault_is_reported_when_it_times_out(make_bridge, pod, cloud):
 
 
 def test_a_cloud_that_assigns_arm_firmware_gets_one_warning(make_bridge, cloud, caplog):
+    cloud.assign("pod-1", firmware=None, harness=1)  # harness isn't per class: no warning
+    with caplog.at_level(logging.WARNING, logger="edge_bridge.bridge"):
+        make_bridge().tick(T0)
+    assert caplog.records == []
     cloud.assign("pod-1", firmware=1, harness=1)
     bridge = make_bridge()
     with caplog.at_level(logging.WARNING, logger="edge_bridge.bridge"):

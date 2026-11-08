@@ -45,6 +45,7 @@ Decisions on the vision, principles, values and scope of the cloud platform, rec
 | D26 | Who decides to escalate | The device's harness code (triggers T1–T7, circuit breaker); the cloud also consults on unresolved non-hardware incidents, within the caps | ✅ |
 | D27 | L3 live sessions: where the agent loop runs | Deferred. Only the typed device-tool contract gets built now, not wired; D12, PRD principle 8 and D19 unchanged | 🔁 deferred |
 | D28 | Contract version rule | Optional, additive changes don't bump `CONTRACT_VERSION`; only breaking changes do, and the server keeps accepting the previous version | ✅ |
+| D29 | How the sensor pod reports to the cloud | We adapt, not the device team: `tools/edge_bridge` reads the pod healer's own records and maps them onto contract v0.1. Pod patches travel as evidence only, never as an overlay | ✅ |
 
 ---
 
@@ -533,3 +534,17 @@ From Kent's review of the Fleet Doctor proposal v2 ([`../fleet-doctor/`](../flee
 - Updated to match: the `version.py` docstring, `cloud/CLAUDE.md` rule 6, `cloud-platform-architecture.md` §9 rule 6, the APIs header and the contracts README.
 
 **History:** decided Sat Nov 7 ~7:45 PM (Kent, from Fleet Doctor strategy §7 question 3).
+
+## Round 4: the sensor pod (Sat Nov 7, ~8 PM)
+
+### D29. How the sensor pod reports to the cloud ✅
+**Question:** Olir's pod healer (`firmware/healer`) records everything on the Pi: podd's JSONL logs and incidents, an audit of every heal-tool call, verified flashes, requests for a person. None of it reaches the cloud. Do we ask the device team to call the contract, or adapt on our side?
+**Decision:** **Adapt on our side** (Kent, Sat Nov 7 ~8 PM PST). `tools/edge_bridge` runs on the Pi next to the healer, reads its records without changing anything, and reports them through the device API: check-ins, one incident per fault once it's over, and a `log_window` and an `agent_trace` recording per incident. The pod registers as `kind: real`, `device_class: sensor_pod`. **Pod firmware patches travel as evidence only** (the incident's `firmware_patch` extra), never as an `overlay`, so the batch job, the gate and the coding agent never try to roll an STM32 patch out to the arms.
+**Options not chosen:** ask Olir to call the API from the healer; send pod patches as overlays with a `code_patch` (blocked on contracts README open item 6, and it would feed pod patches into the gate).
+**What this means for the build** *(inferred)*:
+- No contract change: recording kinds and formats are open strings, and payloads keep extra fields (D28 isn't triggered).
+- A pod fault the healer hands to a person (`notify_human` with instructions) arrives unresolved with `suspected_cause: hardware`, so it becomes a Naïve work order through the existing triage (F6).
+- Harness versions aren't per device class, so the cloud assigns the pod the arm healer's harness. The bridge installs nothing, so it's harmless, but a class-scoped harness would be cleaner.
+- Ishaan's arm healer may not need a bridge: his docs say its report follows the contract (`docs/project-overview.md` §8.1). One sample of its output would settle it.
+
+**History:** decided Sat Nov 7 ~8 PM (Kent, after reviewing what the device side already records).

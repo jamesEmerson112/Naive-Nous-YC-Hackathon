@@ -4,7 +4,7 @@ The cloud half of the arm company's self-healing loop. Devices report incidents 
 
 Python 3.12, FastAPI, Postgres, one worker loop, all in Docker Compose. Every outside service (Naïve, the LLM, the coding agent) has a fake mode, and fake is the default.
 
-**The fake fleet below is for local development and testing.** The work now is real integration with the Pi and the arm hardware: the device side checks in with the same contract (`packages/contracts`, APIs doc), and the build plan's I0 hand-off and M8 blockers track what's left.
+**The fake fleet below is for local development and testing.** The work now is real integration with the Pi and the arm hardware: the device side checks in with the same contract (`packages/contracts`, APIs doc), and the build plan's I0 hand-off and M8 blockers track what's left. The STM32 sensor pod connects through [`tools/edge_bridge`](../tools/edge_bridge/README.md), which reads its healer's records on the Pi and reports them in the same contract (D29; tested against this app, not yet on the bench).
 
 ## Run it locally with fake arms
 

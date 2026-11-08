@@ -44,6 +44,9 @@ class Timing:
             raise ValueError("settle_s must be at least merge_s")
 
 
+DEFAULT_TIMING = Timing()
+
+
 @dataclass
 class PoddIncident:
     """One podd incident (an `incidents.jsonl` open record, plus its resolve record)."""
@@ -120,7 +123,7 @@ class Fault:
 class FaultTracker:
     """Feed it podd records in time order; it hands back the faults that are ready."""
 
-    def __init__(self, timing: Timing = Timing(), faults: list[Fault] | None = None) -> None:
+    def __init__(self, timing: Timing = DEFAULT_TIMING, faults: list[Fault] | None = None) -> None:
         self.timing = timing
         self.faults: list[Fault] = faults or []
 

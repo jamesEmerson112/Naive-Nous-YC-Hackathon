@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 
 from edge_bridge import podd, translate
-from edge_bridge.faults import Fault, FaultTracker, Reason, Timing
+from edge_bridge.faults import DEFAULT_TIMING, Fault, FaultTracker, Reason, Timing
 from edge_bridge.podd import Cursor, PoddPaths, PoddSocket
 from fake_device.client import DeviceClient
 from fake_device.outbox import Outbox, atomic_write
@@ -90,7 +90,7 @@ class Bridge:
         outbox: Outbox,
         sock: PoddSocket,
         state_path: Path,
-        timing: Timing = Timing(),
+        timing: Timing = DEFAULT_TIMING,
         backfill_s: float = 0.0,
     ) -> None:
         self.paths = paths
@@ -124,7 +124,7 @@ class Bridge:
                 tracker.observe_activity(float(rec["ts"]), handoff=asks)
 
         reported = [self._queue(fault, reason, now) for fault, reason in tracker.pop_ready(now)]
-        for incident_id, fault in reported:
+        for _, fault in reported:
             state.reported.extend(i.id for i in fault.incidents)
         state.faults = tracker.to_list()
         state.save(self.state_path)
@@ -243,15 +243,15 @@ class Bridge:
         except httpx.HTTPError as exc:
             log.info("check-in not sent: %s", exc)
             return body.health, False
-        assigned = response.assigned
-        if (assigned.firmware or assigned.harness) and not self._warned_assigned:
+        # The bridge pulls and installs nothing: the healer manages the pod's firmware.
+        # Firmware is assigned per device class, so firmware here means the cloud took the
+        # pod for an arm. (Harness versions aren't per class, so one may be assigned anyway.)
+        if response.assigned.firmware is not None and not self._warned_assigned:
             self._warned_assigned = True
             log.warning(
-                "the cloud assigned firmware %s / harness %s to %s; the bridge installs nothing "
-                "(the healer manages the pod's firmware). Register the pod with device_class "
-                "sensor_pod so the cloud doesn't treat it as an arm (README).",
-                assigned.firmware,
-                assigned.harness,
+                "the cloud assigned arm firmware %s to %s; the bridge installs nothing. "
+                "Register the pod with device_class sensor_pod (README).",
+                response.assigned.firmware,
                 self.device_id,
             )
         return body.health, True

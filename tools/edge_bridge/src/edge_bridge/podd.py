@@ -211,8 +211,17 @@ def workspace_log(paths: PoddPaths, lo: float, hi: float) -> str | None:
     """
     if not (paths.workspace / ".git").exists():
         return None
-    args = ["git", "-C", str(paths.workspace), "log", "-p", "--reverse", "--date=iso",
-            f"--since=@{int(lo)}", f"--until=@{int(hi) + 1}"]  # fmt: skip
+    args = [
+        "git",
+        "-C",
+        str(paths.workspace),
+        "log",
+        "-p",
+        "--reverse",
+        "--date=iso",
+        f"--since=@{int(lo)}",
+        f"--until=@{int(hi) + 1}",
+    ]
     try:
         out = subprocess.run(args, capture_output=True, text=True, timeout=10, check=True).stdout
     except (OSError, subprocess.SubprocessError):
