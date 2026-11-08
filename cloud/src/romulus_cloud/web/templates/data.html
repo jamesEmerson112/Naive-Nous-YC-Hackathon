@@ -1,63 +1,78 @@
 {% extends "base.html" %}
+{% from "partials/ui.html" import icon %}
 {% block title %}Romulus · data{% endblock %}
 {% block content %}
-<p class="back"><a href="/">← incident timeline</a></p>
-<p><label>Your name, recorded on every change you make here
-  <input id="by-name" autocomplete="name" placeholder="operator"></label></p>
+<p class="back"><a href="/">{{ icon("chevron") }}All incidents</a></p>
+<div class="by-field">
+  <label for="by-name">Your name</label>
+  <input id="by-name" autocomplete="name" placeholder="operator" aria-describedby="by-hint">
+  <p id="by-hint" class="muted">Recorded on every change you make on this page, as human:&lt;name&gt;.</p>
+</div>
 
 <section aria-labelledby="exp-h">
   <h1 id="exp-h" class="section-h">Exports <span class="muted">newest first</span></h1>
   {% if exports %}
+  <div class="card table-card">
   <table class="data-table">
     <thead><tr><th>Export</th><th>Dataset</th><th>Format</th><th>Status</th><th></th></tr></thead>
     <tbody>
     {% for e in exports %}
       <tr>
-        <td><code>{{ e.id }}</code></td>
-        <td><code>{{ e.dataset_id }}</code> v{{ e.n }}</td>
+        <td><code title="{{ e.id }}">{{ e.id | shortid }}</code></td>
+        <td><code title="{{ e.dataset_id }}">{{ e.dataset_id | shortid }}</code> v{{ e.n }}</td>
         <td>{{ e.format }}</td>
         <td><span class="status {% if e.status == 'built' %}tone-good{% elif e.status == 'failed' %}tone-bad{% else %}tone-wait{% endif %}">{{ e.status }}</span>
           {% if e.error %}<span class="muted">{{ e.error }}</span>{% endif %}</td>
-        <td>{% if e.download %}<a href="{{ e.download }}">download</a>{% endif %}</td>
+        <td>{% if e.download %}<a class="btn-link" href="{{ e.download }}">Download</a>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<p class="muted">No exports yet.</p>{% endif %}
+  </div>
+  {% else %}<p class="data-empty muted">No exports yet. When you export a dataset snapshot below, the file is built in the background and listed here with a download link.</p>{% endif %}
 </section>
 
 <section aria-labelledby="ds-h">
   <h2 id="ds-h" class="section-h">Datasets <span class="muted">snapshots never change</span></h2>
+  {% if datasets %}
+  <ul class="card data-rows">
   {% for d in datasets %}
-  <div class="data-card">
-    <p><strong>{{ d.name }}</strong> <span class="muted">{{ d.purpose }} · <code>{{ d.id }}</code> · filter <code>{{ d.filter | tojson }}</code></span></p>
-    <form method="post" action="/data/datasets/{{ d.id }}/versions">
-      <input type="hidden" name="by" class="by">
-      <button type="submit">Take snapshot v{{ d.versions | length + 1 }}</button>
-    </form>
-    <ul>
-    {% for v in d.versions %}
-      <li>v{{ v.n }}: {{ v.recording_ids | length }} recordings, {{ v.incident_ids | length }} incidents
-        <span class="muted">sha256 {{ (v.manifest_sha256 or '')[:12] }}</span>
-        {% for f in formats %}
-        <form method="post" action="/data/datasets/{{ d.id }}/versions/{{ v.n }}/exports" class="inline">
-          <input type="hidden" name="format" value="{{ f }}">
+    <li class="data-row">
+      <div class="data-row-head">
+        <p><strong>{{ d.name }}</strong> <span class="muted">{{ d.purpose }} · <code title="{{ d.id }}">{{ d.id | shortid }}</code> · filter <code>{{ d.filter | tojson }}</code></span></p>
+        <form method="post" action="/data/datasets/{{ d.id }}/versions">
           <input type="hidden" name="by" class="by">
-          <button type="submit">Export {{ f }}</button>
+          <button type="submit" class="btn btn-secondary btn-sm">Take snapshot v{{ d.versions | length + 1 }}</button>
         </form>
-        {% endfor %}
-      </li>
-    {% endfor %}
-    </ul>
-  </div>
-  {% else %}
-  <p class="muted">No datasets yet. Create one with <code>POST /v1/datasets</code>.</p>
+      </div>
+      {% if d.versions %}
+      <ul class="versions">
+      {% for v in d.versions %}
+        <li>v{{ v.n }}: {{ v.recording_ids | length }} recordings, {{ v.incident_ids | length }} incidents
+          <span class="muted" title="sha256 {{ v.manifest_sha256 or '' }}">sha256 {{ (v.manifest_sha256 or '')[:12] }}</span>
+          {% for f in formats %}
+          <form method="post" action="/data/datasets/{{ d.id }}/versions/{{ v.n }}/exports" class="inline">
+            <input type="hidden" name="format" value="{{ f }}">
+            <input type="hidden" name="by" class="by">
+            <button type="submit" class="btn btn-secondary btn-sm">Export {{ f }}</button>
+          </form>
+          {% endfor %}
+        </li>
+      {% endfor %}
+      </ul>
+      {% else %}<p class="muted">No snapshots yet. A snapshot freezes which recordings match the filter right now.</p>{% endif %}
+    </li>
   {% endfor %}
+  </ul>
+  {% else %}
+  <p class="data-empty muted">No datasets yet. A dataset is a saved filter over recordings, such as every recording labelled <code>kind:camera_occluded</code>. Datasets are made through the API (<code>POST /v1/datasets</code>); each one appears here, where you can snapshot it and export the snapshot.</p>
+  {% endif %}
 </section>
 
 <section aria-labelledby="rec-h">
   <h2 id="rec-h" class="section-h">Recordings <span class="muted">newest first</span></h2>
   {% if recordings %}
+  <div class="card table-card">
   <table class="data-table">
     <thead><tr><th>When</th><th>Recording</th><th>Labels</th><th>Add label</th></tr></thead>
     <tbody>
@@ -65,31 +80,32 @@
       <tr>
         <td>{{ r.when }}</td>
         <td>{{ r.kind }} <span class="muted">({{ r.format }}) · {{ r.device }}</span><br>
-          <a href="/v1/recordings/{{ r.id }}">{{ r.id[:8] }}</a>
+          <a href="/v1/recordings/{{ r.id }}" title="{{ r.id }}">{{ r.id[:8] }}</a>
           {% if r.incident %} · <a href="/incidents/{{ r.incident }}">incident</a>{% endif %}</td>
-        <td>
+        <td class="labels">
           {% for l in r.labels %}
           <form method="post" action="/data/recordings/{{ r.id }}/labels" class="inline">
             <input type="hidden" name="label" value="{{ l }}">
             <input type="hidden" name="action" value="remove">
             <input type="hidden" name="by" class="by">
-            <button type="submit" class="status tone-info" title="Remove {{ l }}">{{ l }} ×</button>
+            <button type="submit" class="status tone-info label-pill" title="Remove {{ l }}">{{ l }}{{ icon("x") }}</button>
           </form>
           {% endfor %}
         </td>
         <td>
-          <form method="post" action="/data/recordings/{{ r.id }}/labels" class="inline">
+          <form method="post" action="/data/recordings/{{ r.id }}/labels" class="inline add-label">
             <input type="hidden" name="action" value="add">
             <input type="hidden" name="by" class="by">
             <input name="label" required placeholder="key:value" aria-label="Label for {{ r.id }}">
-            <button type="submit">Add</button>
+            <button type="submit" class="btn btn-secondary btn-sm">Add</button>
           </form>
         </td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<p class="muted">No recordings yet.</p>{% endif %}
+  </div>
+  {% else %}<p class="data-empty muted">No recordings yet. Devices upload recordings with their incidents (the incident window, agent traces, episodes); each one appears here, newest first, ready to label and gather into datasets.</p>{% endif %}
 </section>
 <script>
 // Every form here sends the name typed above as `by` (recorded as human:<name>).
