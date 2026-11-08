@@ -1373,6 +1373,9 @@ def _apply_verdict(
                 if held and held.get("available")
                 else None
             ),
+            # Why CODER_VERIFY_DIR was left out (stale, unreadable) or the scripts count as
+            # none (no test on the base); never their output.
+            "verify_note": held.get("note") if held else None,
         },
         now=t.now,
     )
@@ -1435,7 +1438,9 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
     base = (incident.running or {}).get("code_rev")
 
     def make() -> Callable[[], Any]:
-        code, held_out = doctor_code.package_parts(t.session, t.get_store(), base, s.fleet_id)
+        code, own = doctor_code.package_parts(t.session, t.get_store(), base, s.fleet_id)
+        # The lock-in gate's held-out set: the package's verify/ plus CODER_VERIFY_DIR.
+        held_out, note = doctor_code.held_out(t.session, own, base, s.fleet_id, s.coder_verify_dir)
         return partial(
             doctor_code.check_job,
             t.get_sandbox(),
@@ -1447,6 +1452,7 @@ def _check_sandbox(t: _Tick, consult: DoctorConsult, incident: Incident, patch: 
             scratch_dir=s.coder_scratch_dir or None,
             secrets=doctor_trace.secrets(s),
             verify_files=held_out,
+            verify_note=note,
         )
 
     try:
@@ -1492,6 +1498,17 @@ def _offer(t: _Tick, consult: DoctorConsult, incident: Incident) -> None:
             consult,
             rules.ADVISED,
             f"{why}, so nothing is offered; the hypotheses stand as advice.",
+        )
+        return
+    # A real check without held-out verify scripts, again as it's offered (the setting may
+    # have changed since the check).
+    if rules.unverified(checks) and not t.settings.doctor_offer_unverified:
+        _close(
+            t,
+            consult,
+            rules.ADVISED,
+            "The fix's check had no held-out verify/ scripts and DOCTOR_OFFER_UNVERIFIED is "
+            "off, so nothing is offered; the hypotheses stand as advice.",
         )
         return
     refusal = _safety_refusal(draft.get("code_patch"), t.settings)  # again, as it's offered

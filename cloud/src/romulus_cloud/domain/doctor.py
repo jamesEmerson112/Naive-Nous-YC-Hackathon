@@ -1305,8 +1305,8 @@ def _describe(run: Mapping[str, Any] | None) -> str:
 NO_VERIFY = "none available"
 OFFERED_UNVERIFIED = "none available (offered unverified)"
 UNVERIFIED_REASON = (
-    "no held-out verify/ scripts on this base, so nothing decisive checked the fix "
-    "(DOCTOR_OFFER_UNVERIFIED=false)"
+    "no held-out verify/ scripts for this base (its package or CODER_VERIFY_DIR), so nothing "
+    "decisive checked the fix (DOCTOR_OFFER_UNVERIFIED=false)"
 )
 
 
@@ -1338,10 +1338,11 @@ def check_verdict(
        hunks (`code_only`), with no harness flag (`GAMING_FLAGS`, `existing_test:`);
     5. the held-out verify scripts pass on the same code: reason exactly "held-out verify
        failed", nothing more (`verify` is `{"available", "passed"}`; their output is never
-       kept). With no scripts on the base, nothing decisive checked the fix: the check
-       fails with `UNVERIFIED_REASON` and outcome `advised` (a retry would end the same
-       way), unless `offer_unverified` (DOCTOR_OFFER_UNVERIFIED), when it passes with
-       `verify` = `OFFERED_UNVERIFIED`.
+       kept). With no scripts for the base (`{"available": False}`, its `note` saying why
+       when some were left out or collect no test), nothing decisive checked the fix: the
+       check fails with `UNVERIFIED_REASON` (plus the note) and outcome `advised` (a retry
+       would end the same way), unless `offer_unverified` (DOCTOR_OFFER_UNVERIFIED), when it
+       passes with `verify` = `OFFERED_UNVERIFIED`.
 
     → `{passed, outcome (None when passed, else "failed_checks" or "advised"),
     fails_before, passes_after, device_tests, verify ("passed" | "failed" | "none available"
@@ -1364,6 +1365,9 @@ def check_verdict(
         verify_state = OFFERED_UNVERIFIED if offer_unverified else NO_VERIFY
     else:
         verify_state = "passed" if verify.get("passed") is True else "failed"
+    note = verify.get("note") if isinstance(verify, Mapping) else None
+    note = _clip(note, 300) if isinstance(note, str) and note else ""
+    unverified_only = False  # every other check passed; only the held-out scripts are missing
     if screened:
         reason = f"the fix is refused before any run: {'; '.join(screened)}"
     elif not fails_before:
@@ -1386,18 +1390,19 @@ def check_verdict(
     elif verify_state == "not run":
         reason = "the held-out verify step never ran"
     elif verify_state == NO_VERIFY:
-        reason = UNVERIFIED_REASON
+        reason = UNVERIFIED_REASON + (f"; {note}" if note else "")
+        unverified_only = True
     else:
         reason = None
     if reason is None:
         outcome = None
     else:
-        outcome = ADVISED if reason == UNVERIFIED_REASON else FAILED_CHECKS
+        outcome = ADVISED if unverified_only else FAILED_CHECKS
     summary = (
         f"repro {repro_test}: {'fails' if fails_before else 'does not fail'} on the base "
         f"({_describe(before)}); {'passes' if passes_after else 'does not pass'} with the fix "
         f"({_describe(after_repro)}); device tests on the code change: {_describe(after)}; "
-        f"held-out verify: {verify_state}"
+        f"held-out verify: {verify_state}" + (f" ({note})" if note else "")
     )
     return {
         "passed": reason is None,

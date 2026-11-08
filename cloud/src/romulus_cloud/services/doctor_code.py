@@ -19,8 +19,10 @@ and the coder budget it shares with the batch.
   3. CODER_TEST_CMD, unchanged (never appended to, so a compound command like
      `pytest -q; ruff check .` stays what it says), on the patch's non-test hunks only
      (`domain.doctor.code_only`): the device tests pass without any test file's help;
-  4. when the base package has `verify/` scripts: once more on the same code, with them
-     (architecture §6 item 7), pass/fail and counts only.
+  4. when there are held-out verify scripts (`held_out`: the base package's `verify/` plus
+     CODER_VERIFY_DIR, the lock-in gate's set): once more on the same code, with them
+     (architecture §6 item 7), pass/fail and counts only. Scripts that collect no test on
+     the base count as none.
   The verify scripts are in no other run's `files`.
 - **Coder budget:** CODER_MAX_DRAFTS_PER_HOUR counts `coder.started` events fleet-wide in
   the last hour, minus job attempts the provider turned away having spent exactly 0 tokens
@@ -57,7 +59,13 @@ from romulus_cloud.domain import coder_retry
 from romulus_cloud.domain import doctor as rules
 from romulus_cloud.errors import ApiError
 from romulus_cloud.models import CodeVersion, Event
-from romulus_cloud.services.code_lockin import failing_tests, read_package, test_summary
+from romulus_cloud.services.code_lockin import (
+    failing_tests,
+    read_package,
+    stale_verify,
+    test_summary,
+    verify_files,
+)
 from romulus_cloud.services.coder_runs import OK_OUTCOMES, CodeReplay, replay_code_patch
 from romulus_cloud.settings import Settings
 from romulus_contracts.codepatch import CODE_ROOT
@@ -105,6 +113,30 @@ def package_parts(
     if not rel:
         raise NoPackage(f"code {rev}'s package has no files outside {rules.HOLDOUT_DIR}/")
     return rel, rules.held_out_files(files)
+
+
+def held_out(
+    session: Session, own: Mapping[str, bytes], rev: str | None, fleet_id: str, verify_dir: str
+) -> tuple[dict[str, bytes], str | None]:
+    """(the held-out verify scripts the check's last run gets, as `verify/<path>`; why
+    CODER_VERIFY_DIR's scripts were left out, or None). `own` is the base package's
+    `verify/` (`package_parts`' second part).
+
+    The lock-in gate's set (`code_lockin.gate_replay`), read with its own helpers: the base
+    package's `verify/` plus CODER_VERIFY_DIR's files (`code_lockin.verify_files`), the
+    latter written over the former. CODER_VERIFY_DIR is left out, with the reason, when it
+    was generated for code that isn't the base or an ancestor (`code_lockin.stale_verify`)
+    or can't be read; the base's own scripts still count."""
+    own = dict(own)
+    try:
+        extra = verify_files(verify_dir)
+    except CoderError as exc:
+        return own, f"CODER_VERIFY_DIR left out: {exc}"
+    cv = session.get(CodeVersion, (fleet_id, rev))
+    stale = stale_verify(session, extra, cv) if extra and cv is not None else None
+    if stale:
+        return own, f"CODER_VERIFY_DIR left out: {stale}"
+    return {**own, **extra}, None
 
 
 def coder_files(rel: Mapping[str, bytes]) -> dict[str, bytes]:
@@ -246,6 +278,19 @@ def _run(replay: CodeReplay, secrets: Iterable[str]) -> dict[str, Any]:
     }
 
 
+def _no_tests(run: Any) -> bool:
+    """The base's verify run finished cleanly and collected no test: scripts that check
+    nothing, the same as none. A run that timed out or never finished isn't this."""
+    return bool(
+        run is not None
+        and run.ran
+        and run.tests == 0
+        and not run.timed_out
+        and not run.incomplete
+        and run.exit_code is not None
+    )
+
+
 def check_job(
     sandbox: Sandbox,
     files: Mapping[str, bytes],
@@ -257,6 +302,7 @@ def check_job(
     scratch_dir: str | None,
     secrets: Iterable[str] = (),
     verify_files: Mapping[str, bytes] | None = None,
+    verify_note: str | None = None,
 ) -> dict[str, Any]:
     """Off the tick, every run with `SAFE_ENV`; each stops the check when it fails:
 
@@ -264,11 +310,13 @@ def check_job(
     2. the same tests with the full patch (must pass);
     3. the device tests (`test_cmd`) on the base plus the patch's non-test hunks only
        (`domain.doctor.code_only`), so no test file can mask a regression;
-    4. when `verify_files` (the base's held-out `verify/` scripts) exist: once, on the same
-       code, pass/fail only. Only counts come back; their output is dropped here.
+    4. when `verify_files` (the held-out scripts, `held_out`) exist: once, on the same code,
+       pass/fail only. Only counts come back; their output is dropped here.
 
     → `{"before", "after_repro", "after", "verify"}`; a later step is None when an earlier
-    one already failed the check, and `verify` is `{"available": False}` with no scripts."""
+    one already failed the check. `verify` is `{"available": False}` with no scripts, or
+    with scripts that collect no test on the base (then nothing decisive checked the fix);
+    `verify_note` (why CODER_VERIFY_DIR was left out) rides along as `note`."""
     secrets = list(secrets)
     kw = {
         "sandbox": sandbox,
@@ -291,12 +339,18 @@ def check_job(
     result["after"] = _run(replay_code_patch(files, code, test_cmd=test_cmd, **kw), secrets)
     if not result["after"]["passed"]:
         return result
+    note = {"note": verify_note} if verify_note else {}
     if not verify_files:
-        result["verify"] = {"available": False}
+        result["verify"] = {"available": False, **note}
         return result
     held = replay_code_patch(files, code, test_cmd="", verify_files=verify_files, **kw)
-    run = held.patched_verify
+    base_run, run = held.base_verify, held.patched_verify
+    if held.patch_error is None and _no_tests(base_run):
+        why = "its verify/ scripts collect no test on the base"
+        result["verify"] = {"available": False, "note": "; ".join(filter(None, [why, verify_note]))}
+        return result
     result["verify"] = {  # pass/fail and counts only: the scripts' output stays hidden
+        **note,
         "available": True,
         "passed": held.verify_passed and held.patch_error is None,
         "tests": held.expected_verify,

@@ -621,20 +621,21 @@ def test_a_fix_that_fails_the_held_out_verify_closes_with_that_reason_only(
         assert "hand_came_near" not in text and "HAND_AT_30_MM" not in text
 
 
-def _report_no_verify(client, example) -> str:
-    """An incident on `NO_VERIFY_REV`: the base package has no held-out verify scripts."""
+def _report_no_verify(client, example, rev: str = NO_VERIFY_REV) -> str:
+    """An incident on `rev` (default `NO_VERIFY_REV`: a base package with no held-out verify
+    scripts)."""
     body = example("incident_consult_wanted") | {
         "incident_id": str(uuid.uuid4()),
         "occurred_at": (T0 - timedelta(minutes=1)).isoformat(),
-        "running": {"firmware": 1, "harness": 1, "code_rev": NO_VERIFY_REV},
+        "running": {"firmware": 1, "harness": 1, "code_rev": rev},
     }
     assert client.post("/v1/devices/arm-1/incidents", json=body).status_code == 201
     return body["incident_id"]
 
 
 NO_VERIFY_REASON = (
-    "no held-out verify/ scripts on this base, so nothing decisive checked the fix "
-    "(DOCTOR_OFFER_UNVERIFIED=false)"
+    "no held-out verify/ scripts for this base (its package or CODER_VERIFY_DIR), so nothing "
+    "decisive checked the fix (DOCTOR_OFFER_UNVERIFIED=false)"
 )
 OFFERED_UNVERIFIED = "none available (offered unverified)"
 
@@ -655,12 +656,131 @@ def test_with_no_verify_scripts_a_good_fix_closes_advised_by_default(
     (checked,) = _events(db_session, incident_id, "doctor.checked")
     assert checked.data["passed"] is False and checked.data["reason"] == NO_VERIFY_REASON
     assert checked.data["verify"] == "none available" and checked.data["verify_counts"] is None
+    assert checked.data["verify_note"] is None
     (closed,) = _events(db_session, incident_id, "doctor.consult_closed")
     assert closed.data["outcome"] == "advised" and NO_VERIFY_REASON in closed.data["why"]
     assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
     assert not doc.docker.ever_saw_verify and len(doc.docker.runs) == 12  # no verify replay
     doc.run(T0 + timedelta(minutes=1), 3)
     assert len(_consults(db_session, incident_id)) == 1  # advised is never retried
+
+
+def _verify_dir(tmp_path, generated_from: str | None) -> str:
+    """A CODER_VERIFY_DIR like `make device-verify` writes: the toy's verify script and, when
+    `generated_from` is set, a MANIFEST.json naming the code it was generated for."""
+    vdir = tmp_path / "verify_dir"
+    vdir.mkdir()
+    (vdir / "test_verify_d1.py").write_bytes(
+        (fakes.TOY / "verify" / "test_verify_d1.py").read_bytes()
+    )
+    if generated_from:
+        manifest = {"generated_from": {"code_rev": generated_from}}
+        (vdir / "MANIFEST.json").write_text(json.dumps(manifest))
+    return str(vdir)
+
+
+def test_coder_verify_dir_gives_a_base_without_verify_its_held_out_check(
+    client, example, make_doctor, db_session, clock, tmp_path
+):
+    """Real devices ship no verify/ (`make code-register` archives device/); `make
+    device-verify` writes CODER_VERIFY_DIR, which the Doctor reads like the lock-in gate."""
+    vdir = _verify_dir(tmp_path, generated_from=NO_VERIFY_REV)
+    doc = make_doctor(ScriptedCoder(GOOD), coder_verify_dir=vdir)  # no opt-in
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER)
+    (consult,) = _consults(db_session, incident_id)
+    assert (consult.stage, consult.status) == ("applied", "waiting")
+    assert consult.checks["verify"] == "passed"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["passed"] is True and checked.data["verify_note"] is None
+    assert checked.data["verify_counts"] == {
+        "tests": 2,
+        "passed_count": 2,
+        "skipped": 0,
+        "timed_out": False,
+    }
+    assert doc.docker.ever_saw_verify and [r["verify"] for r in doc.docker.runs[-2:]] == [
+        True,
+        True,
+    ]
+
+
+def test_a_stale_coder_verify_dir_is_left_out_and_says_why(
+    client, example, make_doctor, db_session, clock, tmp_path
+):
+    vdir = _verify_dir(tmp_path, generated_from="0ther01")  # not the base or an ancestor
+    doc = make_doctor(ScriptedCoder(GOOD), coder_verify_dir=vdir)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    note = checked.data["verify_note"]
+    assert note.startswith("CODER_VERIFY_DIR left out: stale verify: ") and "0ther01" in note
+    assert checked.data["reason"] == f"{NO_VERIFY_REASON}; {note}"
+    (closed,) = _events(db_session, incident_id, "doctor.consult_closed")
+    assert "stale verify: " in closed.data["why"]
+    assert not doc.docker.ever_saw_verify  # nothing held out was left to run
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
+
+
+EMPTY_VERIFY_REV = "toyev"
+
+
+def test_verify_scripts_with_no_test_count_as_none(
+    client, example, make_doctor, db_session, clock, settings
+):
+    """A base verify/ whose files hold no test: they ran and checked nothing, the same as
+    none (advised, no retry), not a failed held-out check (failed_checks, a re-draft)."""
+    files = {n: d for n, d in fakes.toy_files().items() if not n.startswith("device/verify/")}
+    files["device/verify/helpers.py"] = b"NEAR_MM = 30\n"
+    files["device/verify/test_nothing.py"] = b"# the checks were never written\n"
+    store = build_blobstore(settings.blob_dir)
+    kw = {"actor": "human:test", "actor_class": "human"}
+    registry.create_code(
+        db_session, store, registry.build_tarball(files), rev=EMPTY_VERIFY_REV, **kw
+    )
+    db_session.commit()
+    doc = make_doctor(ScriptedCoder(_patch_paths(CODE_AND_REPRO, base=files)))
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example, rev=EMPTY_VERIFY_REV)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["verify_note"] == "its verify/ scripts collect no test on the base"
+    assert (
+        checked.data["reason"]
+        == f"{NO_VERIFY_REASON}; its verify/ scripts collect no test on the base"
+    )
+    assert doc.docker.ever_saw_verify  # they did run
+    doc.run(T0 + timedelta(minutes=1), 3)
+    assert len(_consults(db_session, incident_id)) == 1  # advised is never retried
+
+
+def test_turning_the_opt_in_off_before_the_offer_closes_advised(
+    client, example, make_doctor, make_settings, db_session, clock
+):
+    """The check passed under DOCTOR_OFFER_UNVERIFIED; the worker restarts without it before
+    the offer: the offer stage re-checks and closes advised instead of making a proposal no
+    device would be served."""
+    doc = make_doctor(ScriptedCoder(GOOD), doctor_offer_unverified=True)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    t = T0 + timedelta(seconds=2)
+    for _ in range(TICKS_TO_OFFER):
+        t = doc.tick(t)
+        if _consults(db_session, incident_id)[0].stage == "offer":
+            break
+    (consult,) = _consults(db_session, incident_id)
+    assert consult.stage == "offer" and consult.checks["verify"] == OFFERED_UNVERIFIED
+    doc.settings = make_settings(**ON)  # no DOCTOR_OFFER_UNVERIFIED
+    doc.tick(t)
+    (consult,) = _consults(db_session, incident_id)
+    assert consult.outcome == "advised"
+    (closed,) = _events(db_session, incident_id, "doctor.consult_closed")
+    assert "DOCTOR_OFFER_UNVERIFIED is off" in closed.data["why"]
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
 
 
 def test_with_the_opt_in_a_fix_with_no_verify_scripts_is_offered_labeled_unverified(

@@ -107,7 +107,8 @@ class Settings(BaseSettings):
     # The gate's code replay (M8b): the device tests (CODER_TEST_CMD, empty = no replay, the
     # stub) and the held-out verify scripts, in fresh containers with no network. The
     # package's own `device/verify/` always runs; CODER_VERIFY_DIR adds a host directory of
-    # more verify scripts kept off the device (each file lands at `verify/<its path>`).
+    # more verify scripts kept off the device (each file lands at `verify/<its path>`). The
+    # Fleet Doctor's sandbox check runs the same set (`doctor_code.held_out`).
     coder_verify_dir: str = ""
     coder_replay_timeout_s: int = 300
     # Where scratch copies of the device code go ("" = the system temp dir). Docker must be

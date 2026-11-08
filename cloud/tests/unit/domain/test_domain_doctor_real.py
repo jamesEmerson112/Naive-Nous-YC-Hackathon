@@ -334,8 +334,8 @@ def test_with_no_verify_scripts_a_real_check_offers_nothing_unless_opted_in():
     v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts)
     assert (v["passed"], v["outcome"], v["verify"]) == (False, rules.ADVISED, "none available")
     assert v["reason"] == (
-        "no held-out verify/ scripts on this base, so nothing decisive checked the fix "
-        "(DOCTOR_OFFER_UNVERIFIED=false)"
+        "no held-out verify/ scripts for this base (its package or CODER_VERIFY_DIR), so "
+        "nothing decisive checked the fix (DOCTOR_OFFER_UNVERIFIED=false)"
     )
     assert (v["fails_before"], v["passes_after"], v["device_tests"]) == (True, True, True)
     assert rules.unverified({"stub": False, "verify": v["verify"]})
@@ -354,6 +354,23 @@ def test_with_no_verify_scripts_a_real_check_offers_nothing_unless_opted_in():
     assert (v["passed"], v["outcome"]) == (False, rules.FAILED_CHECKS)
     v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=VERIFY_OK)
     assert v["outcome"] is None and not rules.unverified({"stub": False, "verify": "passed"})
+
+
+def test_why_held_out_scripts_were_left_out_reaches_the_reason_and_summary():
+    note = "CODER_VERIFY_DIR left out: stale verify: CODER_VERIFY_DIR was generated from code x"
+    no_scripts = {"available": False, "note": note}
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts)
+    assert v["outcome"] == rules.ADVISED and v["reason"] == f"{rules.UNVERIFIED_REASON}; {note}"
+    assert f"held-out verify: none available ({note})" in v["summary"]
+    v = rules.check_verdict(
+        _run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts, offer_unverified=True
+    )
+    assert v["passed"] is True
+    assert f"held-out verify: none available (offered unverified) ({note})" in v["summary"]
+    # Scripts that ran keep the note in the summary too (the base's own still count).
+    ran = VERIFY_OK | {"note": note}
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=ran)
+    assert v["passed"] is True and v["verify"] == "passed" and note in v["summary"]
 
 
 @pytest.mark.parametrize(
