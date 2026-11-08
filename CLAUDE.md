@@ -63,10 +63,10 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 7:40 PM P
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 6:42 PM PST._
-- **Now:** landing the device code (B1): `edge/` is split into `device/`, `harness/` and `bench/` in his checkout, not committed yet (session "Build the edge test bed (iteration 1)"). Testing is stopped; next is pushing these to main *(inferred from his 18:08–18:09 messages)*.
+_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 7:42 PM PST._
+- **Now:** getting the Jetson edge box talking to the Mac: it is plugged into USB-C but macOS's accessory check blocks its data and there is no LAN path yet (session "Identify the connected Jetson", 19:41). The device code (B1) is still split into `device/`, `harness/` and `bench/` in his checkout and not pushed yet.
 - **Just finished:** healer benchmark progress doc with final results and the model pick, qwen3.5:4b with thinking on, harness h3 (`835c4f0`). Device test suite: 18 tests pass, and each planted fault turns it red; oracle 6/6 and baseline 0/6 still hold (test-bed session recap). Earlier: model-selection method (`b9b0f89`), `features.txt` claims (`cd54c16`, `e59093f`), device-side answers (`5cea9c2`).
-- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), the `device/` landing (B1, in progress), a review of the code-package and `code_patch` formats in PR #3 (B2, B3), and a co-review of Fleet Doctor D23–D27, per Kent's block.
+- **Blocked on:** the Jetson link (USB accessory check, no LAN). Owes Kent the safety and visor path list (K17), the `device/` landing (B1), a review of the code-package and `code_patch` formats in PR #3 (B2, B3), and a co-review of Fleet Doctor D23–D27, per Kent's block.
 - **Branch and files:** `main`. Untracked in his checkout: `device/` (README, pytest.ini, `tests/test_spec.py`, `tests/test_classify.py`, conftest), `harness/`, `bench/` (`run_bench.py`, `tasks.py`, README).
 <!-- ishaan-sync:end -->
 
