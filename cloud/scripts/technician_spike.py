@@ -510,14 +510,23 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {_hms(ev.at)}  {line}")
         if state.state != "running":
             # one last read so the closing events (usage, idle) are in the fixture
-            for ev in naive.session_events(state.id, after_seq=last_seq):
-                events.append(ev)
-                last_seq = max(last_seq, ev.seq)
+            for attempt in range(5):
+                try:
+                    for ev in naive.session_events(state.id, after_seq=last_seq):
+                        events.append(ev)
+                        last_seq = max(last_seq, ev.seq)
+                    break
+                except NaiveError as exc:
+                    print(f"  final events read failed (attempt {attempt + 1}): {exc}")
+                    time.sleep(poll_s)
             break
         if time.monotonic() - t0 > timeout_s:
             print(f"timeout after {timeout_s:.0f} s: cancelling")
-            naive.cancel_session(state.id)
-            state = naive.get_session(state.id)
+            try:
+                naive.cancel_session(state.id)
+                state = naive.get_session(state.id)
+            except NaiveError as exc:
+                print(f"  cancel failed: {exc}")
             break
         time.sleep(poll_s)
     wall_s = time.monotonic() - t0
