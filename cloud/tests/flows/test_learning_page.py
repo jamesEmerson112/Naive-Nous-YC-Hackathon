@@ -261,7 +261,8 @@ def test_a_promoted_skill_shows_lesson_to_every_arm_and_zero_clicks(
     assert "recorded Naïve session" not in page
     # Rollout: only installed devices get the check icon; the real arm is queued.
     check = '<svg class="icon" aria-hidden="true"><use href="#i-check"/></svg>'
-    assert f'<b>sim-1</b> <span class="lr-mark">{check}</span> <span class="lr-tag">SIM</span>' in page
+    sim1 = f'<b>sim-1</b> <span class="lr-mark">{check}</span> <span class="lr-tag">SIM</span>'
+    assert sim1 in page
     assert '<span class="lr-tag">SIM·canary</span>' in page
     assert (
         '<b>arm-1</b> <span class="lr-mark">queued</span> <span class="lr-tag">REAL</span>' in page
@@ -512,7 +513,7 @@ def test_a_mirrored_skill_shows_its_naive_skills_version(
     )
     db_session.commit()
     page = _text(client.get("/learning"))
-    assert "mirrored to Naïve Skills · v2" in page and 'lr-published' in page
+    assert "mirrored to Naïve Skills · v2" in page and "lr-published" in page
     assert "romulus-healer-playbook v2 · mirrored after the gate promoted it" in page
 
 
