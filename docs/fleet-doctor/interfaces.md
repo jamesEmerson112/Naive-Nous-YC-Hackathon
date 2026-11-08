@@ -152,12 +152,12 @@ All three are device routes. They take `{device_id}` from the path with no auth,
 | `POST /v1/devices/{id}/proposals/{pid}/result` | `api/proposals.py` → `services/proposals.record_result` | `ProposalResult` → `204`, or `200` for an identical resend | `404 unknown_proposal`; `409 proposal_result_conflict` (a different result than the one recorded); `422` if `applied` has no `overlay_id` |
 
 **L1 handler rule (FR11):** `/doctor/ask` does **not** use `SessionDep`. It runs in four steps:
-1. A short session reads the device, `frozen`, the caps and the spend, then closes.
+1. A short session reads the device, `frozen`, the LLM config, the caps and the spend. A refusal records its event (`doctor.blocked_over_cap`, or `doctor.declined` for an unconfigured LLM; at most one a day per device, incident and reason) and raises. An admitted ask records **`doctor.asked` and commits before the call**, so every ask that reaches the LLM counts toward the caps, even if what follows crashes. The session then closes.
 2. The LLM call runs with **no session open**. Its timeout is `min(settings.doctor_ask_timeout_s, body.budget_s - 2)`. The contract has already clamped `budget_s` to [3, 120] (non-numeric, non-finite or null reads as 20), so the timeout is at least 1 s.
-3. A second short session records `doctor.asked` and `doctor.advised`, or `doctor.blocked_over_cap`, then commits.
+3. A second short session records `doctor.advised`, or `doctor.declined` when the call, or reading its reply, failed in any way. It then commits.
 4. The handler returns.
 
-Get the sessionmaker from `request.app.state.sessionmaker`. Two asks at the same moment can each pass the cap check, so the cap can be overshot by one. That's accepted *(inferred)*.
+Get the sessionmaker from `request.app.state.sessionmaker`. Two asks racing through step 1 can still each pass the cap check and overshoot it by one, but the window is now milliseconds, not the LLM call. That's accepted *(inferred)*.
 
 **Clock:** `cloud/tests/flows/conftest.py`'s `clock` fixture patches `utcnow` in `api.device` and `api.ops`. Add `api.doctor` and `api.proposals` to it (PR 2).
 
@@ -365,8 +365,25 @@ If an `OverlayStatus` arrived first, `incidents.set_overlay_status` will have ma
 ### 6.6 `services/doctor_ask.py` (PR 3)
 
 ```python
-def ask(sessions: sessionmaker, device_id: str, body: DoctorAsk, raw: dict, now, *, settings, llm) -> DoctorAdvice   # raises ApiError per §3
+def ask(sessions: sessionmaker, device_id: str, body: DoctorAsk, raw: dict, now, *, settings, llm: Llm | None) -> DoctorAdvice   # raises ApiError per §3
 ```
+
+As built (PR 3):
+- **The LLM** comes from the FastAPI dependency `api/doctor.get_doctor_llm(settings)`: `build_doctor_llm`, cached per process for each set of LLM settings. It is `None` while `DOCTOR_MODE=off`. A live LLM whose settings `build_doctor_llm` refuses comes back as `doctor_ask.Unconfigured(why)` and isn't cached. Tests swap it with `app.dependency_overrides[get_doctor_llm]`.
+- **Order of checks:** `404 unknown_device`, `503 doctor_off`, `409 fleet_frozen`, then `502 doctor_unavailable` for an unconfigured LLM (`doctor.declined`, reason `llm unconfigured`), then the caps (`admit_ask`), then the price. A `DOCTOR_USD_PER_1K_TOKENS` that `cost_usd` rejects refuses as `429 doctor_cap` (`which="spend"`) before any call, so a bad price never spends.
+- **What counts toward a cap:** only asks that reached the LLM (`doctor.asked`, written before the call). Refused asks don't count.
+  - **Incident cap:** counts `refs @> {"incident": id}` in this fleet, reported or not.
+  - **Device-day cap:** counts this device's `doctor.asked` events since `day_start(now, FLEET_TIMEZONE)` with `data.counts_toward_device_day = true`. An ask is exempt (`false`) only when its `incident_id` is an incident **this device already reported**, so made-up incident ids can't dodge both caps.
+- **Refusal events are deduped:** `doctor.blocked_over_cap` (keyed on `which`) and the unconfigured `doctor.declined` (keyed on `reason`) are written at most once per device, incident (or none) and key per `day_start`. Later refusals still answer, but write nothing.
+- **Any failure is a decline, never a 500.** Any exception from `llm.complete` or from reading the reply (for example a negative token count in `cost_usd`) is handled like this:
+  - It records `doctor.declined` with reason `llm error` and answers `502`. `LlmTimeout` gives reason `llm timeout` and `504` instead.
+  - The event records only `error_type`; the error's message goes to the log.
+  - **A failed call may still be billed,** so `doctor.declined` carries an estimated `cost_usd`: the system and user prompt at `len // 4` tokens, `completion_tokens: 0`, `usage_estimated: true`. The spend cap counts it.
+- **The service owns its two sessions** and commits each one, the FR11 exception to "services never commit".
+- **Events** are stamped `ts=now` (the request's time). Beyond §8:
+  - `doctor.asked` also carries `budget_s`, `timeout_s`, `contract_version` and `counts_toward_device_day`.
+  - `doctor.declined` also carries `error_type` (or `error`, the config reason, when unconfigured), `model`, `latency_ms`, the token counts and `cost_usd`.
+  - Every event carries `incident_kind` once this device has reported the incident.
 
 ## 7. Settings (`cloud/settings.py`, PR 2)
 
