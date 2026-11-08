@@ -13,7 +13,7 @@ How the cloud platform gets built between now (**Sat 3:30 PM**) and the code fre
 Judges score "how much of the company runs without you" (`~/git2/docs/STRATEGY.md` §1), and the platform's top value is legibility (D9). Attention therefore goes to these, in this order:
 
 1. **The hero loop, live and readable:** F2 → F3 → F4 on the incident timeline. If only one thing works, it's this.
-2. **The overnight run (F10).** "It ran while we slept" is the strongest autonomy evidence (`~/git2/docs/1-hackathon-plan.md` §0). It has to **launch by ~12:30 AM**, so everything it needs comes first.
+2. **The overnight run (F10).** "It ran while we slept" is the strongest autonomy evidence (`~/git2/docs/1-hackathon-plan.md` §0). Everything it needs comes first.
 3. **Naïve integration (F6).** Naïve is mandatory, and the Mobilerun call is the sponsor-track story.
 4. **Telemetry as evidence (F7).** Each incident's story shows its recordings. This is the first slice of the data asset (D16).
 5. **The dataset (F8).** It's built on Sunday morning from the data the overnight run produced. Ordering it last makes the "every failure becomes training data" story true by construction.
@@ -31,7 +31,7 @@ Judges score "how much of the company runs without you" (`~/git2/docs/STRATEGY.m
 | **7:30–9:30** | **M3 · Batch, gate, kill switch** | F3, F4 and F5 pass with fake devices | F3, F4, F5 |
 | **9:30–10:30** | **M4 · Telemetry ingest** | Incident windows, logs and agent traces upload and show as evidence | F7 |
 | **10:30–11:30** | **M5 · Work orders → Naïve** | F6 passes in fake mode; one live card appears on the real board | F6 |
-| **11:30–12:30 AM** | **M7 · Overnight launch** | Chaos schedule running, settings switched to overnight, laptop kept awake, `demo` tag pushed | F10 (F9 if quick) |
+| **11:30 PM →** | **M7 · Overnight launch** | Chaos schedule running, settings switched to overnight, laptop kept awake, `demo` tag pushed | F10 (F9 if quick) |
 | Overnight | Nobody touches it | — | F10 |
 | Sun 7:00–7:30 | Read the digest; fix whatever broke | Digest numbers written down | F10 |
 | **7:30–9:00** | **M6 · Datasets** | Snapshot plus regression-corpus export from the overnight data; gate replays the corpus | F8 |
@@ -47,7 +47,7 @@ M6 deliberately comes after M7 (§1, item 5).
 
 Tick these off in this file as you go. Each milestone ends with its flows' tracker rows updated.
 
-**Status, Sat Nov 7, ~7:35 PM PST** (`main` at `52f4e40`): M0–M7 are built and merged with fake devices and fake adapters, all ahead of the §2 timeline; M6 moved forward from Sunday morning because it was ready *(inferred: #14 merged at 5:57 PM)*. What's still open is the live and real-world part: the live Naïve card, the I0 hand-off with the device teammate, the overnight launch itself, and M8 (#19 open, M8b not started). Flow status is in the [flows tracker](cloud-platform-flows.md).
+**Status, Sat Nov 7, ~7:35 PM PST** (`main` at `52f4e40`): M0–M7 are built and merged with fake devices and fake adapters, all ahead of the §2 timeline; M6 moved forward from Sunday morning because it was ready *(inferred: #14 merged at 6:08 PM PST)*. What's still open is the live and real-world part: the live Naïve card, the I0 hand-off with the device teammate, the overnight launch itself, and M8b (M8a merged in #19, `3aba2da`; M8b in progress). Flow status is in the [flows tracker](cloud-platform-flows.md).
 
 **What was built**
 
@@ -61,7 +61,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 | M5 | #6, #11, #15 | Pure triage, labels, digest, `parts.yaml`; work orders → Naïve cards (outbox, spend caps, resolve route); F6 |
 | M6 | #14 | Labels, snapshots, exports, regression corpus; F8 |
 | M7 | #16 | Chaos schedule, digest, disk budget, overnight flag, preflight, runbook; F10 |
-| M8 | #19 (open) | M8a: coder sandbox image and `LocalAgent`, proven on a toy device repo. M8b not started |
+| M8 | #19 | M8a: coder sandbox image and `LocalAgent`, proven on a toy device repo (merged `3aba2da`). M8b (wiring into batch and gate) in progress |
 | Fixes | #13, #17 | Ruff scoped to our packages; fake arms register as `sim`, unknown devices as `unknown`; readable chain labels |
 
 ### M0 · Scaffold, contracts, spikes
@@ -116,7 +116,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 - [x] `telemetry.enforce_budget()` (#16)
 - [x] Preflight `make overnight-check` and runbook `cloud/OVERNIGHT.md` (#16)
 - [ ] Keep the laptop awake (`caffeinate -dims`, power connected, lid open or clamshell with display); Docker Desktop set to start on login. **Kent, at launch:** at #16's check the laptop was on battery and Docker start-on-login was off; `make overnight-check` flags both
-- [ ] Commit, tag `demo-overnight`, push (Kent, at the 12:30 AM go/no-go; #16 deliberately doesn't tag)
+- [ ] Commit, tag `demo-overnight`, push (Kent, at launch; #16 deliberately doesn't tag)
 - [ ] (If quick) F9 offline test: partly covered. `test_f10_overnight.py` unplugs arms' links and checks every outbox drains (#16); there's no separate `test_f9_offline.py` that stops the `api` container
 
 ### M8 · Coding agent for code patches (P1, starts as soon as nothing blocks it; D21, D21a)
@@ -140,7 +140,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 
 **Tasks** (each can start as soon as its own blockers clear):
 - [x] (M0) Code-package and `code_patch` contract in v0.1 (APIs §2.10); `code_versions` table; `POST /v1/code`, `GET /v1/code/{rev}/package` *(B2, B3)* (#3, #4, #8)
-- [ ] `coder` container + `adapters/coder.py` (Protocol + Fake) *(B4, B5)*: the Protocol and `FakeCoder` are merged (#2); the `coder` image and `LocalAgent` are in #19 (open)
+- [x] `coder` container + `adapters/coder.py` (Protocol + Fake) *(B4, B5)*: Protocol and `FakeCoder` (#2); `coder` image and `LocalAgent` (#19). B5's egress gap stays open in the blocker table
 - [ ] `services/batch.py` third path: `code_patch → coder → code version → candidate`, with the coder's test output recorded in the candidate's `why` *(B1, B6)*: M8b. Today #12 passes the patch through unapplied ("pass-through: coding agent not wired")
 - [ ] Gate rule: a code candidate first runs the device tests (in the sandbox), then goes to a canary that can run real code (B7). If no such canary exists, it stops at `awaiting_canary` and says so on the timeline. M8b; the `awaiting_canary` stop already exists (#12). The gate must trust only the sandbox replay, never the agent's own `passed` (#19)
 - [x] Fake device: one scripted incident with a `code_patch` for the demo (#5, scenario `code`)
@@ -161,7 +161,7 @@ Tick these off in this file as you go. Each milestone ends with its flows' track
 4. Behind schedule? Cut from the bottom of §6 and write the cut into the tracker's notes.
 5. Write down any decision made in the decision log, and commit.
 
-Fixed checkpoints: **5:15 PM** (M0), **7:30 PM**, **9:30 PM**, **11:30 PM**, **12:30 AM** (overnight launch: go/no-go), **7:30 AM**, **9:00 AM**, **10:00 AM** (freeze).
+Fixed checkpoints: **5:15 PM** (M0), **7:30 PM**, **9:30 PM**, **11:30 PM**, overnight launch, **7:30 AM**, **9:00 AM**, **10:00 AM** (freeze).
 
 ## 5. Risk register
 

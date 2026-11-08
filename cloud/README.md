@@ -4,7 +4,9 @@ The cloud half of the arm company's self-healing loop. Devices report incidents 
 
 Python 3.12, FastAPI, Postgres, one worker loop, all in Docker Compose. Every outside service (Naïve, the LLM, the coding agent) has a fake mode, and fake is the default.
 
-## Run the demo
+**The fake fleet below is for local development and testing.** The work now is real integration with the Pi and the arm hardware: the device side checks in with the same contract (`packages/contracts`, APIs doc), and the build plan's I0 hand-off and M8 blockers track what's left.
+
+## Run it locally with fake arms
 
 From the repo root (needs Docker and [uv](https://docs.astral.sh/uv/)):
 
@@ -14,19 +16,19 @@ make up && make seed      # db, api, worker on :8000 (API_PORT overrides); firmw
 uv run python -m fake_device --n 3 --url http://localhost:8000 --interval 3 --hold-after 20 --scenario all
 ```
 
-The last command runs three fake arms (`sim-1`…`sim-3`; `sim-2` is the canary) through every scripted scenario: a rules fix, a code patch, a bad candidate, a late bad candidate and a park. Then open:
+The last command runs three fake arms (`sim-1`…`sim-3`; `sim-2` is the canary) through every scripted scenario: a rules fix, a code patch, a bad candidate, a late bad candidate and a park. The arms keep checking in until you press Ctrl-C. If you set `API_PORT`, use that port in `--url` and in the links below. Then open:
 
 - <http://localhost:8000/>: the incident timeline, fleet and kill switch;
 - an incident from the timeline (`/incidents/{id}`): its story from fault to fleet or rollback, with evidence links;
 - <http://localhost:8000/data>: recordings, labels, snapshots and exports.
 
-`make sim` runs the same fake fleet inside Compose instead. `make down` stops everything.
+`make sim` is different: it runs the fake fleet inside Compose with the overnight chaos schedule in real time (a fault about every 10 minutes), not the scripted scenarios. `make down` stops everything.
 
 ## Tests
 
 ```bash
 make test     # every test; each pytest session gets its own throwaway database in romulus-testdb (:55432)
-make flows    # only the flow tests (F1–F10), cloud/tests/flows/
+make flows    # only the flow tests, cloud/tests/flows/: F1–F8 and F10 (F9 is covered only inside F10)
 make lint
 ```
 
@@ -42,7 +44,7 @@ Settings come from `.env` (copy [`.env.example`](../.env.example)); overnight va
 |---|---|---|
 | `NAIVE_MODE` | `fake`: work-order cards are logged locally | `live`: posts cards to the Naïve board. Also needs `NAIVE_API_KEY`, `NAIVE_BOARD_ID`, and `WORK_ORDER_PHONE` set to a teammate's phone; live mode refuses to post while it's the placeholder. Never live overnight (build plan K13) |
 | `LLM_MODE`, `LLM_PROVIDER` | `fake`, `fake`: templated explanations | `live`, `naive_proxy` (or `runpod`), with `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL=openai/gpt-oss-120b` (the model the M0 spike picked) |
-| `CODER_PROVIDER` | `fake` | `local_agent` once M8 lands (#19 open) |
+| `CODER_PROVIDER` | `fake` | `local_agent` once M8b wires it |
 
 ## Planning docs
 

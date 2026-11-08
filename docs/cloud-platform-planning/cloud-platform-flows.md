@@ -26,8 +26,8 @@ Status: ⬜ not started · 🟨 in progress · 🟩 passing with fake devices / 
 | **F7** Telemetry sync | P0 | M4 | `test_f7_telemetry.py` | 🟩 | ⬜ | #10. Fake device uploads synthetic recordings; real LeRobot windows come from the arm |
 | **F8** Dataset snapshot and export | P1 | M6 | `test_f8_datasets.py` | 🟩 | ⬜ | #14; corpus → gate wired in #18. `lerobot` export cut (422, P2). Uses overnight data once it exists |
 | **F9** Offline backfill | P1 | M7 | (inside `test_f10_overnight.py`) | 🟨 | ⬜ | No separate `test_f9_offline.py`. The F10 test unplugs arms' links and checks every outbox drains with no dead letters (#16); stopping the `api` container isn't tested *(inferred)* |
-| **F10** Overnight unattended run | P0 | M7 | `test_f10_overnight.py` + `make digest` | 🟩 | ⬜ | #16: 2 h simulated night in ~4 s; runbook `cloud/OVERNIGHT.md`. The real run (launch ~12:30 AM, go/no-go, `demo-overnight` tag) is Kent's call and hasn't started |
-| **F11** Code patch → coding agent → candidate | P1 (first) | M8 | `test_f11_coding_agent.py` (not yet merged) | 🟨 | ⬜ | In progress: #19 (M8a sandbox + `LocalAgent`) open, M8b (wire the coder into batch and gate) pending. #12 already passes code patches through to `awaiting_canary`. Blockers: build plan §3, M8 |
+| **F10** Overnight unattended run | P0 | M7 | `test_f10_overnight.py` + `make digest` | 🟩 | ⬜ | #16: 2 h simulated night in ~4 s; runbook `cloud/OVERNIGHT.md`. The real run (launch and `demo-overnight` tag) is Kent's call and hasn't started |
+| **F11** Code patch → coding agent → candidate | P1 (first) | M8 | `test_f11_coding_agent.py` (comes with M8b) | 🟨 | ⬜ | In progress: M8a (sandbox + `LocalAgent`) merged in #19 (`3aba2da`); M8b (wire the coder into batch and gate) in progress. #12 already passes code patches through to `awaiting_canary`. Blockers: build plan §3, M8 |
 
 **Last run:** Sat Nov 7, ~7:35 PM PST, `main` at `52f4e40`: `uv run pytest cloud/tests/flows -v` → **82 passed** (14 files, including `test_interop_fake_device.py`). 🟩 means passing with fake devices and fake adapters; no row is ⭐ yet, because the real arm and live Naïve haven't run a flow.
 

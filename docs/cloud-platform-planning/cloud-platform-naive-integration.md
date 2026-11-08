@@ -161,7 +161,7 @@ Write down: the board id, the agent name, how long until the agent started, and 
 
 ### 5.1 Spike results (Sat Nov 7, ~4:45 PM PST)
 
-Source: the orchestrator's spike notes, recorded during M0 with the team's Naïve key.
+Sources: the live org state in [`docs/naive/company-setup.md`](../naive/company-setup.md) §2 (CEO agent, board), and the "Notes from the live spike" in the `cloud/src/romulus_cloud/adapters/llm.py` docstring (proxy, models route, model choice). The `/v1/me` and agents rows were read with the team key during M0.
 
 | Step | Result |
 |---|---|

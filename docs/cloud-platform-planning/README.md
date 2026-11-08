@@ -27,7 +27,7 @@ Planning docs for the Romulus cloud platform: the cloud half of the arm company'
 
 - **Decided: D0–D22, everything.** That covers the heal loop and overlays, the healer patching anything including safety (D5a), the automatic gate with the kill switch as the only human control, Naïve for agents with caps in our code, telemetry as an asset, the coding agent for code patches (P1, tracked blockers), Naïve and RunPod for models, the architecture, and local Docker with Python and FastAPI.
 - **Waiting on Kent:** nothing blocks the code. Open items belong to the device teammate (build plan §7) and Naïve staff (Naïve integration §7).
-- **Built (Sat ~7:35 PM):** M0–M7 merged in PRs #1–#18; F1–F8 and F10 pass with fake devices (82 flow tests). M8 is in progress (#19 open, M8b not started). Details: build plan §3 ("What was built") and the [flows tracker](cloud-platform-flows.md). How to run it: [`cloud/README.md`](../../cloud/README.md).
+- **Built (Sat ~7:35 PM):** M0–M7 merged in PRs #1–#18; F1–F8 and F10 pass with fake devices (82 flow tests). M8 is in progress: M8a merged (#19, `3aba2da`), M8b (wiring the coder into batch and gate) in progress. Details: build plan §3 ("What was built") and the [flows tracker](cloud-platform-flows.md). How to run it: [`cloud/README.md`](../../cloud/README.md).
 - **Still open:** the live Naïve card (pending Kent's go-ahead), the I0 contract review with the device teammate, the overnight launch, and M8 blockers B1, B7, B8.
 
 ## For a coding session
