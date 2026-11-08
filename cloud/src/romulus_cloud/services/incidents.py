@@ -313,8 +313,11 @@ def story(session: Session, incident_id: str) -> tuple[Incident, Story]:
         raise ApiError(404, "unknown_incident", f"Incident {incident_id} does not exist.")
     found = {e.id: e for e in events.find(session, {"incident": incident_id})}
     if incident.overlay_id:
-        # A status that arrived before its incident carries no incident ref; include it.
+        # A status that arrived before its incident carries no incident ref; include the
+        # overlay's own `overlay.*` events.
         overlay_refs = {"device": incident.device_id, "overlay": incident.overlay_id}
-        found.update({e.id: e for e in events.find(session, overlay_refs)})
+        found.update(
+            {e.id: e for e in events.find(session, overlay_refs) if e.kind.startswith("overlay.")}
+        )
     ordered = sorted(found.values(), key=lambda e: (e.ts, e.recorded_at))
     return incident, build_story(ordered, incident_id)

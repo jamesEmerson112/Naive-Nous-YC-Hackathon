@@ -168,13 +168,15 @@ Every `lerobot_v3_tar` recording uses the same LeRobot features (schema **v0.1**
 | 3.2 | `GET /v1/firmware/{version}` | → `{"manifest": §2.1, "sha256": "…"}` | `sha256` is computed over the canonical JSON of the manifest |
 | 3.3 | `GET /v1/harness/{version}/package` | → tarball, with header `X-Sha256` | |
 | 3.3c | `GET /v1/code/{rev}/package` | → tarball, with header `X-Sha256` | Code packages (§2.10, D21) |
-| 3.4 | `POST /v1/devices/{device_id}/installs` | §2.4 → `204` | |
+| 3.4 | `POST /v1/devices/{device_id}/installs` | §2.4 → `204`, or `200 {"status": "already_received"}` for a resend | A resend is the same `(type, version, result, occurred_at)`. `422 unknown_version` if the version isn't in the registry. `last_good` moves only for the assigned version; a report older than the newest one of its type is kept but moves nothing |
 | 3.5 | `POST /v1/devices/{device_id}/incidents` | §2.5 → `201 {"incident_id"}`, or `200` if already received | Idempotent on `incident_id` |
-| 3.6 | `POST /v1/devices/{device_id}/overlays/{overlay_id}` | §2.6 → `204` | |
+| 3.6 | `POST /v1/devices/{device_id}/overlays/{overlay_id}` | §2.6 → `204`, or `200 {"status": "already_received"}` for a resend | `superseded` is terminal. After the cloud sets `locked_in`/`dropped`, device statuses are recorded but don't change it. A status may arrive before its incident |
 | 3.7a | `POST /v1/devices/{device_id}/recordings` | §2.8 → `201 {"recording_id", "upload": "needed" \| "exists"}` | If a blob with that `sha256` is already stored, no upload is needed |
 | 3.7b | `PUT /v1/recordings/{recording_id}/blob` | raw bytes + `X-Sha256` → `204`, or `409 sha256_mismatch` | Idempotent. Resumable chunked upload is a later improvement ([telemetry](cloud-platform-telemetry.md) §3) |
 
 **Device rules:** everything in 3.4–3.7 is queued on disk and retried with backoff while the cloud is unreachable (D8). Send incidents before their recordings.
+
+**Errors:** a `contract_version` outside the supported list → `400 unsupported_contract_version` (required on 3.1, optional elsewhere). Routes 3.4–3.7a from a device that never checked in → `404 unknown_device`; the first check-in registers a device.
 
 ## 4. Operator routes
 
@@ -184,7 +186,7 @@ These are your v1 headings, filled out. The dashboard uses the same routes.
 
 | Route | Purpose |
 |---|---|
-| `POST /v1/firmware` | Create a firmware version by hand (manifest body); the batch job also creates them |
+| `POST /v1/firmware` | Create a firmware version by hand; the batch job also creates them. Body `{"manifest": §2.1, "why", "by", "parent_version"}`; `422 unknown_code_rev` if the manifest's `code_rev` isn't registered |
 | `GET /v1/firmware`, `GET /v1/firmware/{v}` | List or read |
 | `POST /v1/firmware/{v}/retire` | Hide from new assignments (versions are never deleted) |
 | `POST /v1/harness` (multipart tarball), `GET /v1/harness`, `GET /v1/harness/{v}`, `POST /v1/harness/{v}/retire` | Same, for harness packages (CRUD on the embedded SRE) |
@@ -238,8 +240,9 @@ Every event has `actor`, `kind`, `refs` and `why` (v0 plan §4).
 
 | Area | Kinds |
 |---|---|
-| Devices | `device.first_seen`, `device.health_changed`, `install.reported` |
-| Incidents | `incident.reported`, `overlay.held`, `overlay.reverted`, `overlay.locked_in`, `overlay.dropped` |
+| Devices | `device.first_seen`, `device.registered`, `device.assigned`, `device.updated`, `device.running_changed`, `device.health_changed`, `device.overlay_changed`, `install.reported` |
+| Versions | `firmware.version_created`, `harness.version_created`, `code.version_created` |
+| Incidents | `incident.reported`, `incident.agent_acted`, `overlay.applied`, `overlay.held`, `overlay.reverted`, `overlay.superseded`, `overlay.locked_in`, `overlay.dropped` |
 | Batch and gate (events for overlays and candidates whose diff touches safety-layer or visor paths carry `touches_safety: true` in `refs`; D5a, K17) | `batch.ran`, `candidate.created`, `candidate.replayed`, `candidate.canary_started`, `candidate.promoted`, `candidate.rolled_back`, `candidate.frozen`, `candidate.awaiting_canary` |
 | Coding agent (D21) | `coder.started`, `coder.drafted`, `coder.tests_passed`, `coder.tests_failed`, `code.version_created` |
 | Fleet | `fleet.frozen`, `fleet.unfrozen` |
