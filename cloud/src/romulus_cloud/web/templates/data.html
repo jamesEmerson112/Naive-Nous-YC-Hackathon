@@ -3,6 +3,7 @@
 {% block title %}Romulus · data{% endblock %}
 {% block content %}
 <p class="back"><a href="/">{{ icon("chevron") }}All incidents</a></p>
+<h1 class="page-h">Data</h1>
 <div class="by-field">
   <label for="by-name">Your name</label>
   <input id="by-name" autocomplete="name" placeholder="operator" aria-describedby="by-hint">
@@ -10,7 +11,7 @@
 </div>
 
 <section aria-labelledby="exp-h">
-  <h1 id="exp-h" class="section-h">Exports <span class="muted">newest first</span></h1>
+  <h2 id="exp-h" class="section-h">Exports <span class="muted">newest first</span></h2>
   {% if exports %}
   <div class="card table-card">
   <table class="data-table">
