@@ -45,7 +45,7 @@ James and Kent each run a Claude session that posts what they're working on here
 
 ### Romulus: self-healing + fleet layer for the arm company (Kent)
 <!-- romulus-sync:start -->
-_Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 6:20 PM PST · write notes outside the markers_
+_Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 6:30 PM PST · write notes outside the markers_
 
 - **Pitch:** we sell uptime: one heal loop at arm, fleet and company scale. Rivals only diagnose ([Alloy](https://theaiinsider.tech/2026/08/13/alloy-robotics-raises-8m-in-new-funding-to-help-engineers-debug-robot-fleets-with-ai-agents/)) or recommend fixes ([Formant F3](https://www.businesswire.com/news/home/20250630008190/en/Formant-F3-Brings-Generative-AI-and-Agentic-Reasoning-to-Robot-Ops)). We close the loop: "PagerDuty with hands" *(inferred)*.
 - **Rule:** no LLM in the real-time control loop. Models propose reversible fixes, and the gate checks them: replay → simulated canary → automatic promote or rollback. People only touch the kill switch (D6, D11).
@@ -55,8 +55,8 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 6:20 PM P
 - **Research:** pin LeRobot v0.7.0, since it breaks the API ([release](https://github.com/huggingface/lerobot/releases/tag/v0.7.0)).
 - **Research:** the SO-101 sim twin is `robotstudio_so101` in MuJoCo Menagerie, and it runs on a Mac ([menagerie](https://github.com/google-deepmind/mujoco_menagerie)).
 - **Research:** bring a router, Ethernet and a backup video, because venue Wi-Fi sinks demos ([Nailing the Demo](https://generalrobots.substack.com/p/nailing-the-demo)). Everything else is in [`docs/cloud-platform-planning/README.md`](docs/cloud-platform-planning/README.md).
-- **Now:** two PRs are open: #12 (M3b: batch, gate, kill switch; F3–F5) and #16 (M7: overnight kit with a chaos schedule, digest, disk budget and preflight; F10), ahead of the 12:30 AM go/no-go. The Fleet Doctor is at v2, P2, with D23–D27 awaiting decision ([`docs/fleet-doctor/`](docs/fleet-doctor/README.md)).
-- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3a #7 · M4 #10 · M5 #11, #15 · M6 #14 · triage #6 · lint #13 · decisions D0–D22 locked.
+- **Now:** PR #16 (M7: overnight kit; F10) is the last open milestone before the 12:30 AM go/no-go. With M3b merged, the hero loop F2→F5 now runs end to end against fakes *(inferred)*. The Fleet Doctor is at v2, P2, with D23–D27 awaiting decision ([`docs/fleet-doctor/`](docs/fleet-doctor/README.md)).
+- **Done:** M0 #1–#4 · M1 #5, #8 · M2 #9 · M3 #7, #12 · M4 #10 · M5 #11, #15 · M6 #14 · triage #6 · lint #13 · decisions D0–D22 locked.
 - **Blocked:** B4, a Naïve `proxy:write` key or RunPod endpoint. M0's live card and LLM call wait on it and are about 45 min late *(inferred)*. Also B1 (device code in the repo), B8 (STM32 toolchain; Olir's `firmware/toolkit/` may solve it *(inferred)*) and the K17 path list.
 - **Asks:** Ishaan: land `device/` (in progress; healer pick is qwen3.5:4b with thinking on h3, [benchmark](docs/healer-benchmark-progress.md)), review contracts #3 (B2, B3), send the K17 safety and visor paths, co-review D23–D27. James: the RunPod endpoint. Owed to James: a Naïve key with Board scopes.
 <!-- romulus-sync:end -->
