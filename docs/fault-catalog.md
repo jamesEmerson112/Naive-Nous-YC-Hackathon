@@ -10,7 +10,7 @@ Every failure we plan to plant, test or demo. Use it to write faults into the fi
 
 - **The Raspberry Pi 5 (8 GB) runs everything for now:** the robot app, the healer agent and its local model. The Jetson AGX Xavier isn't set up yet. *(team)*
 - **Wired to the Pi:** the HC-SR04 ultrasonic sensor on GPIO, and a USB camera module (HBV-W20217 V22, HD 720p, 72° lens). *(team)*
-  - **Decision pending:** on Olir's `firmware` branch (`ac171dc`) the HC-SR04 is wired to the STM32 instead (TRIG on PA0, ECHO on PB0 through a 10k/18k divider), which streams CSV to the Pi on `/dev/ttyACM0`. If that wiring is kept, U1–U5 below don't apply. See `docs/project-overview.md` §5–§6.
+  - **Decision pending:** on Olir's `firmware` branch (`ac171dc`) the HC-SR04 is wired to the STM32 instead (TRIG on PA0, ECHO on PB0 through a 10k/18k divider), which streams CSV to the Pi on `/dev/ttyACM0`. Since `69fc292` it's part of a sensor pod with a LIS3DH accelerometer, and the Pi daemon `podd` reads it. If that wiring is kept, U1–U5 below don't apply. See `docs/project-overview.md` §5–§6.
 - **The arm** is an SO-101 (leader and follower, 6 Feetech STS3215 servos each), driven through LeRobot v0.7.0 with `robot_type` `so101_follower`. [CLAUDE.md, team status]
 - **The firmware** is bare-metal C for an STM32F042K6 on a Nucleo-F042K6 board:
   - Cortex-M0, 32 KB flash, 6 KB RAM, no HAL, no printf.
@@ -87,7 +87,20 @@ The arm holds an object, and the ultrasonic reading drives what it does. *(team)
 
 The healer fixes the C code and flashes the board. *(team)*
 
-A firmware heal goes like this: read the serial log, find the bug, run `make`, flash over SWD (OpenOCD, with `target/stm32f0x.cfg` named in the Makefile), run `make check` to confirm the chip now runs the new build ID, then watch the telemetry [`firmware` branch Makefile]. The Makefile includes `../toolkit/mk/stm32.mk`, and `fw_info.h` refers to `toolkit/bin/fwtool`; neither is on the branch yet.
+A firmware heal goes like this: read the serial log, find the bug, run `make`, flash over SWD (OpenOCD, with `target/stm32f0x.cfg` named in the Makefile), run `make check` to confirm the chip now runs the new build ID, then watch the telemetry [`firmware` branch Makefile]. The Makefile includes `../toolkit/mk/stm32.mk`, and `fw_info.h` refers to `toolkit/bin/fwtool`; both are on the branch now (`1ffd2ee` onward).
+
+**Built and ready on the `firmware` branch (`69fc292`, Olir).** Six known-bad releases of the sensor pod firmware live in `firmware/demo/bad-images/`, each with a `bug.patch`, a prebuilt image and a `scenario.json`. `demo/scenario start NN` loads one, `trigger` sets it off, and `reset` restores v1.0. `firmware/docs/DEMO.md` gives the logs, the investigation and the fix for each. The Pi-side tools that diagnose them are in `firmware/healer/` (§6 of `docs/project-overview.md`).
+
+| # | Release | What breaks | First triage signal | Durable fix | Closest entry below |
+|---|---|---|---|---|---|
+| 1 | v1.1 | Unaligned stores in the radio frame → HardFault crash loop → safe mode | `crash`, `reboot_loop`, `safe_mode` | `memcpy` / byte-wise stores | F3 |
+| 2 | v1.2 | HSI/2 clock assumption: UART at half baud (garbled), time and distances halved | `link_garbled` | Restore the HSI/PREDIV clock setup | F5 |
+| 3 | v1.3 | Config readback dropped: after a supply glitch the accelerometer stays in power-down (frozen) | `acc_frozen` | Runtime `acc init`, then restore the readback | New: frozen sensor |
+| 4 | v1.4 | Accelerometer at 400 Hz: about 19 kB/s into an 11.5 kB/s link, lines dropped, distance starves | `tx_overrun` | Runtime `rate acc 50`, then fit the byte budget | New: UART byte budget |
+| 5 | v1.5 | ±4 g range set without changing the sensitivity: reads 0.5 g at rest | `acc_gravity` | mg/digit = 2 for ±4 g | F2 (units) |
+| 6 | v1.6 | I2C waits with no timeout: unplugged sensor → hang → watchdog loop → safe mode | `watchdog`, `reboot_loop` | Restore I2C timeouts, then a human replugs | F4 (same pattern, on I2C) |
+
+DEMO.md also lists four physical faults on good firmware: ultrasonic covered (`us_blocked`), loose ECHO wire (`us_intermittent`), LIS3DH unplugged (`acc_error`), and an accelerometer glitch that v1.0 heals by itself. **Gap found Nov 7:** the triage rules check the accelerometer for frozen data but not the ultrasonic. A frozen-echo copy of a real 30 s sample raised no finding *(inferred, from running `check_ultrasonic` on planted copies of the sample)*.
 
 Two Cortex-M0 facts shape these bugs. It has no fault status registers, and unaligned memory accesses always fault (https://interrupt.memfault.com/blog/cortex-m-hardfault-debug).
 
