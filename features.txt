@@ -149,7 +149,7 @@ STM32 firmware control loop             <--- Olir
 STM32 to Pi link (pod telemetry + podd daemon, firmware 69fc292) <--- Olir
 Accelerometer (LIS3DH) on the STM32 pod   <--- Olir
 Pod healer tools: podd, triage rules, 38 heal tools <--- Olir
-Pod healer agent loop + blind eval (HARNESS.md)
+Pod healer agent loop + blind eval (HARNESS.md) <--- Ishaan
 Frozen-ultrasonic triage rule (gap found)
 
 DEMO AND FAULTS
