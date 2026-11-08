@@ -269,5 +269,6 @@ def download_recording(recording_id: str, session: SessionDep, store: BlobStoreD
             SHA256_HEADER: rec.sha256,
             "Content-Length": str(store.size(rec.sha256)),
             "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
         },
     )

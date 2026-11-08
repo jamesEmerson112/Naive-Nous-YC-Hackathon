@@ -203,6 +203,7 @@ def test_f7_incident_with_all_evidence(client, arm, example, count_events, db_se
         dl = client.get(f"/v1/recordings/{m['recording_id']}/blob")
         assert dl.status_code == 200 and dl.content == data
         assert dl.headers["x-sha256"] == m["sha256"]
+        assert dl.headers["x-content-type-options"] == "nosniff"
     messages = list(make_reader(io.BytesIO(log_bytes)).iter_messages())
     assert [ch.topic for _, ch, _ in messages] == ["/log"] * 3
 
@@ -277,6 +278,9 @@ def test_f7_recording_before_incident(client, arm, example, count_events, db_ses
         assert "kind:camera_occluded" in labels(client, m["recording_id"])
         assert count_events("recording.linked", {"recording": m["recording_id"]}) == 1
     s = story(client, inc["incident_id"])
+    # The named recording shows from its `received` step, the listed one from its link.
+    assert s["chain"].count("evidence log_window") == 1
+    assert s["chain"].count("evidence audit") == 1
     assert {e["recording"] for e in s["evidence"]} == {
         named_meta["recording_id"],
         listed_meta["recording_id"],
@@ -329,7 +333,7 @@ def test_f7_any_kind_and_format_is_accepted(client, arm):
     assert dl.content == data and "x-custom" in dl.headers["content-disposition"]
 
 
-def test_f7_errors(client, arm, app, example):
+def test_f7_errors(client, arm, app, example, tmp_path):
     data = text_log()
     m = meta(data, "log_window", "text", None)
     # Unknown device and unknown recording: 404 with a sentence.
@@ -353,7 +357,14 @@ def test_f7_errors(client, arm, app, example):
     app.state.settings = app.state.settings.model_copy(update={"recording_max_bytes": 10})
     big = put_blob(client, m, data)
     assert big.status_code == 413 and big.json()["error"] == "blob_too_large"
-    assert client.get(f"/v1/recordings/{m['recording_id']}/blob").status_code == 404
+    # Chunked, with no Content-Length: the per-chunk check catches it.
+    url = f"/v1/recordings/{m['recording_id']}/blob"
+    chunked = client.put(url, content=(data[i : i + 4] for i in range(0, len(data), 4)))
+    assert "content-length" not in chunked.request.headers
+    assert chunked.status_code == 413 and chunked.json()["error"] == "blob_too_large"
+    assert client.get(url).status_code == 404
+    incoming = tmp_path / "blobs" / "incoming"
+    assert incoming.is_dir() and not list(incoming.glob("*"))  # no temp file left behind
 
 
 def test_f7_checkin_metrics_are_kept_as_history(client, arm, example, db_session):

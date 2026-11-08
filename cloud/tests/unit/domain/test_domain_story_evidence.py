@@ -122,3 +122,26 @@ def test_evidence_without_size_or_data_still_reads():
     s = build_story([bare], INC)
     assert s.steps[0].line == "Evidence from arm-1: recording (?, size unknown)."
     assert s.steps[0].evidence is None and s.evidence == ()
+
+
+def test_a_new_link_shows_in_the_chain_as_evidence():
+    """A recording that didn't name its incident has no `received` step in the story."""
+    linked = Ev(
+        "recording.linked",
+        refs=_rec_refs(),
+        data={"evidence": _ev(True, kind="audit"), "labels_added": [], "linked": True},
+    )
+    s = build_story([_incident(), linked], INC)
+    assert s.chain == "camera_occluded → evidence audit"
+
+
+def test_evidence_steps_never_change_the_status():
+    later = T0 + timedelta(hours=1)
+    evs = [
+        _incident(),
+        Ev("overlay.held", refs={**_rec_refs(), "overlay": "ov-12"}),
+        Ev("recording.received", ts=later, refs=_rec_refs(), data={}),
+        Ev("recording.blob_stored", ts=later, refs=_rec_refs(), data={}),
+        Ev("recording.linked", ts=later, refs=_rec_refs(), data={"linked": True}),
+    ]
+    assert build_story(evs, INC).status == ("overlay held", "good")

@@ -1,28 +1,31 @@
-"""services/telemetry: spooling, labels and linking behind the M4 recording routes."""
+"""services/telemetry: uploads, labels and linking behind the M4 recording routes."""
 
 import hashlib
+import threading
+import time
 import uuid
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.orm import Session
 
 from romulus_cloud import events
-from romulus_cloud.adapters.blobstore import build_blobstore
+from romulus_cloud.adapters.blobstore import FsBlobStore, build_blobstore
 from romulus_cloud.errors import ApiError
-from romulus_cloud.models import Label
+from romulus_cloud.models import Blob, Device, Event, Label, Recording
 from romulus_cloud.services import incidents, telemetry
 from romulus_cloud.services.seed import seed
 from romulus_contracts import IncidentReport, RecordingMeta
 
 
-def test_spool_hashes_counts_and_caps():
-    with telemetry.Spool(max_bytes=10) as spool:
-        spool.write(b"hello ")
-        spool.write(b"bob")
-        assert spool.size == 9
-        assert spool.sha256 == hashlib.sha256(b"hello bob").hexdigest()
+def test_write_chunk_caps_with_a_413(tmp_path):
+    with FsBlobStore(tmp_path).writer(max_bytes=10) as writer:
+        telemetry.write_chunk(writer, b"hello ")
+        telemetry.write_chunk(writer, b"bob")
+        assert writer.sha256 == hashlib.sha256(b"hello bob").hexdigest()
         with pytest.raises(ApiError) as exc:
-            spool.write(b"!!")
+            telemetry.write_chunk(writer, b"!!")
     assert exc.value.status == 413 and exc.value.error == "blob_too_large"
 
 
@@ -79,11 +82,11 @@ def test_current_labels_replays_tombstones(fleet, now):
 
 def test_store_blob_refuses_wrong_bytes_and_keeps_nothing(fleet, store, now):
     rec, _, _ = telemetry.receive(fleet, "arm-1", *_meta(b"right"), now)
-    with telemetry.Spool(100) as spool:
-        spool.write(b"wrong")
+    with store.writer() as writer:
+        writer.write(b"wrong")
         with pytest.raises(ApiError) as exc:
             telemetry.store_blob(
-                fleet, store, rec.id, spool, declared_sha256=None, media_type=None, now=now
+                fleet, store, rec.id, writer, declared_sha256=None, media_type=None, now=now
             )
     assert exc.value.status == 409 and not store.exists(rec.sha256)
     assert not telemetry.is_stored(fleet, rec.sha256)
@@ -93,13 +96,13 @@ def test_store_blob_once_then_resend_is_quiet(fleet, store, now):
     rec, _, upload = telemetry.receive(fleet, "arm-1", *_meta(b"bytes"), now)
     assert upload == "needed"
     for expected in (True, False):
-        with telemetry.Spool(100) as spool:
-            spool.write(b"bytes")
+        with store.writer() as writer:
+            writer.write(b"bytes")
             stored = telemetry.store_blob(
                 fleet,
                 store,
                 rec.id,
-                spool,
+                writer,
                 declared_sha256=rec.sha256.upper(),
                 media_type=None,
                 now=now,
@@ -142,3 +145,79 @@ def test_receive_refuses_unknown_device(db_session, now):
     with pytest.raises(ApiError) as exc:
         telemetry.receive(db_session, "ghost", *_meta(b"x"), now)
     assert exc.value.status == 404
+
+
+def _store(session, store, recording_id, data, now):
+    with store.writer() as writer:
+        writer.write(data)
+        return telemetry.store_blob(
+            session, store, recording_id, writer, declared_sha256=None, media_type=None, now=now
+        )
+
+
+def _wait_for_lock_wait(engine, timeout_s=5.0) -> bool:
+    """True once some backend in this test database is waiting on a row lock."""
+    deadline = time.monotonic() + timeout_s
+    with engine.connect() as conn:
+        while time.monotonic() < deadline:
+            waiting = conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                )
+            ).scalar()
+            conn.rollback()  # pg_stat_activity is a per-transaction snapshot; refresh it
+            if waiting:
+                return True
+            time.sleep(0.02)
+    return False
+
+
+def test_concurrent_first_uploads_of_the_same_bytes_dont_collide(engine, store, now):
+    """Two connections store the same new blob at once (the review's 500). The second
+    insert waits on the first's uncommitted row, then does nothing instead of failing."""
+    device = f"race-{uuid.uuid4().hex[:8]}"
+    data = b"the same bytes from two recordings"
+    sha = hashlib.sha256(data).hexdigest()
+    with Session(engine) as setup:  # real, committed rows; deleted in `finally`
+        setup.add(Device(id=device))
+        setup.flush()
+        a, _, _ = telemetry.receive(setup, device, *_meta(data), now)
+        b, _, _ = telemetry.receive(setup, device, *_meta(data), now)
+        ids = [a.id, b.id]
+        setup.commit()
+
+    errors: list[Exception] = []
+
+    def second() -> None:
+        try:
+            with Session(engine) as s2:
+                _store(s2, store, ids[1], data, now)
+                s2.commit()
+        except Exception as exc:  # noqa: BLE001 - reported by the assert below
+            errors.append(exc)
+
+    first = Session(engine)
+    thread = threading.Thread(target=second)
+    try:
+        assert _store(first, store, ids[0], data, now) is True  # blob row held, uncommitted
+        thread.start()
+        blocked = _wait_for_lock_wait(engine)
+        first.commit()
+        thread.join(timeout=10)
+        assert errors == [], errors
+        assert blocked, "the second upload never reached the blob insert"
+        assert not thread.is_alive() and errors == []
+        with Session(engine) as check:
+            n = check.scalar(select(func.count()).select_from(Blob).where(Blob.sha256 == sha))
+            assert n == 1
+    finally:
+        first.close()
+        thread.join(timeout=10)
+        with Session(engine) as cleanup:
+            cleanup.execute(delete(Event).where(Event.refs.contains({"device": device})))
+            cleanup.execute(delete(Label).where(Label.target_id.in_(ids)))
+            cleanup.execute(delete(Recording).where(Recording.id.in_(ids)))
+            cleanup.execute(delete(Blob).where(Blob.sha256 == sha))
+            cleanup.execute(delete(Device).where(Device.id == device))
+            cleanup.commit()

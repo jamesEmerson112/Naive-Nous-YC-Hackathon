@@ -174,7 +174,7 @@ Every `lerobot_v3_tar` recording uses the same LeRobot features (schema **v0.1**
 | 3.7a | `POST /v1/devices/{device_id}/recordings` | §2.8 → `201 {"recording_id", "upload": "needed" \| "exists"}`, or `200` if already received | If a blob with that `sha256` is already stored, no upload is needed. Idempotent on `recording_id`; the incident may arrive before or after (M4) |
 | 3.7b | `PUT /v1/recordings/{recording_id}/blob` | raw bytes + `X-Sha256` → `204`, or `409 sha256_mismatch`, or `413 blob_too_large` (over `RECORDING_MAX_BYTES`, default 200 MB) | Idempotent; nothing is kept on a mismatch. Resumable chunked upload is a later improvement ([telemetry](cloud-platform-telemetry.md) §3) |
 
-**Device rules:** everything in 3.4–3.7 is queued on disk and retried with backoff while the cloud is unreachable (D8). Send incidents before their recordings.
+**Device rules:** everything in 3.4–3.7 is queued on disk and retried with backoff while the cloud is unreachable (D8). Incidents and their recordings may arrive in either order; the cloud links them (M4).
 
 **Errors:** a `contract_version` outside the supported list → `400 unsupported_contract_version` (required on 3.1, optional elsewhere). Routes 3.4–3.7a from a device that never checked in → `404 unknown_device`; the first check-in registers a device.
 

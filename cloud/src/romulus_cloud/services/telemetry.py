@@ -8,16 +8,15 @@ An incident may arrive before or after its recordings; `link_incident` catches u
 Incident evidence is never deleted here (the disk budget is M7). Nothing here commits.
 """
 
-import hashlib
-import tempfile
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from romulus_cloud import events
-from romulus_cloud.adapters.blobstore import BlobNotFound, BlobStore, HashMismatch
+from romulus_cloud.adapters.blobstore import BlobNotFound, BlobStore, BlobTooLarge, BlobWriter
 from romulus_cloud.domain.labels import auto_labels, split_label
 from romulus_cloud.errors import ApiError
 from romulus_cloud.models import Blob, Incident, Label, Overlay, Recording, WorkOrder
@@ -27,7 +26,6 @@ from romulus_contracts import IncidentReport, RecordingMeta
 RECEIVED = "recording.received"
 BLOB_STORED = "recording.blob_stored"
 LINKED = "recording.linked"
-SPOOL_IN_MEMORY_BYTES = 8 * 1024 * 1024
 
 
 def download_path(recording_id: str) -> str:
@@ -252,31 +250,12 @@ def receive(
     return rec, True, "exists" if stored else "needed"
 
 
-class Spool:
-    """Uploaded bytes on their way to the blob store: hashed, counted and capped."""
-
-    def __init__(self, max_bytes: int) -> None:
-        self.max_bytes = max_bytes
-        self.file = tempfile.SpooledTemporaryFile(max_size=SPOOL_IN_MEMORY_BYTES)
-        self._digest = hashlib.sha256()
-        self.size = 0
-
-    def write(self, chunk: bytes) -> None:
-        self.size += len(chunk)
-        if self.size > self.max_bytes:
-            raise too_large(self.max_bytes)
-        self._digest.update(chunk)
-        self.file.write(chunk)
-
-    @property
-    def sha256(self) -> str:
-        return self._digest.hexdigest()
-
-    def __enter__(self) -> "Spool":
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        self.file.close()
+def write_chunk(writer: BlobWriter, chunk: bytes) -> None:
+    """Add one chunk of an upload; past the writer's cap, a 413 with a clear sentence."""
+    try:
+        writer.write(chunk)
+    except BlobTooLarge as exc:
+        raise too_large(exc.max_bytes) from exc
 
 
 def too_large(max_bytes: int) -> ApiError:
@@ -296,14 +275,15 @@ def store_blob(
     session: Session,
     store: BlobStore,
     recording_id: str,
-    spool: Spool,
+    writer: BlobWriter,
     *,
     declared_sha256: str | None,
     media_type: str | None,
     now: datetime,
 ) -> bool:
-    """Keep a recording's bytes if they hash to its sha256. Returns whether this call
-    stored them for this recording (False on a harmless resend)."""
+    """Keep a recording's bytes (already streamed into `writer`) if they hash to its sha256.
+    Returns whether this call stored them for this recording (False on a harmless resend).
+    Safe under concurrent uploads of the same bytes: the blob row is insert-or-nothing."""
     rec = get_recording(session, recording_id)
     declared = (declared_sha256 or "").strip().lower()
     if declared and declared != rec.sha256:
@@ -311,31 +291,26 @@ def store_blob(
             f"The X-Sha256 header says {declared}, but recording {rec.id}'s metadata says "
             f"{rec.sha256}."
         )
-    if spool.sha256 != rec.sha256:
+    if writer.sha256 != rec.sha256:
         raise _mismatch(
-            f"The bytes received for recording {rec.id} hash to {spool.sha256}, not the "
+            f"The bytes received for recording {rec.id} hash to {writer.sha256}, not the "
             f"{rec.sha256} its metadata declared."
         )
 
-    blob = session.get(Blob, rec.sha256)
-    deduplicated = blob is not None
-    if blob is None or not store.exists(rec.sha256):
-        spool.file.seek(0)
-        try:
-            size = store.put(rec.sha256, spool.file)
-        except HashMismatch as exc:  # the spool and the store disagree: never keep it
-            raise _mismatch(str(exc)) from exc
-        if blob is None:
-            session.add(
-                Blob(
-                    sha256=rec.sha256,
-                    fleet_id=rec.fleet_id,
-                    size_bytes=size,
-                    media_type=media_type,
-                    path=rec.sha256,
-                )
+    deduplicated = is_stored(session, rec.sha256)
+    if not deduplicated or not store.exists(rec.sha256):
+        size = writer.commit(rec.sha256)  # the hash matched above; this renames into place
+        session.execute(
+            pg_insert(Blob)
+            .values(
+                sha256=rec.sha256,
+                fleet_id=rec.fleet_id,
+                size_bytes=size,
+                media_type=media_type,
+                path=rec.sha256,
             )
-            session.flush()
+            .on_conflict_do_nothing(index_elements=["sha256"])
+        )
 
     noted = events.find(session, {"recording": rec.id}, kinds=[RECEIVED, BLOB_STORED])
     if any(e.kind == BLOB_STORED or (e.data or {}).get("upload") == "exists" for e in noted):
@@ -351,7 +326,7 @@ def store_blob(
         "automation",
         BLOB_STORED,
         _refs(rec),
-        f"The {rec.kind} bytes from {rec.device_id} ({_size(spool.size)}) matched their "
+        f"The {rec.kind} bytes from {rec.device_id} ({_size(writer.size)}) matched their "
         f"sha256 and are {how}; they can be downloaded.",
         data={
             "evidence": evidence(rec, True),

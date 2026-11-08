@@ -5,6 +5,7 @@ import pytest
 
 from romulus_cloud.adapters.blobstore import (
     BlobNotFound,
+    BlobTooLarge,
     FsBlobStore,
     HashMismatch,
     InvalidHash,
@@ -80,3 +81,37 @@ def test_empty_blob(tmp_path):
     store = FsBlobStore(tmp_path)
     assert store.put(empty_sha, io.BytesIO(b"")) == 0
     assert store.exists(empty_sha)
+
+
+def test_writer_streams_into_the_store_and_commits_once(tmp_path):
+    store = FsBlobStore(tmp_path)
+    with store.writer() as w:
+        w.write(DATA[:5])
+        w.write(DATA[5:])
+        assert w.sha256 == SHA and w.size == len(DATA)
+        assert w.commit(SHA) == len(DATA)
+    with store.get(SHA) as f:
+        assert f.read() == DATA
+    assert list((tmp_path / "incoming").iterdir()) == []  # renamed into place, not copied
+
+
+def test_writer_into_an_existing_blob_drops_its_temp_file(tmp_path):
+    store = FsBlobStore(tmp_path)
+    store.put(SHA, io.BytesIO(DATA))
+    with store.writer() as w:
+        w.write(DATA)
+        assert w.commit(SHA) == len(DATA)
+    assert list((tmp_path / "incoming").iterdir()) == []
+
+
+def test_writer_cap_mismatch_and_abandon_leave_nothing(tmp_path):
+    store = FsBlobStore(tmp_path)
+    with store.writer(max_bytes=3) as w, pytest.raises(BlobTooLarge):
+        w.write(b"four")
+    with store.writer() as w, pytest.raises(HashMismatch):
+        w.write(DATA + b"x")
+        w.commit(SHA)
+    with store.writer() as w:
+        w.write(DATA)  # never committed
+    assert not store.exists(SHA)
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []

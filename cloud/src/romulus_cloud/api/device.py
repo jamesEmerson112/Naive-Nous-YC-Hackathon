@@ -10,6 +10,7 @@ install result, overlay status or recording answers 200 and changes nothing.
 from typing import Any
 
 from fastapi import APIRouter, Body, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
@@ -149,23 +150,34 @@ async def upload_recording_blob(
     settings: SettingsDep,
     store: BlobStoreDep,
 ):
-    """The recording's raw bytes (APIs §3.7b), checked against its sha256. Safe to resend."""
-    telemetry.get_recording(session, recording_id)  # 404 before reading a large body
+    """The recording's raw bytes (APIs §3.7b), checked against its sha256. Safe to resend.
+
+    The body streams straight into a temp file inside the blob store (written once); the
+    fsync, rename and DB work then run in a worker thread, off the event loop.
+    """
+    await run_in_threadpool(telemetry.get_recording, session, recording_id)  # 404 first
     cap = settings.recording_max_bytes
     length = request.headers.get("content-length", "")
     if length.isdigit() and int(length) > cap:
         raise telemetry.too_large(cap)
-    with telemetry.Spool(cap) as spool:
+    declared = request.headers.get(SHA256_HEADER)
+    media_type = request.headers.get("content-type")
+
+    with store.writer(cap) as writer:
         async for chunk in request.stream():
-            spool.write(chunk)
-        telemetry.store_blob(
-            session,
-            store,
-            recording_id,
-            spool,
-            declared_sha256=request.headers.get(SHA256_HEADER),
-            media_type=request.headers.get("content-type"),
-            now=utcnow(),
-        )
-    session.commit()
+            telemetry.write_chunk(writer, chunk)
+
+        def finish() -> None:
+            telemetry.store_blob(
+                session,
+                store,
+                recording_id,
+                writer,
+                declared_sha256=declared,
+                media_type=media_type,
+                now=utcnow(),
+            )
+            session.commit()
+
+        await run_in_threadpool(finish)
     return Response(status_code=204)

@@ -210,7 +210,13 @@ LABELS: dict[str, Callable[[EventLike], str]] = {
     "overlay.superseded": lambda e: "superseded",
     "recording.received": lambda e: f"evidence {(_evidence(e) or {}).get('kind', 'recording')}",
     "recording.blob_stored": lambda e: "",  # a follow-up; kept out of the chain
-    "recording.linked": lambda e: "",
+    # A recording the incident listed but that didn't name it: its `received` step isn't in
+    # this story, so the link is where it first shows.
+    "recording.linked": lambda e: (
+        f"evidence {(_evidence(e) or {}).get('kind', 'recording')}"
+        if _data(e).get("linked")
+        else ""
+    ),
 }
 
 # Where an incident stands after a step of this kind: (words for a badge, tone), with tone
