@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .vpod import BUILDS, crc_of
 
-TRIGGERS = ("clock_skew", "link_garbled")
+TRIGGERS = ("clock_skew", "link_garbled", "us_mismatch")
 WAKE_AFTER_S = 3.0          # the real harness debounces ~10 s (HARNESS.md); a short wait for the demo
 
 

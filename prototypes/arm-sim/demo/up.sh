@@ -34,7 +34,7 @@ if [ "$MODE" = real ]; then
 else
   ARGS=(--pod sim --var "$VAR")
 fi
-(cd "$SIM" && PYTHONPATH="$SIM" nohup "$PY" -u -m armsim.host "${ARGS[@]}" --romulus "$URL" "${EXTRA[@]}" \
+(cd "$SIM" && PYTHONPATH="$SIM" nohup "$PY" -u -m armsim.host "${ARGS[@]}" --romulus "$URL" ${EXTRA[@]+"${EXTRA[@]}"} \
   > "$LOGS/host.log" 2>&1 & echo $! > "$LOGS/host.pid")
 for _ in $(seq 1 60); do
   (cd "$SIM" && PYTHONPATH="$SIM" "$PY" -c "from armsim.client import call; call('ping')" >/dev/null 2>&1) && break

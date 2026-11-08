@@ -545,8 +545,8 @@ def serve(*, gif=False, view=False, realtime=False, pod=None, var=POD_VAR, romul
             if vpod and fault in POD_FAULTS:
                 vpod.set_fault(POD_FAULTS[fault])
                 return {"ok": True, "fault": fault, "where": "pod"}
-            if vpod and fault == "pod_image02":
-                vpod.flash("02")                       # a bad pod image goes out (an OTA, say)
+            if vpod and fault in ("pod_image02", "pod_image07"):
+                vpod.flash(fault[-2:])                 # a bad pod image goes out (an OTA, say)
                 return {"ok": True, "fault": fault, "where": "pod", "build": vpod.build}
             return {"ok": True, "fault": arm.inject(fault, **req.get("params", {})), "where": "arm"}
         if op == "clear":

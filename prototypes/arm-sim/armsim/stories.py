@@ -78,18 +78,26 @@ def romulus(url, device_ids):
         say(f"  work order {w['id']} for {w['device_id']}: {w.get('status')}")
 
 
-def story_a(real):
+IMAGES = {   # bad pod images (firmware/demo/bad-images) and the podd incident each one opens
+    "07": ("v1.7, distance math truncated to 16 bits: the distance disagrees with its own echo time",
+           "us_mismatch"),
+    "02": ("v1.2, wrong clock: distances and the pod's clock run at half speed", "clock_skew"),
+}
+
+
+def story_a(real, image="07"):
+    what, kind = IMAGES[image]
     say("STORY A: the system collapses (a bad pod firmware), the pod heals itself, the arm resumes")
     skill("go_home")
     if real:
-        say("Olir: start the bad-image-02 scenario on the pod now (firmware/demo/scenario start 02)")
+        say(f"Olir: start the bad-image-{image} scenario on the pod now (firmware/demo/scenario start {image})")
     else:
-        say("a bad pod image (v1.2, wrong clock) goes out: distances and the pod's clock run at half speed")
-        call("inject", fault="pod_image02")
+        say(f"a bad pod image ({what}) goes out")
+        call("inject", fault=f"pod_image{image}")
         time.sleep(1.0)
     skill("approach")
-    wait(lambda s: any(i["kind"] == "clock_skew" for i in s.get("pod", {}).get("incidents", [])), 60,
-         "podd's own triage flags the pod: clock_skew")
+    wait(lambda s: any(i["kind"] == kind for i in s.get("pod", {}).get("incidents", [])), 60,
+         f"podd's own triage flags the pod: {kind}")
     wait(lambda s: not s["incidents"], 120, "the pod healer rolled back, and the arm's check at home passed")
     say("the arm resumes the job")
     for name in ("approach", "grip", "lift", "release", "go_home"):
@@ -149,12 +157,15 @@ def main():
     ap.add_argument("story", choices=["a", "b", "stall"])
     ap.add_argument("--hermes", action="store_true", help="story b: the job comes from a Naïve card, Hermes runs it")
     ap.add_argument("--real", action="store_true", help="the real bench: plant faults by hand, don't inject")
+    ap.add_argument("--image", choices=sorted(IMAGES), default="07",
+                    help="story a: which bad pod image (07 is the bench demo's, #54; 02 the clock bug)")
     ap.add_argument("--romulus", default=os.environ.get("ARMSIM_ROMULUS", "http://localhost:8000"))
     a = ap.parse_args()
     st = call("status")
     if st.get("incidents"):
         raise SystemExit(f"the arm has open incidents; clear them first: {st['incidents']}")
-    {"a": lambda: story_a(a.real), "b": lambda: story_b(a.real, a.hermes), "stall": lambda: story_stall(a.real)}[a.story]()
+    {"a": lambda: story_a(a.real, a.image), "b": lambda: story_b(a.real, a.hermes),
+     "stall": lambda: story_stall(a.real)}[a.story]()
     time.sleep(12)                                           # the next check-in and the outbox drain
     romulus(a.romulus, {st.get("romulus", {}).get("device", "arm-twin-1"), "pod-1"})
 

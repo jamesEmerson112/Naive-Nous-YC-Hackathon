@@ -30,6 +30,9 @@ import zlib
 BUILDS = {
     "good": "pod v1.1-sim 2026-11-07T22:00:00Z",
     "02": "pod v1.2-clock-hsi2-sim 2026-11-07T22:30:00Z",
+    # firmware/demo/bad-images/07-us-dist-16bit: the distance math is truncated to 16 bits, so the
+    # reported mm disagrees with its own echo time (podd's us_mismatch); the bench demo's fault (#54)
+    "07": "pod v1.7-us-dist-16bit-sim 2026-11-07T23:00:00Z",
 }
 US_JITTER = 0.4          # µs, the real sample's spread (firmware/ultrasonic-sample.json)
 
@@ -118,6 +121,9 @@ class VirtualPod:
             return 0, 0, "no_echo"
         us = m * 1000.0 * 2000.0 / 343.0 + self.rng.gauss(0.0, US_JITTER)
         us = int(round(us * self._clock_scale()))          # a half-speed timer counts half the echo
+        if self.image == "07":
+            mm = ((us * 343 + 1000) & 0xFFFF) // 2000        # v1.7: the product kept in 16 bits
+            return mm, us, ("ok" if 116 <= us <= 23300 else "out_of_range")
         mm = (us * 343 + 1000) // 2000
         return mm, us, ("ok" if 116 <= us <= 23300 else "out_of_range")
 
