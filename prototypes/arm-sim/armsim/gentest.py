@@ -29,7 +29,9 @@ PI_REPO = "~/sage_hardware_healer/Naive-Nous-YC-Hackathon"
 CAMERA = os.environ.get("ARMSIM_CAMERA", "/tmp/armcam/latest.jpg")
 OUT = Path(__file__).resolve().parents[1] / "runs" / "gentest"
 # The debugger and the eye run on Astra (the default profile stays as it is); ARMSIM_HERMES_MODEL overrides.
-HERMES_MODEL = ["-m", os.environ.get("ARMSIM_HERMES_MODEL", "gpt-6-astra"), "--provider", "openai-codex"]
+HERMES_BASE = ["-m", os.environ.get("ARMSIM_HERMES_MODEL", "gpt-6-astra"), "--provider", "openai-codex"]
+HERMES_MODEL = list(HERMES_BASE)        # the profile's reasoning effort unless a run sets one (--reasoning)
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
 FRAME = "metres from the centre of the arm's base: x forward (where the arm faces at pan 0), y to the arm's left, z up (the twin's estimated calibration)"
 
 
@@ -469,7 +471,7 @@ def probe_check(image, bag):
     return bool(reply.get("go") is True), str(reply.get("why") or "no reply")[:300], round(time.time() - t0, 1), cells
 
 
-def guided(max_trials, probe_first=False):
+def guided(max_trials, probe_first=False, efforts=()):
     """One Hermes-designed test per trial until the eye says INSIDE (or the cap, or a servo alarm). With
     probe_first, each test is first probed (jaws open at the closing point, a camera check by Astra) and only
     run in full on a go; a no-go is logged as a probe try for the next plan."""
@@ -497,6 +499,9 @@ def guided(max_trials, probe_first=False):
     print("arm host:", out.strip() or err.strip(), flush=True)
     try:
         for i in range(1, max_trials + 1):
+            global HERMES_MODEL
+            effort = efforts[(i - 1) % len(efforts)] if efforts else None    # rotates test by test, to compare them
+            HERMES_MODEL = HERMES_BASE + (["--reasoning", effort] if effort else [])
             p = plan(history, before, after, close)
             if history:
                 history[-1]["eye"] = p["verdict"]
@@ -512,7 +517,8 @@ def guided(max_trials, probe_first=False):
                 print("stopping: Hermes gave no usable next test", flush=True)
                 break
             n = p["next"]
-            print(f"test {i}: {n['recording']} pan {n['pan']:+.1f} speed {n['speed']} | why: {n['why']}", flush=True)
+            print(f"test {i}: {n['recording']} pan {n['pan']:+.1f} speed {n['speed']} | effort {effort or 'profile'}, "
+                  f"plan {p['plan_s']} s | why: {n['why']}", flush=True)
             before = snap(f"g{i}-before")
             if probe_first:
                 pr, image = run_probe(n, f"p{i}")
@@ -520,7 +526,7 @@ def guided(max_trials, probe_first=False):
                     print(f"probe {i} failed: {pr.get('error', 'no pause seen')}", flush=True)
                     break
                 go, why, check_s, cells = probe_check(image, p["bag"])
-                prow = {"try": f"p{i}", **pr, "close_at": pr["open_jaws_at"], "grasped": None, "go": go, **cells,
+                prow = {"try": f"p{i}", **pr, "close_at": pr["open_jaws_at"], "grasped": None, "go": go, **cells, "effort": effort, "plan_s": p["plan_s"], "check_s": check_s,
                         "probe_check": why, "plan": n, "before": str(before), "after": str(image), "ts": time.time()}
                 history.append(prow)
                 with open(PLAN_LOG, "a") as f:
@@ -542,7 +548,7 @@ def guided(max_trials, probe_first=False):
             time.sleep(2)
             after = snap(f"g{i}-after")
             close = close_img
-            row = {"try": f"g{i}", **res, "plan": n, "before": str(before), "after": str(after),
+            row = {"try": f"g{i}", **res, "plan": n, "effort": effort, "plan_s": p["plan_s"], "before": str(before), "after": str(after),
                    "close_image": str(close_img) if close_img else None, "ts": time.time()}
             history.append(row)
             with open(PLAN_LOG, "a") as f:
@@ -575,6 +581,8 @@ def main():
     r.add_argument("--max-trials", type=int, default=6)
     r.add_argument("--guide", choices=["fixed", "hermes"], default="fixed")
     r.add_argument("--probe", action="store_true", help="probe each test first; run it in full only on Astra's go")
+    r.add_argument("--reasoning", default="", help="Astra's reasoning effort; a comma list rotates test by test "
+                   "(e.g. none,low,medium); empty = the Hermes profile's")
     a = ap.parse_args()
     if a.cmd == "trial":
         if abs(a.pan) > 10:
@@ -583,7 +591,10 @@ def main():
             raise SystemExit(f"speed must be {SPEEDS[0]}-{SPEEDS[1]}")
         print(json.dumps((probe if a.probe else trial)(a.rec, a.pan, a.speed)), flush=True)
     else:
-        guided(a.max_trials, probe_first=a.probe) if a.guide == "hermes" else run(a.max_trials)
+        efforts = tuple(e for e in a.reasoning.split(",") if e)
+        if any(e not in EFFORTS for e in efforts):
+            raise SystemExit(f"reasoning must be from {EFFORTS}")
+        guided(a.max_trials, probe_first=a.probe, efforts=efforts) if a.guide == "hermes" else run(a.max_trials)
 
 
 if __name__ == "__main__":
