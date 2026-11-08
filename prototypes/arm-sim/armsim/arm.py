@@ -6,6 +6,7 @@ Units follow LeRobot and Andre's primitives: arm joints in degrees, gripper 0-10
 Known gap for tomorrow: the sim's zero pose isn't the real arm's calibrated zero, so poses will
 need a per-joint offset once Andre's calibration file is in hand.
 """
+import time
 from collections import deque
 
 import mujoco
@@ -46,6 +47,10 @@ class SimArm:
         self.watchers = []                   # called with each new distance row (the watchdog)
         self.faults = {}                     # active planted faults, see inject()
         self.d_rows = deque(maxlen=200)      # recent D rows with ts and pred_mm (20 s at 10 Hz)
+        # Pod mode: distance comes from a pod through podd (armsim.podsource), not from tick().
+        # tick() then only logs what the pose predicts, stamped with wall-clock time, for the join.
+        self.pod_mode = False
+        self.pred_hist = deque(maxlen=200)   # (wall-clock ts, predicted mm) at 10 Hz
         self.halt_reason = None              # set by the watchdog: motion stops at the next tick
         self._parking = False
         self.rng = np.random.default_rng(seed)
@@ -141,6 +146,11 @@ class SimArm:
                                  self.d.actuator_force[self._act], self.status())
         if self.t + 1e-9 >= self._next_d:
             self._next_d += 1.0 / POD_RATE_HZ
+            if self.pod_mode:
+                self.pred_hist.append((time.time(), self.predicted_mm(objects=SCENE_OBJECTS)))
+                for hook in self.hooks:
+                    hook(self)
+                return
             row = self.distance()
             pred = self.predicted_mm(objects=SCENE_OBJECTS)
             row["pred_mm"] = None if pred is None else round(pred, 1)
@@ -267,6 +277,14 @@ class SimArm:
             row = {"mm": mm, "us": us, "st": "ok" if mm >= MIN_MM else "out_of_range"}
         self._last_d = row
         return dict(row)
+
+    def sensor_m(self):
+        """The rangefinder's true distance in metres, or None when nothing is in range (no echo).
+        The virtual pod (armsim.vpod) turns this into the pod's own D lines."""
+        dist_m = float(self.d.sensordata[self._sensor])
+        if dist_m < 0 or dist_m >= self.m.sensor_cutoff[self.m.sensor("ultrasonic").id] - 1e-6:
+            return None
+        return dist_m
 
     def inject(self, fault, **params):
         """Plant a fault (sim only). Sensor: `us_frozen`, `us_offset` (mm), `us_scale` (factor),
