@@ -76,23 +76,24 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Sat Nov 7, 11:38 PM PST_
+_Last updated: Sat Nov 7, 11:52 PM PST_
 
 **Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. The re-timed plan now sets the P1 minimum by 12:30 AM (a typed command moves the sim arm; a planted fault gives a spoken sentence), then P2 overnight to 7 AM and P3 the real arm 7–10 AM (`features.txt`). Kent's next steps: the live Naïve card and the overnight launch by 12:30 AM; #46 (B5) is his only open PR. Olir has the pod healer bench runs and the bad-ultrasonic arm heal test.
 
 **Recently done:**
+- The team got one real SO-101 arm moving (reported in James's session about 11:45 PM; nothing committed). Which driver ran it, and whether any joint data was saved, is not known yet: `arm/safe_replay.py` and `live_replay.py` record nothing, while Andre's `prims.record` writes primitive JSON on the machine that ran it
 - James pushed `2f56e2d` (11:31 PM): the hub's Sim + control lane now shows our build plan next to Kent's on one schedule, and `features.ts` parses the BY PERSON, IN PHASE ORDER section; in `features.txt` the phase legend and James's lines follow the re-timed plan (P3 7:30–9 AM with Andre: swap the sim arm for the real one)
 - Kent merged Fleet Doctor PR 7 as #44 and the final tracker as #52 (11:23–11:25 PM): every planned PR is merged and reviewed, the Fleet Doctor is off by default, and the follow-ups are tracked in #52
-- James opened #47–#51 (11:02 PM), one per stale branch (`arm/teleop-recording`, `demo`, `firmware-harness-connection`, `firmware`, `local-model-serve`). Each changes only `CLAUDE.md`; all five are still open
 - James's P1 prototypes run in simulation (local branch `james/arm-sim`, not pushed): arm host, `so101-arm` Hermes plugin with a `pre_tool_call` guard, a level-1 watchdog, a fault factory, a ChatTS level-2 test on RunPod (pod terminated). Opening its PR is now his P1 line (`features.txt`)
 
 **Open questions:**
 - Fleet Doctor follow-ups (#52): keep `DOCTOR_DRAFT=coder` off on real device text until B5 (#46) merges; `SAFETY_PATHS_CONFIRMED` stays false, discarding every proposal, until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder; gate replay hardening is in progress on `cloud/replay-hardening` (not on GitHub yet)
-- Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block)
+- Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block). A read-only pass over `firmware/healer/` (James's session) found no ultrasonic "frozen" or `out_of_range` triage rule in `detect.py`, only `us_no_echo`, `us_intermittent` and `us_blocked`, which matters for the bad-ultrasonic heal test *(inferred)*
 - Overlaps the notice PRs flag: Andre's arm files exist twice (his branch and a flat `arm/` on main from #36); three real-arm drivers (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, James's `prototypes/arm-sim/`); the cm-vs-mm ultrasonic and shared `/dev/ttyACM0` clash from #31. Which driver wins? *(inferred)*
 - Team calls still open: Stripe direction (Kent's block still lists it as P0 with James; James's line says to tell Kent it is optional), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email)
 
 **Recent commits (all authors):**
+- `0960a83` Sat 23:39 · jamesEmerson112 · Update team status in CLAUDE.md
 - `2f56e2d` Sat 23:31 · jamesEmerson112 · Hub: our build plan and James's features.txt lines in the Sim + control lane
 - `0240aee` Sat 23:29 · jamesEmerson112 · Update team status in CLAUDE.md
 - `43c707a` Sat 23:28 · Kent Gang · Update Kent status in CLAUDE.md
@@ -102,7 +103,6 @@ _Last updated: Sat Nov 7, 11:38 PM PST_
 - `9c61066` Sat 23:16 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `126d521` Sat 23:08 · jamesEmerson112 · Update team status in CLAUDE.md
 - `7c734da` Sat 22:59 · jamesEmerson112 · Update team status and features.txt
-- `b2dd790` Sat 22:58 · Kent Gang · Update Kent status in CLAUDE.md
 
 **Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `doctor/evidence-real` (#44), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
