@@ -75,23 +75,27 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 
 ## Team status
 <!-- team-status:start -->
-_Last updated: Sat Nov 7, 10:19 PM PST_
+## Team status
+_Last updated: Sat Nov 7, 10:29 PM PST_
 
-**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Olir's laptop now serves the pod healer's model to the Pi over Ethernet (#43), so the next step is the bench runs from `firmware/harness/HANDOFF.md`. Kent has two open PRs: #44 (Fleet Doctor PR 7, the last of 9) and #38 (B1). Andre's `arm/teleop-recording` still has no PR.
+**Current focus:** a robotic-arm company. Naïve runs the business and the job board; Hermes on the bench drives the arm through a plugin; an LLM operates the arm, with RunPod for anything power- or VRAM-heavy. Kent merged #38, so Ishaan's real `device/` code now goes through the coder path; #44 (Fleet Doctor PR 7, the last of 9) and #45 (M8 status docs) are open. James's P1 arm prototypes work in the MuJoCo sim but aren't pushed yet. The pod healer bench runs (`firmware/harness/HANDOFF.md`) are still next on the bench.
 
 **Recently done:**
-- Olir merged #43 (`84c802e`, 10:12 PM; commit `dba39b1`): `server/` serves qwen3.5:4b from the laptop to the Pi over the direct Ethernet cable (`serve.py` relay on the Ethernet IP only, `start.sh` under `caffeinate`, `pi_check.py` for the Pi). Not yet run against the harness on the bench
-- Kent merged #42 (`f510ec3`, 10:09 PM): Fleet Doctor F12 interop, the real cloud and the unmodified fake device end to end (`test_f12d_interop_fake_device.py`)
-- Kent opened #44 (`doctor/evidence-real`, 10:16 PM): Fleet Doctor PR 7, real evidence, coder draft, sandbox check and consult traces, behind `DOCTOR_DRAFT=fake` and `DOCTOR_CHECK=stub` defaults
-- Ishaan merged #41 (`4ee3517`, 10:04 PM): pod healer agent loop and blind eval in `firmware/harness/`, handed to Olir's session (`8d9a30b`)
+- Kent merged #38 (`c8b58cb`, 10:20 PM): real device code in the coder path (B1, B3): `devicecode/` packaging and bench verify, coder retry, `code register` CLI, F11 real-device flow test. Opened #45 (`cloud/docs-m8`, 10:28 PM), M8 status docs
+- James's P1 prototypes run in simulation (local branch `james/arm-sim`, 9 commits, not pushed): an arm host and the `so101-arm` Hermes plugin with a `pre_tool_call` guard, approach-then-grasp on the wrist sensor, a level-1 watchdog that parks and repairs, a fault factory (1,000 labeled runs in about a minute), and a ChatTS level-2 test on RunPod (pod terminated, about $0.50). Sim only: the 3 cm block, the centreline sensor mount and the grip back-off still need checking on the real arm (James's session)
+- Olir merged #43 (`84c802e`, 10:12 PM): `server/` serves qwen3.5:4b from the laptop to the Pi over Ethernet. Not yet run against the harness on the bench
+- Kent merged #42 (`f510ec3`, 10:09 PM): Fleet Doctor F12 interop, the real cloud and the unmodified fake device end to end
 
 **Open questions:**
-- Pod healer bench runs: the model now runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block)
+- Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block)
 - Kent is still blocked only on the K17 safety and visor path list from Ishaan (it also gates the Fleet Doctor), plus his own go-ahead for the live Naïve card. Ishaan also still owes the contracts review (B2, B3)
 - #31 flagged two clashes: the arm's servo bus and `podd` both default to `/dev/ttyACM0`, and `robot/` reads the ultrasonic in cm from Pi GPIO while Olir's pod reports mm. Should `robot/` follow `arm/safe_replay.py` (`/dev/serial/by-id/`, mm through `podd`)? *(inferred)*
-- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and the arm prototypes before Kent's 9–10 AM "real arm + polish" slot. The overnight launch is due by 12:30 AM (Kent's plan)
+- Team calls still open: Stripe direction (bill the robot owner or pay the supplier), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email), and when `james/arm-sim` gets pushed for Kent's 9–10 AM "real arm + polish" slot. The overnight launch is due by 12:30 AM (Kent's plan)
 
 **Recent commits (all authors):**
+- `625c345` Sat 22:28 · Kent Gang · Update Kent status in CLAUDE.md
+- `c8b58cb` Sat 22:20 · kgang · Romulus B1: real device code in the coder path (#38)
+- `dd40482` Sat 22:19 · jamesEmerson112 · Update team status and features.txt
 - `22ff5a8` Sat 22:18 · Kent Gang · Update Kent status in CLAUDE.md
 - `4594267` Sat 22:15 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
 - `84c802e` Sat 22:12 · Oliravan Eswaramoorthy · Merge pull request #43 from jamesEmerson112/local-model-serve
@@ -99,9 +103,6 @@ _Last updated: Sat Nov 7, 10:19 PM PST_
 - `f510ec3` Sat 22:09 · kgang · Fleet Doctor F12 interop: the real cloud and the unmodified fake device, end to end (#42)
 - `24d965b` Sat 22:08 · Kent Gang · Update Kent status in CLAUDE.md
 - `be5cd12` Sat 22:08 · Kent Gang · Update Kent status in CLAUDE.md
-- `dba39b1` Sat 22:08 · OlirEswar · Serve qwen3.5:4b from the laptop to the Pi over Ethernet (server/)
-- `8d9a30b` Sat 22:04 · Ishaan Ranjan · Point Olir's session to the pod healer handoff in CLAUDE.md
-- `4ee3517` Sun 01:04 · Ishaan Ranjan · Pod healer agent loop and blind eval in firmware/harness (#41)
 
-**Branches on GitHub:** `main`; open PR branches `doctor/evidence-real` (#44, Kent) and `cloud/b1-device-code` (#38, Kent); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
+**Branches on GitHub:** `main`; open PR branches `doctor/evidence-real` (#44, Kent) and `cloud/docs-m8` (#45, Kent); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `cloud/b1-device-code` (#38), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
