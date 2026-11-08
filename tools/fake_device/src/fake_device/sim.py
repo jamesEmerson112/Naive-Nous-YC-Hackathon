@@ -4,6 +4,9 @@ It runs nothing real. "Installing" switches version numbers, health is derived f
 flags, and metrics come from a seeded RNG so runs are repeatable. Its reflexes are real,
 though: `reflexes(signals)` runs `romulus_contracts.rules.evaluate` over the running
 manifest's rules with the active overlay merged on top, exactly as the gate's replay does.
+
+It also fakes the Fleet Doctor's `doctor.ProposalHost` (parked for a consult, snapshot,
+apply, verify, health, mark-good), kept apart from the visor's interface.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from romulus_contracts import (
     Fired,
     FirmwareManifest,
     Overlay,
+    Proposal,
     Running,
     evaluate,
 )
@@ -47,6 +51,15 @@ class SimDevice:
     """The overlay passed its watch (reported `held`): health is `ok` again."""
     parked: bool = False
     """Parked with torque off (a `park` incident): health is `failing` until repaired."""
+    consult_parked: bool = False
+    """Parked for a Fleet Doctor consult (the healer gave up and asked the cloud): safe, no
+    tasks, health `degraded`, until a proposal overlay is marked good or the wait ends."""
+    task_running: bool = False
+    """A task is running, so the proposal applier won't touch the code."""
+    proposal_verify_ok: bool = True
+    """Sim knob: whether verify passes after applying a proposal."""
+    fault_recurs: bool = False
+    """Sim knob: the fault is back, so health is `failing` (e.g. under a proposal overlay)."""
 
     bad_versions: dict[int, str] = field(default_factory=dict)
     """Firmware versions that are bad here (bad-candidate mode, flow F4), version -> mode:
@@ -81,6 +94,10 @@ class SimDevice:
         mode = self.bad_versions.get(self.firmware)
         if self.parked or mode == "install" or (mode == "late" and not during_install):
             return "failing"
+        if self.fault_recurs:
+            return "failing"
+        if self.consult_parked:
+            return "degraded"  # safe and waiting for the Doctor, but not working
         if self.overlay is not None and not self.overlay_held:
             return "degraded"  # an overlay under watch (contracts README, I0 item 1)
         return "ok"
@@ -152,3 +169,32 @@ class SimDevice:
 
     def reflexes(self, signals: dict[str, Any]) -> list[Fired]:
         return evaluate(self.rules(), signals)
+
+    # -- the Fleet Doctor's side (doctor.ProposalHost) --------------------------------
+
+    def park_for_consult(self) -> None:
+        self.consult_parked = True
+
+    def parked_and_idle(self) -> bool:
+        return (self.parked or self.consult_parked) and not self.task_running
+
+    def active_overlay_id(self) -> str | None:
+        return self.overlay.overlay_id if self.overlay else None
+
+    def snapshot(self) -> tuple[Overlay | None, bool]:
+        return self.overlay, self.overlay_held
+
+    def restore(self, snapshot: tuple[Overlay | None, bool]) -> None:
+        self.overlay, self.overlay_held = snapshot
+
+    def verify(self, proposal: Proposal) -> tuple[bool, str]:
+        check = proposal.repro_test or "the verify scripts"
+        if not self.proposal_verify_ok:
+            return False, f"verify failed: {check} (sim)"
+        return True, f"verify passed: {check} (sim)"
+
+    def healthy(self) -> bool:
+        return self.health() != "failing"
+
+    def mark_good(self, overlay_id: str) -> None:
+        self.consult_parked = False  # the fix held for the mark-good window: back to work

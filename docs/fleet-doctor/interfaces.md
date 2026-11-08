@@ -495,22 +495,42 @@ This is the code Ishaan copies or imports into the Pi app. It stays out of `viso
 
 ```python
 # client.py (DeviceClient)
-def ask_doctor(self, ask: dict, *, timeout_s: float) -> dict | None   # None on any error or timeout; direct call, not the outbox
-def get_proposal(self, proposal_id: str) -> tuple[dict, str]          # (body, sha256); checks X-Sha256 like pull_firmware
-# outbox.py: new kind "proposal_result" → POST …/proposals/{pid}/result
+def ask_doctor(self, ask: dict, *, timeout_s: float) -> dict | None   # None on any error, non-200 or timeout; direct call, not the outbox
+def get_proposal(self, proposal_id: str, *, expected_sha256: str | None = None) -> tuple[dict, str]
+    # (body, sha256); checks X-Sha256 like the packages, and the pointer's sha256 when given → HashMismatch / InvalidPackage
+def report_proposal_result(self, proposal_id: str, result: ProposalResult) -> None   # used by the outbox
+# outbox.py: Outbox.add_proposal_result(proposal_id, result), kind "proposal_result" → POST …/proposals/{pid}/result
 
-# doctor.py
-class CircuitBreaker:      # per heal: after the first failed or timed-out ask, every later ask is skipped
-class TriggerHook:         # detect(steps, *, verify_failures, budget_used, tier, skill_matched) -> str | None  (T2, T4, T5, T6, T7)
-                           # maybe_ask(...) -> str | None  (the ≤300-token text to inject, or None)
-class ProposalApplier:     # on check-in pointer: pull → sha check → parked? → base matches? → not expired? →
-                           # apply overlay (proposal_id) → verify/health → MarkGoodTimer(N=60 s) → queue the result
-class MarkGoodTimer:       # health must hold N seconds or the overlay reverts (RAUC mark-good)
+# doctor.py (as built in PR 5)
+@dataclass(frozen=True)
+class HealStep:            # command, read=(), changed=(), check="pass"|"fail"|None, build_failed=False
+class CircuitBreaker:      # allow(), trip(reason), reset(); per heal
+class TriggerHook:         # TriggerHook(client, *, k=2, budget_share=0.7, budget_s=20, max_asks_per_incident=6)
+                           # start_heal(incident_id=None)
+                           # detect(steps, *, verify_failures=0, budget_used=0.0, tier=None, skill_matched=True) -> "T2".."T7" | None
+                           # maybe_ask(steps, *, ...same..., question=None, context=None) -> str | None
+                           # history: [{"trigger", "ask", "advice"}]
+class ProposalHost(Protocol):   # parked_and_idle, running, active_overlay_id, snapshot, restore,
+                                # apply_overlay, verify(proposal) -> (ok, detail), healthy, mark_good
+class ProposalApplier:     # ProposalApplier(client, host, outbox, *, state_path=None, mark_good_s=60, safety_paths=())
+                           # handle(pointer, now, *, frozen=False) -> "applied"|"rejected"|"stale"|"failed_verify"|None
+                           # tick(now) -> (overlay_id, "good"|"reverted") | None      # the mark-good timer
+class MarkGoodTimer:       # check(now, healthy) -> "watching"|"good"|"failed"
+def base_mismatch(base, running, active_overlay_id, code_patch) -> str   # "" when it matches
+def format_advice(advice, trigger, *, max_tokens=300) -> str | None
 ```
 
-- **New scenario:** `SCENARIOS["consult"]` sends `resolved=False`, `suspected_cause="software"`, `running.code_rev` set, and `consult={"wanted": true, "trigger": "T2", "attempts": 2}`.
-- **Chaos:** a `doctor` chaos kind with rate 0 in `overnight` and > 0 in `demo`.
-- **`fake_cloud.py`:** add the three routes to `ROUTES`.
+**How the PR 5 code settles details this section left open:**
+- **Asks.** Each trigger asks at most once per heal. T4 means the same command 3 times *in a row* (whitespace collapsed), or 5 steps in a row that read no new file and change none. T6 and T7 fire only before the first step. Empty advice injects nothing and doesn't trip the breaker.
+- **Applier check order.** Already handled or under watch → no-op. Frozen → no-op. Then: pull and sha → `rejected`; parked and idle → `rejected`; base → `stale`; expiry → `rejected`; malformed patch or a `safety_paths` hit → `rejected`. Then snapshot, apply, verify plus health (on failure, restore and report `failed_verify`), then watch.
+- **Base.** `firmware` and `code_rev` always match. `harness` only when the proposal sets it, `mcu_build` only for a patch under `firmware/`. The active overlay must equal `base.overlay_id`, and both null counts as a match.
+- **One proposal at a time.** A second pointer waits until the current watch ends. A 404 or 410 on GET drops the proposal with no result; a 5xx or network error retries on the next check-in. Handled ids are kept in `doctor.json`, so a restart never applies one twice.
+- **After the watch.** Mark-good calls `host.mark_good`, which unparks in the sim. Only then is a replaced overlay reported `superseded`. A health failure restores the snapshot and reports the proposal overlay `reverted`. `FakeArm` reports a marked-good proposal overlay `held` `proposal_hold_after_s` later (default 1200 s).
+- **Sim.** `SimDevice` gains `consult_parked` (health `degraded`), `task_running`, and the knobs `proposal_verify_ok` and `fault_recurs`, and implements `ProposalHost`. `FakeArm` has `doctor` (a `TriggerHook`) and `applier`.
+
+- **New scenario:** `SCENARIOS["consult"]` makes an L1 ask (T2) through `arm.doctor`, parks for the consult, and sends `resolved=False`, `suspected_cause="software"`, `running.code_rev` set, the advice in `agent.reasoning`, and `consult={"wanted": true, "trigger": "T2", "attempts": 2}`. At `hold_after_s` the arm unparks unless a fix is under watch.
+- **Chaos:** a `doctor` chaos kind (`Rates.doctor_every_s`): 0 in `overnight`, 1800 in `demo`. It lands on non-canary arms and uses its own random stream, so the overnight schedule is unchanged.
+- **`fake_cloud.py`:** the three routes are in `ROUTES`; `FakeCloud.offer(device_id, proposal=None)` makes check-ins carry the pointer, and `canned_proposal()` and `CANNED_ADVICE` mirror the contracts examples.
 
 ## 11. L3 contract only (`contracts/tools.py`, PR 8; D27 deferred)
 
