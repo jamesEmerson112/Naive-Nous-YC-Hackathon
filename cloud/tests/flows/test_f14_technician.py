@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from romulus_cloud.adapters.naive import FixtureNaive, NaiveError
-from romulus_cloud.adapters.shop import FakeShop
+from romulus_cloud.adapters.shop import FakeShop, ShopError
 from romulus_cloud.models import TechnicianCase
 from romulus_cloud.services import incidents, technician, workorders
 from romulus_cloud.worker import Step, run_tick
@@ -319,3 +319,61 @@ def test_without_agent_runs_the_incident_agent_is_the_fallback(
     sent = _case(db_session, _only_order(client, incident_id)["id"]).request["message"]
     assert '"agent_reasoning"' in sent and "back_off elbow_flex -10 deg" in sent
     assert '"agent_runs": []' in sent
+
+
+class _FlakyShop:
+    """The store answers 429 `fails` times, then the real product (WowRobo does this)."""
+
+    def __init__(self, fails: int):
+        self.fails, self.calls = fails, 0
+
+    def product(self, origin, handle, *, timeout=5.0):
+        self.calls += 1
+        if self.calls <= self.fails:
+            raise ShopError(f"GET {origin}/products/{handle}.js answered 429")
+        return _product()
+
+
+def test_a_store_hiccup_is_rechecked_before_the_part_card_gives_up(
+    client, seeded, sessions, db_session, tech_settings
+):
+    naive, shop = _naive(), _FlakyShop(fails=1)
+    incident_id = _report_incident(client, "sim-1")
+    _tick(sessions, tech_settings, naive, shop, T0)
+    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=3))
+    order = _only_order(client, incident_id)
+    part = _case(db_session, order["id"]).actions["part"]
+    assert not part["staged"] and part["blocked_reason"].startswith("couldn't check price: ")
+    _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=6))  # email + recheck
+    case = _case(db_session, order["id"])
+    assert case.actions["part"]["staged"] and case.actions["email"]["status"] == "sent"
+    assert client.get(f"/v1/technician/cases/{case.id}").json()["technician_part"]["cart_url"]
+    dead = _FlakyShop(fails=99)
+    incident_2 = _report_incident(client, "sim-2")
+    for i in range(6):
+        _tick(sessions, tech_settings, naive, dead, T0 + timedelta(seconds=3 * i))
+    assert dead.calls == 3  # SHOP_TRIES, then the card says why
+    part = _case(db_session, _only_order(client, incident_2)["id"]).actions["part"]
+    assert not part["staged"] and "429" in part["blocked_reason"]
+
+
+def test_the_live_recording_replays_with_the_schema_gate_beat(
+    client, seeded, sessions, db_session, tech_settings
+):
+    """The 9:xx live capture: its first submit_output was rejected (subject > 45) and fixed."""
+    path = FIXTURES / "joint_stall_live.json"
+    if not path.is_file():
+        pytest.skip("no live fixture")
+    naive = FixtureNaive(path, now=lambda: T0, play_seconds=0)
+    shop = FakeShop({(ORIGIN, HANDLE): _product()})
+    incident_id = _report_incident(client, "sim-1")
+    for i in range(3):
+        _tick(sessions, tech_settings, naive, shop, T0 + timedelta(seconds=3 * i))
+    case = _case(db_session, _only_order(client, incident_id)["id"])
+    assert case.status == "waiting" and len(case.report["verdict"]) <= 80
+    lines = [f["text"] for f in case.feed]
+    assert "Report rejected by schema (subject too long)" in lines
+    assert lines.index("Fixed the report and resubmitted it") > lines.index(
+        "Report rejected by schema (subject too long)"
+    )
+    assert not any(line.startswith("span") for line in lines)

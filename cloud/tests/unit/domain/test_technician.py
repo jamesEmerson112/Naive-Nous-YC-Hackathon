@@ -80,7 +80,8 @@ def test_schema_snapshot():
     assert part["type"] == ["object", "null"]
     assert part["properties"]["origin"] == {"type": "string", "enum": [ORIGIN]}
     assert part["properties"]["qty"] == {"type": "integer", "minimum": 1, "maximum": 2}
-    assert s["properties"]["verdict"]["maxLength"] == 140
+    assert s["properties"]["verdict"]["maxLength"] == 80
+    assert s["properties"]["verdict"]["description"].startswith("Plain words for a video caption")
     assert s["properties"]["technician_brief"]["properties"]["subject"]["maxLength"] == 45
     assert s["properties"]["technician_brief"]["properties"]["body"]["maxLength"] == 1200
     assert s["properties"]["hypotheses"]["maxItems"] == 3
@@ -101,7 +102,7 @@ def test_a_good_report_validates():
     [
         ({"confidence": "certain"}, "report.confidence"),
         ({"joint": "knee"}, "report.joint"),
-        ({"verdict": "x" * 141}, "report.verdict"),
+        ({"verdict": "x" * 81}, "report.verdict"),
         ({"hypotheses": []}, "report.hypotheses"),
         ({"sources": [{"title": "a", "url": "http://insecure"}]}, "report.sources[0].url"),
         ({"technician_brief": {"subject": "s" * 46, "body": "b"}}, "subject"),
@@ -140,14 +141,17 @@ def test_part_origin_must_be_allowlisted_and_ids_exact():
 
 def test_a_recorded_fixture_report_validates():
     """The fake (and later live) fixture's structured output passes our own check."""
-    paths = sorted(FIXTURES.glob("joint_stall_*.json"))
-    if not paths:
-        pytest.skip("no technician fixture yet")
-    for path in paths:
-        data = json.loads(path.read_text())
-        session = data.get("session") or {}
-        output = session.get("structured_output") or data.get("structured_output")
-        assert t.validate_report(output, VENDORS) == [], path.name
+    for name, strict in (
+        ("joint_stall_fake.json", True),
+        ("joint_stall_live2.json", True),  # recorded with the 80-character verdict rule
+        ("joint_stall_live.json", False),  # recorded before it: its verdict gets clipped
+    ):
+        path = FIXTURES / name
+        if not path.is_file():
+            continue
+        output = (json.loads(path.read_text()).get("session") or {}).get("structured_output")
+        assert t.validate_report(output, VENDORS, strict=strict) == [], name
+        assert t.validate_report(t.clip_report(output, VENDORS), VENDORS) == [], name
 
 
 # --- actions and the gate -------------------------------------------------------------------
@@ -206,7 +210,7 @@ def test_part_checks_pass_on_the_exact_variant():
         ),
         (dict(REPORT["part"], variant_id="999"), PRODUCT, 50, "variant 999 is not on"),
         (dict(REPORT["part"], origin="https://other.example"), PRODUCT, 50, "not an allowlisted"),
-        (REPORT["part"], None, 50, "couldn't read"),
+        (REPORT["part"], None, 50, "couldn't check price: timeout"),
     ],
 )
 def test_part_checks_block_with_a_reason(part, product, cap, reason):
@@ -262,6 +266,17 @@ class Ev:
         (Ev("tool_call", "submit_output"), "Submitted the typed report"),
         (Ev("message", text="Checking  the\nservo"), "Checking the servo"),
         (Ev("tool_result", "web_search"), ""),
+        (
+            Ev(
+                "tool_result",
+                "submit_output",
+                text='error: Validation failed for tool "submit_output": - '
+                "technician_brief.subject: must not have more than 45 characters",
+            ),
+            "Report rejected by schema (subject too long)",
+        ),
+        (Ev("tool_result", "submit_output", text="Final result recorded."), ""),
+        (Ev("other", text="span.started"), ""),
         (Ev("status"), ""),
     ],
 )

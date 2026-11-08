@@ -595,6 +595,7 @@ def _pull_events(case: TechnicianCase, naive: Any, settings: Settings) -> None:
         return
     raw_events = list(_raw(case).get("events") or [])
     last_at = _raw(case).get("last_event_at")
+    rejected = bool(_raw(case).get("report_rejected"))
     for e in new:
         if e.seq <= case.last_event_seq:
             continue
@@ -602,8 +603,13 @@ def _pull_events(case: TechnicianCase, naive: Any, settings: Settings) -> None:
         raw_events.append(e.raw)
         if e.at is not None:
             last_at = e.at.isoformat()
-        _feed(case, e.at, rules.feed_line(e), settings)
-    _note(case, events=raw_events, last_event_at=last_at)
+        line = rules.feed_line(e)
+        if line.startswith("Report rejected"):
+            rejected = True
+        elif e.kind == "output" and rejected:
+            line, rejected = "Fixed the report and resubmitted it", False
+        _feed(case, e.at, line, settings)
+    _note(case, events=raw_events, last_event_at=last_at, report_rejected=rejected)
 
 
 def _duration_s(case: TechnicianCase, state: Any) -> float | None:
@@ -618,6 +624,42 @@ def _duration_s(case: TechnicianCase, state: Any) -> float | None:
     if case.started_at and case.reported_at:
         return max(0.0, (case.reported_at - case.started_at).total_seconds())
     return None
+
+
+SHOP_TRIES = 3
+
+
+def _part_retry_due(case: TechnicianCase) -> bool:
+    """The store couldn't be read (e.g. a 429) and we haven't tried SHOP_TRIES times yet."""
+    part = _actions(case).get("part") or {}
+    return bool(part.get("shop_error")) and int(part.get("tries") or 1) < SHOP_TRIES
+
+
+def _stage(session: Session, case: TechnicianCase, part: dict[str, Any], now: datetime) -> None:
+    """Write the checked part onto the work order (`raw.technician_part`) while it waits."""
+    order = session.get(WorkOrder, case.work_order_id, with_for_update=True)
+    if order is None or order.status != "needs_human":
+        return
+    keys = ("origin", "handle", "variant_id", "qty", "title", "unit_usd", "cart_url", "checks")
+    raw = dict(order.raw) if isinstance(order.raw, dict) else {}
+    raw["technician_part"] = {k: part[k] for k in keys} | {"case": case.id}
+    order.raw = raw
+    flag_modified(order, "raw")
+    order.updated_at = now
+
+
+def _recheck_part(
+    session: Session, case: TechnicianCase, now: datetime, settings: Settings, shop: Any
+) -> None:
+    before = dict(_actions(case).get("part") or {})
+    part = _check_part(before, settings, shop) | {"tries": int(before.get("tries") or 1) + 1}
+    _set_action(case, "part", part)
+    case.updated_at = now
+    if part["staged"]:
+        _stage(session, case, part, now)
+        _feed(
+            case, now, f"Romulus re-checked {part['origin_host']}: ${part['unit_usd']} ✓", settings
+        )
 
 
 def _check_part(part: dict[str, Any], settings: Settings, shop: Any) -> dict[str, Any]:
@@ -680,31 +722,14 @@ def _diagnosed(
     part_action = next((a for a in actions if a["kind"] == "stage_part"), None)
     part = None
     if part_action is not None:
-        part = _check_part({k: v for k, v in part_action.items() if k != "kind"}, settings, shop)
+        asked = {k: v for k, v in part_action.items() if k != "kind"}
+        part = _check_part(asked, settings, shop) | {"tries": 1}
         _set_action(case, "part", part)
         ok = "✓" if part["staged"] else "✗"
         price = f"${part['unit_usd']}" if part["unit_usd"] else "no price"
         _feed(case, now, f"Romulus checked {part['origin_host']}: {price} {ok}", settings)
         if part["staged"]:
-            order = session.get(WorkOrder, case.work_order_id, with_for_update=True)
-            if order is not None and order.status == "needs_human":
-                raw = dict(order.raw) if isinstance(order.raw, dict) else {}
-                raw["technician_part"] = {
-                    k: part[k]
-                    for k in (
-                        "origin",
-                        "handle",
-                        "variant_id",
-                        "qty",
-                        "title",
-                        "unit_usd",
-                        "cart_url",
-                        "checks",
-                    )
-                } | {"case": case.id}
-                order.raw = raw
-                flag_modified(order, "raw")
-                order.updated_at = now
+            _stage(session, case, part, now)
     _set_status(case, "waiting", now, None)
     verdict = str(report.get("verdict") or "")
     staged = bool(part and part["staged"])
@@ -830,6 +855,8 @@ def _advance(
         order = session.get(WorkOrder, case.work_order_id)
         if order is not None and order.status in ("done", "denied", "stopped"):
             _set_status(case, "done" if order.status == "done" else "stopped", now)
+        elif _part_retry_due(case):
+            _recheck_part(session, case, now, settings, shop)
     if (
         case.status in ("waiting", "done")
         and (_actions(case).get("email") or {}).get("status") == "sending"
@@ -865,6 +892,7 @@ def sync(
         if (
             case.status == "waiting"
             and (_actions(case).get("email") or {}).get("status") != "sending"
+            and not _part_retry_due(case)
         ):
             order = session.get(WorkOrder, case.work_order_id)
             if order is None or order.status == "needs_human":

@@ -29,7 +29,7 @@ JOINTS = (
 """SO-101 joints (Feetech STS3215 bus servo ids 1-6), the STM32 pod, or unknown."""
 SERVO_IDS = {j: i for i, j in enumerate(JOINTS[:6], start=1)}
 
-VERDICT_MAX = 140
+VERDICT_MAX = 80
 CLAIM_MAX = 160
 SOURCE_TITLE_MAX = 100
 PART_WHY_MAX = 200
@@ -40,6 +40,11 @@ HYPOTHESES_MAX = 3
 SOURCES_MAX = 4
 FEED_MAX = 60
 FEED_TEXT_MAX = 90
+
+VERDICT_HINT = (
+    "Plain words for a video caption, at most ~8 words, no joint ids, numbers or units. "
+    "Example: Elbow blocked or servo failing: needs hands"
+)
 
 FAILED_STOP_REASONS = {
     "awaiting_approval": "the session parked on awaiting_approval (a tool asked for approval)",
@@ -105,7 +110,7 @@ def report_schema(vendors: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     part["type"] = ["object", "null"]
     return _obj(
         {
-            "verdict": _str(VERDICT_MAX, minLength=1),
+            "verdict": _str(VERDICT_MAX, minLength=1, description=VERDICT_HINT),
             "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
             "joint": {"type": "string", "enum": list(JOINTS)},
             "hypotheses": {
@@ -339,7 +344,7 @@ def part_checks(
     if not allowed:
         blocked = f"{origin or 'the store'} is not an allowlisted vendor"
     elif product is None:
-        blocked = f"couldn't read {origin}/products/{part.get('handle')}.js: {shop_error}"
+        blocked = f"couldn't check price: {shop_error or 'no answer from the store'}"
     elif variant is None:
         blocked = f"variant {variant_id} is not on {origin}/products/{part.get('handle')}"
     elif not in_stock:
@@ -364,6 +369,7 @@ def part_checks(
         "staged": staged,
         "why": str(part.get("why") or ""),
         "blocked_reason": blocked,
+        "shop_error": shop_error if product is None else None,  # worth another try
     }
 
 
@@ -411,6 +417,16 @@ def _quoted(text: Any, limit: int = 60) -> str:
     return f"“{_clip(' '.join(str(text).split()), limit)}”"
 
 
+def _rejection(text: str) -> str:
+    """`subject too long` from Naïve's "- technician_brief.subject: must not have more than
+    45 characters"; else the first field named, else `invalid`."""
+    m = re.search(r"-\s*([\w.\[\]]+):\s*([^\n]*)", text)
+    if not m:
+        return "invalid"
+    field = m.group(1).split(".")[-1]
+    return f"{field} too long" if "more than" in m.group(2) else f"{field} invalid"
+
+
 def feed_line(e: EventLike) -> str:
     """One short line for an event ("Searched “STS3215 stall”", "Read shop.wowrobo.com/…"),
     or "" for events the feed leaves out (tool results, bookkeeping)."""
@@ -431,8 +447,10 @@ def feed_line(e: EventLike) -> str:
         if tool in ("ask_operator", "ask"):
             return "Asked the operator a question"
         return _clip(f"Used {tool or 'a tool'}", FEED_TEXT_MAX)
+    if e.kind == "tool_result" and tool == "submit_output" and (e.text or "").startswith("error"):
+        return f"Report rejected by schema ({_rejection(e.text or '')})"
     if e.kind == "message" and e.text:
-        return _clip(" ".join(e.text.split()), FEED_TEXT_MAX)
+        return _clip(" ".join(e.text.replace("**", "").split()), FEED_TEXT_MAX)
     if e.kind == "output":
         return "Submitted the typed report"
     return ""
