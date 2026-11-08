@@ -75,9 +75,11 @@
   .tc-dots { display: none; }
   .tc-why { margin: 10px 0 0; color: var(--ink-2); font-size: 1rem; max-width: 46rem; }
   .tc-why-bad { color: var(--clay-ink); font-weight: 600; }
-  /* A quiet meta row, set after a heading (never a tracked-caps label above one) */
-  .tc-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0 0; font-size: 0.833rem; font-weight: 600; color: var(--muted); }
+  /* A quiet meta line: sentence case, small, muted, with room on both sides, so it reads well
+     wherever it sits (this page puts it after a heading; /learning reuses it too) */
+  .tc-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; font-size: 0.833rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); }
   .tc-kicker:empty { display: none; }
+  .tc-card > .tc-kicker:last-child { margin-bottom: 0; }
   .tc-kicker-note { font-size: 0.833rem; font-weight: 500; color: var(--muted); }
 
   /* The two cards: the part (with the one approval) and the email */
