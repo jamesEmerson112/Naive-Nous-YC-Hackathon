@@ -63,11 +63,11 @@ _Kent's session refreshes this every 10 min · Last synced: Sat Nov 7, 6:10 PM P
 
 ### Device-side healer (Ishaan)
 <!-- ishaan-sync:start -->
-_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 5:42 PM PST._
-- **Now:** confirmation runs for the healer model pick: 18 trials each for qwen3.5:4b thinking on and off, plus 5 extra D1 trials, then the leader pick and an update to `docs/healer-benchmark-progress.md` (session "Build the edge test bed (iteration 1)").
-- **Just finished:** first-pass screen on harness h3: qwen3.5:4b fixed 6/6 with thinking, 5/6 without (missed D1), qwen3:4b-instruct-2507 3/6, granite4.1:3b 1/6 (session "Current idea summary"); pushed the progress doc and model-selection method (`b9b0f89`). Earlier: `features.txt` claims (`cd54c16`, `e59093f`), overview and fault catalog (`16c6b9c`, `38771aa`, `325a4bb`), device-side answers (`5cea9c2`).
-- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), the `edge/` to `device/` move after the tests (B1), and a review of the code-package and `code_patch` formats in PR #3 (B2, B3), per Kent's block.
-- **Branch and files:** `main`. `edge/` (robot app, sim, supervisor, healer harnesses h1–h3, `bench/run_bench.py`, `bench/analyze.py`) stays local until its own checks pass.
+_Ishaan's local Claude session refreshes this block about every 30 min. Last synced: Sat Nov 7, 6:12 PM PST._
+- **Now:** healer model picked, testing stopped. Moving `edge/` into the repo as `device/`, updating `docs/healer-benchmark-progress.md` with the pick, and starting Kent's test suite (session "Build the edge test bed (iteration 1)"). Also reading Kent's Fleet Doctor docs for the upper-level, offline-first-then-sync harness (session "Current idea summary").
+- **Just finished:** model pick: qwen3.5:4b with thinking on, 10/12 in confirmation runs, D1 fixed both times; the queued h1/h2/no-skills runs were cancelled before starting (sessions "Current idea summary", "Build the edge test bed (iteration 1)"). Earlier: progress doc and model-selection method (`b9b0f89`), `features.txt` claims (`cd54c16`, `e59093f`), overview and fault catalog (`16c6b9c`, `38771aa`, `325a4bb`), device-side answers (`5cea9c2`).
+- **Blocked on:** nothing. Owes Kent the safety and visor path list (K17), the `edge/` to `device/` move (B1, in progress), a review of the code-package and `code_patch` formats in PR #3 (B2, B3), and a co-review of Fleet Doctor D23–D27, per Kent's block.
+- **Branch and files:** `main`. `edge/` (robot app, sim, supervisor, healer harnesses h1–h3, `bench/run_bench.py`, `bench/analyze.py`) is still local and untracked; it lands as `device/` *(inferred from the test-bed session recap)*.
 <!-- ishaan-sync:end -->
 
 ## Team status
