@@ -25,6 +25,7 @@ P1 Fleet Doctor follow-ups: K17 list → SAFETY_PATHS_CONFIRMED; real token pric
 P2 Overnight launch: chaos schedule, laptop awake, demo tag
 P2 Morning digest by 7:30 AM: agent vs human actions
 P3 Real arm + polish, 9-10 AM: F2 and F3 on the real arm (with Olir, Andre)
+P3 Naive technician: hard failure -> Naive report + email + checked cart, 1 human click (docs/naive-technician/) <--- Kent
 Done: Romulus M0-M7 and M8 up to the canary (#19, #28, #38; B7 open), STM32 toolchain (B8, #24), Fleet Doctor L1 + L2 + Teach + L3 contract (#22-#44, all merged, off by default), edge bridge: pod healer → cloud (D29, #25)
 
 OLIR

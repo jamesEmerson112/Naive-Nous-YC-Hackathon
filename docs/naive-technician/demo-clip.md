@@ -1,59 +1,90 @@
-# The demo clip: 10–15 seconds of Naïve Technician
+# The demo clip: 10–15 seconds of Naïve Technician (v2)
 
-_What the beat has to land, in order of priority:_
-1. _Naïve agents took over when the robot couldn't fix itself._
-2. _They touched the real world: an email, a phone, a real web store._
-3. _A person stepped in exactly once._
+_What the beat has to land, in order:_
+1. _Some faults need hands, and the robot knows it._
+2. _A **Naïve** agent took the case._
+3. _It touched the real world: a technician's inbox and a real web store._
+4. _A person stepped in exactly once, to spend money._
 
-_Anything that doesn't serve those three gets cut._
+_Anything that doesn't serve those four gets cut. Numbers on screen are **measured** in the spike or the live run, never typed in. The figures below (2 min, $0.41) are placeholders._
+
+## The story: "Some faults need hands"
+The fault is a jammed elbow, and that should be visible on camera. Nobody needs it explained that a robot can't pull out its own jam, so the jam makes "can't fix itself" obvious at once. It also sets up the honest verdict: *"Elbow blocked or servo failing: needs hands."*
+- The technician is told to **clear the jam first**.
+- The servo is staged as a **spare**, in case the stall damaged it.
+- The human click is then a real judgment, not a rubber stamp.
+
+The v1 framing ("traces the stall to the elbow servo… the exact replacement") would show foam in the joint and then buy a motor. A judge would read that as "they jammed it and the AI ordered a part." Cropping the jam out to sell a "failed servo" story would mislead by omission, so don't do that either *(review, demo #1)*.
+
+**How to jam it.** Lock the elbow **in both directions**: a zip tie around the forearm and upper arm, or a firm grip that holds through the move back home.
+- **Why foam alone fails.** It blocks only the reach, so the healer's checked move home succeeds, and the stall is then reported `resolved=True` and no case opens (`armsim/host.py`'s `verify` counts it fixed once the home move arrives). Rehearsing in sim doesn't catch this, because sim's `joint_stuck` blocks both ways *(review, execution #2)*.
+- **Limits.** At most 2 takes, with 2 minutes between them, because a C018 heats up at stall. The servo stalls at about 2.94 N·m (`armsim/real.py`).
 
 ## The script
-Your draft is about 50 words, roughly 20 s at a normal 150 words a minute. It also says "a part needs to be replaced" as a certainty. On a wedged elbow, an honest agent will rank *jam* next to *failed servo*. So the script should say what the agent did, not overclaim what it knew *(inferred)*.
+**Kent's draft:**
+- It's about 50 words, roughly 20 s.
+- It opens on jargon ("integrate with the platform").
+- "It's concluded a part needs to be replaced" overclaims.
+- "Added it to a cart" is slightly off: the cart comes into being when a person opens the link.
 
-**15 s version (about 36 words):**
-> When the robot's own healer gives up, Romulus hands the case to a Naïve technician agent. It traces the stall to the elbow servo, emails a technician, and puts the exact replacement in a cart — one click for a human to approve.
+**15 s, recommended (37 words):**
+> Some faults need hands. The healer can't clear this jam, so a Naïve agent takes the case: diagnoses it, emails a technician what to check, and puts a spare servo in a cart. Our one step: approve.
 
-**10 s version (about 25 words):**
-> When the healer gives up, a Naïve technician agent takes over: diagnosis, technician emailed, replacement in the cart. A human makes one click.
+**15 s, closest to Kent's draft (35 words):**
+> Naïve agents take over when the robot can't fix itself. Here it diagnosed a jammed elbow, emailed a technician what to check, and staged a spare servo in a cart for a human to approve.
 
-**Captions only** (no voice-over; on-screen text does the work):
-`Healer gave up → Naïve technician` · `Diagnosed in 2 min · $0.41` · `Technician emailed` · `Part in cart · waiting on you` · `1 human click`
+**10 s (26 words):**
+> Some faults need hands. A Naïve agent takes the case: diagnoses it, emails a technician, puts a spare servo in a cart. We click once.
 
-## Shot list (15 s; drop shot 1 for the 10 s cut)
-| t (s) | Shot | On screen | Must be true when filmed |
+Say "Naïve" in the first 3 s: the Naïve SDK is required and the judges are the Naïve team *(review, demo #3)*.
+
+## Shot list (15 s; for the 10 s cut, drop shot 1 if the beat before ends on the arm, and keep shot 2 to 1.5 s)
+| t (s) | Shot | Caption (5 words or fewer) | Must be true when filmed |
 |---|---|---|---|
-| 0.0–2.5 | **Arm**, close: the elbow strains against a foam block and the arm parks | lower third: `Elbow stalled · healer: 2 tries · can't fix → hand off` | the real arm, `stories stall --real` (`prototypes/arm-sim/MORNING.md:15`) |
-| 2.5–6.0 | **Romulus Technician page**: the status rail goes Escalated → Diagnosed; feed lines tick in; the verdict appears | caption `Naïve agent · researching (2 min, sped up ×8)` | a real live session. Speed it up in the edit and **say so on screen** |
-| 6.0–9.0 | **Actions column**: "✓ Emailed technician" → hard cut to a teammate's phone: the email notification from the Romulus Technician inbox (or the phone ringing, if T1 is built) | caption `Technician emailed (and called)` | the real Naïve inbox. The email really arrives |
-| 9.0–12.5 | **"Order part · STS3215 · WowRobo · $15.99"** with the gate ticks → cursor clicks **Approve & open cart** → the real WowRobo cart page with the servo in it | caption `Human approves → real vendor cart` | the real Shopify cart link, built and price-checked by Romulus |
-| 12.5–15.0 | **Back to the page footer**: `4 agent actions · 3 on their own · 1 human click` and the session cost | caption `1 human click` | the counter counts the real actions |
+| 0–3 | **Arm**: the locked elbow strains and the arm parks; the story banner flips to "healer gave up → Naïve technician" | Some faults need hands | the real arm, or labelled footage (see the honesty rules below) |
+| 3–5 | **Naïve Studio**: the technician session's chat, with tool calls scrolling (`web_search`, `web_fetch shop.wowrobo.com/…`) | Naïve agent on the case | the same live session as shot 3 |
+| 5–7 | **Romulus page, zoomed**: the verdict lands under the "NAÏVE AGENT · technician" header | Diagnosed in 2 min | the measured duration. Say the speed-up on screen if it's sped up (2 min into 2 s is about 60×) |
+| 7–10 | **Phone filling the frame**, with the email open. From: "Romulus Technician (Naïve agent)". Subject: `arm-1 down: clear elbow jam, spare servo ready` (45 characters at most, so it reads on a lock screen) | Technician emailed | the real email arrived in a teammate's inbox. Film the phone with another phone |
+| 10–15 | **Spare-part card** with four ticks → the cursor clicks **Approve & open cart** → the **real WowRobo cart**, held 1.5 s → overlay `2 min · $0.41 · 1 human click` | You approve. That's it. | the cart link was built and price-checked by Romulus; the overlay numbers come from the case |
 
-**Why this order.** Each shot is one idea, and the eye always has one big thing to read: the verdict, a phone, a cart, a number. The phone shot and the cart shot are "proof of the real world"; they're the most persuasive frames, so each gets at least 3 s *(inferred, standard demo editing)*.
+**Why this order.** Each shot is one idea with one big thing to read: a jam, a transcript, a verdict, a phone, a cart. The two "proof of the real world" frames, the phone and the cart, get at least 3 s each.
+- **Shot 2 is new in v2.** It shows the run in Naïve's own UI: the strongest single frame for "this is really Naïve."
+- **The overlay replaces v1's separate counter shot.** v1's "4 agent actions · 3 on their own · 1 human click" didn't add up, since the human click isn't an agent action and tool calls weren't counted. The overlay is the business in three numbers: speed, cost per incident and human involvement *(review, demo #2, #4)*.
 
-## Making each frame legible (page requirements that come from the clip)
-- **The verdict is the largest text on the page,** one line of 140 characters at most (the schema enforces it, `design.md` §2.1).
-- **Status rail at the top:** four dots that fill. It reads at phone-video resolution where tables don't.
-- **Feed lines name real places:** "Read shop.wowrobo.com/…", "Checked Amazon". These lines are what make "did internet research" credible in under a second.
-- **Gate ticks under each action:** `✓ vendor ✓ in stock ✓ price ✓ under $50`. They show the human isn't approving blind, and that code, not the model, checked the money.
-- **The footer counter** is the judging question as a number.
-- **Before filming:** browser zoom at 125–150%, a dark or light theme matching the rest of the video, the cursor visible, notifications off except on the teammate's phone.
+## Honesty rules for the edit
+- **Match the arm to the incident.** If the page's incident came from a sim device, either leave the real arm out of the beat or caption the arm shot "re-enacted". Never splice footage so a sim incident looks like the real arm's.
+- **Label speed-ups.** Say on screen how much a shot is sped up.
+- **Label replays.** A replayed case shows its "Recorded Naïve session" badge in every frame.
+- **Say "staged a cart", never "ordered" or "paid".**
 
-## Live demo at 1 PM (if presented live, not only as video)
-A Naïve session takes minutes, not seconds *(inferred: about 10–15 model turns at a median of a few seconds each; measure it in the spike)*. So don't wait on it on stage:
-1. **Start of the pitch:** wedge the elbow and run the stall. Say "it can't fix this one; it's escalated" and move on.
-2. **Middle:** the other beats (software heal, rollback, fleet).
-3. **End:** open the Technician page. The case finished while we talked. Read the verdict, show the phone, click **Approve & open cart** live.
-4. **Fallback, decided before going on stage:** if the live case hasn't finished or failed, open the case recorded at 9:30 AM (`TECHNICIAN_MODE=replay`, with the "Replay of Naïve session …" badge visible). Say it's the run from this morning. Never present a replay as live (Constitution, Ethical).
+## Page requirements that come from the clip
+These are acceptance criteria, not polish (`design.md` §8):
+- **The verdict** is the largest text on the page, 36 px or more and 140 characters at most. Hypotheses, sources and gate details go below the fold.
+- **The header** reads "NAÏVE AGENT · technician · live session" (or the replay badge) in large type.
+- **The story banner** reuses James's "broke → parked → healing → …" wording, extended with "healer gave up → Naïve took over → waiting on you". Viewers will already know that banner from the earlier beats.
+- **Feed lines name real places:** "Read shop.wowrobo.com/…", "Checked Amazon".
+- **The gate ticks** sit on the part card: `✓ allowlisted vendor ✓ in stock ✓ price checked ✓ ≤ $50`.
+- **Approve opens the cart inside the click handler,** so no pop-up blocker fires.
+- **Before filming:** browser zoom 125–150%, the cursor visible, notifications off everywhere except the teammate's phone. In the edit, zoom into one region of the page per shot.
 
-## Capture checklist (by 10:00 AM, the code freeze)
-- [ ] One clean live run on the real arm. Its session is exported to the replay file (`build-plan.md` step 6).
-- [ ] A screen recording of the Technician page from escalation to done, 1080p or higher.
-- [ ] A phone recording of the email arriving (and the call, if T1). Film the phone with another phone; screen recordings of notifications look fake *(inferred)*.
-- [ ] A screen recording of Approve → the WowRobo cart.
-- [ ] The arm shot of the stall and park. Reuse the stall story footage if it was already filmed.
-- [ ] A backup: the whole beat run once in `replay` mode, for the backup video.
+## At the table (11:00 judging) and on stage (1 PM)
+**30-second table version.**
+1. Open the finished case page and read the verdict.
+2. Hand over the teammate's phone, with the email open.
+3. Click Approve; the WowRobo cart opens.
+4. When asked where you stepped in: "Once, to spend money. The technician is a contractor the agent dispatched."
+
+**On stage.** A session takes minutes *(measure it in the spike)*, so don't wait for it live.
+1. **Before going on:** if the spike took more than about 90 s, jam the arm before the pitch and say so. **Pre-open the replay case in a tab.**
+2. **During the other beats:** the case runs.
+3. **End:** open the case. If it's done, read the verdict, show the phone (mirrored to the projector, since a phone held up on stage is invisible) and click Approve live.
+4. **Fallback:** if it isn't done, switch to the replay tab, with its badge visible, and say "this is the run from this morning." No restart needed, because replay is chosen per case.
+5. **Logistics:** bring a hotspot, since the Naïve API, the email and WowRobo all need internet. Don't use sound: a Twilio trial reads a notice first.
+
+**Line for the business story, using measured numbers only:**
+> That's a field-service dispatcher's job, done by a Naïve agent in two minutes for forty cents. Every arm in the fleet gets it.
 
 ## What not to show
-- **Naïve's dashboard live view.** It's withheld from API keys, so we can't embed it (F:20086), and it takes the eye off Romulus.
-- **Raw JSON, logs, or the work-order `needs_human` row.** That's the old dead end; the Technician page replaces it.
-- **Any claim that it "ordered" or "paid".** It staged a cart; a person checks out. "Puts it in a cart for a human to approve" is accurate, so keep that wording.
+- **Naïve's browser live view.** It can't be embedded, because it answers only a signed-in Studio session (F:20086), and the T0 agent has no browser anyway.
+- **Raw JSON, logs, or the old `needs_human` row.** The Technician page replaces that dead end.
+- **The sponsor tools (AgentMail, Mobilerun, Monid).** They'd weaken the main-track Naïve story. The only exception: AgentMail is the email fallback if Naïve's outbound mail returns 501, labelled honestly (`design.md` §4) *(review, demo #10)*.
