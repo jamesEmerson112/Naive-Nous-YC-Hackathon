@@ -90,9 +90,11 @@ _Last updated: Sat Nov 7, 11:52 PM PST_
 - Fleet Doctor follow-ups (#52): keep `DOCTOR_DRAFT=coder` off on real device text until B5 (#46) merges; `SAFETY_PATHS_CONFIRMED` stays false, discarding every proposal, until Ishaan sends the K17 safety and visor path list; `DOCTOR_USD_PER_1K_TOKENS=0.001` is a placeholder; gate replay hardening is in progress on `cloud/replay-hardening` (not on GitHub yet)
 - Pod healer bench runs: the model runs on the laptop over Ethernet (#43), but nothing has been checked on the bench yet: `pi_check.py`, podd, SWD, flashing, the scenarios, the SSH `--target` path, or the `claude` driver against the live API (HANDOFF.md, Ishaan's block). A read-only pass over `firmware/healer/` (James's session) found no ultrasonic "frozen" or `out_of_range` triage rule in `detect.py`, only `us_no_echo`, `us_intermittent` and `us_blocked`, which matters for the bad-ultrasonic heal test *(inferred)*
 - Overlaps the notice PRs flag: Andre's arm files exist twice (his branch and a flat `arm/` on main from #36); three real-arm drivers (Andre's `arm/prims/`, Olir's `arm/safe_replay.py`, James's `prototypes/arm-sim/`); the cm-vs-mm ultrasonic and shared `/dev/ttyACM0` clash from #31. Which driver wins? *(inferred)*
-- Team calls still open: Stripe direction (Kent's block still lists it as P0 with James; James's line says to tell Kent it is optional), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email)
+- Team calls still open: Stripe is now optional, only if we're ahead (Kent's block at 11:48 PM matches James's line), Monid's job, owners for the unclaimed lines (fleet-ops, Mobilerun key, Stripe payment, AgentMail email)
 
 **Recent commits (all authors):**
+- `a42ef74` Sat 23:53 · jamesEmerson112 · Update team status in CLAUDE.md
+- `52032cd` Sat 23:48 · Kent Gang · Update Kent status in CLAUDE.md
 - `0960a83` Sat 23:39 · jamesEmerson112 · Update team status in CLAUDE.md
 - `2f56e2d` Sat 23:31 · jamesEmerson112 · Hub: our build plan and James's features.txt lines in the Sim + control lane
 - `0240aee` Sat 23:29 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -101,8 +103,6 @@ _Last updated: Sat Nov 7, 11:52 PM PST_
 - `2e71f56` Sat 23:23 · kgang · Fleet Doctor PR 7: real evidence, coder draft, sandbox check, consult traces (#44)
 - `96ac33a` Sat 23:18 · jamesEmerson112 · Update team status in CLAUDE.md
 - `9c61066` Sat 23:16 · Ishaan Ranjan · Update Ishaan status in CLAUDE.md
-- `126d521` Sat 23:08 · jamesEmerson112 · Update team status in CLAUDE.md
-- `7c734da` Sat 22:59 · jamesEmerson112 · Update team status and features.txt
 
 **Branches on GitHub:** `main`; open PR branches `cloud/b5-egress` (#46, Kent) and the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `arm/teleop-recording` (Andre, no PR); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); merged and still on GitHub: `doctor/evidence-real` (#44), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
