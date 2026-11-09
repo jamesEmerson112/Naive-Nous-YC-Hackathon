@@ -15,14 +15,23 @@ from armsim import loopgif  # noqa: E402
 
 
 def test_every_scene_draws_its_whole_story():
-    for name, (draw, _, end, _) in loopgif.SCENES.items():
+    for name, (draw, _, end, *_) in loopgif.SCENES.items():
         for t in (0.0, end / 2, end, end + 5):
             im = draw(t)
             assert im.size == (loopgif.OUT_W, loopgif.OUT_H), (name, t, im.size)
 
 
+def test_every_caption_stays_up_long_enough_to_read():
+    fps = loopgif.FPS
+    for name, (_, _, end, _, captions) in loopgif.SCENES.items():
+        ts = loopgif.story_times(end, fps, captions)
+        for t0, t1, _, _, words in captions[:-1]:
+            shown = sum(1 for t in ts if t0 <= t < t1) / fps
+            assert shown >= len(words.split()) / loopgif.WPS - 1 / fps, (name, words, shown)
+
+
 def test_the_palette_keeps_the_theme_colours():
-    draw, _, end, times = loopgif.SCENES["heal"]
+    draw, _, end, times, _ = loopgif.SCENES["heal"]
     pal = loopgif.palette_from(draw, times[:2]).getpalette()[: 3 * 255]
     colours = {tuple(pal[i:i + 3]) for i in range(0, len(pal), 3)}
     for col in (loopgif.AMBER, loopgif.RED, loopgif.GREEN, loopgif.VIOLET, loopgif.PINK, loopgif.CYAN):
@@ -34,7 +43,7 @@ def test_a_short_gif_stores_only_what_changed():
         out = Path(d) / "loop.gif"
         old = loopgif.SCENES["heal"]
         claim = lambda t: old[0](t + 4.8)                       # noqa: E731  the card moving to doing, 1 s of it
-        loopgif.SCENES["heal"] = (claim, out, 1.0, old[3][:2])
+        loopgif.SCENES["heal"] = (claim, out, 1.0, old[3][:2], old[4][:1])      # one caption: no pauses
         try:
             loopgif.build("heal", out, 5)
         finally:
@@ -47,7 +56,7 @@ def test_a_short_gif_stores_only_what_changed():
 
 
 if __name__ == "__main__":
-    for fn in (test_every_scene_draws_its_whole_story, test_the_palette_keeps_the_theme_colours,
-               test_a_short_gif_stores_only_what_changed):
+    for fn in (test_every_scene_draws_its_whole_story, test_every_caption_stays_up_long_enough_to_read,
+               test_the_palette_keeps_the_theme_colours, test_a_short_gif_stores_only_what_changed):
         fn()
         print("ok ", fn.__name__)

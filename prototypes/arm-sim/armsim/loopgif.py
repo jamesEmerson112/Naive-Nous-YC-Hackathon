@@ -159,20 +159,19 @@ P_CHECKIN = [(338, 382), (338, BUS_Y), (741, BUS_Y), (741, 148), (764, 148)]
 
 # ---- the story, in seconds ------------------------------------------------------------------------------------
 CAPTIONS = [  # t0, t1, step, colour of who acts, caption
-    (0.0, 1.4, "", DIM, "One order, one stuck sensor, nobody typing: how the data moves."),
+    (0.0, 1.4, "", DIM, "One order, one stuck sensor, nobody typing."),
     (1.4, 4.6, "1", PINK, "An order lands on the Naïve board as an ARM JOB card."),
-    (4.6, 7.6, "2", PINK, "The dispatcher claims the card and hands it to Hermes. From here on, nobody types."),
-    (7.6, 11.5, "3", VIOLET, "Hermes runs the arm one skill at a time and never sends joint angles. "
-                             "The wrist distance streams to plain code through podd."),
+    (4.6, 7.6, "2", PINK, "The dispatcher claims it and hands it to Hermes. From here on, nobody types."),
+    (7.6, 11.5, "3", VIOLET, "Hermes runs the arm one skill at a time, never joint angles. Readings stream "
+                             "through podd to plain code."),
     (11.5, 14.8, "4", RED, "The watchdog (plain code, no model) sees “Distance stuck at 130 mm while the arm "
                            "moved 29 mm” and parks the arm."),
-    (14.8, 17.6, "5", VIOLET, "Hermes gets the incident back. A guard refuses any move while it's open, so Hermes "
-                              "reads the arm and calls arm_restart_sensor."),
-    (17.6, 21.4, "6", GREEN, "podd restarts the sensor, and the watchdog checks it at home: fresh readings, "
-                             "podd agrees. Healed."),
+    (14.8, 17.6, "5", VIOLET, "A guard blocks Hermes's next move while the fault is open. Hermes reads the arm "
+                              "and calls arm_restart_sensor."),
+    (17.6, 21.4, "6", GREEN, "podd restarts the sensor. The watchdog checks it at home: fresh readings, podd "
+                             "agrees. Healed."),
     (21.4, 26.4, "7", VIOLET, "Hermes redoes the job, posts RESULT: on the card and moves it to done."),
-    (26.4, 29.4, "8", BLUE, "Romulus gets the incident and its log window, the evidence for later. "
-                            "No work order: no person was needed."),
+    (26.4, 29.4, "8", BLUE, "Romulus gets the incident and its log window. No work order: no person was needed."),
     (29.4, 99.0, "", GREEN, "Nobody types anything after the order. No model sits in the real-time loop."),
 ]
 PHASES = [(0.0, "IDLE", DIM), (4.8, "WORKING", CYAN), (11.6, "PARKED", RED), (17.0, "HEALING", AMBER),
@@ -472,22 +471,18 @@ BAGS = [((114, 314), (30, 13), (222, 58, 58)), ((129, 311), (28, 13), (238, 136,
 FLASHES = [12.0, 15.6, 19.0, 21.6]                                          # camera frames sent to the Mac
 P_CAM = [(30, 292), (30, BUS_Y), (469, BUS_Y), (469, 233), (492, 233)]
 EXP_CAPTIONS = [
-    (0.0, 1.2, "", DIM, "One of the 102 tries, from the Nov 8 try log: Astra plans it, the arm runs it, the camera "
-                        "reports back."),
-    (1.2, 4.8, "1", VIOLET, "Astra reads the try log and the latest camera frames, with a labelled grid it names "
-                            "cells by."),
+    (0.0, 1.2, "", DIM, "One of the 102 tries, from the Nov 8 try log."),
+    (1.2, 4.8, "1", VIOLET, "Astra reads the try log and the latest camera frames, gridded so it can name cells."),
     (4.8, 9.0, "2", VIOLET, "It writes the next test as JSON, with its reason: recording_2, pan −4, speed 0.5 "
                             "(24.1 s)."),
-    (9.0, 11.6, "3", CYAN, "gentest on the Mac keeps pan within ±10° and speed within 0.5–1.0, then starts the try "
-                           "on the Pi over SSH."),
-    (11.6, 16.6, "4", CYAN, "The Pi replays Andre's taught recording_2, turned −4° at the base. The jaws close on "
-                            "the pile at 16.7 s and squeeze to 99%."),
-    (16.6, 22.2, "5", GREEN, "Three bags stay in the jaws for 20.7 s, over the box and back, until the gripper "
-                             "reports an overload (alarm 32)."),
-    (22.2, 25.0, "6", BLUE, "The Pi writes grip time, jaw tip and joints to the try log, and the frames go back to "
-                            "Astra."),
-    (25.0, 28.4, "7", VIOLET, "Astra judges the last try UNSURE and plans the next one: a probe at pan −2, which it "
-                              "calls GO. Then again, all afternoon."),
+    (9.0, 11.6, "3", CYAN, "gentest on the Mac clamps pan (±10°) and speed (0.5–1.0), then starts the try on the Pi "
+                           "over SSH."),
+    (11.6, 16.6, "4", CYAN, "The Pi replays Andre's recording_2, turned −4° at the base. The jaws close on the pile "
+                            "at 16.7 s."),
+    (16.6, 22.2, "5", GREEN, "Squeezed to 99%, three bags stay in the jaws for 20.7 s, until alarm 32: gripper "
+                             "overload."),
+    (22.2, 25.0, "6", BLUE, "The Pi logs grip time, jaw tip and joints; the frames go back to Astra."),
+    (25.0, 28.4, "7", VIOLET, "Astra judges it UNSURE and plans the next: a probe at pan −2, which it calls GO."),
     (28.4, 99.0, "", GREEN, "Nobody touches the arm. The bench camera is Astra's only eye."),
 ]
 EXP_PHASES = [(0.0, "WAITING", DIM), (1.2, "PLANNING", VIOLET), (9.0, "TRYING", CYAN),
@@ -637,11 +632,27 @@ def caption(c, t, captions, footnote):
         c.text((x, 500), footnote, "body", 14, MUTED)
 
 
-SCENES = {  # name: draw, GIF, last change, frames whose colours make the palette
-    "heal": (draw, OUT, END, [0.0, 3.0, 6.0, 10.5, 12.5, 16.0, 17.5, 20.5, 23.5, 27.5, END]),
+SCENES = {  # name: draw, GIF, last change, frames whose colours make the palette, captions
+    "heal": (draw, OUT, END, [0.0, 3.0, 6.0, 10.5, 12.5, 16.0, 17.5, 20.5, 23.5, 27.5, END], CAPTIONS),
     "experiment": (draw_experiment, EXP_OUT, EXP_END, [0.0, 3.0, 7.0, 10.0, 14.0, 16.2, 19.0, 21.2, 23.0, 27.0,
-                                                       EXP_END]),
+                                                       EXP_END], EXP_CAPTIONS),
 }
+WPS = 3.3                                                  # reading speed, words a second
+
+
+def story_times(end, fps, captions):
+    """The GIF's frames as story times. The story runs at 1x, and pauses on a caption's last frame until the
+    caption has been up long enough to read (its words / WPS). A pause repeats one frame, which costs almost
+    nothing: Pillow merges identical frames into one longer one."""
+    holds = {}
+    for t0, t1, _, _, words in captions[:-1]:
+        extra = len(words.split()) / WPS - (t1 - t0)
+        if extra > 0:
+            holds[round(t1 * fps) - 1] = round(extra * fps)
+    ts = []
+    for k in range(int(end * fps) + 1):
+        ts += [k / fps] * (1 + holds.get(k, 0))
+    return ts
 
 
 THEME = [TEXT, MUTED, DIM, CYAN, VIOLET, PINK, BLUE, GREEN, RED, AMBER, BEAM, LINK, JOINT, (230, 120, 96),
@@ -669,11 +680,14 @@ def palette_from(draw_fn, times):
 
 
 def build(name, out, fps):
-    draw_fn, _, end, times = SCENES[name]
+    draw_fn, _, end, times, captions = SCENES[name]
     pal = palette_from(draw_fn, times)
-    n = int(end * fps) + 1
-    frames = [draw_fn(k / fps).quantize(palette=pal, dither=Image.Dither.NONE) for k in range(n)]
-    ms = [round(1000 / fps)] * (n - 1) + [HOLD_MS]
+    frames, last = [], (None, None)
+    for t in story_times(end, fps, captions):
+        if t != last[0]:
+            last = (t, draw_fn(t).quantize(palette=pal, dither=Image.Dither.NONE))
+        frames.append(last[1])
+    ms = [round(1000 / fps)] * (len(frames) - 1) + [HOLD_MS]
     out.parent.mkdir(parents=True, exist_ok=True)
     # optimize=True: Pillow stores each frame as the box that changed, with unchanged pixels transparent (the
     # palette keeps one index free for that).
