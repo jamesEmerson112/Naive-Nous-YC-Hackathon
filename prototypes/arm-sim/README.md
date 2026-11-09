@@ -166,7 +166,7 @@ uv pip install --python .venv/bin/python -e ../../packages/contracts -e ../../to
   <img alt="The stall story in the sim twin: the elbow stops 25 degrees short of its target, the arm parks and the incident goes to a person" src="media/sim/story-stall.gif" width="270">
 </p>
 
-The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The yellow line is the pod's ultrasonic beam to the green block, and the status line at the top shows the distance and why the arm parked.
+The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The yellow line is the pod's ultrasonic beam to the green block, and the status line at the top shows the distance and why the arm parked. The same faults, plus `redo`, are shown as Mission Control sees them after the commands table below.
 
 
 **The autonomous loop, Mission Control and the healer's manager** (all `PYTHONPATH=. .venv/bin/python -m …`, with the arm host up):
