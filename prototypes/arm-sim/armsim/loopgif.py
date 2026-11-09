@@ -438,8 +438,9 @@ def draw(t):
         c.text((INCIDENTS[0] + 10, INCIDENTS[1] + 40), "none yet", "mono", 14, DIM, "lm")
     moving_dot(c, P_REPORT, t, *REPORT, BLUE, 5)
     box(c, ORDERS, "work orders")
-    c.text((ORDERS[0] + 10, ORDERS[1] + 40), "none needed" if got else "only on a hand-off", "mono", 14,
+    c.text((ORDERS[0] + 10, ORDERS[1] + 38), "none needed" if got else "only on a hand-off", "mono", 14,
            GREEN if got else DIM, "lm")
+    c.text((ORDERS[0] + 10, ORDERS[1] + 58), "a Naïve card for a person", "body", 13, DIM, "lm")   # romulus.py
 
     caption(c, t, CAPTIONS, "Drawn from real runs: story b with Hermes in the sim, and a Naïve card on the real arm.")
     return c.frame()

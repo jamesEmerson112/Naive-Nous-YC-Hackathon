@@ -170,6 +170,8 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
 
 Long heals are fine, because the robot is parked and the process is autonomous. *(team)* The LLM is never part of the real-time control or safety loop; it acts only while the arm is parked (Romulus design rule; *(team)*).
 
+**As built:** one pass through this loop, from the arm-sim prototype, is animated in the root README ([How the pieces fit](../README.md#how-the-pieces-fit)). A stuck sensor parks the arm, and Hermes heals it from a Naïve card, with nobody typing after the order.
+
 ### 8.2 Health tiers *(team)*
 
 | Tier | Catches | Signals *(inferred)* |
