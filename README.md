@@ -39,6 +39,11 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 
 <img alt="Mission Control with a dead elbow: the order starts, the header turns to PARKED: elbow stalled, then HEALING while the arm retries at home, then NEEDS A PERSON with the card in Blocked and a work order opened, and finally FIXED by a person, checked at home" src="prototypes/arm-sim/media/sim/mission-control-stall.gif" width="800">
 
+<details><summary>A stuck sensor, healed in 6.5 s: the distance reading freezes mid-job, the arm parks, and a scripted heal restarts the sensor through podd</summary>
+
+<img alt="Mission Control with a stuck sensor: WORKING, then the stuck sensor is planted while the watchdog watches; at the lift the header turns to PARKED: stuck sensor, the ultrasonic output frozen at 39 identical readings, then HEALING with the fallback script restarting the sensor, then HEALED in 6.5 s with no person needed, and the order finishes in 22 s" src="prototypes/arm-sim/media/sim/mission-control-stuck-sensor.gif" width="800">
+</details>
+
 <details><summary>The same screen when nothing is broken: an order runs itself in 15 s</summary>
 
 <img alt="Mission Control during a pick order: the header goes from idle to queued to working, the twin goes home, reaches over the block and approaches it while the wrist distance counts down, the card moves to Done, and the commander feed logs each step" src="prototypes/arm-sim/media/sim/mission-control-pick.gif" width="800">
@@ -124,6 +129,7 @@ PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted & 
 
 In Mission Control:
 - **1** places an order.
+- **3** plants a stuck sensor. It needs the virtual sensor pod: start the host with `--pod sim --var "$TMPDIR/armsim-pod"`. Keep that folder's path short, since podd's socket path has a length limit.
 - **5** plants a dead elbow.
 - **6** bumps the block, so the next grasp misses. The dispatcher heals that only when started with `--manager fake --wrong-action redo`.
 - **7** is "a person fixed it".
