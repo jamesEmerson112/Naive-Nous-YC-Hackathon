@@ -6,6 +6,10 @@ The simulated SO-101 bench, and since Sun Nov 8 the whole self-healing loop.
 
 The morning checklist and the open decisions are in [`MORNING.md`](MORNING.md).
 
+**On this page:**
+- [The real-arm experiment](#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8): charts, GIFs, what to fix next.
+- [Everything together, in one place](#everything-together-in-one-place): setup, the self-healing stories, the commands, Mission Control, the real arm.
+
 ## The real-arm experiment: Astra picks up the red bag (Nov 8)
 On the last afternoon, the arm tried to pick up a red bag of chips and drop it in a box, with an LLM, not a person, deciding each attempt.
 - **The planner:** Astra (`gpt-6-astra` through Hermes). It reads the camera and a JSON log of every earlier try, then designs the next test.
