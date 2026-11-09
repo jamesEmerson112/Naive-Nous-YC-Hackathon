@@ -4,7 +4,7 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sun Nov 8, 11:48 AM PST from CLAUDE.md, commits and docs/.
+Updated Mon Nov 9, 2:48 AM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
@@ -241,3 +241,4 @@ Romulus: Heal-agent run reports on the dashboard <--- Olir
 Demo and faults: Ultrasonic v1.8 near-hold image + heal test <--- Olir
 Romulus: Fleet learning: verified heal traces → training data <--- Kent
 Hermes: Camera look before/after card jobs (vision) <--- James
+Demo and faults: Real-arm gentest write-up + charts (report.py) <--- James
