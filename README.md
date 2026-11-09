@@ -4,6 +4,8 @@ A robotic-arm company that heals itself. When something breaks on a robot (an SO
 
 Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole story: [`docs/project-overview.md`](docs/project-overview.md).
 
+**On this page:** [See it](#see-it) · [How the pieces fit](#how-the-pieces-fit) · [What's where](#whats-where) · [Run it](#run-it)
+
 ## See it
 **The pitch.** Hardware Buddy: self-healing hardware for robotics and manufacturing. This is Andre's pitch animation ([`pitch/`](pitch/storyboard.md)), the part before the live demo:
 
@@ -97,3 +99,23 @@ make test                                               # every Python test (thr
 ```
 
 With the pod on the bench, start podd (`firmware/healer/bin/podd`) on the Pi, then the bridge: `uv run python -m edge_bridge --url http://<laptop-LAN-IP>:8000` ([setup](tools/edge_bridge/README.md#run-it-on-the-pi)).
+
+**The arm in the simulator, with Mission Control** (no hardware, no Docker; this is how the Mission Control GIFs above were made):
+
+```bash
+cd prototypes/arm-sim
+./setup.sh                                                          # MuJoCo Menagerie's SO-101 model into vendor/
+uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
+PYTHONPATH=. .venv/bin/python -m armsim poses                       # the sim's taught poses
+PYTHONPATH=. .venv/bin/python -m armsim.host --realtime &           # the sim arm, paced to wall-clock time
+PYTHONPATH=. .venv/bin/python -m armsim.mission --board file &      # Mission Control on http://localhost:8765
+PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted &   # runs the orders
+```
+
+In Mission Control:
+- **1** places an order.
+- **5** plants a dead elbow.
+- **7** is "a person fixed it".
+- **V** switches between the twin and the split view.
+
+More in [`prototypes/arm-sim/README.md`](prototypes/arm-sim/README.md).
