@@ -85,15 +85,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Mon Nov 9, 3:28 AM PST_
+_Last updated: Mon Nov 9, 3:37 AM PST_
 
-**Current focus:** after the hackathon: James is writing up what the team built in the root `README.md`. "See it" now has Mission Control GIFs for a stuck sensor (parked on 39 identical readings, healed in 6.5 s with no person) and bad pod image 07 (parked 98 mm short, rolled back to v1.1, healed in 20.6 s), linked to an anchor in the arm-sim README (`2b87067`–`8166be9`). The raw data stays local and git-ignored (`data/hackathon-*/`).
+**Current focus:** after the hackathon: James is writing up what the team built in the root `README.md`. "See it" now has Mission Control GIFs for a stuck sensor (parked on 39 identical readings, healed in 6.5 s with no person) and bad pod image 07 (parked 98 mm short, rolled back to v1.1, healed in 20.6 s), linked to an anchor in the arm-sim README (`2b87067`–`8166be9`); the sim recipe now starts the host with the virtual sensor pod, so keys 3 and 4 work as written (`baa88c8`, `e492d24`). The raw data stays local and git-ignored (`data/hackathon-*/`).
 
 **Recently done:**
+- James: README recipe fixes: the host starts with the virtual sensor pod so keys 3 and 4 work as is (`baa88c8`); the pod folder falls back to /tmp when TMPDIR is unset, as `demo/up.sh` does (`e492d24`); the arm-sim README says its Mission Control GIFs are three heals, a hand-off and a plain pick (`8887438`)
 - James: README: stuck-sensor and pod-image-07 Mission Control GIFs (keys 3 and 4 in the recipe, `2b87067`, `e75d78f`, `a4ab585`); which heals are folded under the two shown (`141dcec`); Astra planned 96 of the 102 real-arm tries (`ebc7a31`); an anchor on the arm-sim Mission Control GIFs, linked from the root README and the sim stories (`e17ec44`, `f8017de`, `8166be9`)
 - James: README fixes: the wrong-move GIF (key 6, `26352a8`); where arm-sim fits (`d4fc952`); the edge bridge beside the real podd in the arm-sim demo (`171cdaf`); eight known-bad firmware demo images, not six (`67c64b7`); an "On this page" list in the arm-sim README (`4487e2c`)
 - James: root README GIFs: Hardware Buddy pitch (`e45cee3`), Mission Control pick order and dead-elbow stall in the sim (`6223cf6`, `21d251f`); contents line and sim + Mission Control run recipe (`b241561`)
-- James: real-arm write-up and charts (`46f6f3d`): `armsim/report.py` redraws them from `data/hackathon-2026-11-08/`; 102 tries (70 full, 32 probes), the red bag never reached the box
 
 **Open questions:**
 - Naïve is flaky (429s and an `internal_error` this morning): go with the live board on stage, or the local fallback (Mission Control's button + the Pi's scripted dispatcher, proven at 11:10)? `armsim/hermes_file.py` (Hermes over the file board) isn't built (`HANDOFF-LOCAL.md` §4)
@@ -102,16 +102,16 @@ _Last updated: Mon Nov 9, 3:28 AM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `e492d24` Mon 03:29 · jamesEmerson112 · README: the pod folder falls back to /tmp when TMPDIR is unset, as demo/up.sh does
+- `baa88c8` Mon 03:29 · jamesEmerson112 · README: the sim recipe starts the host with the virtual sensor pod, so keys 3 and 4 work as is
+- `2ffec75` Mon 03:28 · jamesEmerson112 · Update team status in CLAUDE.md
+- `8887438` Mon 03:28 · jamesEmerson112 · arm-sim README: the Mission Control GIFs are three heals, a hand-off and a plain pick
 - `8166be9` Mon 03:27 · jamesEmerson112 · arm-sim README: Mission Control in the sim in the On this page list
 - `f8017de` Mon 03:27 · jamesEmerson112 · README: an anchor on the arm-sim Mission Control GIFs, linked from the root README and the sim stories
 - `a4ab585` Mon 03:26 · jamesEmerson112 · README: the stuck-sensor GIF parks during the release, not the lift
 - `ebc7a31` Mon 03:24 · jamesEmerson112 · README: Astra planned 96 of the 102 real-arm tries (six came from the fixed list that ran first; one go-ahead was James's call)
 - `e17ec44` Mon 03:23 · jamesEmerson112 · arm-sim README: point from the story GIFs to Mission Control's view of the same faults
 - `141dcec` Mon 03:22 · jamesEmerson112 · README: say which Mission Control heals are folded under the two shown
-- `e75d78f` Mon 03:22 · jamesEmerson112 · README: Mission Control healing bad pod image 07 in the sim (parked 98 mm short, us_mismatch, rolled back to v1.1, healed in 20.6 s), as a GIF; key 4 in the recipe
-- `2b87067` Mon 03:20 · jamesEmerson112 · README: Mission Control healing a stuck sensor in the sim (parked on 39 identical readings, a scripted restart, healed in 6.5 s with no person), as a GIF; key 3 and the host's --pod sim in the recipe
-- `6fad16e` Mon 03:18 · jamesEmerson112 · Update team status in CLAUDE.md
-- `67c64b7` Mon 03:16 · jamesEmerson112 · README: firmware/ has eight known-bad demo images (07 and 08 came with the arm heal test), not six
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
