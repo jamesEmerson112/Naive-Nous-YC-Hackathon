@@ -48,7 +48,7 @@ In the sim, a stand-in does the pod healer's rollback ([story a](prototypes/arm-
 
 <details><summary>A stuck sensor, healed in 6.5 s: the distance reading freezes mid-job, the arm parks, and a scripted heal restarts the sensor through podd</summary>
 
-<img alt="Mission Control with a stuck sensor: WORKING, then the stuck sensor is planted while the watchdog watches; at the lift the header turns to PARKED: stuck sensor, the ultrasonic output frozen at 39 identical readings, then HEALING with the fallback script restarting the sensor, then HEALED in 6.5 s with no person needed, and the order finishes in 22 s" src="prototypes/arm-sim/media/sim/mission-control-stuck-sensor.gif" width="800">
+<img alt="Mission Control with a stuck sensor: WORKING, then the stuck sensor is planted while the watchdog watches; during the release the header turns to PARKED: stuck sensor, the ultrasonic output frozen at 39 identical readings, then HEALING with the fallback script restarting the sensor, then HEALED in 6.5 s with no person needed, and the order finishes in 22 s" src="prototypes/arm-sim/media/sim/mission-control-stuck-sensor.gif" width="800">
 </details>
 
 <details><summary>The same screen when nothing is broken: an order runs itself in 15 s</summary>
