@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/readme/hero.svg" width="100%" alt="Hardware Buddy: robots that fix themselves. A heartbeat line runs green, goes flat and red when the arm stops, Buddy heals it, and it runs green again.">
+  <img src="docs/readme/hero.svg" width="100%" alt="Hardware Buddy: robots that fix themselves. A robot arm picks up a block, a firmware bug stops it dead, Buddy rolls the firmware back offline, and the arm finishes the job with nobody touching it.">
 </p>
 
 <p align="center">
@@ -8,10 +8,10 @@
 </p>
 
 <p align="center">
-  <img alt="Built on the Naïve SDK" src="https://img.shields.io/badge/built_on-Na%C3%AFve_SDK-6D5DF6?style=flat-square">
-  <img alt="Local model qwen3.5:4b, 3.3 GB" src="https://img.shields.io/badge/local_model-qwen3.5%3A4b_%C2%B7_3.3_GB-22B07D?style=flat-square">
-  <img alt="Hardware SO-101, Pi 5, STM32" src="https://img.shields.io/badge/hardware-SO--101_%C2%B7_Pi_5_%C2%B7_STM32-F08A4B?style=flat-square">
-  <img alt="Commander Hermes Agent" src="https://img.shields.io/badge/commander-Hermes_Agent-1F1B2E?style=flat-square">
+  <img alt="Built on the Naïve SDK" src="https://img.shields.io/badge/built_on-Na%C3%AFve_SDK-8250DF?style=flat-square">
+  <img alt="Local model qwen3.5:4b, 3.3 GB" src="https://img.shields.io/badge/local_model-qwen3.5%3A4b%2C_3.3_GB-1A7F37?style=flat-square">
+  <img alt="Hardware SO-101, Pi 5, STM32" src="https://img.shields.io/badge/hardware-SO--101%2C_Pi_5%2C_STM32-59636E?style=flat-square">
+  <img alt="Commander Hermes Agent" src="https://img.shields.io/badge/commander-Hermes_Agent-1F2328?style=flat-square">
 </p>
 
 <p align="center">
@@ -19,8 +19,7 @@
   <a href="#how-it-works"><b>How it works</b></a> ·
   <a href="#the-numbers"><b>Numbers</b></a> ·
   <a href="#see-it"><b>See it</b></a> ·
-  <a href="#run-it"><b>Run it</b></a> ·
-  <a href="#team"><b>Team</b></a>
+  <a href="#run-it"><b>Run it</b></a>
 </p>
 
 ## Watch the demo
@@ -40,10 +39,10 @@ One heal loop, at three scales. A model proposes a fix that can be undone, plain
 ### 1. The robot heals itself, offline
 
 <p align="center">
-  <img src="docs/readme/heal.svg" width="100%" alt="A real bench run with no internet and nobody touching it: bad firmware at 0 s, rolled back at 46 s, the job runs clean at 72 s, root cause found at 141 s.">
+  <img src="docs/readme/heal.svg" width="100%" alt="A real bench run with no internet and nobody touching it: bad firmware v1.7 at 0 s, rolled back to v1.0 at 46 s, the job runs clean at 72 s, root cause found at 141 s.">
 </p>
 
-That's a real run on our bench ([`firmware/harness/RESULTS.md`](firmware/harness/RESULTS.md)). We flashed the sensor pod with v1.7, a release with a bug planted in its distance math, and the arm's obstacle reflex started firing at nothing. The healer, `qwen3.5:4b` running locally through Ollama, rolled the firmware back, re-ran the job cleanly, and traced the bug to one line:
+That's a real run on our bench, with no internet and nobody touching it ([`firmware/harness/RESULTS.md`](firmware/harness/RESULTS.md)). We flashed the sensor pod with v1.7, a release with a bug planted in its distance math, and the arm's obstacle reflex started firing at nothing. The healer, `qwen3.5:4b` running locally through Ollama, rolled the firmware back, re-ran the job cleanly, and traced the bug to one line:
 
 ```diff
 @@ src/hcsr04.c:122 · the line the healer traced (v1.7 → v1.0) @@
@@ -83,7 +82,7 @@ At 3.3 GB, `qwen3.5:4b` fits on the edge box. For comparison, the big cloud age
 ### 2. When it needs hands, a Naïve agent takes the case
 
 <p align="center">
-  <img src="docs/readme/technician.svg" width="100%" alt="A live run: the arm jams and the healer parks it, a Naïve agent diagnoses it, plain code emails a technician and stages the spare part, and a person approves the purchase. 38 s to a case, $0.08 per case, 1 human click.">
+  <img src="docs/readme/technician.svg" width="100%" alt="A live run: the arm jams and the healer parks it, a Naïve agent diagnoses it in one 27 s session for $0.08, plain code emails a technician and stages the spare part, and a person approves the purchase. 38 s from the jam to a case waiting for approval.">
 </p>
 
 A robot can't pull out its own jam. When the healer parks the arm for a hardware fault, Romulus, our cloud, opens a work order and the **Naïve Technician** takes it ([`docs/naive-technician/`](docs/naive-technician/README.md)). A Naïve agent diagnoses the fault, plain code emails a technician what to check and stages the spare part, and a person approves the purchase. That's the one step we keep human.
@@ -91,7 +90,7 @@ A robot can't pull out its own jam. When the healer parks the arm for a hardware
 ### 3. Across the fleet, every fault happens once
 
 <p align="center">
-  <img src="docs/readme/fleet.svg" width="100%" alt="A live run: a fix fails on one robot, a Naïve agent writes a skill, the gate replays it and tries it on a simulated canary, and it is promoted to the fleet 57 s after the agent session opened, with 0 human clicks.">
+  <img src="docs/readme/fleet.svg" width="100%" alt="A live run: a fix fails on sim-1 and holds on sim-3, a Naïve agent writes a skill in 22 s for $0.03, the gate tries it on sim-2 for 30 s, and it is promoted to the fleet 57 s after the agent session opened, with 0 human clicks.">
 </p>
 
 Back online, every robot syncs its heal runs to Romulus. When one kind of fault keeps failing across the fleet, a Naïve agent reviews the cluster and proposes a skill or a rule. It ships only through the gate: a replay against past incidents, then a canary on a simulated arm ([`docs/recursive-self-improvement/`](docs/recursive-self-improvement/README.md)).
@@ -347,25 +346,6 @@ In Mission Control:
 More in [`prototypes/arm-sim/README.md`](prototypes/arm-sim/README.md).
 
 </details>
-
-## What's real, and what's next
-
-- **Real hardware.** The firmware heal ran on the real SO-101 and STM32 pod. The model ran on a laptop wired straight to the Pi with no internet, because the Pi 5 is too slow for it ([`server/`](server/README.md)).
-- **Real Naïve.** The Technician and fleet-learning runs used live Naïve agent sessions, a real email and a real store cart, on incidents from our simulated fleet. The real arm was queued for the fleet update, not updated.
-- **The twin and the real arm.** The Mission Control heals ran on the MuJoCo twin. On the real arm, Hermes ran a Naïve card end to end with no fault, and an LLM planned 96 of 102 pick-and-place tries.
-- **Next.** Put the model on the robot itself (our Jetson AGX Xavier), run fleet learning on real hardware, and ship the Hermes plugin for the Hermes Agent Plugin Hackathon.
-
-## Team
-
-| Who | What they built |
-|---|---|
-| **Andre** | Hardware: assembling and calibrating the arm, LeRobot teleop and recorded motions. The pitch animations, and the Guam story |
-| **Ishaan** | The arm healer and the benchmark that picked the model, the pod healer's agent loop and blind eval, the demo video, this README |
-| **James** | The MuJoCo twin and Mission Control, the Hermes `so101-arm` plugin, the watchdog and fault factory, the Nov 8 real-arm experiment with Astra, the loop animations, the stack map |
-| **Kent** | Romulus: the device API, gate and canary, datasets and timeline, the Naïve Technician, fleet learning, the edge bridge, Fleet Doctor |
-| **Olir** | The STM32 sensor pod, podd and the 38 heal tools, the known-bad firmware images, the model relay, the Naïve SDK client, and the real bench heal |
-
-How we work together, and the team's last status (Nov 9): [`CLAUDE.md`](CLAUDE.md). The whole story, start to finish: [`docs/project-overview.md`](docs/project-overview.md).
 
 <p align="center">
   <br>
