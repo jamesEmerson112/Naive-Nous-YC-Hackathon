@@ -1,123 +1,79 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560" role="img" aria-labelledby="tt dd">
-<title id="tt">Every fault happens once</title>
-<desc id="dd">Fleet learning, measured in a live run. A heal fails on sim-1 and holds on sim-3. A Naïve agent session (fleet-doctor) reads both runs in 22 s for 3 cents and writes a skill. The gate replays it, runs a canary on sim-2 for 32.5 s, and promotes it: harness v2 on every arm, 57 s from lesson to fleet, 0 human clicks. Changes that touch safety are staged for their owner instead.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" width="1200" height="360" role="img" aria-labelledby="tt dd">
+<title id="tt">Across the fleet, every fault happens once</title>
+<desc id="dd">A live run. A fix fails on one robot. A Naïve agent writes a skill. The gate replays it against past incidents and tries it on a simulated canary, then promotes it to the fleet: 57 s from the agent session, 0 human clicks.</desc>
 <style>
 .t{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 .r{font-family:ui-rounded,"SF Pro Rounded",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-.m{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
 .fb{transform-box:fill-box;transform-origin:center}
-@keyframes r0v1{0.000%{opacity:1;}0.000%{opacity:1;}72.308%{opacity:1;}73.077%{opacity:0;}100.000%{opacity:0;}}
-.r0v1{animation:r0v1 13.0s linear infinite;}
-@keyframes r0v2{0.000%{opacity:0;}71.923%{opacity:0;}72.692%{opacity:1;}95.385%{opacity:1;}96.154%{opacity:0;}100.000%{opacity:0;}}
-.r0v2{animation:r0v2 13.0s linear infinite;}
-@keyframes rg0{0.000%{opacity:0;}71.538%{opacity:0;}72.308%{opacity:1;}95.385%{opacity:1;}96.154%{opacity:0;}100.000%{opacity:0;}}
-.rg0{animation:rg0 13.0s linear infinite;}
-@keyframes r1v1{0.000%{opacity:1;}0.000%{opacity:1;}74.615%{opacity:1;}75.385%{opacity:0;}100.000%{opacity:0;}}
-.r1v1{animation:r1v1 13.0s linear infinite;}
-@keyframes r1v2{0.000%{opacity:0;}74.231%{opacity:0;}75.000%{opacity:1;}95.385%{opacity:1;}96.154%{opacity:0;}100.000%{opacity:0;}}
-.r1v2{animation:r1v2 13.0s linear infinite;}
-@keyframes rg1{0.000%{opacity:0;}73.846%{opacity:0;}74.615%{opacity:1;}95.385%{opacity:1;}96.154%{opacity:0;}100.000%{opacity:0;}}
-.rg1{animation:rg1 13.0s linear infinite;}
-@keyframes r2v1{0.000%{opacity:1;}0.000%{opacity:1;}76.923%{opacity:1;}77.692%{opacity:0;}100.000%{opacity:0;}}
-.r2v1{animation:r2v1 13.0s linear infinite;}
-@keyframes r2v2{0.000%{opacity:0;}76.538%{opacity:0;}77.308%{opacity:1;}95.385%{opacity:1;}96.154%{opacity:0;}100.000%{opacity:0;}}
-.r2v2{animation:r2v2 13.0s linear infinite;}
-@keyframes rg2{0.000%{opacity:0;}76.154%{opacity:0;}76.923%{opacity:1;}95.385%{opacity:1;}96.154%{opacity:0;}100.000%{opacity:0;}}
-.rg2{animation:rg2 13.0s linear infinite;}
-@keyframes fail{0.000%{opacity:0;}0.769%{opacity:0;}2.308%{opacity:1;}71.538%{opacity:1;}73.077%{opacity:0;}100.000%{opacity:0;}}
-.fail{animation:fail 13.0s linear infinite;}
-@keyframes held{0.000%{opacity:0;}3.077%{opacity:0;}4.615%{opacity:1;}71.538%{opacity:1;}73.077%{opacity:0;}100.000%{opacity:0;}}
-.held{animation:held 13.0s linear infinite;}
-@keyframes can{0.000%{opacity:0;}44.615%{opacity:0;}46.154%{opacity:1;}58.462%{opacity:1;}60.000%{opacity:0;}100.000%{opacity:0;}}
-.can{animation:can 13.0s linear infinite;}
-@keyframes rvon{0.000%{opacity:0;}11.538%{opacity:0;}13.846%{opacity:1;}27.692%{opacity:1;}30.000%{opacity:0;}100.000%{opacity:0;}}
-.rvon{animation:rvon 13.0s linear infinite;}
-@keyframes rvdone{0.000%{opacity:0;}24.615%{opacity:0;}26.154%{opacity:1;}95.385%{opacity:1;}96.923%{opacity:0;}100.000%{opacity:0;}}
-.rvdone{animation:rvdone 13.0s linear infinite;}
-@keyframes skill{0.000%{opacity:0;transform:translate(0px,16px);}29.231%{opacity:0;transform:translate(0px,16px);}32.692%{opacity:1;transform:translate(0,0);}95.385%{opacity:1;transform:translate(0,0);}98.077%{opacity:0;transform:translate(0,0);}100.000%{opacity:0;transform:translate(0px,16px);}}
-.skill{animation:skill 13.0s ease-out infinite;}
-@keyframes gt0{0.000%{opacity:0;}36.923%{opacity:0;}38.462%{opacity:1;}95.385%{opacity:1;}96.923%{opacity:0;}100.000%{opacity:0;}}
-.gt0{animation:gt0 13.0s linear infinite;}
-@keyframes gt1{0.000%{opacity:0;}56.923%{opacity:0;}58.462%{opacity:1;}95.385%{opacity:1;}96.923%{opacity:0;}100.000%{opacity:0;}}
-.gt1{animation:gt1 13.0s linear infinite;}
-@keyframes gt2{0.000%{opacity:0;}63.077%{opacity:0;}64.615%{opacity:1;}95.385%{opacity:1;}96.923%{opacity:0;}100.000%{opacity:0;}}
-.gt2{animation:gt2 13.0s linear infinite;}
-@keyframes pk0{0.000%{opacity:0;transform:translate(236px,169px);}7.692%{opacity:0;transform:translate(236px,169px);}8.077%{opacity:1;transform:translate(236px,169px);}12.787%{opacity:1;transform:translate(400px,169px);}13.846%{opacity:1;transform:translate(420px,200px);}14.615%{opacity:0;transform:translate(420px,200px);}100.000%{opacity:0;transform:translate(420px,200px);}}
-.pk0{animation:pk0 13.0s linear infinite;}
-@keyframes pk1{0.000%{opacity:0;transform:translate(720px,216px);}26.154%{opacity:0;transform:translate(720px,216px);}26.538%{opacity:1;transform:translate(720px,216px);}29.231%{opacity:1;transform:translate(752px,216px);}30.000%{opacity:0;transform:translate(752px,216px);}100.000%{opacity:0;transform:translate(752px,216px);}}
-.pk1{animation:pk1 13.0s linear infinite;}
-@keyframes pk2{0.000%{opacity:0;transform:translate(956px,300px);}33.077%{opacity:0;transform:translate(956px,300px);}33.462%{opacity:1;transform:translate(956px,300px);}33.677%{opacity:1;transform:translate(956px,320px);}38.203%{opacity:1;transform:translate(536px,320px);}38.462%{opacity:1;transform:translate(536px,344px);}39.231%{opacity:0;transform:translate(536px,344px);}100.000%{opacity:0;transform:translate(536px,344px);}}
-.pk2{animation:pk2 13.0s linear infinite;}
-@keyframes pk3{0.000%{opacity:0;transform:translate(310px,278px);}46.154%{opacity:0;transform:translate(310px,278px);}46.538%{opacity:1;transform:translate(310px,278px);}49.231%{opacity:1;transform:translate(236px,263px);}50.000%{opacity:0;transform:translate(236px,263px);}100.000%{opacity:0;transform:translate(236px,263px);}}
-.pk3{animation:pk3 13.0s linear infinite;}
-@keyframes pk40{0.000%{opacity:0;transform:translate(1072px,414px);}65.385%{opacity:0;transform:translate(1072px,414px);}65.769%{opacity:1;transform:translate(1072px,414px);}66.083%{opacity:1;transform:translate(1072px,470px);}70.827%{opacity:1;transform:translate(226px,470px);}72.308%{opacity:1;transform:translate(226px,206px);}73.077%{opacity:0;transform:translate(226px,206px);}100.000%{opacity:0;transform:translate(226px,206px);}}
-.pk40{animation:pk40 13.0s linear infinite;}
-@keyframes pk41{0.000%{opacity:0;transform:translate(1072px,414px);}65.385%{opacity:0;transform:translate(1072px,414px);}65.769%{opacity:1;transform:translate(1072px,414px);}66.231%{opacity:1;transform:translate(1072px,470px);}73.213%{opacity:1;transform:translate(226px,470px);}74.615%{opacity:1;transform:translate(226px,300px);}75.385%{opacity:0;transform:translate(226px,300px);}100.000%{opacity:0;transform:translate(226px,300px);}}
-.pk41{animation:pk41 13.0s linear infinite;}
-@keyframes pk42{0.000%{opacity:0;transform:translate(1072px,414px);}65.385%{opacity:0;transform:translate(1072px,414px);}65.769%{opacity:1;transform:translate(1072px,414px);}66.408%{opacity:1;transform:translate(1072px,470px);}76.056%{opacity:1;transform:translate(226px,470px);}76.923%{opacity:1;transform:translate(226px,394px);}77.692%{opacity:0;transform:translate(226px,394px);}100.000%{opacity:0;transform:translate(226px,394px);}}
-.pk42{animation:pk42 13.0s linear infinite;}
-@keyframes sumf{0.000%{opacity:0;transform:translate(0px,12px);}78.462%{opacity:0;transform:translate(0px,12px);}81.923%{opacity:1;transform:translate(0,0);}95.385%{opacity:1;transform:translate(0,0);}98.077%{opacity:0;transform:translate(0,0);}100.000%{opacity:0;transform:translate(0px,12px);}}
-.sumf{animation:sumf 13.0s ease-out infinite;}
-@keyframes skv{0.000%{opacity:0;transform:translate(0px,8px);}80.769%{opacity:0;transform:translate(0px,8px);}83.462%{opacity:1;transform:translate(0,0);}95.385%{opacity:1;transform:translate(0,0);}98.077%{opacity:0;transform:translate(0,0);}100.000%{opacity:0;transform:translate(0px,8px);}}
-.skv{animation:skv 13.0s ease-out infinite;}
-@media (prefers-reduced-motion:reduce){*{animation-delay:-11.0s!important;animation-play-state:paused!important}}
+@keyframes on0{0.000%{opacity:0}2.000%{opacity:0}5.000%{opacity:1}88.000%{opacity:1}91.000%{opacity:0}100.000%{opacity:0}}
+.on0{animation:on0 10.0s linear infinite}
+@keyframes ic0{0.000%{transform:scale(1)}5.000%{transform:scale(1)}6.800%{transform:scale(1.15)}9.200%{transform:scale(1)}100.000%{transform:scale(1)}}
+.ic0{animation:ic0 10.0s ease-in-out infinite}
+@keyframes on1{0.000%{opacity:0}18.000%{opacity:0}21.000%{opacity:1}88.000%{opacity:1}91.000%{opacity:0}100.000%{opacity:0}}
+.on1{animation:on1 10.0s linear infinite}
+@keyframes ic1{0.000%{transform:scale(1)}21.000%{transform:scale(1)}22.800%{transform:scale(1.15)}25.200%{transform:scale(1)}100.000%{transform:scale(1)}}
+.ic1{animation:ic1 10.0s ease-in-out infinite}
+@keyframes on2{0.000%{opacity:0}34.000%{opacity:0}37.000%{opacity:1}88.000%{opacity:1}91.000%{opacity:0}100.000%{opacity:0}}
+.on2{animation:on2 10.0s linear infinite}
+@keyframes ic2{0.000%{transform:scale(1)}37.000%{transform:scale(1)}38.800%{transform:scale(1.15)}41.200%{transform:scale(1)}100.000%{transform:scale(1)}}
+.ic2{animation:ic2 10.0s ease-in-out infinite}
+@keyframes on3{0.000%{opacity:0}50.000%{opacity:0}53.000%{opacity:1}88.000%{opacity:1}91.000%{opacity:0}100.000%{opacity:0}}
+.on3{animation:on3 10.0s linear infinite}
+@keyframes ic3{0.000%{transform:scale(1)}53.000%{transform:scale(1)}54.800%{transform:scale(1.15)}57.200%{transform:scale(1)}100.000%{transform:scale(1)}}
+.ic3{animation:ic3 10.0s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){*{animation-delay:-8.0s!important;animation-play-state:paused!important}}
 </style>
-<defs><pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="1.5" fill="#E8DECF"/></pattern></defs><rect x="1" y="1" width="1198" height="558" rx="28" fill="#FFF8EE" stroke="#E8DECF" stroke-width="2"/><rect x="1" y="1" width="1198" height="558" rx="28" fill="url(#dots)" opacity=".55"/><text x="40" y="58" class="t" font-size="14" font-weight="750" fill="#2F8FD8" text-anchor="start" letter-spacing="2">LIVE RUN · FLEET LEARNING · SUN NOV 8, 10:04 AM</text><text x="38" y="96" class="r" font-size="32" font-weight="800" fill="#1F1B2E" text-anchor="start" >Every fault happens once</text><g transform="translate(40 132)">
-<rect width="196" height="74" rx="16" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2"/>
-<g transform="translate(36 37) scale(.36)"><g transform="translate(0 0) scale(1.0000)"><g class="r0b">
+<rect x="1" y="1" width="1198" height="358" rx="28" fill="#FFF8EE" stroke="#E8DECF" stroke-width="2"/><text x="48" y="58" class="t" font-size="16" font-weight="750" fill="#1F6FB0" text-anchor="start" letter-spacing="2.2">LIVE RUN · NOV 8, 10:04 AM</text><path d="M282 150 H398" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round"/><path d="M389 142 L398 150 L389 158" fill="none" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="210" cy="150" r="56" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2.5"/><circle class="on0" cx="210" cy="150" r="56" fill="#FDE3E6" stroke="#F0556A" stroke-width="4"/><g transform="translate(210 150)"><g class="ic0 fb"><g transform="translate(-2 2) scale(0.5500)"><g class="b">
 <g fill="#5546E0"><rect x="-29.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-29.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-29.5" width="20" height="11" rx="5.5"/><rect x="41" y="-29.5" width="20" height="11" rx="5.5"/><rect x="-5.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-5.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-5.5" width="20" height="11" rx="5.5"/><rect x="41" y="-5.5" width="20" height="11" rx="5.5"/><rect x="18.5" y="-61" width="11" height="20" rx="5.5"/><rect x="18.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="18.5" width="20" height="11" rx="5.5"/><rect x="41" y="18.5" width="20" height="11" rx="5.5"/></g>
 <rect x="-46" y="-46" width="92" height="92" rx="27" fill="#6D5DF6"/>
 <path d="M-31 -35 H-12" stroke="#9A8FFF" stroke-width="6" stroke-linecap="round"/>
 <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-<g class="r0xo"><g class="r0eo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
-<path class="r0xh" opacity="0" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
-<path class="r0xc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
-<path class="r0xb" opacity="0" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
-<path class="r0xs" d="M-10 18 Q0 26 10 18"/>
-<path class="r0xm" opacity="0" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
-<path class="r0xf" opacity="0" d="M-10 25 Q0 17 10 25"/>
-<path class="r0xl" opacity="0" d="M-7 21 H7"/>
-</g></g></g></g>
-<text x="70" y="31" class="m" font-size="17" font-weight="700" fill="#1F1B2E" text-anchor="start" >sim-1</text>
-<g class="r0v1"><text x="70" y="55" class="t" font-size="14" font-weight="600" fill="#6E6A7C" text-anchor="start" >harness v1</text></g>
-<g class="r0v2"><text x="70" y="55" class="t" font-size="14" font-weight="750" fill="#0F7A54" text-anchor="start" >harness v2</text></g>
-</g><circle cx="214" cy="146" r="7" fill="#C9C1B4"/><g class="rg0"><circle cx="214" cy="146" r="7" fill="#22B07D"/></g><g transform="translate(40 226)">
-<rect width="196" height="74" rx="16" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2"/>
-<g transform="translate(36 37) scale(.36)"><g transform="translate(0 0) scale(1.0000)"><g class="r1b">
+<g class="xo"><g class="eo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
+<path class="xh" opacity="0" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
+<path class="xc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
+<path class="xb" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
+<path class="xs" opacity="0" d="M-10 18 Q0 26 10 18"/>
+<path class="xm" opacity="0" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
+<path class="xf" d="M-10 25 Q0 17 10 25"/>
+<path class="xl" opacity="0" d="M-7 21 H7"/>
+</g></g></g><circle cx="24" cy="-24" r="13" fill="#F0556A" stroke="#fff" stroke-width="3"/><path d="M19.5 -28.5 L28.5 -19.5 M28.5 -28.5 L19.5 -19.5" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/></g></g><text x="210" y="248" class="r" font-size="22" font-weight="750" fill="#1F1B2E" text-anchor="middle" >A fix fails</text><text x="210" y="276" class="t" font-size="20" font-weight="550" fill="#6E6A7C" text-anchor="middle" >on one robot</text><path d="M542 150 H658" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round"/><path d="M649 142 L658 150 L649 158" fill="none" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="470" cy="150" r="56" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2.5"/><circle class="on1" cx="470" cy="150" r="56" fill="#ECE9FF" stroke="#6D5DF6" stroke-width="4"/><g transform="translate(470 150)"><g class="ic1 fb"><path d="M-26 -20 H26 A9 9 0 0 1 35 -11 V9 A9 9 0 0 1 26 18 H-2 L-16 30 V18 H-26 A9 9 0 0 1 -35 9 V-11 A9 9 0 0 1 -26 -20 Z" fill="#fff" stroke="#1F1B2E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="-13" cy="-1" r="4.5" fill="#6D5DF6"/><circle cy="-1" r="4.5" fill="#6D5DF6"/><circle cx="13" cy="-1" r="4.5" fill="#6D5DF6"/></g></g><text x="470" y="248" class="r" font-size="22" font-weight="750" fill="#1F1B2E" text-anchor="middle" >Naïve agent</text><text x="470" y="276" class="t" font-size="20" font-weight="550" fill="#6E6A7C" text-anchor="middle" >writes a skill</text><path d="M802 150 H918" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round"/><path d="M909 142 L918 150 L909 158" fill="none" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="730" cy="150" r="56" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2.5"/><circle class="on2" cx="730" cy="150" r="56" fill="#DCEEFB" stroke="#2F8FD8" stroke-width="4"/><g transform="translate(730 150)"><g class="ic2 fb"><path d="M0 -32 L27 -21 V0 C27 18 14 29 0 35 C-14 29 -27 18 -27 0 V-21 Z" fill="#fff" stroke="#1F1B2E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M-11 1 L-3 9 L12 -7" fill="none" stroke="#22B07D" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></g></g><text x="730" y="248" class="r" font-size="22" font-weight="750" fill="#1F1B2E" text-anchor="middle" >The gate</text><text x="730" y="276" class="t" font-size="20" font-weight="550" fill="#6E6A7C" text-anchor="middle" >replays and canaries it</text><circle cx="990" cy="150" r="56" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2.5"/><circle class="on3" cx="990" cy="150" r="56" fill="#DDF4EA" stroke="#22B07D" stroke-width="4"/><g transform="translate(990 150)"><g class="ic3 fb"><g transform="translate(-19 -13) scale(0.2667)"><g class="b">
 <g fill="#5546E0"><rect x="-29.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-29.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-29.5" width="20" height="11" rx="5.5"/><rect x="41" y="-29.5" width="20" height="11" rx="5.5"/><rect x="-5.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-5.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-5.5" width="20" height="11" rx="5.5"/><rect x="41" y="-5.5" width="20" height="11" rx="5.5"/><rect x="18.5" y="-61" width="11" height="20" rx="5.5"/><rect x="18.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="18.5" width="20" height="11" rx="5.5"/><rect x="41" y="18.5" width="20" height="11" rx="5.5"/></g>
 <rect x="-46" y="-46" width="92" height="92" rx="27" fill="#6D5DF6"/>
 <path d="M-31 -35 H-12" stroke="#9A8FFF" stroke-width="6" stroke-linecap="round"/>
 <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-<g class="r1xo"><g class="r1eo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
-<path class="r1xh" opacity="0" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
-<path class="r1xc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
-<path class="r1xb" opacity="0" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
-<path class="r1xs" d="M-10 18 Q0 26 10 18"/>
-<path class="r1xm" opacity="0" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
-<path class="r1xf" opacity="0" d="M-10 25 Q0 17 10 25"/>
-<path class="r1xl" opacity="0" d="M-7 21 H7"/>
-</g></g></g></g>
-<text x="70" y="31" class="m" font-size="17" font-weight="700" fill="#1F1B2E" text-anchor="start" >sim-2</text>
-<g class="r1v1"><text x="70" y="55" class="t" font-size="14" font-weight="600" fill="#6E6A7C" text-anchor="start" >harness v1</text></g>
-<g class="r1v2"><text x="70" y="55" class="t" font-size="14" font-weight="750" fill="#0F7A54" text-anchor="start" >harness v2</text></g>
-</g><circle cx="214" cy="240" r="7" fill="#C9C1B4"/><g class="rg1"><circle cx="214" cy="240" r="7" fill="#22B07D"/></g><g transform="translate(40 320)">
-<rect width="196" height="74" rx="16" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2"/>
-<g transform="translate(36 37) scale(.36)"><g transform="translate(0 0) scale(1.0000)"><g class="r2b">
+<g class="xo" opacity="0"><g class="eo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
+<path class="xh" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
+<path class="xc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
+<path class="xb" opacity="0" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
+<path class="xs" opacity="0" d="M-10 18 Q0 26 10 18"/>
+<path class="xm" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
+<path class="xf" opacity="0" d="M-10 25 Q0 17 10 25"/>
+<path class="xl" opacity="0" d="M-7 21 H7"/>
+</g></g></g><g transform="translate(19 -13) scale(0.2667)"><g class="b">
 <g fill="#5546E0"><rect x="-29.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-29.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-29.5" width="20" height="11" rx="5.5"/><rect x="41" y="-29.5" width="20" height="11" rx="5.5"/><rect x="-5.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-5.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-5.5" width="20" height="11" rx="5.5"/><rect x="41" y="-5.5" width="20" height="11" rx="5.5"/><rect x="18.5" y="-61" width="11" height="20" rx="5.5"/><rect x="18.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="18.5" width="20" height="11" rx="5.5"/><rect x="41" y="18.5" width="20" height="11" rx="5.5"/></g>
 <rect x="-46" y="-46" width="92" height="92" rx="27" fill="#6D5DF6"/>
 <path d="M-31 -35 H-12" stroke="#9A8FFF" stroke-width="6" stroke-linecap="round"/>
 <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-<g class="r2xo"><g class="r2eo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
-<path class="r2xh" opacity="0" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
-<path class="r2xc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
-<path class="r2xb" opacity="0" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
-<path class="r2xs" d="M-10 18 Q0 26 10 18"/>
-<path class="r2xm" opacity="0" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
-<path class="r2xf" opacity="0" d="M-10 25 Q0 17 10 25"/>
-<path class="r2xl" opacity="0" d="M-7 21 H7"/>
-</g></g></g></g>
-<text x="70" y="31" class="m" font-size="17" font-weight="700" fill="#1F1B2E" text-anchor="start" >sim-3</text>
-<g class="r2v1"><text x="70" y="55" class="t" font-size="14" font-weight="600" fill="#6E6A7C" text-anchor="start" >harness v1</text></g>
-<g class="r2v2"><text x="70" y="55" class="t" font-size="14" font-weight="750" fill="#0F7A54" text-anchor="start" >harness v2</text></g>
-</g><circle cx="214" cy="334" r="7" fill="#C9C1B4"/><g class="rg2"><circle cx="214" cy="334" r="7" fill="#22B07D"/></g><g class="fail"><rect x="244" y="148" width="132" height="30" rx="15" fill="#FDE3E6"/><text x="310" y="168" class="t" font-size="14.5" font-weight="750" fill="#C8243C" text-anchor="middle" >heal failed</text></g><g class="held"><rect x="244" y="336" width="132" height="30" rx="15" fill="#DDF4EA"/><text x="310" y="356" class="t" font-size="14.5" font-weight="750" fill="#0F7A54" text-anchor="middle" >heal held</text></g><g class="can"><rect x="244" y="242" width="132" height="30" rx="15" fill="#FDF0D5"/><text x="310" y="262" class="t" font-size="14.5" font-weight="750" fill="#B9770E" text-anchor="middle" >canary · 32.5 s</text></g><rect x="420" y="132" width="300" height="168" rx="20" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2"/><g class="rvon"><rect x="420" y="132" width="300" height="168" rx="20" fill="#ECE9FF" stroke="#6D5DF6" stroke-width="3"/></g><g transform="translate(466 184) scale(.8)"><path d="M-26 -20 H26 A9 9 0 0 1 35 -11 V9 A9 9 0 0 1 26 18 H-2 L-16 30 V18 H-26 A9 9 0 0 1 -35 9 V-11 A9 9 0 0 1 -26 -20 Z" fill="#fff" stroke="#1F1B2E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="-13" cy="-1" r="4.5" fill="#6D5DF6"/><circle cy="-1" r="4.5" fill="#6D5DF6"/><circle cx="13" cy="-1" r="4.5" fill="#6D5DF6"/></g><text x="510" y="178" class="r" font-size="18" font-weight="800" fill="#1F1B2E" text-anchor="start" >Naïve agent session</text><text x="510" y="200" class="t" font-size="14.5" font-weight="550" fill="#6E6A7C" text-anchor="start" >fleet-doctor · cluster review</text><text x="444" y="244" class="t" font-size="15.5" font-weight="500" fill="#1F1B2E" text-anchor="start" >Reads the failed run and the</text><text x="444" y="265" class="t" font-size="15.5" font-weight="500" fill="#1F1B2E" text-anchor="start" >passing one, writes a skill.</text><g class="rvdone"><text x="444" y="290" class="m" font-size="15" font-weight="750" fill="#5546E0" text-anchor="start" >22 s · 3¢</text></g><g class="skill"><rect x="752" y="132" width="408" height="168" rx="20" fill="#FFFFFF" stroke="#6D5DF6" stroke-width="2.5"/><g transform="translate(792 190) scale(.85)"><path d="M-22 -30 H10 L24 -16 V30 H-22 Z" fill="#fff" stroke="#1F1B2E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 -30 V-16 H24" fill="none" stroke="#1F1B2E" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M-12 -8 H14 M-12 4 H14 M-12 16 H4" stroke="#6D5DF6" stroke-width="4" stroke-linecap="round"/></g><text x="832" y="176" class="t" font-size="13" font-weight="800" fill="#5546E0" text-anchor="start" letter-spacing="1.8">NEW SKILL</text><text x="832" y="202" class="r" font-size="17" font-weight="800" fill="#1F1B2E" text-anchor="start" >Servo read error: check the retry</text><text x="832" y="224" class="r" font-size="17" font-weight="800" fill="#1F1B2E" text-anchor="start" >call site, not the config</text><text x="776" y="264" class="t" font-size="14.5" font-weight="500" fill="#6E6A7C" text-anchor="start" >Cites the failed sim-1 run and the passing sim-3</text><text x="776" y="285" class="t" font-size="14.5" font-weight="500" fill="#6E6A7C" text-anchor="start" >run. "Not tested on real hardware."</text></g><text x="420" y="330" class="t" font-size="13" font-weight="800" fill="#6E6A7C" text-anchor="start" letter-spacing="1.8">THE GATE, IN PLAIN CODE</text><rect x="420" y="344" width="232" height="70" rx="16" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2"/><g class="gt0"><rect x="420" y="344" width="232" height="70" rx="16" fill="#DDF4EA" stroke="#22B07D" stroke-width="3"/><circle cx="624" cy="379" r="12" fill="#22B07D" stroke="#FFFFFF" stroke-width="3"/><path d="M619.0 379.2 L622.8 383.1 L629.3 375.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/></g><text x="440" y="375" class="r" font-size="18" font-weight="800" fill="#1F1B2E" text-anchor="start" >replay</text><text x="440" y="398" class="t" font-size="14.5" font-weight="550" fill="#6E6A7C" text-anchor="start" >past incidents</text><path d="M656 379 H668" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round"/><rect x="672" y="344" width="232" height="70" rx="16" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2"/><g class="gt1"><rect x="672" y="344" width="232" height="70" rx="16" fill="#DDF4EA" stroke="#22B07D" stroke-width="3"/><circle cx="876" cy="379" r="12" fill="#22B07D" stroke="#FFFFFF" stroke-width="3"/><path d="M871.0 379.2 L874.8 383.1 L881.3 375.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/></g><text x="692" y="375" class="r" font-size="18" font-weight="800" fill="#1F1B2E" text-anchor="start" >canary</text><text x="692" y="398" class="t" font-size="14.5" font-weight="550" fill="#6E6A7C" text-anchor="start" >sim-2, 30 s window</text><path d="M908 379 H920" stroke="#C9C1B4" stroke-width="4" stroke-linecap="round"/><rect x="924" y="344" width="232" height="70" rx="16" fill="#FFFFFF" stroke="#E8DECF" stroke-width="2"/><g class="gt2"><rect x="924" y="344" width="232" height="70" rx="16" fill="#DDF4EA" stroke="#22B07D" stroke-width="3"/><circle cx="1128" cy="379" r="12" fill="#22B07D" stroke="#FFFFFF" stroke-width="3"/><path d="M1123.0 379.2 L1126.8 383.1 L1133.3 375.4" fill="none" stroke="#FFFFFF" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/></g><text x="944" y="375" class="r" font-size="18" font-weight="800" fill="#1F1B2E" text-anchor="start" >promote</text><text x="944" y="398" class="t" font-size="14.5" font-weight="550" fill="#6E6A7C" text-anchor="start" >every so101 arm</text><path d="M1072 414 V470 H226 V420" fill="none" stroke="#E8DECF" stroke-width="4" stroke-dasharray="2 9" stroke-linecap="round"/><g class="pk0"><circle r="12" fill="#F0556A" opacity=".22"/><circle r="7" fill="#F0556A"/></g><g class="pk1"><circle r="12" fill="#6D5DF6" opacity=".22"/><circle r="7" fill="#6D5DF6"/></g><g class="pk2"><circle r="12" fill="#6D5DF6" opacity=".22"/><circle r="7" fill="#6D5DF6"/></g><g class="pk3"><circle r="12" fill="#F7B23B" opacity=".22"/><circle r="7" fill="#F7B23B"/></g><g class="pk40"><circle r="12" fill="#22B07D" opacity=".22"/><circle r="7" fill="#22B07D"/></g><g class="pk41"><circle r="12" fill="#22B07D" opacity=".22"/><circle r="7" fill="#22B07D"/></g><g class="pk42"><circle r="12" fill="#22B07D" opacity=".22"/><circle r="7" fill="#22B07D"/></g><g class="sumf"><rect x="300" y="488" width="600" height="52" rx="26" fill="#1F1B2E"/><text x="600" y="521" class="r" font-size="19" font-weight="800" fill="#FFFFFF" text-anchor="middle" >one lesson → every arm · 57 s · 3¢ · 0 clicks</text></g><g class="skv"><text x="1160" y="521" class="t" font-size="15" font-weight="750" fill="#5546E0" text-anchor="end" >Naïve Skills playbook v1 → v2</text></g><g transform="translate(54 506)"><rect x="-11" y="-3" width="22" height="18" rx="4" fill="#1F1B2E"/><path d="M-6 -3 V-8 A6 6 0 0 1 6 -8 V-3" fill="none" stroke="#1F1B2E" stroke-width="3.5"/></g><text x="72" y="514" class="t" font-size="14.5" font-weight="750" fill="#1F1B2E" text-anchor="start" >touches safety?</text><text x="72" y="533" class="t" font-size="14.5" font-weight="500" fill="#6E6A7C" text-anchor="start" >staged for its owner</text>
+<g class="xo" opacity="0"><g class="eo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
+<path class="xh" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
+<path class="xc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
+<path class="xb" opacity="0" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
+<path class="xs" opacity="0" d="M-10 18 Q0 26 10 18"/>
+<path class="xm" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
+<path class="xf" opacity="0" d="M-10 25 Q0 17 10 25"/>
+<path class="xl" opacity="0" d="M-7 21 H7"/>
+</g></g></g><g transform="translate(0 19) scale(0.2667)"><g class="b">
+<g fill="#5546E0"><rect x="-29.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-29.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-29.5" width="20" height="11" rx="5.5"/><rect x="41" y="-29.5" width="20" height="11" rx="5.5"/><rect x="-5.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-5.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-5.5" width="20" height="11" rx="5.5"/><rect x="41" y="-5.5" width="20" height="11" rx="5.5"/><rect x="18.5" y="-61" width="11" height="20" rx="5.5"/><rect x="18.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="18.5" width="20" height="11" rx="5.5"/><rect x="41" y="18.5" width="20" height="11" rx="5.5"/></g>
+<rect x="-46" y="-46" width="92" height="92" rx="27" fill="#6D5DF6"/>
+<path d="M-31 -35 H-12" stroke="#9A8FFF" stroke-width="6" stroke-linecap="round"/>
+<g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+<g class="xo" opacity="0"><g class="eo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
+<path class="xh" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
+<path class="xc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
+<path class="xb" opacity="0" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
+<path class="xs" opacity="0" d="M-10 18 Q0 26 10 18"/>
+<path class="xm" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
+<path class="xf" opacity="0" d="M-10 25 Q0 17 10 25"/>
+<path class="xl" opacity="0" d="M-7 21 H7"/>
+</g></g></g></g></g><text x="990" y="248" class="r" font-size="22" font-weight="750" fill="#1F1B2E" text-anchor="middle" >Promoted</text><text x="990" y="276" class="t" font-size="20" font-weight="550" fill="#6E6A7C" text-anchor="middle" >to the fleet</text><text x="600" y="328" class="t" font-size="23" text-anchor="middle"><tspan fill="#1F1B2E" font-weight="800">57 s</tspan><tspan fill="#6E6A7C" font-weight="550"> from agent session to fleet</tspan><tspan fill="#C9C1B4" font-weight="800">   ·   </tspan><tspan fill="#1F1B2E" font-weight="800">0</tspan><tspan fill="#6E6A7C" font-weight="550"> human clicks</tspan></text>
 </svg>
