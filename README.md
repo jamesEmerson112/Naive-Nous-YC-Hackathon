@@ -129,7 +129,7 @@ cd prototypes/arm-sim
 ./setup.sh                                                          # MuJoCo Menagerie's SO-101 model into vendor/
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 PYTHONPATH=. .venv/bin/python -m armsim poses                       # the sim's taught poses
-PYTHONPATH=. .venv/bin/python -m armsim.host --realtime --pod sim --var "$TMPDIR/armsim-pod" &   # the sim arm, paced to wall-clock time, with a virtual sensor pod and Olir's podd
+PYTHONPATH=. .venv/bin/python -m armsim.host --realtime --pod sim --var "${TMPDIR:-/tmp}/armsim-pod" &   # the sim arm, paced to wall-clock time, with a virtual sensor pod and Olir's podd
 PYTHONPATH=. .venv/bin/python -m armsim.mission --board file &      # Mission Control on http://localhost:8765
 PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted &   # runs the orders
 ```
