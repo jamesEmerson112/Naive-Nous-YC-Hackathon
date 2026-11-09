@@ -644,13 +644,28 @@ SCENES = {  # name: draw, GIF, last change, frames whose colours make the palett
 }
 
 
+THEME = [TEXT, MUTED, DIM, CYAN, VIOLET, PINK, BLUE, GREEN, RED, AMBER, BEAM, LINK, JOINT, (230, 120, 96),
+         (45, 170, 120), (120, 230, 180), (222, 58, 58), (238, 136, 48), (246, 196, 72), (176, 140, 92),
+         (120, 136, 176)]
+
+
 def palette_from(draw_fn, times):
-    """One palette for every frame, from a strip of frames that hold every state's colours."""
+    """One palette for every frame: each theme colour, and its blends into the panels (thin text is mostly
+    blend), keep a slot of their own, since a median cut gives few pixels none; the rest comes from a strip of
+    frames that hold every state. 255 colours, so one index stays free for the transparent deltas."""
+    fixed = [BG, GRID, PANEL, EDGE, BOX, BOX_EDGE]
+    for col in THEME:
+        fixed += [mix(base, col, u) for base in (BOX, PANEL) for u in (0.33, 0.66)] + [col]
+    fixed = list(dict.fromkeys(fixed))
     sample = [draw_fn(t) for t in times]
     strip = Image.new("RGB", (OUT_W, OUT_H * len(sample)))
     for k, im in enumerate(sample):
         strip.paste(im, (0, k * OUT_H))
-    return strip.quantize(colors=255, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+    rest = strip.quantize(colors=255 - len(fixed), method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+    flat = [v for c in fixed for v in c] + rest.getpalette()[: 3 * (255 - len(fixed))]
+    pal = Image.new("P", (1, 1))
+    pal.putpalette(flat)
+    return pal
 
 
 def build(name, out, fps):
