@@ -85,14 +85,14 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Mon Nov 9, 3:18 AM PST_
+_Last updated: Mon Nov 9, 3:28 AM PST_
 
-**Current focus:** after the hackathon: James is writing up what the team built in the root `README.md`. "See it" now shows Mission Control healing a wrong move in the sim (missed grasp, reversed, corrected, redone in 28 s) next to the dead-elbow GIF, and the README says where the arm-sim prototype fits (the whole loop on one laptop, on the same device API) (`26352a8`–`67c64b7`). The raw data stays local and git-ignored (`data/hackathon-*/`).
+**Current focus:** after the hackathon: James is writing up what the team built in the root `README.md`. "See it" now has Mission Control GIFs for a stuck sensor (parked on 39 identical readings, healed in 6.5 s with no person) and bad pod image 07 (parked 98 mm short, rolled back to v1.1, healed in 20.6 s), linked to an anchor in the arm-sim README (`2b87067`–`8166be9`). The raw data stays local and git-ignored (`data/hackathon-*/`).
 
 **Recently done:**
-- James: README fixes: the wrong-move GIF (`prototypes/arm-sim/media/sim/mission-control-wrong-move.gif`, key 6 in the recipe, `26352a8`); where arm-sim fits, with links to the fault lab and the Naïve console (`d4fc952`); the edge bridge runs beside the real podd in the arm-sim demo, with no recorded run on the bench Pi (`171cdaf`); firmware/ has eight known-bad demo images, not six (`67c64b7`); an "On this page" list in the arm-sim README (`4487e2c`)
+- James: README: stuck-sensor and pod-image-07 Mission Control GIFs (keys 3 and 4 in the recipe, `2b87067`, `e75d78f`, `a4ab585`); which heals are folded under the two shown (`141dcec`); Astra planned 96 of the 102 real-arm tries (`ebc7a31`); an anchor on the arm-sim Mission Control GIFs, linked from the root README and the sim stories (`e17ec44`, `f8017de`, `8166be9`)
+- James: README fixes: the wrong-move GIF (key 6, `26352a8`); where arm-sim fits (`d4fc952`); the edge bridge beside the real podd in the arm-sim demo (`171cdaf`); eight known-bad firmware demo images, not six (`67c64b7`); an "On this page" list in the arm-sim README (`4487e2c`)
 - James: root README GIFs: Hardware Buddy pitch (`e45cee3`), Mission Control pick order and dead-elbow stall in the sim (`6223cf6`, `21d251f`); contents line and sim + Mission Control run recipe (`b241561`)
-- James: GIFs of the sim stories and real-arm tries 14:00:30 and 14:09:38 in the arm-sim README (`b4d5b33`); root README "See it" section (`d278a46`)
 - James: real-arm write-up and charts (`46f6f3d`): `armsim/report.py` redraws them from `data/hackathon-2026-11-08/`; 102 tries (70 full, 32 probes), the red bag never reached the box
 
 **Open questions:**
@@ -102,16 +102,16 @@ _Last updated: Mon Nov 9, 3:18 AM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `8166be9` Mon 03:27 · jamesEmerson112 · arm-sim README: Mission Control in the sim in the On this page list
+- `f8017de` Mon 03:27 · jamesEmerson112 · README: an anchor on the arm-sim Mission Control GIFs, linked from the root README and the sim stories
+- `a4ab585` Mon 03:26 · jamesEmerson112 · README: the stuck-sensor GIF parks during the release, not the lift
+- `ebc7a31` Mon 03:24 · jamesEmerson112 · README: Astra planned 96 of the 102 real-arm tries (six came from the fixed list that ran first; one go-ahead was James's call)
+- `e17ec44` Mon 03:23 · jamesEmerson112 · arm-sim README: point from the story GIFs to Mission Control's view of the same faults
+- `141dcec` Mon 03:22 · jamesEmerson112 · README: say which Mission Control heals are folded under the two shown
+- `e75d78f` Mon 03:22 · jamesEmerson112 · README: Mission Control healing bad pod image 07 in the sim (parked 98 mm short, us_mismatch, rolled back to v1.1, healed in 20.6 s), as a GIF; key 4 in the recipe
+- `2b87067` Mon 03:20 · jamesEmerson112 · README: Mission Control healing a stuck sensor in the sim (parked on 39 identical readings, a scripted restart, healed in 6.5 s with no person), as a GIF; key 3 and the host's --pod sim in the recipe
+- `6fad16e` Mon 03:18 · jamesEmerson112 · Update team status in CLAUDE.md
 - `67c64b7` Mon 03:16 · jamesEmerson112 · README: firmware/ has eight known-bad demo images (07 and 08 came with the arm heal test), not six
-- `171cdaf` Mon 03:15 · jamesEmerson112 · README: the edge bridge runs beside the real podd in the arm-sim demo (demo/up.sh); no recorded run on the bench Pi
-- `4487e2c` Mon 03:12 · jamesEmerson112 · arm-sim README: an On this page list (the real-arm experiment, everything together)
-- `d4fc952` Mon 03:12 · jamesEmerson112 · README: where the arm-sim prototype fits (the whole loop on one laptop, the same device API), and links to the fault lab and the Naïve console
-- `26352a8` Mon 03:10 · jamesEmerson112 · README: Mission Control healing a wrong move in the sim (missed grasp, reversed, corrected, redone in 28 s), as a GIF beside the dead-elbow one; key 6 in the recipe
-- `0e62abd` Mon 03:09 · jamesEmerson112 · Update team status and features.txt
-- `b241561` Mon 03:04 · jamesEmerson112 · README: a contents line, and the sim + Mission Control recipe under Run it
-- `21d251f` Mon 03:03 · jamesEmerson112 · README: Mission Control parking, healing and handing off a dead elbow in the sim, as a GIF (the plain pick folded below)
-- `6223cf6` Mon 03:01 · jamesEmerson112 · README: Mission Control running a pick order in the sim, as a GIF
-- `e45cee3` Mon 02:58 · jamesEmerson112 · README: Andre's Hardware Buddy pitch animation as a GIF at the top of See it
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
