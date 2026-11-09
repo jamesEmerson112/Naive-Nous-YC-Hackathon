@@ -74,6 +74,7 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 - **Every device speaks one contract**, the device API in [`packages/contracts`](packages/contracts/README.md) ([APIs doc](docs/cloud-platform-planning/cloud-platform-apis.md)): check in every 10 s, report each incident with what the healer did, upload evidence, pull assigned versions.
 - **The sensor pod gets there through the edge bridge.** Olir's healer records everything locally and never calls the cloud; [`tools/edge_bridge`](tools/edge_bridge/README.md) reads those records on the Pi and reports them, so the healer needs no changes (decision D29). It's tested against the real cloud app but hasn't run on the bench yet.
 - **The cloud closes the loop**: fixes that hold become firmware and harness versions, replayed against past incidents and tried on a simulated canary before the fleet gets them ([`cloud/README.md`](cloud/README.md)).
+- **The arm-sim prototype runs the whole loop on one laptop** ([`prototypes/arm-sim`](prototypes/arm-sim/README.md)); the sim and Mission Control GIFs above come from it. It has a MuJoCo twin of the SO-101 with its watchdog, a virtual sensor pod read by Olir's real `podd`, Mission Control, a dispatcher that takes orders from a board (a local file or a Naïve card), and a Hermes manager. Its arm reporter checks in with Romulus like any device, and the same code drives the real arm (`--arm real --pod real`).
 
 ## What's where
 
@@ -90,7 +91,7 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 | [`harness/`](harness/) · [`bench/`](bench/README.md) | The healer's agent harnesses h1–h3, and the benchmark that scores them on planted faults ([progress](docs/healer-benchmark-progress.md)) | Ishaan |
 | [`arm/`](arm/README.md) | The real SO-101: LeRobot setup and calibration, the taught recordings, and `safe_replay.py` (ultrasonic-gated replay) | Andre, Olir |
 | [`prototypes/arm-sim/`](prototypes/arm-sim/README.md) | The SO-101 twin and the whole self-healing loop, in sim and on the real arm: arm host and watchdog, Mission Control, the Hermes plugin, the Nov 8 Astra experiment | James |
-| [`prototypes/`](prototypes/) | Also the fault lab (can pi and Hermes fix the healer's faults?) and a Naïve console | James |
+| [`prototypes/`](prototypes/) | Also the [fault lab](prototypes/fault-lab/README.md) (can pi and Hermes fix the healer's faults?) and the [Naïve console](prototypes/naive-console/README.md) | James |
 | [`hub/`](hub/) | Source of the Arm Company Stack Map artifact | James |
 | [`pitch/`](pitch/storyboard.md) | The Hardware Buddy pitch animation: storyboard and the animated pages | Andre |
 | [`docs/`](docs/) | Research, the fault catalog, cloud planning, sponsor notes, raw doc dumps | everyone |
