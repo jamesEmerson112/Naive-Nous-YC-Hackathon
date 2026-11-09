@@ -2,7 +2,9 @@
 
 A robotic-arm company that heals itself. When something breaks on a robot (an SO-101 arm on a Raspberry Pi 5, or the STM32 sensor pod next to it), a small healer on the device diagnoses and fixes it, or parks the hardware and asks for a person. The **Romulus** cloud collects every incident, turns fixes that hold into new versions for the whole fleet behind a replay and a canary, and hands hardware faults to Naïve agents as work orders. Built for the Naïve Autonomous Company Hackathon and the Hermes Agent Plugin Hackathon ([`docs/hackathons.md`](docs/hackathons.md)).
 
-Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole story: [`docs/project-overview.md`](docs/project-overview.md).
+**After the order, nobody types.** [How the pieces fit](#how-the-pieces-fit) follows the data from the arm to the Naïve and Hermes agents and back, in two animations: a job that heals a stuck sensor on its own, and one try of the Nov 8 real-arm run, where an LLM planned 96 of the 102 tries.
+
+Team context, working rules and the team's last status (Nov 9): [`CLAUDE.md`](CLAUDE.md). The whole story: [`docs/project-overview.md`](docs/project-overview.md).
 
 **On this page:** [See it](#see-it) · [How the pieces fit](#how-the-pieces-fit) · [What's where](#whats-where) · [Run it](#run-it)
 
