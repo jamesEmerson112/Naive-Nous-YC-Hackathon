@@ -184,6 +184,8 @@ The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The y
 
 The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The design is `docs/worker-manager-healer.md`.
 
+**How the data moves** from a Naïve card through Hermes, the arm host and the watchdog to Romulus, as an animated diagram of story `b --hermes`: [the root README](../../README.md#how-the-pieces-fit). `PYTHONPATH=. .venv/bin/python -m armsim.loopgif` redraws it into `media/autonomous-loop.gif`.
+
 <a id="mission-control-in-the-sim"></a>
 <p>
   <img alt="Mission Control with a dead elbow planted: PARKED, then HEALING with a retry at home, then NEEDS A PERSON with a work order, then FIXED by a person" src="media/sim/mission-control-stall.gif" width="400">

@@ -73,6 +73,19 @@ In the sim, a stand-in does the pod healer's rollback ([story a](prototypes/arm-
 
 ## How the pieces fit
 
+**One job, end to end, with nobody typing after the order.** An order becomes a card on the Naïve board, and the dispatcher hands it to Hermes, which runs the arm one skill at a time through the [`so101-arm` plugin](prototypes/arm-sim/hermes-plugin/so101-arm/__init__.py) and never sends joint angles. The arm's readings go to plain code next to it:
+1. When the wrist distance freezes, the watchdog parks the arm, and a guard refuses Hermes's next move.
+2. Hermes reads the arm and calls `arm_restart_sensor`, and the watchdog checks the fix at home.
+3. Hermes finishes the job and closes the card, and Romulus gets the incident with its log window.
+
+<img alt="Animated diagram of one self-healing job, in four lanes: the arm, plain code next to it, the agents and Romulus. An ARM JOB card lands on the Naïve board, the dispatcher claims it and Hermes takes it; Hermes calls arm_go_home and arm_reach while the wrist distance streams through podd; the reading sticks at 130 mm while the prediction moves, the watchdog parks the arm and the check-ins turn to health failing; Hermes gets parked back, reads arm_status and calls arm_restart_sensor; podd turns the sensor off and on, the watchdog checks it at home and the arm is healed; Hermes redoes reach, approach, grip, lift, release and go_home, posts RESULT: and the card moves to done; Romulus records the us_stuck incident as resolved with its log window, and no work order is needed. A badge reads people after the order: 0" src="prototypes/arm-sim/media/autonomous-loop.gif" width="800">
+
+It's a drawing ([`armsim/loopgif.py`](prototypes/arm-sim/armsim/loopgif.py)), and each step in it ran:
+- **In the sim,** a Naïve card drove Hermes through a stuck sensor: Hermes healed it, finished the job, commented `RESULT:` and the card went to done ([`MORNING.md`](prototypes/arm-sim/MORNING.md), story `b --hermes`). The readings on screen are rows from the sim's stuck-sensor packet ([`esc-us_stuck.json`](prototypes/arm-sim/hermes-manager/samples/esc-us_stuck.json)).
+- **On the real arm,** a Naïve card + Hermes job ran with no fault: done 107 s after the claim, 25 tool calls, nobody typing ([`HANDOFF-LOCAL.md`](prototypes/arm-sim/HANDOFF-LOCAL.md), Sun 10:27 AM).
+
+Which code runs where:
+
 ```
  on the bench (Pi 5)                                    on the laptop (Docker)           online
 
