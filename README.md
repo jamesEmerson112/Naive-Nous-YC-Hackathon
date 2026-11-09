@@ -39,6 +39,13 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 
 <img alt="Mission Control with a dead elbow: the order starts, the header turns to PARKED: elbow stalled, then HEALING while the arm retries at home, then NEEDS A PERSON with the card in Blocked and a work order opened, and finally FIXED by a person, checked at home" src="prototypes/arm-sim/media/sim/mission-control-stall.gif" width="800">
 
+<details><summary>A bad pod firmware image (07, the bench demo's fault), healed in 20.6 s: the distance reads 98 mm short of the arm's kinematics, the arm parks, and the pod's firmware is rolled back</summary>
+
+<img alt="Mission Control with bad pod image 07: the sensor pod shows v1.7, bad image 07, with its distance math cut to 16 bits; at the order the header turns to PARKED: sensor offset, reads 98 mm short against the arm's kinematics, and podd flags us_mismatch; then HEALING while the pod rolls back to v1.1, known good, a check at home, HEALED in 20.6 s with the job resumed, and the order done in 34 s" src="prototypes/arm-sim/media/sim/mission-control-pod-image.gif" width="800">
+
+In the sim, a stand-in does the pod healer's rollback ([story a](prototypes/arm-sim/README.md#everything-together-in-one-place)).
+</details>
+
 <details><summary>A stuck sensor, healed in 6.5 s: the distance reading freezes mid-job, the arm parks, and a scripted heal restarts the sensor through podd</summary>
 
 <img alt="Mission Control with a stuck sensor: WORKING, then the stuck sensor is planted while the watchdog watches; at the lift the header turns to PARKED: stuck sensor, the ultrasonic output frozen at 39 identical readings, then HEALING with the fallback script restarting the sensor, then HEALED in 6.5 s with no person needed, and the order finishes in 22 s" src="prototypes/arm-sim/media/sim/mission-control-stuck-sensor.gif" width="800">
@@ -129,7 +136,7 @@ PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted & 
 
 In Mission Control:
 - **1** places an order.
-- **3** plants a stuck sensor. It needs the virtual sensor pod: start the host with `--pod sim --var "$TMPDIR/armsim-pod"`. Keep that folder's path short, since podd's socket path has a length limit.
+- **3** plants a stuck sensor, and **4** a bad pod image (07). Both need the virtual sensor pod: start the host with `--pod sim --var "$TMPDIR/armsim-pod"`. Keep that folder's path short, since podd's socket path has a length limit.
 - **5** plants a dead elbow.
 - **6** bumps the block, so the next grasp misses. The dispatcher heals that only when started with `--manager fake --wrong-action redo`.
 - **7** is "a person fixed it".

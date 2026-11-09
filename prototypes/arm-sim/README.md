@@ -187,12 +187,14 @@ The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The 
   <img alt="Mission Control with a dead elbow planted: PARKED, then HEALING with a retry at home, then NEEDS A PERSON with a work order, then FIXED by a person" src="media/sim/mission-control-stall.gif" width="400">
   <img alt="Mission Control during a wrong move: WRONG MOVE: missed grasp, then reversed, corrected by the manager and checked by plain code, the wrist sensor finds the block 30 mm off, and the header reads REDONE in 28 s" src="media/sim/mission-control-wrong-move.gif" width="400">
   <img alt="Mission Control with a stuck sensor: the reading freezes mid-job, PARKED: stuck sensor, HEALING with a scripted sensor restart, then HEALED in 6.5 s with no person needed" src="media/sim/mission-control-stuck-sensor.gif" width="400">
+  <img alt="Mission Control with bad pod image 07: PARKED: sensor offset, reads 98 mm short against the arm's kinematics, podd flags us_mismatch, the pod rolls back to v1.1, and the header reads HEALED in 20.6 s" src="media/sim/mission-control-pod-image.gif" width="400">
 </p>
 
 Mission Control in the sim, recorded from `armsim.host --realtime`, `armsim.mission --board file` and `armsim.dispatch --board file --exec scripted`, with these extras:
 - **Dead elbow:** key 5 plants it, key 1 places an order, and key 7 is "a person fixed it".
 - **Wrong move** (dispatcher `--manager fake --wrong-action redo`): key 6 bumps the block 30 mm, and key 1 places an order. The grasp misses, so the arm reverses, the stand-in manager says relocate and redo, plain code checks the shift (±40 mm), and the arm redoes the grip: REDONE in 28 s.
 - **Stuck sensor** (host `--pod sim --var "$TMPDIR/armsim-pod"`, a short path because podd's socket path has a length limit): key 1 places an order, and key 3 freezes the distance reading mid-job. The watchdog parks the arm on 39 identical readings, a scripted heal restarts the sensor, and it's HEALED in 6.5 s with no person.
+- **Pod image 07** (the same `--pod sim` host): key 4 plants it, and key 1 places an order. The distance reads 98 mm short of the arm's kinematics, so the arm parks and podd flags `us_mismatch`. The pod rolls back to v1.1 (a stand-in for the pod healer in sim), the check at home passes, and it's HEALED in 20.6 s.
 
 <details><summary>A plain pick order, with nothing broken</summary>
 
