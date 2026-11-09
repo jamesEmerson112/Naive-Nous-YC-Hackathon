@@ -5,6 +5,10 @@ A robotic-arm company that heals itself. When something breaks on a robot (an SO
 Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole story: [`docs/project-overview.md`](docs/project-overview.md).
 
 ## See it
+**The pitch.** Hardware Buddy: self-healing hardware for robotics and manufacturing. This is Andre's pitch animation ([`pitch/`](pitch/storyboard.md)), the part before the live demo:
+
+<img alt="The Hardware Buddy pitch: $1.4 trillion lost every year to unplanned downtime; a site out of reach with no link; Hardware Buddy, local and cloud, syncing when online; today's fault-ticket-technician loop; the live demo, a chip-packing line; hardware has to get smarter" src="docs/media/hardware-buddy-pitch.gif" width="640">
+
 **In the simulator, the arm heals itself.** Plain-code checks catch each fault and park the arm, with no model in the loop. Then the arm is healed or handed to a person ([the stories](prototypes/arm-sim/README.md#everything-together-in-one-place), in the MuJoCo twin of the SO-101):
 
 <p>
