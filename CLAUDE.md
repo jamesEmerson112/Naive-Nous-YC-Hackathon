@@ -1,6 +1,6 @@
 # CLAUDE.md — Naive Nous YC Hackathon
 
-Shared context for everyone working in this repo, people and Claude sessions alike. A Claude Code session rewrites the **Team status** section about every 10 minutes and pushes it to `main`. You can edit everything else by hand.
+Shared context for everyone working in this repo, people and Claude sessions alike. During the hackathon a Claude Code session rewrote the **Team status** section about every 10 minutes. That refresh stopped on Mon Nov 9, so the section is its last snapshot.
 
 ## What this repo is
 Prep and build work for two hackathons running at the same time:
@@ -27,18 +27,14 @@ Prep and build work for two hackathons running at the same time:
 - Every fact cites a source; anything you worked out yourself is marked *(inferred)*.
 - No Claude or other AI co-author lines in commits.
 - Run `git pull --rebase origin main` before you push. Never force-push `main`.
-- Don't hand-edit between the `team-status` markers below; the next refresh overwrites it. Put notes for the team in **Notes from the team** instead.
+- Put notes for the team in **Notes from the team**, not in the `team-status` block below, which is the Nov 9 snapshot.
 - Before starting a feature, look in `features.txt`. If nobody has it, claim it with `<--- YourName` and push; if someone does, talk to them first.
 
 ## Notes from the team
 _Add anything others should know here (who is doing what, decisions, blockers)._
 
-### Please everyone: set up your own status sync (from James)
-James and Kent each run a Claude session that posts what they're working on here about every 10 minutes. Please set one up too (Ishaan, Olir, Andre), so we can all see who's on what and don't redo or overwrite each other's work.
-
-**How to set it up:** in the Claude desktop app, create a scheduled task that runs every 10 minutes, or in Claude Code run `/loop 10m <prompt>`. Use a prompt like this one:
-
-> In this repo, run `git pull --rebase origin main`. Rewrite only my own block in CLAUDE.md, between `<!-- <name>-sync:start -->` and `<!-- <name>-sync:end -->` (create the block under "Notes from the team" if it's missing). Write 3–5 lines on what I'm working on, what I just finished, what I'm blocked on, and my branch and files. Don't touch anything else. If only the timestamp would change, make no commit. Otherwise `git add CLAUDE.md`, commit "Update <name> status in CLAUDE.md", and `git push origin main`. If the push is rejected, pull --rebase once and retry. Never force-push.
+### Status syncs aren't needed anymore (from James, Mon Nov 9)
+During the hackathon, James and Kent each ran a Claude session that posted what they were working on here about every 10 minutes. The hackathon is over and James's sync stopped on Mon Nov 9, so there's no need to set one up.
 
 **Rules:**
 - Edit only your own block. The `team-status` and `romulus-sync` blocks belong to James and Kent.
