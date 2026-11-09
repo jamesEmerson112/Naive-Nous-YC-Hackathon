@@ -129,14 +129,14 @@ cd prototypes/arm-sim
 ./setup.sh                                                          # MuJoCo Menagerie's SO-101 model into vendor/
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt
 PYTHONPATH=. .venv/bin/python -m armsim poses                       # the sim's taught poses
-PYTHONPATH=. .venv/bin/python -m armsim.host --realtime &           # the sim arm, paced to wall-clock time
+PYTHONPATH=. .venv/bin/python -m armsim.host --realtime --pod sim --var "$TMPDIR/armsim-pod" &   # the sim arm, paced to wall-clock time, with a virtual sensor pod and Olir's podd
 PYTHONPATH=. .venv/bin/python -m armsim.mission --board file &      # Mission Control on http://localhost:8765
 PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted &   # runs the orders
 ```
 
 In Mission Control:
 - **1** places an order.
-- **3** plants a stuck sensor, and **4** a bad pod image (07). Both need the virtual sensor pod: start the host with `--pod sim --var "$TMPDIR/armsim-pod"`. Keep that folder's path short, since podd's socket path has a length limit.
+- **3** plants a stuck sensor, and **4** a bad pod image (07). Both use the virtual sensor pod (`--pod sim` above). Keep its `--var` folder's path short, since podd's socket path has a length limit.
 - **5** plants a dead elbow.
 - **6** bumps the block, so the next grasp misses. The dispatcher heals that only when started with `--manager fake --wrong-action redo`.
 - **7** is "a person fixed it".
