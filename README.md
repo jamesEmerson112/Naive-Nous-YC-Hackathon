@@ -21,9 +21,17 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 - **b:** a stuck sensor (middle)
 - **stall:** a dead elbow servo, handed to a person (right)
 
-**Mission Control watches it live.** An order becomes a card on the job board. A dispatcher claims it, and the arm does the job step by step while the 3D twin, the jobs columns and the commander feed follow along. This one is "pick up the block" in the sim, done in 15 s ([`armsim.mission`](prototypes/arm-sim/README.md#everything-together-in-one-place)):
+**Mission Control watches it live** ([`armsim.mission`](prototypes/arm-sim/README.md#everything-together-in-one-place)). Here a dead elbow servo is planted in the sim, and then an order comes in.
+1. The watchdog parks the arm.
+2. The checked retry at home fails, so the job goes to a person with a work order.
+3. Once a person fixes the elbow, the check at home passes.
+
+<img alt="Mission Control with a dead elbow: the order starts, the header turns to PARKED: elbow stalled, then HEALING while the arm retries at home, then NEEDS A PERSON with the card in Blocked and a work order opened, and finally FIXED by a person, checked at home" src="prototypes/arm-sim/media/sim/mission-control-stall.gif" width="800">
+
+<details><summary>The same screen when nothing is broken: an order runs itself in 15 s</summary>
 
 <img alt="Mission Control during a pick order: the header goes from idle to queued to working, the twin goes home, reaches over the block and approaches it while the wrist distance counts down, the card moves to Done, and the commander feed logs each step" src="prototypes/arm-sim/media/sim/mission-control-pick.gif" width="800">
+</details>
 
 **On the real arm, an LLM ran the experiments.** On Nov 8 an LLM planner, Astra through Hermes, ran 102 pick-and-place tries on the real SO-101, judging each from the bench camera. The red bag never made it into the box. One try lifted three bags for 20.7 s, though, and the charts show why the rest slipped: [the full write-up](prototypes/arm-sim/README.md#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8).
 

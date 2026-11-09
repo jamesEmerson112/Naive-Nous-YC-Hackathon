@@ -179,6 +179,15 @@ The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The y
 
 The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The design is `docs/worker-manager-healer.md`.
 
+<p>
+  <img alt="Mission Control with a dead elbow planted: PARKED, then HEALING with a retry at home, then NEEDS A PERSON with a work order, then FIXED by a person" src="media/sim/mission-control-stall.gif" width="400">
+  <img alt="Mission Control running a pick order in the sim: queued, working, the twin reaching and approaching the block, then done" src="media/sim/mission-control-pick.gif" width="400">
+</p>
+
+Mission Control in the sim, recorded from `armsim.host --realtime`, `armsim.mission --board file` and `armsim.dispatch --board file --exec scripted`:
+- **Left:** key 5 plants a dead elbow, key 1 places an order, and key 7 is "a person fixed it".
+- **Right:** a plain pick order.
+
 **What each piece does:**
 - **The watchdog** (`host.py`) speaks one sentence, parks the arm, and closes an incident only after `verify()`: home, fresh readings, and podd agreeing. Pod incidents park the arm too.
 - **The arm reporter** (`romulus.py`) sends a check-in every 10 s, plus one incident report (and a `log_window` recording) per incident once it is over.
