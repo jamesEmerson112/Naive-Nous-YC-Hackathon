@@ -28,7 +28,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]                 # prototypes/arm-sim
 OUT = ROOT / "media" / "autonomous-loop.gif"
-W, H, S = 960, 540, 2                                       # drawn at S x, then scaled down for smooth edges
+W, H, S = 960, 540, 2                                       # layout units; drawn at S x, then scaled down
+OUT_W, OUT_H = 1280, 720                                    # the GIF: sharp at the READMEs' 800 px on a 2x screen
 FPS = 10
 END = 30.0                                                  # the last change; the final frame is then held
 HOLD_MS = 4000
@@ -135,7 +136,7 @@ class Canvas:
         return lines + [cur]
 
     def frame(self):
-        return self.im.resize((W, H), Image.LANCZOS)
+        return self.im.resize((OUT_W, OUT_H), Image.LANCZOS)
 
 
 # ---- layout ---------------------------------------------------------------------------------------------------
@@ -646,9 +647,9 @@ SCENES = {  # name: draw, GIF, last change, frames whose colours make the palett
 def palette_from(draw_fn, times):
     """One palette for every frame, from a strip of frames that hold every state's colours."""
     sample = [draw_fn(t) for t in times]
-    strip = Image.new("RGB", (W, H * len(sample)))
+    strip = Image.new("RGB", (OUT_W, OUT_H * len(sample)))
     for k, im in enumerate(sample):
-        strip.paste(im, (0, k * H))
+        strip.paste(im, (0, k * OUT_H))
     return strip.quantize(colors=255, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
 
 
