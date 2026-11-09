@@ -1,10 +1,14 @@
-"""An animated diagram of the autonomous loop, for the README: an order becomes a Naïve card, Hermes runs the arm,
-the arm's readings reach plain code, a stuck sensor parks the arm and heals, and nobody types after the order.
+"""Animated diagrams of the two autonomous loops, for the READMEs.
 
-    PYTHONPATH=. .venv/bin/python -m armsim.loopgif                     # writes media/autonomous-loop.gif
-    PYTHONPATH=. .venv/bin/python -m armsim.loopgif --at 12.5 20 --out /tmp/stills   # PNG stills, for layout checks
+    PYTHONPATH=. .venv/bin/python -m armsim.loopgif                       # both GIFs into media/
+    PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene heal          # media/autonomous-loop.gif
+    PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene experiment    # media/experiment-loop.gif
+    PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene heal --at 12.5 20 --out /tmp/stills   # PNG stills
 
-It's a drawing, not a screen recording, and each step in it happened in a run:
+They're drawings, not screen recordings, and each step in them happened in a run.
+
+heal: an order becomes a Naïve card, Hermes runs the arm, the arm's readings reach plain code, a stuck sensor parks
+the arm and heals, and nobody types after the order.
 - story b --hermes in the sim: a Naïve card drove Hermes, which healed the stuck sensor, finished the job, commented
   RESULT: and moved the card to done (MORNING.md, the story table);
 - a Naïve card + Hermes job on the real arm, done 107 s after the claim with nobody typing (HANDOFF-LOCAL.md, Sun
@@ -12,6 +16,9 @@ It's a drawing, not a screen recording, and each step in it happened in a run:
 The readings and the watchdog's sentence come from the sim's us_stuck escalation packet
 (hermes-manager/samples/esc-us_stuck.json), the tool names from hermes-plugin/so101-arm, the card's title from
 armsim/stories.py, and what the host sends Romulus from armsim/romulus.py.
+
+experiment: one try of the Nov 8 generate-and-test run on the real arm (armsim/gentest.py), with the values from the
+try log: Astra plans it, gentest runs it on the Pi, the camera and the log report back.
 """
 import argparse
 import math
@@ -225,13 +232,29 @@ def tip_at(t):
     return pose
 
 
-def ik(tip):
+def ik(tip, shoulder=SHOULDER):
     wx, wy = tip[0], tip[1] - L3
-    dx, dy = wx - SHOULDER[0], wy - SHOULDER[1]
+    dx, dy = wx - shoulder[0], wy - shoulder[1]
     d = clamp(math.hypot(dx, dy), abs(L1 - L2) + 1e-3, L1 + L2 - 1e-3)
     a, b = math.atan2(dy, dx), math.acos((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))
-    elbows = [(SHOULDER[0] + L1 * math.cos(th), SHOULDER[1] + L1 * math.sin(th)) for th in (a - b, a + b)]
+    elbows = [(shoulder[0] + L1 * math.cos(th), shoulder[1] + L1 * math.sin(th)) for th in (a - b, a + b)]
     return min(elbows, key=lambda e: e[1]), (wx, wy)      # elbow up
+
+
+def draw_links(c, shoulder, tip, jaw):
+    """The SO-101 seen from the side: base, two links, the wrist and the open or closed jaws."""
+    elbow, wrist = ik(tip, shoulder)
+    c.rect((shoulder[0] - 20, shoulder[1] + 6, shoulder[0] + 20, TABLE_Y), fill=JOINT, outline=EDGE, r=5)
+    c.line([shoulder, elbow], LINK, 11)
+    c.line([elbow, wrist], LINK, 10)
+    bar = tip[1] - 16
+    c.line([wrist, (tip[0], bar)], LINK, 7)
+    c.line([(tip[0] - jaw - 2, bar), (tip[0] + jaw + 2, bar)], (230, 120, 96), 3)
+    for side in (-1, 1):
+        c.line([(tip[0] + side * jaw, bar), (tip[0] + side * jaw, tip[1] + 2)], (230, 120, 96), 3)
+    for p, r in ((shoulder, 7), (elbow, 6), (wrist, 5)):
+        c.dot(p, r, JOINT)
+        c.dot(p, r - 3, (120, 136, 176))
 
 
 def jaw_at(t):
@@ -256,23 +279,11 @@ def block_top(t, tip):
 
 def draw_arm(c, t):
     tip = tip_at(t)
-    elbow, wrist = ik(tip)
     top = block_top(t, tip)
     bx = tip[0] if GRIP[1] <= t < RELEASE[0] + 0.1 else BLOCK_X
     c.line([(26, TABLE_Y), (186, TABLE_Y)], (58, 72, 108), 2)
     c.rect((bx - 9, top, bx + 9, top + BLOCK), fill=(45, 170, 120), outline=(120, 230, 180), r=2, width=1)
-    c.rect((38, 302, 78, TABLE_Y), fill=JOINT, outline=EDGE, r=5)
-    c.line([SHOULDER, elbow], LINK, 11)
-    c.line([elbow, wrist], LINK, 10)
-    j = jaw_at(t)
-    bar = tip[1] - 16
-    c.line([wrist, (tip[0], bar)], LINK, 7)
-    c.line([(tip[0] - j - 2, bar), (tip[0] + j + 2, bar)], (230, 120, 96), 3)
-    for side in (-1, 1):
-        c.line([(tip[0] + side * j, bar), (tip[0] + side * j, tip[1] + 2)], (230, 120, 96), 3)
-    for p, r in ((SHOULDER, 7), (elbow, 6), (wrist, 5)):
-        c.dot(p, r, JOINT)
-        c.dot(p, r - 3, (120, 136, 176))
+    draw_links(c, SHOULDER, tip, jaw_at(t))
     sx, sy = tip[0] + 15, tip[1] - 19                      # the ultrasonic sensor on the wrist
     c.rect((sx - 4, sy - 3, sx + 4, sy + 3), fill=BEAM, r=1)
     if not (16.9 <= t < 18.2):                             # off while podd restarts it
@@ -430,9 +441,187 @@ def draw(t):
     c.text((ORDERS[0] + 10, ORDERS[1] + 40), "none needed" if got else "only on a hand-off", "mono", 14,
            GREEN if got else DIM, "lm")
 
-    # caption
-    _, _, step, scol, words = latest(CAPTIONS, t)
-    final = step == "" and t >= CAPTIONS[-1][0]
+    caption(c, t, CAPTIONS, "Drawn from real runs: story b with Hermes in the sim, and a Naïve card on the real arm.")
+    return c.frame()
+
+
+# ---- the second loop: the real-arm experiment, one try from the Nov 8 try log --------------------------------------
+# What happened at 13:47-13:54 (data/hackathon-2026-11-08/arm-runs/gentest, local): Astra planned try g3 as
+# recording_2 at pan -4, speed 0.5, in 24.1 s; the jaws closed at 16.7 s, squeezed to 99% and held three bags for
+# 20.7 s, ending in alarm 32 (gripper overload); Astra's eye then said UNSURE and it planned a probe at pan -2: GO.
+# 96 of the log's 102 rows carry an Astra plan (README, "The real-arm experiment").
+EXP_OUT = ROOT / "media" / "experiment-loop.gif"
+EXP_END = 29.5
+EXP_LANES = [
+    (16, 216, "THE BENCH", "the real SO-101, a camera"),
+    (238, 458, "THE PI", "gentest trial: one try"),
+    (480, 700, "THE MAC", "gentest run: the loop"),
+    (722, 944, "THE AGENT", "Astra (gpt-6-astra) via Hermes"),
+]
+TRIAL = (250, 120, 446, 382)
+RUN, FRAMES, TRYLOG = (492, 120, 688, 176), (492, 184, 688, 282), (492, 290, 688, 382)
+ASTRA = (734, 120, 932, 382)
+BENCH_SHOULDER = (56, 296)
+BENCH = {"rest": (84, 272), "above": (120, 262), "grab": (120, 312), "lift": (120, 252), "box": (176, 248)}
+BENCH_MOVES = [(11.8, 13.4, "rest", "above"), (13.6, 15.4, "above", "grab"), (16.8, 17.8, "grab", "lift"),
+               (18.0, 19.6, "lift", "box"), (19.8, 21.4, "box", "rest")]
+JAWS_CLOSE, OVERLOAD = (15.6, 16.4), 21.0
+BAGS = [((114, 314), (30, 13), (222, 58, 58)), ((129, 311), (28, 13), (238, 136, 48)),
+        ((121, 302), (26, 11), (246, 196, 72))]                          # centre, size, colour; the red one first
+FLASHES = [12.0, 15.6, 19.0, 21.6]                                          # camera frames sent to the Mac
+P_CAM = [(30, 292), (30, BUS_Y), (469, BUS_Y), (469, 233), (492, 233)]
+EXP_CAPTIONS = [
+    (0.0, 1.2, "", DIM, "One of the 102 tries, from the Nov 8 try log: Astra plans it, the arm runs it, the camera "
+                        "reports back."),
+    (1.2, 4.8, "1", VIOLET, "Astra reads the try log and the latest camera frames, with a labelled grid it names "
+                            "cells by."),
+    (4.8, 9.0, "2", VIOLET, "It writes the next test as JSON, with its reason: recording_2, pan −4, speed 0.5 "
+                            "(24.1 s)."),
+    (9.0, 11.6, "3", CYAN, "gentest on the Mac keeps pan within ±10° and speed within 0.5–1.0, then starts the try "
+                           "on the Pi over SSH."),
+    (11.6, 16.6, "4", CYAN, "The Pi replays Andre's taught recording_2, turned −4° at the base. The jaws close on "
+                            "the pile at 16.7 s and squeeze to 99%."),
+    (16.6, 22.2, "5", GREEN, "Three bags stay in the jaws for 20.7 s, over the box and back, until the gripper "
+                             "reports an overload (alarm 32)."),
+    (22.2, 25.0, "6", BLUE, "The Pi writes grip time, jaw tip and joints to the try log, and the frames go back to "
+                            "Astra."),
+    (25.0, 28.4, "7", VIOLET, "Astra judges the last try UNSURE and plans the next one: a probe at pan −2, which it "
+                              "calls GO. Then again, all afternoon."),
+    (28.4, 99.0, "", GREEN, "Nobody touches the arm. The bench camera is Astra's only eye."),
+]
+EXP_PHASES = [(0.0, "WAITING", DIM), (1.2, "PLANNING", VIOLET), (9.0, "TRYING", CYAN),
+              (16.4, "HOLDING 3 BAGS", GREEN), (OVERLOAD, "ALARM 32", RED), (22.0, "AT REST", MUTED),
+              (25.0, "PLANNING", VIOLET)]
+TRIAL_LINES = [(10.4, "over SSH: one try", MUTED), (11.6, "replay recording_2", TEXT),
+               (12.0, "pan -4.0  speed 0.5", TEXT), (15.6, "jaws close  16.7 s", CYAN),
+               (16.4, "squeeze     99%", TEXT), (17.0, "holding     …", GREEN), (OVERLOAD, "alarm 32  overload", RED),
+               (21.6, "back at rest", TEXT), (22.0, "peak load 0.95 N·m", MUTED)]
+LOG_ROWS = [(0.0, "g10 rec_2  +6   0.9 s", TEXT), (0.0, "p1  rec_2 +10   GO", TEXT),
+            (0.0, "g2  rec_2 +10   0.9 s", TEXT), (22.8, "g3  rec_2  -4  20.7 s", GREEN),
+            (27.0, "p1  rec_2  -2   GO", VIOLET)]
+ASTRA_LINES = [(1.6, "reading the try log", MUTED), (2.4, "and the latest frames", MUTED),
+               (5.0, '{"recording":', VIOLET), (5.4, '   "recording_2",', VIOLET), (5.8, ' "pan": -4.0,', VIOLET),
+               (6.2, ' "speed": 0.5}', VIOLET), (7.0, "why: move the jaws", MUTED), (7.4, "camera-right, to E8", MUTED),
+               (8.2, "planned in 24.1 s", GREEN), (24.4, "eye: UNSURE", AMBER), (25.4, "next: probe, pan -2", VIOLET),
+               (26.6, "probe check: GO", GREEN)]
+
+
+def bench_tip(t):
+    pose = BENCH["rest"]
+    for t0, t1, a, b in BENCH_MOVES:
+        if t >= t1:
+            pose = BENCH[b]
+        elif t >= t0:
+            u = prog(t, t0, t1)
+            return lerp(BENCH[a][0], BENCH[b][0], u), lerp(BENCH[a][1], BENCH[b][1], u)
+        else:
+            break
+    return pose
+
+
+def draw_bench(c, t):
+    tip = bench_tip(t)
+    c.line([(24, TABLE_Y), (208, TABLE_Y)], (58, 72, 108), 2)
+    box_c = (176, 140, 92)                                   # the box, open at the top
+    c.rect((152, 284, 204, TABLE_Y), fill=mix(PANEL, box_c, 0.12), r=2)
+    c.line([(152, 284), (152, TABLE_Y), (204, TABLE_Y), (204, 284)], box_c, 2.5)
+    held = t >= JAWS_CLOSE[1]
+    grab = BENCH["grab"]
+    for (cx, cy), (w, h), col in reversed(BAGS):             # the pile, then the bags in the jaws
+        if held:
+            cx, cy = tip[0] + cx - grab[0], tip[1] + cy - grab[1]
+        c.rect((cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), fill=col, outline=mix(col, (255, 255, 255), 0.35),
+               r=4, width=1)
+    jaw = 14.0 if t < JAWS_CLOSE[0] else lerp(14, 9, prog(t, *JAWS_CLOSE))
+    draw_links(c, BENCH_SHOULDER, tip, jaw)
+    if OVERLOAD <= t < 22.6:                                  # the gripper's alarm
+        c.dot((tip[0] + 16, tip[1] - 26), 8, RED)
+        c.text((tip[0] + 16, tip[1] - 26), "!", "head", 13, TEXT, "mm")
+    c.rect((22, 266, 36, 292), fill=(34, 40, 58), outline=MUTED, r=3, width=1)   # the iPhone, at table height
+    c.dot((29, 273), 2.5, (90, 100, 130))
+    flash = [f for f in FLASHES if 0 <= t - f < 0.35]
+    if flash:
+        c.dot((29, 273), 7, mix(TEXT, PANEL, (t - flash[0]) / 0.35))
+        c.dot((29, 273), 3, TEXT)
+
+
+def draw_experiment(t):
+    c = Canvas()
+    for x in range(0, W, 32):
+        c.line([(x, 0), (x, H)], GRID, 1)
+    for y in range(0, H, 32):
+        c.line([(0, y), (W, y)], GRID, 1)
+    c.text((18, 12), "102 tries on the real arm, planned by an LLM", "head", 27, TEXT)
+    c.text((19, 46), "Astra (through Hermes) plans each test from the camera and the try log, and the arm runs it. "
+                     "Nov 8", "body", 14, MUTED)
+    c.rect((736, 12, 944, 60), fill=mix(PANEL, GREEN, 0.10), outline=mix(GREEN, PANEL, 0.35), r=12, width=1.2)
+    c.text((752, 36), "ASTRA PLANNED", "head", 15, MUTED, "lm")
+    c.text((930, 36), "96/102", "head", 30, GREEN, "rm")
+    for x0, x1, title, where in EXP_LANES:
+        panel(c, x0, x1, title, where)
+    paths = {"log_astra": [(688, 336), (711, 336), (711, 250), (734, 250)],
+             "frames_astra": [(688, 233), (711, 233), (734, 233)],
+             "astra_run": [(734, 148), (711, 148), (688, 148)],
+             "ssh": [(492, 148), (469, 148), (446, 148)],
+             "pi_arm": [(250, 200), (227, 200), (204, 200)],
+             "pi_log": [(446, 336), (469, 336), (492, 336)]}
+    for p in list(paths.values()) + [P_CAM]:
+        c.line(p, mix(EDGE, BG, 0.1), 1.5)
+
+    draw_bench(c, t)
+    _, phase, color = latest(EXP_PHASES, t)
+    c.rect((36, 344, 196, 380), fill=mix(PANEL, color, 0.16), outline=color, r=18, width=1.5)
+    c.text((116, 362), phase, "head", 18, color, "mm")
+
+    trying = 9.0 <= t < 22.0
+    box(c, TRIAL, "gentest trial", "on the Pi", CYAN if trying else MUTED, edge=CYAN if trying else BOX_EDGE,
+        glow=CYAN if trying else None)
+    lines = [(s.replace("…", "20.7 s") if s.startswith("holding") and t >= 21.6 else s, col)
+             for t0, s, col in TRIAL_LINES if t >= t0]
+    lines_in(c, TRIAL, lines, size=14)
+
+    box(c, RUN, "gentest run", "on the Mac", MUTED, glow=CYAN if 9.2 <= t < 10.6 else None)
+    c.text((RUN[0] + 10, RUN[1] + 39), "pan ±10° · speed 0.5–1.0", "body", 13,
+           GREEN if 9.2 <= t < 11.6 else MUTED, "lm")
+    box(c, FRAMES, "camera frames", glow=BEAM if any(0 <= t - f - 1.0 < 0.5 for f in FLASHES) else None)
+    gx, gy, cw, ch = FRAMES[0] + 12, FRAMES[1] + 34, 9, 6            # the 12 x 9 labelled grid, E8 marked
+    for i in range(13):
+        c.line([(gx + i * cw, gy), (gx + i * cw, gy + 9 * ch)], BOX_EDGE, 1)
+    for j in range(10):
+        c.line([(gx, gy + j * ch), (gx + 12 * cw, gy + j * ch)], BOX_EDGE, 1)
+    c.rect((gx + 4 * cw, gy + 7 * ch, gx + 5 * cw, gy + 8 * ch), fill=AMBER, r=1)
+    c.text((gx + 12 * cw + 10, gy + 6), "1 a second,", "body", 13, MUTED, "lm")
+    c.text((gx + 12 * cw + 10, gy + 22), "grid A-L, 1-9", "body", 13, MUTED, "lm")
+    c.text((gx + 12 * cw + 10, gy + 42), "target E8", "mono", 13, AMBER, "lm")
+    box(c, TRYLOG, "try log", "JSON lines", MUTED, glow=BLUE if 22.8 <= t < 23.6 else None)
+    lines_in(c, TRYLOG, [(s, col) for t0, s, col in LOG_ROWS if t >= t0], top=30, step=18, size=13)
+
+    thinking = 1.2 <= t < 9.0 or 23.2 <= t < 27.4
+    box(c, ASTRA, "Astra", "via Hermes", VIOLET, edge=VIOLET if thinking else BOX_EDGE, glow=VIOLET if thinking else None)
+    lines_in(c, ASTRA, [(s, col) for t0, s, col in ASTRA_LINES if t >= t0], top=30, step=19, size=13)
+
+    for t0, t1 in ((1.4, 2.2), (23.2, 24.0)):
+        moving_dot(c, paths["log_astra"], t, t0, t1, BLUE)
+    for t0, t1 in ((1.8, 2.6), (23.6, 24.4)):
+        moving_dot(c, paths["frames_astra"], t, t0, t1, BEAM)
+    moving_dot(c, paths["astra_run"], t, 8.6, 9.2, VIOLET)
+    moving_dot(c, paths["ssh"], t, 9.6, 10.4, CYAN)
+    moving_dot(c, paths["pi_arm"], t, 11.0, 11.6, CYAN)
+    if 11.8 <= t < 21.4:
+        start = math.floor(t / 0.35) * 0.35
+        moving_dot(c, paths["pi_arm"], t, start, start + 0.45, CYAN, 3.2)
+    for f in FLASHES:
+        moving_dot(c, P_CAM, t, f, f + 1.0, BEAM)
+    moving_dot(c, paths["pi_log"], t, 22.2, 22.8, BLUE)
+
+    caption(c, t, EXP_CAPTIONS, "Astra planned 96 of the 102 tries, 11:41–14:33. Drawn from the try log, "
+                                "13:47–13:54.")
+    return c.frame()
+
+
+def caption(c, t, captions, footnote):
+    _, _, step, scol, words = latest(captions, t)
+    final = step == "" and t >= captions[-1][0]
     c.rect((16, 418, 944, 524), fill=mix(PANEL, scol, 0.10 if final else 0.04), outline=mix(scol, PANEL, 0.45),
            r=14, width=1.2)
     x = 34
@@ -444,24 +633,30 @@ def draw(t):
     for k, s in enumerate(c.wrap(words, "bold" if final else "body", size, 944 - x - 24)):
         c.text((x, 436 + k * 28), s, "bold" if final else "body", size, GREEN if final else TEXT)
     if final:
-        c.text((x, 500), "Drawn from real runs: story b with Hermes in the sim, and a Naïve card on the real arm.",
-               "body", 14, MUTED)
-    return c.frame()
+        c.text((x, 500), footnote, "body", 14, MUTED)
 
 
-def palette_from(times):
+SCENES = {  # name: draw, GIF, last change, frames whose colours make the palette
+    "heal": (draw, OUT, END, [0.0, 3.0, 6.0, 10.5, 12.5, 16.0, 17.5, 20.5, 23.5, 27.5, END]),
+    "experiment": (draw_experiment, EXP_OUT, EXP_END, [0.0, 3.0, 7.0, 10.0, 14.0, 16.2, 19.0, 21.2, 23.0, 27.0,
+                                                       EXP_END]),
+}
+
+
+def palette_from(draw_fn, times):
     """One palette for every frame, from a strip of frames that hold every state's colours."""
-    sample = [draw(t) for t in times]
+    sample = [draw_fn(t) for t in times]
     strip = Image.new("RGB", (W, H * len(sample)))
     for k, im in enumerate(sample):
         strip.paste(im, (0, k * H))
     return strip.quantize(colors=255, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
 
 
-def build(out, fps):
-    pal = palette_from([0.0, 3.0, 6.0, 10.5, 12.5, 16.0, 17.5, 20.5, 23.5, 27.5, END])
-    n = int(END * fps) + 1
-    frames = [draw(k / fps).quantize(palette=pal, dither=Image.Dither.NONE) for k in range(n)]
+def build(name, out, fps):
+    draw_fn, _, end, times = SCENES[name]
+    pal = palette_from(draw_fn, times)
+    n = int(end * fps) + 1
+    frames = [draw_fn(k / fps).quantize(palette=pal, dither=Image.Dither.NONE) for k in range(n)]
     ms = [round(1000 / fps)] * (n - 1) + [HOLD_MS]
     out.parent.mkdir(parents=True, exist_ok=True)
     # optimize=True: Pillow stores each frame as the box that changed, with unchanged pixels transparent (the
@@ -472,20 +667,25 @@ def build(out, fps):
 
 def main():
     ap = argparse.ArgumentParser(prog="python -m armsim.loopgif", description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", default=None, help=f"the GIF (default {OUT.relative_to(ROOT)}), or a folder for --at")
+    ap.add_argument("--scene", choices=sorted(SCENES), default=None,
+                    help="heal (the self-healing job) or experiment (the real-arm loop); default both")
+    ap.add_argument("--out", default=None, help="the GIF (with --scene), or a folder for --at")
     ap.add_argument("--fps", type=int, default=FPS)
     ap.add_argument("--at", type=float, nargs="+", metavar="SECONDS", help="write PNG stills at these times instead")
     a = ap.parse_args()
+    names = [a.scene] if a.scene else sorted(SCENES)
     if a.at:
         folder = Path(a.out or ".")
         folder.mkdir(parents=True, exist_ok=True)
-        for t in a.at:
-            p = folder / f"loop-{t:05.1f}.png"
-            draw(t).save(p)
-            print(p)
+        for name in names:
+            for t in a.at:
+                p = folder / f"{name}-{t:05.1f}.png"
+                SCENES[name][0](t).save(p)
+                print(p)
         return
-    out = build(Path(a.out) if a.out else OUT, a.fps)
-    print(f"{out}  {out.stat().st_size / 1e6:.2f} MB")
+    for name in names:
+        out = build(name, Path(a.out) if a.out and a.scene else SCENES[name][1], a.fps)
+        print(f"{out}  {out.stat().st_size / 1e6:.2f} MB")
 
 
 if __name__ == "__main__":

@@ -84,6 +84,10 @@ It's a drawing ([`armsim/loopgif.py`](prototypes/arm-sim/armsim/loopgif.py)), an
 - **In the sim,** a Naïve card drove Hermes through a stuck sensor: Hermes healed it, finished the job, commented `RESULT:` and the card went to done ([`MORNING.md`](prototypes/arm-sim/MORNING.md), story `b --hermes`). The readings on screen are rows from the sim's stuck-sensor packet ([`esc-us_stuck.json`](prototypes/arm-sim/hermes-manager/samples/esc-us_stuck.json)).
 - **On the real arm,** a Naïve card + Hermes job ran with no fault: done 107 s after the claim, 25 tool calls, nobody typing ([`HANDOFF-LOCAL.md`](prototypes/arm-sim/HANDOFF-LOCAL.md), Sun 10:27 AM).
 
+**The Nov 8 experiment on the real arm ran hands-off too.** Astra (`gpt-6-astra` through Hermes) planned 96 of the 102 tries from the try log and the bench camera, its only eye. Here is one of them, the 13:50 three-bag carry, with its values from the try log ([the write-up](prototypes/arm-sim/README.md#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8)):
+
+<img alt="Animated diagram of one real-arm try in four lanes: the bench, the Pi, the Mac and the agent. Astra via Hermes reads the try log and the camera frames with their labelled grid, and writes the next test as JSON: recording_2, pan -4, speed 0.5, planned in 24.1 s. gentest on the Mac checks pan and speed and starts the try on the Pi over SSH. The arm replays recording_2, the jaws close on the pile at 16.7 s and squeeze to 99%, and three bags stay in the jaws for 20.7 s until the gripper reports alarm 32. The Pi writes the result to the try log, and Astra judges the try UNSURE and plans a probe at pan -2, which it calls GO. A badge reads Astra planned 96/102" src="prototypes/arm-sim/media/experiment-loop.gif" width="800">
+
 Which code runs where:
 
 ```

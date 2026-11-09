@@ -49,6 +49,10 @@ flowchart LR
   pi -- "grip time, jaw tip, joints" --> log[("try log")]
   log --> astra
 ```
+<img alt="The same loop animated with one try's values from the try log, the 13:50 carry: Astra writes recording_2, pan -4, speed 0.5 in 24.1 s; gentest starts it on the Pi over SSH; the jaws close at 16.7 s, squeeze to 99% and hold three bags for 20.7 s until alarm 32; the result goes to the try log; Astra judges it UNSURE and plans a probe at pan -2, which it calls GO" src="media/experiment-loop.gif" width="800">
+
+The same loop, animated with one try's values from the try log (the 13:50 carry). `PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene experiment` redraws it.
+
 The method changed through the afternoon (the numbers on the timeline):
 1. Astra plans each test.
 2. The grip squeezes to 99%.
@@ -184,7 +188,7 @@ The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The y
 
 The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The design is `docs/worker-manager-healer.md`.
 
-**How the data moves** from a Naïve card through Hermes, the arm host and the watchdog to Romulus, as an animated diagram of story `b --hermes`: [the root README](../../README.md#how-the-pieces-fit). `PYTHONPATH=. .venv/bin/python -m armsim.loopgif` redraws it into `media/autonomous-loop.gif`.
+**How the data moves** from a Naïve card through Hermes, the arm host and the watchdog to Romulus, as an animated diagram of story `b --hermes`: [the root README](../../README.md#how-the-pieces-fit). `PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene heal` redraws it into `media/autonomous-loop.gif`.
 
 <a id="mission-control-in-the-sim"></a>
 <p>
