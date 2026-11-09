@@ -95,9 +95,15 @@ Turning the base moves each recording along its own diagonal, and all three stay
 - **The strict rule failed:** "a jaw must show under the edge" was never met, 0 of 18. A camera at table height can't see under the bag.
 - **The looser rule:** "the jaws reach the edge, low enough to tuck under" said go 14 of 14 times.
 
-From 13:58 on, each full try also got a **timed frame sheet**: a frame every 4 s through the whole motion. This one shows the jaws coming up empty at 20 s while the bag stays in the pile:
+From 13:58 on, the camera also took a frame every 4 s through each full try. Astra got these as one timed sheet per try; here are two of those tries as animations:
 
-<img alt="Frame sheet of the 14:00 try: eight frames, 4 s apart, from the reach through the grab, the empty lift, the swing over the box and the return" src="media/gentest/frame-sheet-140030.jpg" width="820">
+<p>
+  <img alt="The 14:00:30 try, frame by frame: the reach, the jaws closing on the red bag, the jaws coming up empty, the swing over the box and the return" src="media/gentest/try-140030.gif" width="400">
+  <img alt="The 14:09:38 try with the re-grab check: the grab, then the arm holding just above the pile while it checks the grip and re-grabs with small base nudges" src="media/gentest/try-140938.gif" width="400">
+</p>
+
+- **14:00:30 (left).** A whole try: the jaws close on the bag between 16 and 20 s and come up empty, the bag stays in the pile, and the arm swings over the box anyway.
+- **14:09:38 (right).** The re-grab check (7). After the grab, the arm holds just above the pile and reads the gripper. Each time it judged the jaws empty, it re-grabbed with a small base nudge (+1.5°, −1.5°, +3°). It never judged one held, so it never carried; it misread thin edge grips as empty and was switched off.
 
 ### Where the time goes
 <picture>
@@ -118,9 +124,11 @@ From 13:58 on, each full try also got a **timed frame sheet**: a frame every 4 s
 - **The camera.** It sits at table height, so it can't see a jaw under the bag. Mount it higher or add a second one.
 - **The motion.** Teach a recording whose jaws straddle the bag's rim, or give the planner a small lift or wrist offset, inside safe limits.
 
-**The data stays local.** The raw try log, 400+ camera frames, Astra's exact prompts and replies, and per-try GIFs are in `data/hackathon-2026-11-08/` on James's Mac, and git ignores them. To redraw these charts from it:
+**The data stays local.** The raw try log, 400+ camera frames, Astra's exact prompts and replies, and 102 per-try GIFs are in `data/hackathon-2026-11-08/` on James's Mac, and git ignores them. To redraw this section's media from it:
 ```
-PYTHONPATH=. .venv/bin/python -m armsim.report
+PYTHONPATH=. .venv/bin/python -m armsim.report                            # the charts
+PYTHONPATH=. .venv/bin/python -m armsim.gifs --tries 14:00:30 14:09:38    # the try animations
+PYTHONPATH=. .venv/bin/python -m armsim.gifs --stories                    # the sim story GIFs (media/sim/)
 ```
 
 ## Everything together, in one place
@@ -147,6 +155,14 @@ uv pip install --python .venv/bin/python -e ../../packages/contracts -e ../../to
 | `b --hermes` | The same, but the job is a new Naïve board card and Hermes does it, ending with `RESULT:` on the card. |
 | `stall` | A dead elbow servo: a checked retry fails, the incident is handed to a person (`hardware`), and Romulus opens a work order. |
 | `redo` (`--manager fake`) | A wrong action (sim only): the block is bumped and the grasp misses. The arm reverses, the manager corrects the approach (±40 mm, never joint angles), and the arm redoes it; after two misses it goes to a person. |
+
+<p>
+  <img alt="Story a in the sim twin: the distance reading disagrees with the arm's pose, so the arm parks, and resumes once the pod is healed" src="media/sim/story-a.gif" width="270">
+  <img alt="Story b in the sim twin: the distance reading is stuck while the arm moves, so the arm parks, the sensor restarts and the job retries" src="media/sim/story-b.gif" width="270">
+  <img alt="The stall story in the sim twin: the elbow stops 25 degrees short of its target, the arm parks and the incident goes to a person" src="media/sim/story-stall.gif" width="270">
+</p>
+
+The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The yellow line is the pod's ultrasonic beam to the green block, and the status line at the top shows the distance and why the arm parked.
 
 
 **The autonomous loop, Mission Control and the healer's manager** (all `PYTHONPATH=. .venv/bin/python -m …`, with the arm host up):
