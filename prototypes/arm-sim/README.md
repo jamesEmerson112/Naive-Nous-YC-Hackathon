@@ -6,6 +6,123 @@ The simulated SO-101 bench, and since Sun Nov 8 the whole self-healing loop.
 
 The morning checklist and the open decisions are in [`MORNING.md`](MORNING.md).
 
+## The real-arm experiment: Astra picks up the red bag (Nov 8)
+On the last afternoon, the arm tried to pick up a red bag of chips and drop it in a box, with an LLM, not a person, deciding each attempt.
+- **The planner:** Astra (`gpt-6-astra` through Hermes). It reads the camera and a JSON log of every earlier try, then designs the next test.
+- **What it can choose:** one of Andre's three taught pick-and-place recordings, turned at the base (`pan`, ±10°) and slowed (`speed`, 0.5–1.0). The code clamps anything else.
+- **Who watches:** nobody touches the arm. The bench camera is Astra's only eye.
+- **The result:** the red bag never landed in the box. On try 13:50, though, the arm lifted three bags for 20.7 s, and the data shows why the other tries slipped.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/gentest/timeline-dark.svg">
+  <img alt="Timeline of 102 tries from 11:41 to 14:33: grip time per try by recording, probes below, and seven numbered changes to the method" src="media/gentest/timeline-light.svg">
+</picture>
+
+<p>
+  <img alt="The 13:50 try: before, the jaws closing on the pile, and after with three bags held above the arm" src="media/gentest/carry-20261108-135027.gif" width="400">
+  <img alt="The 11:57 near miss: wave at pan +9 carried the red bag and dropped it just short of the box" src="media/gentest/near-miss-wave-115717.gif" width="400">
+</p>
+
+| | |
+|---|---|
+| Tries | 102 between 11:41 and 14:33: 70 full pick-and-places and 32 probes |
+| One try | about 69 s: 38 s of arm motion, 27 s of Astra planning, 5 s for camera, SSH and logging |
+| Longest grip | 20.7 s: `recording_2` at pan −4, three bags (it never let go, below) |
+| Closest to the box | `wave` at pan +9 held 3.2 s and dropped the bag just short |
+| Probe go rate | 0 of 18 with "a jaw must show under the edge"; 14 of 14 with "the jaws reach the edge" |
+| Red bag in the box | 0 |
+
+**The loop.** `python -m armsim.gentest run --guide hermes` on the Mac. The Pi side is `gentest trial`, and the arm host is stopped while the loop runs.
+```mermaid
+flowchart LR
+  cam["iPhone camera<br/>1 frame a second"] --> frames["frames with a labelled grid<br/>and a timed sheet per try"]
+  frames --> astra["Astra via Hermes<br/>reads the images and the try log"]
+  astra -- "next test as JSON:<br/>recording, pan, speed" --> mac["gentest on the Mac<br/>clamps pan and speed"]
+  mac -- SSH --> pi["gentest trial on the Pi<br/>a probe or a full try"]
+  pi --> arm["SO-101 replays<br/>the recording"]
+  arm --> cam
+  pi -- "grip time, jaw tip, joints" --> log[("try log")]
+  log --> astra
+```
+The method changed through the afternoon (the numbers on the timeline):
+1. Astra plans each test.
+2. The grip squeezes to 99%.
+3. A probe before the grab: the arm stops with its jaws open at the grip point, and Astra says go or no-go from the camera.
+4. A labelled grid on every frame, so Astra names cells ("jaws F8, edge E8").
+5. A looser go rule (below).
+6. `recording_2` only, with frame sheets.
+7. A re-grab check.
+
+### `recording_2` is the motion that grips
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/gentest/grip-by-recording-dark.svg">
+  <img alt="Grip time by recording: recording_2 holds about 0.9 to 1.25 s plus the 20.7 s carry; wave and recording_3 hold 0.5 to 0.8 s" src="media/gentest/grip-by-recording-light.svg">
+</picture>
+
+`recording_2` closes its jaws lowest, about 2 cm above the table. Every Astra-planned try with it held at least 0.86 s; the two near zero are from the fixed list that ran before Astra. Once the search narrowed to it, Astra fine-tuned the pan in half-degree steps:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/gentest/recording2-pan-dark.svg">
+  <img alt="recording_2 grip time against pan: the 20.7 s carry at pan -4, about 0.9 s at the other pans" src="media/gentest/recording2-pan-light.svg">
+</picture>
+
+A grip time near 0.9 s turned out to be the jaws closing, not a hold. Only the frame sheets (below) tell a slip from a carry.
+
+### Why it never reached the box
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/gentest/jaw-heights-dark.svg">
+  <img alt="Jaw height through each recording: wave and recording_3 open their jaws over the box; recording_2 never did" src="media/gentest/jaw-heights-light.svg">
+</picture>
+
+- **Where it fell apart:** `recording_2` swings over the box like the other two, but Andre's recording never opens its jaws. It closes them only to about 31 of 100, a grip loose enough that a bag could slip out over the box. Then the loop started squeezing every grip to 99%, so the 20.7 s try held all three bags all the way home, until the gripper reported an overload (alarm 32).
+- **The fix:** `gentest` now opens `recording_2`'s jaws at its dip over the box, 10 s in (`DROP_AT`). That fix hasn't had a successful carry to prove it yet.
+
+### Where the jaws went
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/gentest/jaw-map-dark.svg">
+  <img alt="Top-down map of where the jaws closed, in cm from the arm's base: each recording sweeps its own diagonal; Astra's bag-edge estimates sit among them" src="media/gentest/jaw-map-light.svg">
+</picture>
+
+Turning the base moves each recording along its own diagonal, and all three stay inside a 6 × 6 cm patch. Astra's estimates of the bag's near edge (crosses) moved as each try pushed the bag around.
+
+### What Astra sees
+<p>
+  <img alt="A probe frame with the labelled 12 by 9 grid: the open jaws in G8, beside the red bag's edge in F8" src="media/gentest/probe-grid-132558.jpg" width="400">
+  <img alt="Probe go at 13:26: before, then the jaws held open at the grip point" src="media/gentest/probe-go-132627.gif" width="400">
+</p>
+
+**The probe frame** (left). This is the shot Astra judged GO at 13:26 (right): the jaws are held open at the grip point, with the grid it names cells by.
+- **The strict rule failed:** "a jaw must show under the edge" was never met, 0 of 18. A camera at table height can't see under the bag.
+- **The looser rule:** "the jaws reach the edge, low enough to tuck under" said go 14 of 14 times.
+
+From 13:58 on, each full try also got a **timed frame sheet**: a frame every 4 s through the whole motion. This one shows the jaws coming up empty at 20 s while the bag stays in the pile:
+
+<img alt="Frame sheet of the 14:00 try: eight frames, 4 s apart, from the reach through the grab, the empty lift, the swing over the box and the return" src="media/gentest/frame-sheet-140030.jpg" width="820">
+
+### Where the time goes
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/gentest/time-split-dark.svg">
+  <img alt="A try's 69 s: 38 s arm motion, 27 s Astra planning, 5 s camera, SSH and saving" src="media/gentest/time-split-light.svg">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="media/gentest/planning-time-dark.svg">
+  <img alt="Astra planning time: reasoning effort none, low or medium makes no clear difference (about 25 to 31 s); Sol is slower than Astra; a lean prompt cuts planning from 21 s to about 13 s" src="media/gentest/planning-time-light.svg">
+</picture>
+
+- **Reasoning effort didn't matter,** on the arm or in matched tests on one frozen snapshot.
+- **Prompt size did:** a lean prompt cut planning from 21 s to about 13 s (`--lean`). Sol was slower than Astra and less consistent.
+
+### What to fix next
+- **The servo power.** The servo bus dropped out three times, starting with motor 1, and twice it left the arm hanging mid-move: once slumped over the pile, once over the box. Secure the supply and its connector before anything else.
+- **A real "holding" signal.** The gripper's position and load read the same for a thin edge grip and an empty one. The re-grab check (7) opened the jaws on good grabs.
+- **The camera.** It sits at table height, so it can't see a jaw under the bag. Mount it higher or add a second one.
+- **The motion.** Teach a recording whose jaws straddle the bag's rim, or give the planner a small lift or wrist offset, inside safe limits.
+
+**The data stays local.** The raw try log, 400+ camera frames, Astra's exact prompts and replies, and per-try GIFs are in `data/hackathon-2026-11-08/` on James's Mac, and git ignores them. To redraw these charts from it:
+```
+PYTHONPATH=. .venv/bin/python -m armsim.report
+```
+
 ## Everything together, in one place
 **Setup:** once per machine, after the setup below, add the Romulus client to this venv:
 ```

@@ -17,3 +17,8 @@ __pycache__/
 # Naïve SDK client (naive/)
 naive/node_modules/
 data/
+
+# Hackathon data (Nov 8, 2026): the arm runs, camera frames, Astra's prompts and replies, and a Romulus DB dump.
+# Kept local on purpose until we decide what to publish (data/hackathon-2026-11-08/README.md). Only the charts
+# drawn from it (prototypes/arm-sim/media/gentest/, by armsim/report.py) are in git.
+data/hackathon-*/
