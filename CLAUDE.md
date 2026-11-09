@@ -85,15 +85,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Mon Nov 9, 2:48 AM PST_
+_Last updated: Mon Nov 9, 2:58 AM PST_
 
-**Current focus:** after the hackathon: James wrote up the Nov 8 real-arm generate-and-test runs (`46f6f3d`): `armsim/report.py` draws timeline, grip, pan, jaw-height, jaw-map and timing charts from the local data into `prototypes/arm-sim/media/gentest/`, with the story in `prototypes/arm-sim/README.md` and a summary in the root `README.md`. 102 tries (11:41–14:33, 70 full, 32 probes), the red bag never reached the box; the best try, `recording_2` at pan −4, lifted three bags for 20.7 s but never opened its jaws over the box. The raw data stays local and git-ignored (`data/hackathon-*/`). No other commits since 2:28 PM Sunday.
+**Current focus:** after the hackathon: James is writing up what the team built. The arm-sim README now shows the sim self-healing stories (`a`, `b`, stall) and two frame-by-frame real-arm tries as GIFs (`b4d5b33`, `armsim.gifs --stories / --tries` builds them from the local data), and the root `README.md` gained a "See it" section, marks Ishaan's device healer, harness and bench as landed, and fills in missing folders in "What's where" (`d278a46`). The raw data stays local and git-ignored (`data/hackathon-*/`).
 
 **Recently done:**
-- James: real-arm write-up and charts (`46f6f3d`): `armsim/report.py` redraws them from `data/hackathon-2026-11-08/`; README lists what to fix next (servo power, a real holding signal, a higher camera, a recording whose jaws straddle the bag's rim)
-- James: backed up the gentest data to `~/armsim-data/2026-11-08/` on the Mac: 96 tries (64 full, 32 probes), 416 frames, 13 timed sheets, 102 GIFs, the loop log; full Astra prompts and replies only for 13:55–14:32 (22 plans, 6 go/no-go checks), parsed replies for every try (session, no commit)
-- James: gentest `--note TEXT` puts a bench note first in every prompt to Astra (`d65d498`); fixed the arm-host restart, whose `cd` ran inside the background job so the pid file and status check failed (`644b748`)
-- James: gentest `--regrab` switched off: the gripper check misread thin edge grabs as empty and dropped the bag; Astra now sees each try's re-grab attempts and is told those tries were real grabs (`2d16875`, `2227e5d`)
+- James: GIFs of the sim stories (`media/sim/story-a.gif`, `story-b.gif`, `story-stall.gif`) and real-arm tries 14:00:30 and 14:09:38 (`media/gentest/try-*.gif`) in the arm-sim README (`b4d5b33`); root README "See it" section (`d278a46`)
+- James: real-arm write-up and charts (`46f6f3d`): `armsim/report.py` redraws them from `data/hackathon-2026-11-08/`; 102 tries (70 full, 32 probes), the red bag never reached the box; best try `recording_2` at pan −4 held three bags 20.7 s but never opened its jaws over the box
+- James: backed up the gentest data to `~/armsim-data/2026-11-08/` on the Mac: 96 tries (64 full, 32 probes), 416 frames, 13 timed sheets, 102 GIFs, the loop log (session, no commit)
+- James: gentest `--note TEXT` puts a bench note first in every prompt to Astra (`d65d498`); fixed the arm-host restart, whose `cd` ran inside the background job (`644b748`)
 
 **Open questions:**
 - Naïve is flaky (429s and an `internal_error` this morning): go with the live board on stage, or the local fallback (Mission Control's button + the Pi's scripted dispatcher, proven at 11:10)? `armsim/hermes_file.py` (Hermes over the file board) isn't built (`HANDOFF-LOCAL.md` §4)
@@ -102,6 +102,9 @@ _Last updated: Mon Nov 9, 2:48 AM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `d278a46` Mon 02:55 · jamesEmerson112 · README: a See it section (the sim self-healing stories and the real-arm experiment as GIFs), Ishaan's device/harness/bench marked as landed, and the missing folders in What's where
+- `b4d5b33` Mon 02:53 · jamesEmerson112 · arm-sim README: the sim self-healing stories and two frame-by-frame real-arm tries as GIFs (armsim.gifs --stories / --tries builds them from the local data)
+- `d9a843e` Mon 02:48 · jamesEmerson112 · Update team status and features.txt
 - `46f6f3d` Mon 02:42 · jamesEmerson112 · arm-sim: charts and write-up of the Nov 8 real-arm generate-and-test runs (armsim/report.py draws them from the local data); the hackathon data stays local and git-ignored
 - `2115d08` Sun 17:39 · jamesEmerson112 · Update team status in CLAUDE.md
 - `a41f72c` Sun 17:23 · jamesEmerson112 · Update team status in CLAUDE.md
@@ -109,9 +112,6 @@ _Last updated: Mon Nov 9, 2:48 AM PST_
 - `644b748` Sun 14:28 · jamesEmerson112 · arm-sim: gentest's arm-host restart ran its cd inside the background job (pid file and status check failed)
 - `0f2cab4` Sun 14:21 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 - `d65d498` Sun 14:21 · jamesEmerson112 · arm-sim: gentest --note, a note from the bench put first in every prompt to Astra
-- `dce8d91` Sun 14:18 · jamesEmerson112 · Update team status in CLAUDE.md
-- `2227e5d` Sun 14:13 · jamesEmerson112 · arm-sim: tell Astra the re-grab check misread thin edge grabs as empty (re-grab off)
-- `b2c40c1` Sun 14:11 · jamesEmerson112 · Merge branch 'main' of https://github.com/jamesEmerson112/Naive-Nous-YC-Hackathon into james/arm-sim
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
