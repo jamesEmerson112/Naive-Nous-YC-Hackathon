@@ -1,15 +1,169 @@
-# Naive Nous YC Hackathon
+<p align="center">
+  <img src="docs/readme/hero.svg" width="100%" alt="Hardware Buddy. Robots that fix themselves, from a company run by AI agents.">
+</p>
 
-A robotic-arm company that heals itself. When something breaks on a robot (an SO-101 arm on a Raspberry Pi 5, or the STM32 sensor pod next to it), a small healer on the device diagnoses and fixes it, or parks the hardware and asks for a person. The **Romulus** cloud collects every incident, turns fixes that hold into new versions for the whole fleet behind a replay and a canary, and hands hardware faults to Naïve agents as work orders. Built for the Naïve Autonomous Company Hackathon and the Hermes Agent Plugin Hackathon ([`docs/hackathons.md`](docs/hackathons.md)).
+<p align="center">
+  <b>A self-healing operating system for robots and factory hardware, sold by a company that mostly runs itself.</b><br>
+  Built at Y Combinator for the Naïve Autonomous Company Hackathon, Nov 7 to 8, 2026.
+</p>
+
+<p align="center">
+  <img alt="Built on the Naïve SDK" src="https://img.shields.io/badge/built_on-Na%C3%AFve_SDK-6D5DF6?style=flat-square">
+  <img alt="Local model qwen3.5:4b, 3.3 GB" src="https://img.shields.io/badge/local_model-qwen3.5%3A4b_%C2%B7_3.3_GB-22B07D?style=flat-square">
+  <img alt="Hardware SO-101, Pi 5, STM32" src="https://img.shields.io/badge/hardware-SO--101_%C2%B7_Pi_5_%C2%B7_STM32-F08A4B?style=flat-square">
+  <img alt="Commander Hermes Agent" src="https://img.shields.io/badge/commander-Hermes_Agent-1F1B2E?style=flat-square">
+  <img alt="Cloud FastAPI and Postgres" src="https://img.shields.io/badge/cloud-FastAPI_%C2%B7_Postgres-2F8FD8?style=flat-square">
+</p>
+
+<p align="center">
+  <a href="#watch-the-demo"><b>Demo video</b></a> ·
+  <a href="#how-it-works"><b>How it works</b></a> ·
+  <a href="#the-numbers"><b>The numbers</b></a> ·
+  <a href="#see-it"><b>See it</b></a> ·
+  <a href="#how-the-pieces-fit"><b>How the pieces fit</b></a> ·
+  <a href="#run-it"><b>Run it</b></a> ·
+  <a href="#team"><b>Team</b></a>
+</p>
 
 **Autonomy, shown.** [How the pieces fit](#how-the-pieces-fit) follows the data from the arm to the Naïve and Hermes agents and back, in three animations:
 - **A self-healing job:** after the order, nobody types. A stuck sensor parks the arm, and Hermes heals it.
 - **A real-arm try from Nov 8,** when an LLM planned 96 of the 102 tries.
 - **Fleet learning:** a Naïve agent turned two heals into a skill that the gate promoted to the fleet 57 s later, with 0 human clicks.
 
-Team context, working rules and the team's last status (Nov 9): [`CLAUDE.md`](CLAUDE.md). The whole story: [`docs/project-overview.md`](docs/project-overview.md).
+## Watch the demo
 
-**On this page:** [See it](#see-it) · [How the pieces fit](#how-the-pieces-fit) · [What's where](#whats-where) · [Run it](#run-it)
+[![Watch the Hardware Buddy demo video](docs/readme/video.svg)][demo]
+
+<p align="center"><sub>Click to watch on Google Drive.</sub></p>
+
+## The problem
+
+The world's 500 biggest companies lose almost **$1.4 trillion a year** to unplanned downtime, about 11% of their revenue ([Siemens, *The True Cost of Downtime 2024*][siemens]). A lot of that is machines breaking where nobody can reach them. Andre has seen it with satellites and a ground station on Guam: a short contact window, no internet, and a fault that costs millions because nobody can log in to fix it.
+
+Robots have the same problem on a smaller scale. When an arm on a line crashes, someone gets paged, walks over with a laptop and reads logs. If the robot is offline it just stays broken, and whatever it saw when it failed is gone.
+
+Our bet is that small local models can now do first-line repair on their own. They can read the logs, find the bad change, fix it, check the fix, and call a person only when the job needs hands.
+
+## How it works
+
+<p align="center">
+  <img src="docs/readme/loops.svg" width="100%" alt="One heal loop at three scales: on the robot (detect, fix, verify), across the fleet (sync, replay, sim canary, promote), across the company (work order, Naïve agent, technician and part, one human click).">
+</p>
+
+Hardware Buddy runs one heal loop at three sizes. Each time, a model proposes a fix that can be undone, plain code checks it, and the fix is promoted or rolled back. No model ever sits in the real-time control loop.
+
+| Scale | What happens | Where it lives |
+|---|---|---|
+| **The robot** | A local model fixes software faults with no internet. For a hardware fault, it parks the arm and reports. | [`firmware/`](firmware/README.md), [`device/`](device/README.md), [`arm/`](arm/README.md) |
+| **The fleet** | Back online, the robot syncs to **Romulus**, our cloud. Fixes that hold are replayed, tried on a simulated canary and shipped to every robot. | [`cloud/`](cloud/README.md), [`tools/edge_bridge/`](tools/edge_bridge/README.md) |
+| **The company** | Naïve agents take the cases software can't fix. They diagnose, email a technician, stage the part and write new skills for the fleet. | [`docs/naive-technician/`](docs/naive-technician/README.md), [`docs/recursive-self-improvement/`](docs/recursive-self-improvement/README.md) |
+
+### 1. On the robot: it heals its own firmware, offline
+
+<p align="center">
+  <img src="docs/readme/heal.svg" width="100%" alt="A real bench run: bad firmware v1.7 makes the arm flail, the local healer rolls back to v1.0 at 46 s, re-runs the job cleanly at 72 s, and names the root cause at 141 s, with 0 humans.">
+</p>
+
+That's a real run on our bench, with no internet and nobody touching anything ([`firmware/harness/RESULTS.md`](firmware/harness/RESULTS.md), run `20261108-000512-arm07-ollama`).
+
+We flashed the sensor pod with v1.7, a release with a bug planted in its distance math. The pod started seeing obstacles that weren't there, so the arm's obstacle reflex kept firing. It flailed for 8 seconds and the job gave up. Then the healer, `qwen3.5:4b` running locally through Ollama, took over with the pod's heal tools:
+
+- **At 46 s** it had rolled the firmware back to v1.0 and verified it on the chip.
+- **At 72 s** it had re-run the operator's job on its own: exit 0, 663 of 663 frames, every joint reaching 97 to 99% of its commanded range.
+- **At 141 s** it had found the root cause, a 16-bit cast on line 122 of `hcsr04.c`, and written it down.
+
+```diff
+@@ src/hcsr04.c:122 · the line the healer traced (v1.7 → v1.0) @@
+-        out->dist_mm = (uint16_t)(us * 343u + 1000u) / 2000u;   /* us * 0.343 mm/us / 2, rounded */
++        out->dist_mm = (us * 343u + 1000u) / 2000u;   /* us * 0.343 mm/us / 2, rounded */
+```
+
+The cast cuts the value to 16 bits before the divide, so something 376 mm away reads as 15 mm. The whole run took twelve turns and ten tool calls (eight reads, one flash, one arm job) with zero errors. The one call it wasn't allowed to make, a git commit, was refused by the harness.
+
+<details>
+<summary><b>Why it's safe to let a model flash firmware</b></summary>
+<br>
+
+- **Tools, not a shell.** The agent only gets the pod's 38 heal tools, and each one has a risk level: `read`, `runtime`, `code`, `flash` or `notify` ([`firmware/healer/`](firmware/healer/README.md)). The harness caps flashes at 3 per run and refuses paths outside the workspace ([`firmware/harness/`](firmware/harness/README.md)).
+- **Every flash can undo itself.** `fw_flash` backs up the chip, programs it, verifies it, watches it, and rolls back on its own if the new image misbehaves.
+- **Faults can't be planted from inside.** Fault injection is for the operator only, and `pod_cmd` refuses `inject`.
+- **Software gets fixed, hardware gets parked.** For a hardware fault the arm is parked with torque off, a person is told, and no code changes.
+- **No hints.** Before the bench run above, [`arm/hint_audit.py`](arm/hint_audit.py) checked everything the agent could read and found nothing that gives the answer away.
+
+</details>
+
+<details>
+<summary><b>How we picked the model</b></summary>
+<br>
+
+We planted six faults in the robot app: a fake "safety" rule, a missing validity check, dropped servo retries, a config typo, a hang, and a missing servo that has to be parked, not patched. A hidden check the healer never sees scores each one. All runs used harness h3 on a MacBook with Ollama, capped at 30 steps and 15 minutes per task ([`docs/healer-benchmark-progress.md`](docs/healer-benchmark-progress.md), [`bench/`](bench/README.md)).
+
+| Model | Passed | Live demo fault (D1) | Median time per task |
+|---|---|---|---|
+| **qwen3.5:4b, thinking on** | **10 / 12** | **2 / 2** | 105 s |
+| qwen3.5:4b, thinking off | 7 / 10 | 0 / 2 | 63 s |
+| qwen3:4b-instruct-2507 | 3 / 6 | 0 / 1 | 104 s |
+| granite4.1:3b | 1 / 6 | 0 / 1 | 180 s |
+
+At 3.3 GB, `qwen3.5:4b` fits on the edge box. For comparison, the big cloud agents (Naïve's `pi` and Hermes, both on gpt-6-sol) fixed 12 of 12 on a stand-in version of the same six faults ([`prototypes/fault-lab/`](prototypes/fault-lab/README.md)).
+
+</details>
+
+### 2. When it needs hands: a Naïve agent takes the case
+
+<p align="center">
+  <img src="docs/readme/technician.svg" width="100%" alt="The Naïve Technician: a jammed elbow, a Naïve agent session, an email to a technician, a spare servo staged in a cart, and one human approval. 38 s, 27 s, $0.08, 1 click.">
+</p>
+
+Some faults can't be fixed in software, and a robot can't pull out its own jam. When the healer gives up on a hardware fault, Romulus opens a work order and the **Naïve Technician** takes it ([`docs/naive-technician/`](docs/naive-technician/README.md)):
+
+1. A `technician` agent session on Naïve diagnoses the fault and returns a typed report: a verdict, ranked hypotheses with physical checks, and an optional spare part.
+2. Plain code acts on the report. It emails the technician from the agent's own Naïve inbox, checks the part against the vendor's live store, and builds a real cart link.
+3. A person approves the purchase. It's the one step we keep human.
+
+In the live rehearsal at 8:44 AM it took **38 s** from incident to a case waiting for approval, one **27 s** Naïve session that cost **$0.08**, a real email to a teammate, and the spare servo staged at $15.99.
+
+### 3. Across the fleet: every fault happens once
+
+<p align="center">
+  <img src="docs/readme/fleet.svg" width="100%" alt="Fleet learning: a failed heal on sim-1, a Naïve agent session writes a skill in 22 s for 3 cents, the gate replays it, canaries it on sim-2 and promotes it to every arm in 57 s with 0 human clicks.">
+</p>
+
+Back online, every robot syncs its incidents and heal runs to Romulus. Each heal gets labelled by whatever checked it (the gate, the device or a bench test), never by a model's opinion. When one kind of fault keeps failing across the fleet, a Naïve agent reviews the cluster and proposes a fix ([`docs/recursive-self-improvement/`](docs/recursive-self-improvement/README.md)):
+
+- A **missed detection** becomes a proposed rule.
+- A **failed heal** becomes a proposed skill for the healer.
+- Either one ships only through the same gate as every other change: a replay against past incidents, a canary on a simulated arm, then promote or roll back.
+
+In the live run at 10:04 AM, a `fleet-doctor` session read a failed heal on sim-1 and a passing one on sim-3, then wrote the skill *"Servo read error: check the retry call site, not the config"* in 22 s for 3¢. The gate replayed it, ran a 32.5 s canary on sim-2, and promoted it to every arm **57 s after the session opened, with 0 human clicks**. The healer's playbook went to Naïve Skills as v2.
+
+The other session that morning proposed a frozen-sensor rule. Offline, it caught 120 of 120 sensor freezes lasting 4 seconds or more (the fleet catches 0 today), with no new false alarms on 410 healthy windows. But the rule touches the arm's start gate, so it was staged for Olir to review instead of shipping. The agent knows where its autonomy stops:
+
+| Change | Decided by | Human clicks |
+|---|---|---|
+| Dataset snapshots and training exports | plain code | 0 |
+| A new rule or skill that doesn't touch safety | the gate: replay, simulated canary, promote or roll back | 0 |
+| Anything that touches safety | its owner, with the measured evidence attached | 1 review |
+| Spending money | a person | 1 click |
+
+A rolled-back proposal pauses reviews for that fault until a person clears it. Every kind of action earns its autonomy, and loses it after a bad fix.
+
+## The numbers
+
+<p align="center">
+  <img src="docs/readme/stats.svg" width="100%" alt="141 s real heal with no humans, 10 of 12 heals by a 3.3 GB local model, 38 heal tools, 57 s from one lesson to every arm, $0.08 per Naïve case, 1 human click.">
+</p>
+
+Every number above was measured, not estimated:
+
+| What | Number | Source |
+|---|---|---|
+| Real arm on bad firmware, healed with no internet and no humans | 141 s (rollback verified at 46 s, job re-run clean at 72 s) | [`firmware/harness/RESULTS.md`](firmware/harness/RESULTS.md) |
+| Local model on the six-fault benchmark | 10 of 12 heals, `qwen3.5:4b`, 3.3 GB | [`docs/healer-benchmark-progress.md`](docs/healer-benchmark-progress.md) |
+| Heal tools on the sensor pod | 38: 25 read, 4 runtime, 6 code, 2 flash, 1 notify | [`firmware/healer/tools.json`](firmware/healer/tools.json) |
+| Naïve Technician, live rehearsal | 38 s to a case, one 27 s session, $0.08, 1 click | [`docs/naive-technician/README.md`](docs/naive-technician/README.md) |
+| Fleet learning, live run | 57 s from lesson to every arm, 3¢, 0 clicks | [`docs/recursive-self-improvement/runbook.md`](docs/recursive-self-improvement/runbook.md) |
+| Frozen-sensor rule, offline probe | 0 → 120 of 120 freezes caught, 0 new false alarms | [`docs/recursive-self-improvement/runbook.md`](docs/recursive-self-improvement/runbook.md) |
 
 ## See it
 **The pitch.** Hardware Buddy: self-healing hardware for robotics and manufacturing. This is Andre's pitch animation ([`pitch/`](pitch/storyboard.md)), the part before the live demo:
@@ -98,17 +252,11 @@ It's a drawing ([`armsim/loopgif.py`](prototypes/arm-sim/armsim/loopgif.py)) of 
 
 <img alt="Animated diagram of fleet learning's live run, in four lanes: the fleet, Romulus, Naïve and a person. Romulus labels 9 heal runs, 4 of them by a check (2 passed, 2 failed). A servo-read fix failed on sim-1 and held on sim-3, so Romulus opens a session for the Naïve agent fleet-doctor, which writes the lesson as a skill in 22 s for $0.030. The gate builds harness v2 and runs it on the canary sim-2 for 30 s. A second session proposes a frozen-sensor rule; it touches safety code, so it is staged for Olir with the probe's numbers: 120 of 120 freezes caught, no false alarms on 410 healthy windows. The skill is promoted 57 s after the first session, the sims run harness v2, the real arm-1 is queued, Naïve Skills gets healer-playbook v2, and the board gets a comment: 0 human clicks" src="prototypes/arm-sim/media/fleet-loop.gif" width="800">
 
-Which code runs where:
+Which code runs where: the bench (the Pi 5, the sensor pod and the arm) works offline, Romulus runs on a laptop in Docker, and Naïve is online.
 
-```
- on the bench (Pi 5)                                    on the laptop (Docker)           online
-
- SO-101 arm ── arm healer (Ishaan; device/) ──────────────────────┐
-                                                                  │  device API
- STM32 pod ── pod healer (Olir; firmware/healer) ── edge bridge ──┼─ (packages/contracts) ─► Romulus cloud (cloud/) ──► Naïve
-                                                 (tools/edge_bridge)                         timeline, gate,         work orders,
- fake arms (tools/fake_device): development, tests, overnight run ┘                          datasets, kill switch   agents
-```
+<p align="center">
+  <img src="docs/readme/stack.svg" width="100%" alt="The stack in three layers and four beats. On the bench, offline: the STM32 sensor pod talks serial to podd and its 38 heal tools, the local healer agent (qwen3.5:4b) works only through those tools, and the arm host drives the SO-101. Reports go up through the edge bridge and the arm host to the Romulus cloud (device API, labelled runs, work orders, gate). Naïve agents act: the technician takes hardware faults and ends at one human click, the fleet-doctor turns failure clusters into a rule or skill for the gate and the board. Fixes ship back: the gate sends new versions to the arm host, and the board sends job cards to the Hermes commander, which drives the arm with named skills.">
+</p>
 
 - **Every device speaks one contract**, the device API in [`packages/contracts`](packages/contracts/README.md) ([APIs doc](docs/cloud-platform-planning/cloud-platform-apis.md)): check in every 10 s, report each incident with what the healer did, upload evidence, pull assigned versions.
 - **The sensor pod gets there through the edge bridge.** Olir's healer records everything locally and never calls the cloud; [`tools/edge_bridge`](tools/edge_bridge/README.md) reads those records on the Pi and reports them, so the healer needs no changes (decision D29). It's tested against the real cloud app, and the arm-sim demo starts it beside Olir's real `podd` ([`demo/up.sh`](prototypes/arm-sim/demo/up.sh)). Nothing in the repo records a run on the bench Pi *(inferred)*.
@@ -117,23 +265,21 @@ Which code runs where:
 
 ## What's where
 
-| Folder | What | Owner |
+| Folder | What's in it | Who |
 |---|---|---|
-| [`cloud/`](cloud/README.md) | Romulus cloud platform: device API, registry, batch job, gate, telemetry and datasets, work orders, timeline | Kent |
-| [`packages/contracts/`](packages/contracts/README.md) | `romulus-contracts`: the device ↔ cloud payloads, shared by both sides | Kent |
-| [`tools/edge_bridge/`](tools/edge_bridge/README.md) | Runs next to the pod healer on the Pi and reports its incidents, logs and agent actions to the cloud | Kent |
-| [`tools/fake_device/`](tools/fake_device/README.md) | N fake arms against the cloud, and the reference device client and outbox | Kent |
-| [`firmware/`](firmware/README.md) | STM32 sensor pod: firmware with self-diagnostics, and the pod healer (podd, triage rules, 38 heal tools, [eight known-bad demo images](firmware/demo/bad-images/)) | Olir |
-| [`server/`](server/README.md) | Runs the pod healer's model (qwen3.5:4b) on the laptop with Ollama, for the harness on the Pi | Olir |
-| [`naive/`](naive/README.md) | The Naïve TypeScript SDK client for Romulus | Olir |
-| [`device/`](device/README.md) | The arm healer: the code that runs on the robot (Pi app, supervisor, fake arm and sensor, tests) | Ishaan |
-| [`harness/`](harness/) · [`bench/`](bench/README.md) | The healer's agent harnesses h1–h3, and the benchmark that scores them on planted faults ([progress](docs/healer-benchmark-progress.md)) | Ishaan |
-| [`arm/`](arm/README.md) | The real SO-101: LeRobot setup and calibration, the taught recordings, and `safe_replay.py` (ultrasonic-gated replay) | Andre, Olir |
-| [`prototypes/arm-sim/`](prototypes/arm-sim/README.md) | The SO-101 twin and the whole self-healing loop, in sim and on the real arm: arm host and watchdog, Mission Control, the Hermes plugin, the Nov 8 Astra experiment | James |
-| [`prototypes/`](prototypes/) | Also the [fault lab](prototypes/fault-lab/README.md) (can pi and Hermes fix the healer's faults?) and the [Naïve console](prototypes/naive-console/README.md) | James |
-| [`hub/`](hub/) | Source of the Arm Company Stack Map artifact | James |
-| [`pitch/`](pitch/storyboard.md) | The Hardware Buddy pitch animation: storyboard and the animated pages | Andre |
-| [`docs/`](docs/) | Research, the fault catalog, cloud planning, sponsor notes, raw doc dumps | everyone |
+| [`firmware/`](firmware/README.md) | The STM32 sensor pod firmware with self-diagnostics. `healer/` has podd, the plain-code triage rules and the 38 heal tools, `harness/` the healer's agent loop and blind eval, `demo/` the [eight known-bad firmware images](firmware/demo/bad-images/) | Olir, Ishaan |
+| [`arm/`](arm/README.md) | The real SO-101: LeRobot setup and calibration, teleop and the taught recordings, `safe_replay.py` (ultrasonic-gated replay), and the self-healing bench test (`heal_test.py`) | Olir, Andre |
+| [`device/`](device/README.md), [`harness/`](harness/), [`bench/`](bench/README.md) | The arm healer's robot app and supervisor, the h1 to h3 healer harnesses, and the benchmark that picked the model | Ishaan |
+| [`server/`](server/README.md) | Serves the healer's model from a laptop to the Pi, over Ethernet only | Olir |
+| [`cloud/`](cloud/README.md) | Romulus: device API, registry, gate and canary, datasets, timeline, work orders, the Naïve Technician, fleet learning, kill switch | Kent |
+| [`packages/contracts/`](packages/contracts/README.md) | `romulus-contracts`, the device ↔ cloud payloads shared by both sides | Kent |
+| [`tools/`](tools/edge_bridge/README.md) | `edge_bridge` reports the pod healer to the cloud. `fake_device` runs fake arms for development and the overnight chaos run | Kent |
+| [`naive/`](naive/README.md) | A client for the official Naïve TypeScript SDK, with a read-only connection check | Olir |
+| [`prototypes/`](prototypes/) | [`arm-sim`](prototypes/arm-sim/README.md) is the SO-101 twin and the whole self-healing loop, in sim and on the real arm: the arm host and watchdog, Mission Control, the Hermes plugin, the fault factory and the Nov 8 Astra experiment. The [fault lab](prototypes/fault-lab/README.md) pits Naïve's `pi` against Hermes on the same faults, and there's a [Naïve console](prototypes/naive-console/README.md) | James |
+| [`hub/`](hub/) | The Arm Company Stack Map | James |
+| [`pitch/`](pitch/storyboard.md) | The pitch animations, in three styles | Andre |
+| [`docs/`](docs/) | Research, the [fault catalog](docs/fault-catalog.md), cloud planning, and the Technician and fleet-learning plans | everyone |
+| [`docs/readme/`](docs/readme/build.py) | The animations on this page, drawn by one standard-library script | Ishaan |
 
 ## Run it
 
@@ -141,13 +287,27 @@ Needs Docker and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync --all-packages
-make up && make seed                                    # the cloud on :8000, with arm-1 and sim-1…3
-uv run python -m fake_device --n 3 --scenario all       # fake arms through every scripted fault
-open http://localhost:8000/                             # incident timeline, fleet, kill switch
-make test                                               # every Python test (throwaway Postgres)
+# the cloud on :8000, with arm-1 and sim-1…3
+make up && make seed
+# fake arms through every scripted fault
+uv run python -m fake_device --n 3 --scenario all
+# incident timeline, fleet, kill switch
+open http://localhost:8000/
+# every Python test, on a throwaway Postgres
+make test
 ```
 
-With the pod on the bench, start podd (`firmware/healer/bin/podd`) on the Pi, then the bridge: `uv run python -m edge_bridge --url http://<laptop-LAN-IP>:8000` ([setup](tools/edge_bridge/README.md#run-it-on-the-pi)).
+| To run | Start here |
+|---|---|
+| The pod healer on the bench (Pi, pod, local model) | [`firmware/harness/HANDOFF.md`](firmware/harness/HANDOFF.md) |
+| The model relay from a laptop to the Pi | [`server/README.md`](server/README.md) |
+| Fleet learning, live | [`docs/recursive-self-improvement/runbook.md`](docs/recursive-self-improvement/runbook.md) |
+| The Naïve Technician, live | [`docs/naive-technician/runbook.md`](docs/naive-technician/runbook.md) |
+| The arm twin, Mission Control and the Hermes plugin | [`prototypes/arm-sim/README.md`](prototypes/arm-sim/README.md) |
+| The healer benchmark | [`bench/README.md`](bench/README.md) |
+| The overnight unattended run | [`cloud/OVERNIGHT.md`](cloud/OVERNIGHT.md) |
+
+With the pod on the bench, start podd (`firmware/healer/bin/podd`) on the Pi, then the bridge: `uv run python -m edge_bridge --url http://<laptop-LAN-IP>:8000` ([setup](tools/edge_bridge/README.md#run-it-on-the-pi)). To redraw the art on this page, run `python3 docs/readme/build.py`.
 
 **The arm in the simulator, with Mission Control** (no hardware, no Docker; this is how the Mission Control GIFs above were made):
 
@@ -170,3 +330,34 @@ In Mission Control:
 - **V** switches between the twin and the split view.
 
 More in [`prototypes/arm-sim/README.md`](prototypes/arm-sim/README.md).
+
+## What's real, and what's next
+
+Here's exactly what ran where.
+
+- **Real hardware.** The firmware heal above ran on the real SO-101 and the real STM32 pod. The model ran on a laptop wired straight to the Pi with no internet, because the Pi 5 is too slow for it ([`server/`](server/README.md)).
+- **Real Naïve.** The Technician rehearsal and the fleet-learning run used live Naïve agent sessions, a real email and a real store cart. Their incidents came from our simulated fleet (sim-1 to sim-3), and the real arm was queued for the fleet update, not updated.
+- **The twin and the real arm.** The Mission Control heals ran on the MuJoCo twin. On the real arm, a Naïve card took Hermes through a whole job with nobody typing (no fault that time), and Astra planned 96 of 102 pick-and-place tries.
+- **Next.** Put the model on the robot itself (our Jetson AGX Xavier), run fleet learning on real hardware, and ship the Hermes plugin for the Hermes Agent Plugin Hackathon.
+
+## Team
+
+| Who | What they built |
+|---|---|
+| **Andre** | Hardware: assembling and calibrating the arm, LeRobot teleop and recorded motions. The pitch animations, and the Guam story |
+| **Ishaan** | The arm healer and the benchmark that picked the model, the pod healer's agent loop and blind eval, the demo video, this README |
+| **James** | The MuJoCo twin and Mission Control, the Hermes `so101-arm` plugin, the watchdog and fault factory, the Nov 8 real-arm experiment with Astra, the loop animations, the stack map |
+| **Kent** | Romulus: the device API, gate and canary, datasets and timeline, the Naïve Technician, fleet learning, the edge bridge, Fleet Doctor |
+| **Olir** | The STM32 sensor pod, podd and the 38 heal tools, the known-bad firmware images, the model relay, the Naïve SDK client, and the real bench heal |
+
+How we work together, and the team's last status (Nov 9): [`CLAUDE.md`](CLAUDE.md). The whole story, start to finish: [`docs/project-overview.md`](docs/project-overview.md).
+
+<p align="center">
+  <br>
+  <img src="docs/readme/buddy.svg" width="88" alt="The Buddy chip">
+  <br>
+  <b>Software is automating everything. Hardware has to get smarter.</b>
+</p>
+
+[demo]: #watch-the-demo
+[siemens]: https://assets.new.siemens.com/siemens/assets/api/uuid:1b43afb5-2d07-47f7-9eb7-893fe7d0bc59/TCOD-2024_original.pdf

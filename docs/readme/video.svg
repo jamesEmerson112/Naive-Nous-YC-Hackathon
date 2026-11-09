@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" width="1200" height="675" role="img" aria-labelledby="tt dd">
+<title id="tt">Watch the Hardware Buddy demo</title>
+<desc id="dd">Video thumbnail: a play button. A real robot arm breaks, fixes its own firmware with no internet, and Naïve agents take care of the rest. Chapters: the problem, it heals itself, when it needs hands, the fleet learns.</desc>
+<style>
+.t{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.r{font-family:ui-rounded,"SF Pro Rounded",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.m{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+.fb{transform-box:fill-box;transform-origin:center}
+@keyframes blinkvbeo{0.000%{transform:scaleY(1);}60.000%{transform:scaleY(1);}62.647%{transform:scaleY(.08);}65.882%{transform:scaleY(1);}100.000%{transform:scaleY(1);}}.vbeo{animation:blinkvbeo 3.4s ease-in-out infinite}
+@keyframes pr0{0.000%{opacity:.8;transform:scale(1);}100.000%{opacity:0;transform:scale(1.9);}}
+.pr0{animation:pr0 2.4s ease-out infinite;animation-delay:0.0s}
+@keyframes pr1{0.000%{opacity:.8;transform:scale(1);}100.000%{opacity:0;transform:scale(1.9);}}
+.pr1{animation:pr1 2.4s ease-out infinite;animation-delay:1.2s}
+@keyframes pb{0.000%{transform:scale(1);}50.000%{transform:scale(1.05);}100.000%{transform:scale(1);}}.pb{animation:pb 2.4s ease-in-out infinite}
+@keyframes vbar{0.000%{transform:scaleX(.002);}95.000%{transform:scaleX(1);}100.000%{transform:scaleX(1);}}
+.vbar{animation:vbar 12s linear infinite;transform-box:fill-box;transform-origin:left center}
+@keyframes vhead{0.000%{transform:translateX(0);}95.000%{transform:translateX(1060px);}100.000%{transform:translateX(1060px);}}
+.vhead{animation:vhead 12s linear infinite}
+@media (prefers-reduced-motion:reduce){*{animation-delay:-1.0s!important;animation-play-state:paused!important}}
+</style>
+<defs><radialGradient id="vg" cx="50%" cy="46%" r="62%"><stop offset="0" stop-color="#3A2F7A"/><stop offset=".55" stop-color="#231E3C"/><stop offset="1" stop-color="#1F1B2E"/></radialGradient>
+<pattern id="vdots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="3" cy="3" r="1.4" fill="#FFFFFF" opacity=".07"/></pattern></defs>
+<rect width="1200" height="675" rx="28" fill="url(#vg)"/><rect width="1200" height="675" rx="28" fill="url(#vdots)"/><g transform="translate(70 74) scale(.42)"><g transform="translate(0 0) scale(1.0000)"><g class="vbb">
+<g fill="#5546E0"><rect x="-29.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-29.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-29.5" width="20" height="11" rx="5.5"/><rect x="41" y="-29.5" width="20" height="11" rx="5.5"/><rect x="-5.5" y="-61" width="11" height="20" rx="5.5"/><rect x="-5.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="-5.5" width="20" height="11" rx="5.5"/><rect x="41" y="-5.5" width="20" height="11" rx="5.5"/><rect x="18.5" y="-61" width="11" height="20" rx="5.5"/><rect x="18.5" y="41" width="11" height="20" rx="5.5"/><rect x="-61" y="18.5" width="20" height="11" rx="5.5"/><rect x="41" y="18.5" width="20" height="11" rx="5.5"/></g>
+<rect x="-46" y="-46" width="92" height="92" rx="27" fill="#6D5DF6"/>
+<path d="M-31 -35 H-12" stroke="#9A8FFF" stroke-width="6" stroke-linecap="round"/>
+<g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+<g class="vbxo"><g class="vbeo fb" stroke="none" fill="#fff"><ellipse cx="-16" cy="-6" rx="8.5" ry="12.5"/><ellipse cx="16" cy="-6" rx="8.5" ry="12.5"/></g></g>
+<path class="vbxh" opacity="0" d="M-25 -3 Q-16 -17 -7 -3 M7 -3 Q16 -17 25 -3"/>
+<path class="vbxc" opacity="0" d="M-25 -6 Q-16 2 -7 -6 M7 -6 Q16 2 25 -6"/>
+<path class="vbxb" opacity="0" d="M-27 -22 L-11 -28 M11 -28 L27 -22"/>
+<path class="vbxs" d="M-10 18 Q0 26 10 18"/>
+<path class="vbxm" opacity="0" d="M-12 16 Q0 32 12 16 Z" fill="#fff"/>
+<path class="vbxf" opacity="0" d="M-10 25 Q0 17 10 25"/>
+<path class="vbxl" opacity="0" d="M-7 21 H7"/>
+</g></g></g></g><text x="112" y="84" class="r" font-size="26" font-weight="800" fill="#FFF8EE" text-anchor="start" >Hardware Buddy</text><rect x="1010" y="54" width="150" height="38" rx="19" fill="#FFFFFF1F" stroke="#FFFFFF40" stroke-width="1.5"/><text x="1085" y="79" class="t" font-size="14" font-weight="800" fill="#FFF8EE" text-anchor="middle" letter-spacing="2">DEMO VIDEO</text><circle class="pr0 fb" cx="600" cy="300" r="70" fill="none" stroke="#9A8FFF" stroke-width="3"/><circle class="pr1 fb" cx="600" cy="300" r="70" fill="none" stroke="#9A8FFF" stroke-width="3"/><g class="pb fb"><circle cx="600" cy="300" r="70" fill="#6D5DF6"/><circle cx="600" cy="300" r="70" fill="none" stroke="#FFFFFF" stroke-opacity=".35" stroke-width="2"/><path d="M584 268 L630 300 L584 332 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="10" stroke-linejoin="round"/></g><text x="600" y="446" class="r" font-size="50" font-weight="800" fill="#FFF8EE" text-anchor="middle" letter-spacing="-.5">Watch the demo</text><text x="600" y="490" class="t" font-size="21" font-weight="500" fill="#C9C4DD" text-anchor="middle" >A real robot arm breaks, fixes its own firmware with no internet,</text><text x="600" y="518" class="t" font-size="21" font-weight="500" fill="#C9C4DD" text-anchor="middle" >and Naïve agents take care of the rest.</text><rect x="70" y="586" width="1060" height="8" rx="4" fill="#FFFFFF2A"/><rect class="vbar" x="70" y="586" width="1060" height="8" rx="4" fill="#9A8FFF"/><text x="70.0" y="624" class="t" font-size="16" font-weight="600" fill="#C9C4DD" text-anchor="start" >The problem</text><rect x="386.0" y="583" width="4" height="14" rx="2" fill="#1F1B2E"/><text x="396.0" y="624" class="t" font-size="16" font-weight="600" fill="#C9C4DD" text-anchor="start" >It heals itself</text><rect x="661.6" y="583" width="4" height="14" rx="2" fill="#1F1B2E"/><text x="671.6" y="624" class="t" font-size="16" font-weight="600" fill="#C9C4DD" text-anchor="start" >When it needs hands</text><rect x="873.6" y="583" width="4" height="14" rx="2" fill="#1F1B2E"/><text x="883.6" y="624" class="t" font-size="16" font-weight="600" fill="#C9C4DD" text-anchor="start" >The fleet learns</text><g class="vhead"><circle cx="70" cy="590" r="9" fill="#FFFFFF"/></g>
+</svg>
