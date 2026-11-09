@@ -723,9 +723,9 @@ def draw_fleet(t):
          "heal held: retry restored", GREEN)
     chip(c, CHIP_Y["sim-2"], "sim-2", "SIM", "harness v2" if canary else "harness v1",
          (GREEN if ok else AMBER) if canary else MUTED,
-         ("canary ok: 2 check-ins" if ok else "canary, 30 s") if canary else "no fault", (GREEN if ok else AMBER)
+         ("canary ok: 2 check-ins" if ok else "canary, 30 s") if canary else "", (GREEN if ok else AMBER)
          if canary else DIM, glow=AMBER if canary and not ok else None)
-    chip(c, CHIP_Y["arm-1"], "arm-1", "REAL", "queued" if shipped else "harness v1", AMBER if shipped else MUTED,
+    chip(c, CHIP_Y["arm-1"], "arm-1", "REAL", "queued" if shipped else "", AMBER,   # its version: not in the runbook
          "no Pi on this stack", MUTED)
 
     box(c, RUNS, "heal runs", glow=BLUE if 2.4 <= t < 4.6 else None)
