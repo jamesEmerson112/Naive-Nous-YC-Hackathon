@@ -85,15 +85,15 @@ _Ishaan's local Claude session refreshes this block about every hour. Last synce
 ## Team status
 <!-- team-status:start -->
 ## Team status
-_Last updated: Mon Nov 9, 3:08 AM PST_
+_Last updated: Mon Nov 9, 3:18 AM PST_
 
-**Current focus:** after the hackathon: James is writing up what the team built in the root `README.md`. Its "See it" section now opens with Andre's Hardware Buddy pitch GIF, then Mission Control parking, healing and handing off a dead elbow in the sim (the plain pick order folded below), then the sim stories and real-arm tries; the README also gained a contents line and the sim + Mission Control recipe under "Run it" (`e45cee3`–`b241561`). The raw data stays local and git-ignored (`data/hackathon-*/`).
+**Current focus:** after the hackathon: James is writing up what the team built in the root `README.md`. "See it" now shows Mission Control healing a wrong move in the sim (missed grasp, reversed, corrected, redone in 28 s) next to the dead-elbow GIF, and the README says where the arm-sim prototype fits (the whole loop on one laptop, on the same device API) (`26352a8`–`67c64b7`). The raw data stays local and git-ignored (`data/hackathon-*/`).
 
 **Recently done:**
-- James: root README GIFs: Hardware Buddy pitch (`docs/media/hardware-buddy-pitch.gif`, `e45cee3`), Mission Control pick order and dead-elbow stall in the sim (`prototypes/arm-sim/media/sim/mission-control-{pick,stall}.gif`, `6223cf6`, `21d251f`); contents line and sim + Mission Control run recipe (`b241561`)
-- James: GIFs of the sim stories (`media/sim/story-a.gif`, `story-b.gif`, `story-stall.gif`) and real-arm tries 14:00:30 and 14:09:38 (`media/gentest/try-*.gif`) in the arm-sim README (`b4d5b33`); root README "See it" section (`d278a46`)
-- James: real-arm write-up and charts (`46f6f3d`): `armsim/report.py` redraws them from `data/hackathon-2026-11-08/`; 102 tries (70 full, 32 probes), the red bag never reached the box; best try `recording_2` at pan −4 held three bags 20.7 s but never opened its jaws over the box
-- James: backed up the gentest data to `~/armsim-data/2026-11-08/` on the Mac: 96 tries (64 full, 32 probes), 416 frames, 13 timed sheets, 102 GIFs, the loop log (session, no commit)
+- James: README fixes: the wrong-move GIF (`prototypes/arm-sim/media/sim/mission-control-wrong-move.gif`, key 6 in the recipe, `26352a8`); where arm-sim fits, with links to the fault lab and the Naïve console (`d4fc952`); the edge bridge runs beside the real podd in the arm-sim demo, with no recorded run on the bench Pi (`171cdaf`); firmware/ has eight known-bad demo images, not six (`67c64b7`); an "On this page" list in the arm-sim README (`4487e2c`)
+- James: root README GIFs: Hardware Buddy pitch (`e45cee3`), Mission Control pick order and dead-elbow stall in the sim (`6223cf6`, `21d251f`); contents line and sim + Mission Control run recipe (`b241561`)
+- James: GIFs of the sim stories and real-arm tries 14:00:30 and 14:09:38 in the arm-sim README (`b4d5b33`); root README "See it" section (`d278a46`)
+- James: real-arm write-up and charts (`46f6f3d`): `armsim/report.py` redraws them from `data/hackathon-2026-11-08/`; 102 tries (70 full, 32 probes), the red bag never reached the box
 
 **Open questions:**
 - Naïve is flaky (429s and an `internal_error` this morning): go with the live board on stage, or the local fallback (Mission Control's button + the Pi's scripted dispatcher, proven at 11:10)? `armsim/hermes_file.py` (Hermes over the file board) isn't built (`HANDOFF-LOCAL.md` §4)
@@ -102,16 +102,16 @@ _Last updated: Mon Nov 9, 3:08 AM PST_
 - Olir: the P0 frozen-ultrasonic rule waits until after the demo (fleet learning stages it with the #75 numbers); Ishaan still owes Kent the K17 safety and visor paths and the contracts review (B2, B3)
 
 **Recent commits (all authors):**
+- `67c64b7` Mon 03:16 · jamesEmerson112 · README: firmware/ has eight known-bad demo images (07 and 08 came with the arm heal test), not six
+- `171cdaf` Mon 03:15 · jamesEmerson112 · README: the edge bridge runs beside the real podd in the arm-sim demo (demo/up.sh); no recorded run on the bench Pi
+- `4487e2c` Mon 03:12 · jamesEmerson112 · arm-sim README: an On this page list (the real-arm experiment, everything together)
+- `d4fc952` Mon 03:12 · jamesEmerson112 · README: where the arm-sim prototype fits (the whole loop on one laptop, the same device API), and links to the fault lab and the Naïve console
+- `26352a8` Mon 03:10 · jamesEmerson112 · README: Mission Control healing a wrong move in the sim (missed grasp, reversed, corrected, redone in 28 s), as a GIF beside the dead-elbow one; key 6 in the recipe
+- `0e62abd` Mon 03:09 · jamesEmerson112 · Update team status and features.txt
 - `b241561` Mon 03:04 · jamesEmerson112 · README: a contents line, and the sim + Mission Control recipe under Run it
 - `21d251f` Mon 03:03 · jamesEmerson112 · README: Mission Control parking, healing and handing off a dead elbow in the sim, as a GIF (the plain pick folded below)
 - `6223cf6` Mon 03:01 · jamesEmerson112 · README: Mission Control running a pick order in the sim, as a GIF
 - `e45cee3` Mon 02:58 · jamesEmerson112 · README: Andre's Hardware Buddy pitch animation as a GIF at the top of See it
-- `75ec38c` Mon 02:58 · jamesEmerson112 · Update team status in CLAUDE.md
-- `d278a46` Mon 02:55 · jamesEmerson112 · README: a See it section (the sim self-healing stories and the real-arm experiment as GIFs), Ishaan's device/harness/bench marked as landed, and the missing folders in What's where
-- `b4d5b33` Mon 02:53 · jamesEmerson112 · arm-sim README: the sim self-healing stories and two frame-by-frame real-arm tries as GIFs (armsim.gifs --stories / --tries builds them from the local data)
-- `d9a843e` Mon 02:48 · jamesEmerson112 · Update team status and features.txt
-- `46f6f3d` Mon 02:42 · jamesEmerson112 · arm-sim: charts and write-up of the Nov 8 real-arm generate-and-test runs (armsim/report.py draws them from the local data); the hackathon data stays local and git-ignored
-- `2115d08` Sun 17:39 · jamesEmerson112 · Update team status in CLAUDE.md
 
 **Branches on GitHub:** `main`; open PR: `main` (#63, into Olir's `full-test-2`); `james/arm-sim-ydcsss` (merged into `main` in `d36ba8b`; nothing ahead); `ishaan/demo-video-animation` (Ishaan's demo video); `claude/hardware-buddy-animation-56b7ff` (#87, closed; `pitch/` is on `main`); merged and still on GitHub: `learn/wrap-up` (#93), `learn/runbook` (#92), `ui/technician-empty` (#91), `ui/learning` (#90), `learn/live-polish` (#89), `ui/polish` (#88), `learn/page-wire` (#86), `learn/review-service` (#82), `ui/fleet` (#85), `learn/page` (#77), `learn/data-spine` (#78), `learn/naive-publish` (#81), `ui/technician` (#83), `ui/incident` (#84), `ui/foundation` (#80), `cloud/technician-live-default` (#79), `learn/review-domain` (#74), `learn/evidence` (#75), `learn/demo-data` (#76), `tech/docs-measured` (#72), `test-4` (#73); the notice PR branches `claudemd-notice/arm-teleop-recording` (#47), `claudemd-notice/demo` (#48), `claudemd-notice/firmware-harness-connection` (#49), `claudemd-notice/firmware` (#50), `claudemd-notice/local-model-serve` (#51); `firmware-harness-connection` (no commits of its own yet); `cloud/m8-coder-wip` (1 commit, "not for merge"); also merged: `tech/backend` (#68), `tech/runbook` (#71), `tech/page-fixes` (#70), `tech/approval-example` (#66, #69), `tech/adapters` (#67), `tech/page` (#65), `full-test-3` (#64), `full-test-2` (#62), `doctor/repro-seal` (#57), `james/arm-sim` (#55), `arm/teleop-recording` (Andre, merged into main through #55), `olir/arm-ultrasonic-heal` (#54), `local-model-serve` (#43), `ishaan/pod-agent-loop` (#41), `ishaan/device-healer` (#31), `firmware` and `demo` (Olir)
 <!-- team-status:end -->
