@@ -2,7 +2,7 @@
 
 A robotic-arm company that heals itself. When something breaks on a robot (an SO-101 arm on a Raspberry Pi 5, or the STM32 sensor pod next to it), a small healer on the device diagnoses and fixes it, or parks the hardware and asks for a person. The **Romulus** cloud collects every incident, turns fixes that hold into new versions for the whole fleet behind a replay and a canary, and hands hardware faults to Naïve agents as work orders. Built for the Naïve Autonomous Company Hackathon and the Hermes Agent Plugin Hackathon ([`docs/hackathons.md`](docs/hackathons.md)).
 
-**After the order, nobody types.** [How the pieces fit](#how-the-pieces-fit) follows the data from the arm to the Naïve and Hermes agents and back, in two animations: a job that heals a stuck sensor on its own, and one try of the Nov 8 real-arm run, where an LLM planned 96 of the 102 tries.
+**After the order, nobody types.** [How the pieces fit](#how-the-pieces-fit) follows the data from the arm to the Naïve and Hermes agents and back, as an animation of a job that heals a stuck sensor on its own. A second animation shows a try from the Nov 8 real-arm run, where an LLM planned 96 of the 102 tries.
 
 Team context, working rules and the team's last status (Nov 9): [`CLAUDE.md`](CLAUDE.md). The whole story: [`docs/project-overview.md`](docs/project-overview.md).
 
@@ -87,7 +87,7 @@ It's a drawing ([`armsim/loopgif.py`](prototypes/arm-sim/armsim/loopgif.py)), an
 - **On the real arm,** a Naïve card + Hermes job ran with no fault: done 107 s after the claim, 25 tool calls, nobody typing ([`HANDOFF-LOCAL.md`](prototypes/arm-sim/HANDOFF-LOCAL.md), Sun 10:27 AM).
 - **Romulus's database from the hackathon** (kept local, like the rest of the data) holds 20 incidents. 17 were resolved with no person: distance faults on the sim twin (stuck, frozen, mismatched), and bad-image and link faults on the sensor pod. The other 3 were the sim twin's dead elbow, each handed to a person as a `needs_human` work order.
 
-**The Nov 8 experiment on the real arm ran hands-off too.** Astra (`gpt-6-astra` through Hermes) planned 96 of the 102 tries from the try log and the bench camera, its only eye. Here is one of them, the 13:50 three-bag carry, with its values from the try log ([the write-up](prototypes/arm-sim/README.md#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8)):
+**In the Nov 8 experiment on the real arm, an LLM decided the tries.** Astra (`gpt-6-astra` through Hermes) planned 96 of the 102 tries from the try log and the bench camera, its only eye. Here is one of them, the 13:50 three-bag carry, with its values from the try log ([the write-up](prototypes/arm-sim/README.md#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8)):
 
 <img alt="Animated diagram of one real-arm try in four lanes: the bench, the Pi, the Mac and the agent. Astra via Hermes reads the try log and the camera frames with their labelled grid, and writes the next test as JSON: recording_2, pan -4, speed 0.5, planned in 24.1 s. gentest on the Mac checks pan and speed and starts the try on the Pi over SSH. The arm replays recording_2, the jaws close on the pile at 16.7 s and squeeze to 99%, and three bags stay in the jaws for 20.7 s until the gripper reports alarm 32. The Pi writes the result to the try log, and Astra judges the try UNSURE and plans a probe at pan -2, which it calls GO. A badge reads Astra planned 96/102" src="prototypes/arm-sim/media/experiment-loop.gif" width="800">
 
