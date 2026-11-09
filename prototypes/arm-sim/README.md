@@ -9,7 +9,7 @@ The morning checklist and the open decisions are in [`MORNING.md`](MORNING.md).
 **On this page:**
 - [The real-arm experiment](#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8): charts, GIFs, what to fix next.
 - [Everything together, in one place](#everything-together-in-one-place): setup, the self-healing stories, the commands, Mission Control, the real arm.
-- [Mission Control in the sim](#mission-control-in-the-sim): four heals and a hand-off, as GIFs.
+- [Mission Control in the sim](#mission-control-in-the-sim): three heals, a hand-off to a person and a plain pick, as GIFs.
 
 ## The real-arm experiment: Astra picks up the red bag (Nov 8)
 On the last afternoon, the arm tried to pick up a red bag of chips and drop it in a box, with an LLM, not a person, deciding the attempts. Astra planned 96 of the 102 tries; the other six came from a fixed list that ran first, and one go-ahead was James's call at the bench.
