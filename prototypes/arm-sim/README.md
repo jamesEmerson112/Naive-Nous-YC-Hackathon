@@ -11,7 +11,7 @@ The morning checklist and the open decisions are in [`MORNING.md`](MORNING.md).
 - [Everything together, in one place](#everything-together-in-one-place): setup, the self-healing stories, the commands, Mission Control, the real arm.
 
 ## The real-arm experiment: Astra picks up the red bag (Nov 8)
-On the last afternoon, the arm tried to pick up a red bag of chips and drop it in a box, with an LLM, not a person, deciding each attempt.
+On the last afternoon, the arm tried to pick up a red bag of chips and drop it in a box, with an LLM, not a person, deciding the attempts. Astra planned 96 of the 102 tries; the other six came from a fixed list that ran first, and one go-ahead was James's call at the bench.
 - **The planner:** Astra (`gpt-6-astra` through Hermes). It reads the camera and a JSON log of every earlier try, then designs the next test.
 - **What it can choose:** one of Andre's three taught pick-and-place recordings, turned at the base (`pan`, ±10°) and slowed (`speed`, 0.5–1.0). The code clamps anything else.
 - **Who watches:** nobody touches the arm. The bench camera is Astra's only eye.
