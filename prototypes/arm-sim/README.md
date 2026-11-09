@@ -166,7 +166,7 @@ uv pip install --python .venv/bin/python -e ../../packages/contracts -e ../../to
   <img alt="The stall story in the sim twin: the elbow stops 25 degrees short of its target, the arm parks and the incident goes to a person" src="media/sim/story-stall.gif" width="270">
 </p>
 
-The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The yellow line is the pod's ultrasonic beam to the green block, and the status line at the top shows the distance and why the arm parked. The same faults, plus `redo`, are shown as Mission Control sees them after the commands table below.
+The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The yellow line is the pod's ultrasonic beam to the green block, and the status line at the top shows the distance and why the arm parked. The same faults, plus `redo`, are shown [as Mission Control sees them](#mission-control-in-the-sim) after the commands table below.
 
 
 **The autonomous loop, Mission Control and the healer's manager** (all `PYTHONPATH=. .venv/bin/python -m …`, with the arm host up):
@@ -183,6 +183,7 @@ The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The y
 
 The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The design is `docs/worker-manager-healer.md`.
 
+<a id="mission-control-in-the-sim"></a>
 <p>
   <img alt="Mission Control with a dead elbow planted: PARKED, then HEALING with a retry at home, then NEEDS A PERSON with a work order, then FIXED by a person" src="media/sim/mission-control-stall.gif" width="400">
   <img alt="Mission Control during a wrong move: WRONG MOVE: missed grasp, then reversed, corrected by the manager and checked by plain code, the wrist sensor finds the block 30 mm off, and the header reads REDONE in 28 s" src="media/sim/mission-control-wrong-move.gif" width="400">

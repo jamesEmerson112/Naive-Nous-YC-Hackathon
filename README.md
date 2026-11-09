@@ -23,7 +23,7 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 - **b:** a stuck sensor (middle)
 - **stall:** a dead elbow servo, handed to a person (right)
 
-**Mission Control watches it live** ([`armsim.mission`](prototypes/arm-sim/README.md#everything-together-in-one-place)). Below, two faults are planted from its presenter buttons: the arm heals the first by itself and hands the second to a person. Two more self-heals (a bad pod image and a stuck sensor) and a run with nothing broken are folded under them.
+**Mission Control watches it live** ([`armsim.mission`](prototypes/arm-sim/README.md#mission-control-in-the-sim)). Below, two faults are planted from its presenter buttons: the arm heals the first by itself and hands the second to a person. Two more self-heals (a bad pod image and a stuck sensor) and a run with nothing broken are folded under them.
 
 *A wrong move, healed in 28 s.* The block is bumped 30 mm, so the grip closes on nothing.
 1. The arm reverses: jaws open, backed off.
