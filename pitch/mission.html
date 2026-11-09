@@ -1,0 +1,1060 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardware Buddy · Mission</title>
+<style>
+:root{
+  --bg:#07090C; --ink:#E6EAEE; --dim:#8A94A0; --mute:#5B6570; --faint:#2B323B;
+  --tint:#13171C; --card:#0B0E12; --cardline:#20262E;
+  --green:#3DDC97; --red:#FF5A5F; --amber:#FFB547; --accent:#7C9CFF;
+  --sans:-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --mono:ui-monospace, "SF Mono", Menlo, monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden}
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;user-select:none;-webkit-user-select:none;cursor:default}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background-color:var(--bg);
+  background-image:radial-gradient(circle at center, rgba(230,234,238,.07) 0 1.4px, transparent 2px);background-size:40px 40px}
+.scene{position:absolute;left:0;top:0;width:1920px;height:1080px;opacity:0;visibility:hidden;transition:opacity .5s ease, visibility 0s linear .5s}
+.scene.on{opacity:1;visibility:visible;transition:opacity .5s ease, visibility 0s}
+#stage.instant .scene{transition:none}
+.layer{position:absolute;left:0;top:0;width:1920px;height:1080px}
+svg{overflow:visible}
+.t{position:absolute;white-space:nowrap;color:var(--ink);font-family:var(--sans)}
+.mono{font-family:var(--mono);text-transform:uppercase;letter-spacing:.12em}
+
+/* line art */
+.ln{fill:none;stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ln .ft,.ft{fill:var(--tint)}
+.mute{stroke:var(--faint)}
+.belt{stroke:var(--mute);stroke-dasharray:3 21}
+.thin{stroke-width:1.5;opacity:.6}
+
+/* Buddy mark */
+.buddy{overflow:visible;display:block}
+.buddy .bd-body{fill:#0E121B;stroke:var(--ink);stroke-width:5.5;stroke-linejoin:round}
+.buddy .bd-pin{fill:none;stroke:var(--ink);stroke-width:5.5;stroke-linecap:round}
+.buddy .bd-eye{fill:var(--accent);stroke:none}
+
+/* pills */
+.pill{display:inline-flex;align-items:center;gap:16px;padding:13px 28px 13px 24px;border-radius:999px;font:500 32px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;border:2px solid}
+.pill .d{width:14px;height:14px;border-radius:50%;background:currentColor;box-shadow:0 0 12px currentColor;flex:none}
+.pill.g{color:var(--green);border-color:rgba(61,220,151,.45);background:rgba(61,220,151,.08)}
+.pill.r{color:var(--red);border-color:rgba(255,90,95,.5);background:rgba(255,90,95,.1)}
+.pillpos{position:absolute;left:960px;top:300px;transform:translate(-50%,-50%);display:grid;justify-items:center;align-items:center}
+.pillpos>*{grid-area:1/1}
+
+/* cards */
+.card{position:absolute;background:var(--card);border:2px solid var(--cardline);border-radius:22px;padding:34px 36px;color:var(--ink);font-family:var(--sans)}
+.ghost{position:absolute;border:2px dashed rgba(230,234,238,.13);border-radius:22px}
+.chk{overflow:visible;display:block;flex:none}
+.chk-c{fill:rgba(61,220,151,.1);stroke:var(--green);stroke-width:2.5}
+.chk-p{fill:none;stroke:var(--green);stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
+
+/* scene 1 */
+.bignum{font:600 200px/1 var(--sans);letter-spacing:-.04em;font-variant-numeric:tabular-nums;display:flex;align-items:baseline}
+.bignum .unit{font-size:84px;letter-spacing:-.02em;color:var(--dim);margin-left:26px;font-weight:500}
+.cap{font:500 46px/1.2 var(--sans);color:var(--ink);margin-top:26px;letter-spacing:-.01em}
+.foot{font-size:21px;color:var(--dim);margin-top:40px;line-height:1.7}
+.foot:before{content:"";display:block;width:56px;height:2px;background:var(--faint);margin-bottom:18px}
+
+/* scene 2 */
+.atm{fill:none;stroke:rgba(230,234,238,.09);stroke-width:2}
+.orbit{fill:none;stroke:#3E4650;stroke-width:2;stroke-dasharray:2 12;stroke-linecap:round}
+.win{fill:none;stroke:var(--ink);stroke-width:3;stroke-linecap:round}
+.winh{fill:none;stroke:var(--ink);stroke-opacity:.12;stroke-width:16;stroke-linecap:round}
+.cone{fill:rgba(230,234,238,.045);stroke:rgba(230,234,238,.13);stroke-width:1.5}
+.pulse{fill:none;stroke:var(--ink);stroke-width:3;stroke-linecap:round}
+.remdot{fill:none;stroke:rgba(230,234,238,.6);stroke-width:3;stroke-linecap:round;stroke-dasharray:.5 12}
+.wghost{fill:none;stroke:rgba(230,234,238,.3);stroke-width:3;stroke-linecap:round;stroke-dasharray:2 10}
+.remx{fill:none;stroke:var(--red);stroke-width:3;stroke-linecap:round}
+.lbl{font-size:32px;color:var(--ink)}
+.guam{font-size:32px;color:var(--ink)}
+.coord{font-size:21px;color:var(--dim);margin-left:18px;letter-spacing:.08em}
+.nl2{font:500 32px/1 var(--sans);color:#FF8A8D;margin-left:14px}
+.hline{font:600 76px/1.1 var(--sans);letter-spacing:-.03em}
+
+/* scene 3 / 9 lockup */
+.markbox{position:absolute;width:280px;height:280px}
+.wm{font:600 128px/1 var(--sans);letter-spacing:-.04em}
+.tag{font:500 52px/1.15 var(--sans);letter-spacing:-.015em}
+.sub3{font-size:32px;color:var(--dim)}
+.tag9{font:500 46px/1.2 var(--sans);color:var(--dim);letter-spacing:-.01em}
+.l9a{font:500 62px/1.1 var(--sans);color:var(--dim);letter-spacing:-.015em}
+.l9b{font:700 108px/1.05 var(--sans);letter-spacing:-.035em}
+
+/* scene 4 */
+.lk{stroke:#4A535E;stroke-width:2.5}
+.lk.dash{stroke-dasharray:7 11}
+.node{stroke:rgba(230,234,238,.55)}
+.env .ft,.env path{stroke:var(--accent);stroke-width:2.5}
+.ring{fill:none;stroke:var(--accent);stroke-width:2.5}
+.flow{fill:var(--accent);stroke:none}
+.bgc{fill:var(--bg);stroke:none}
+.step{font-size:32px;color:var(--ink)}
+.step b{color:var(--accent);font-weight:600}
+.nlab{font:500 38px/1 var(--sans);text-align:center}
+.term{padding:24px 34px 22px}
+.term-h{display:flex;justify-content:space-between;align-items:center;font-size:21px;color:var(--dim);margin-bottom:10px;padding-bottom:14px;border-bottom:2px solid #171C22}
+.st{display:inline-flex;align-items:center;gap:10px;color:var(--accent)}
+.st .d{width:10px;height:10px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.term-row{display:flex;align-items:center;gap:22px;font:400 32px/62px var(--mono);color:var(--ink)}
+.term-row .ic{position:relative;width:44px;height:44px;flex:none}
+.term-row .ic svg{position:absolute;left:0;top:0}
+.spin{transform-origin:22px 22px}
+
+/* scene 5 */
+.lab{font-size:32px;color:var(--ink)}
+.card-h{display:flex;justify-content:space-between;align-items:center;height:40px}
+.sdot{position:relative;width:18px;height:18px;border-radius:50%;background:var(--green);box-shadow:0 0 14px rgba(61,220,151,.75)}
+.sdot .ring{position:absolute;left:-2px;top:-2px;width:22px;height:22px;border:2px solid var(--green);border-radius:50%}
+.cicon{position:absolute;left:0;top:88px;width:596px;height:300px}
+.buls{position:absolute;left:36px;top:418px}
+.bul{display:flex;align-items:flex-start;gap:20px;font:500 38px/1.22 var(--sans);margin-bottom:16px;white-space:nowrap}
+.bul i{flex:none;width:20px;height:2px;background:var(--dim);margin-top:24px}
+.lk-solid{stroke:rgba(230,234,238,.8);stroke-width:2.5}
+.lk-dash{stroke:#5B6570;stroke-width:2.5;stroke-dasharray:8 12}
+.port{fill:var(--bg);stroke:rgba(230,234,238,.8);stroke-width:2}
+.pkt{fill:var(--accent);stroke:none}
+.lkl{font-size:32px;color:var(--dim)}
+#s5Lart{stroke-width:1.64}
+#s5arm{stroke-width:4.1}
+#s5cloud{stroke-width:1.75}
+
+/* scene 6 */
+.hl{font:600 96px/1.05 var(--sans);letter-spacing:-.035em}
+.ecg{fill:none;stroke:var(--green);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.ecgh{fill:none;stroke:var(--green);stroke-opacity:.13;stroke-width:10;stroke-linejoin:round;stroke-linecap:round}
+.head{fill:var(--green)}
+.ct{font:600 50px/1.1 var(--sans);letter-spacing:-.02em}
+.mrow{display:flex;justify-content:space-between;margin-top:34px;font-size:32px}
+.ml{color:var(--dim)}
+.mv{color:var(--ink);font-variant-numeric:tabular-nums}
+.meter{display:flex;gap:5px;margin-top:16px;height:36px}
+.meter i{flex:1;border-radius:3px;background:#161B21}
+.res{position:absolute;left:36px;bottom:34px;display:flex;align-items:center;gap:18px;font:500 40px/1 var(--sans)}
+.code{margin-top:26px;border:2px solid #1B2129;border-radius:12px;background:#080A0D;padding:8px 0;font:400 32px/56px var(--mono);color:var(--ink)}
+.cl{position:relative;padding:0 16px;white-space:pre}
+.cl .sg{display:inline-block;width:2ch}
+.cl.del{background:rgba(255,90,95,.12)}
+.cl.del .sg{color:var(--red)}
+.cl.add .sg{color:var(--green)}
+.strike{position:absolute;left:calc(16px + 2ch);top:50%;height:3px;margin-top:-1px;width:30ch;background:var(--red);transform-origin:left center;border-radius:2px}
+.caret{display:inline-block;width:.55ch;height:36px;background:var(--accent);vertical-align:-6px;margin-left:2px}
+
+/* scene 7 */
+.kick{font-size:32px;color:var(--dim)}
+.nd{stroke:rgba(230,234,238,.35)}
+.nd.r{stroke:rgba(255,90,95,.6)}
+.nd.g{stroke:rgba(61,220,151,.6)}
+.ico-r{stroke:var(--red);stroke-width:2.5}
+.dotf{fill:var(--red);stroke:none}
+.ico-g{stroke:var(--green);stroke-width:3.2}
+.arr{stroke:rgba(230,234,238,.45);stroke-width:2.5}
+.arr.ac{stroke:var(--accent)}
+.band-r{fill:rgba(255,90,95,.13);stroke:rgba(255,90,95,.6);stroke-width:2}
+.band-g{fill:rgba(61,220,151,.13);stroke:rgba(61,220,151,.6);stroke-width:2}
+.bt{font:500 32px/1 var(--sans)}
+.bt.r{color:#FF8A8D}
+.bt.g{color:#7DEBB9}
+.nl7{font:500 32px/1 var(--sans);color:var(--ink);text-align:center}
+
+/* scene 8 */
+.kick8{display:inline-flex;align-items:center;gap:18px;font-size:32px;color:var(--dim)}
+.kick8 .d{width:14px;height:14px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px rgba(124,156,255,.8)}
+.title8{font:600 132px/1 var(--sans);letter-spacing:-.04em}
+.rule8{position:absolute;height:2px;background:rgba(230,234,238,.3)}
+.meta8{font-size:32px;color:var(--dim)}
+.sep{margin:0 .6em;color:#4A535E}
+
+/* HUD */
+#hud{position:absolute;left:0;right:0;bottom:30px;display:flex;justify-content:center;gap:12px;opacity:.6;transition:opacity .3s;pointer-events:none;z-index:5}
+#hud.hide{opacity:0}
+#hud i{width:8px;height:8px;border-radius:4px;background:#323943;transition:width .3s, background .3s}
+#hud i.on{width:26px;background:#8A94A0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <filter id="glow" x="-150%" y="-150%" width="400%" height="400%">
+      <feGaussianBlur stdDeviation="3.4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="earthFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E6EAEE" stop-opacity=".075"/>
+      <stop offset=".45" stop-color="#E6EAEE" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+</svg>
+<div id="stage"><div id="hud"></div></div>
+
+<script>
+(function(){
+'use strict';
+const BIG = 1e9, SNAP = 1e6;
+const cl = (x, a = 0, b = 1) => x < a ? a : x > b ? b : x;
+const pr = (t, s, d) => cl((t - s) / d);
+const mix = (a, b, p) => a + (b - a) * p;
+const E = {
+  o: p => 1 - Math.pow(1 - p, 3),
+  io: p => p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2,
+  i: p => p * p,
+  back: p => { const c1 = 1.7, c3 = c1 + 1; return p >= 1 ? 1 : 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); }
+};
+const $ = id => document.getElementById(id);
+const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+const C = { ink: '#E6EAEE', dim: '#8A94A0', green: '#3DDC97', red: '#FF5A5F', amber: '#FFB547', accent: '#7C9CFF', cardline: '#20262E', seg: '#161B21' };
+function mixc(a, b, p) { const A = hex(a), B = hex(b); return 'rgb(' + Math.round(mix(A[0], B[0], p)) + ',' + Math.round(mix(A[1], B[1], p)) + ',' + Math.round(mix(A[2], B[2], p)) + ')'; }
+
+/* ---------- element helpers (pure setters: every frame sets full state) ---------- */
+function op(el, o) { el.style.opacity = o; el.style.visibility = o <= 0.001 ? 'hidden' : ''; }
+function rise(el, p, dy = 22) { op(el, p); el.style.transform = (p >= 1 || dy === 0) ? '' : 'translateY(' + ((1 - p) * dy).toFixed(2) + 'px)'; }
+const LEN = new WeakMap();
+function glen(el) { let l = LEN.get(el); if (l === undefined) { try { l = el.getTotalLength(); } catch (e) { l = 1000; } LEN.set(el, l); } return l; }
+function drawIn(el, p) {
+  if (p >= 1) { el.style.strokeDasharray = ''; el.style.strokeDashoffset = ''; el.style.visibility = ''; return; }
+  if (p <= 0) { el.style.visibility = 'hidden'; return; }
+  const l = glen(el) + 2;
+  el.style.visibility = '';
+  el.style.strokeDasharray = l + ' ' + l;
+  el.style.strokeDashoffset = (l * (1 - p)).toFixed(2);
+}
+function blink(now, seed = 0) {
+  const P = 4300, tt = now + seed * 1373, c = Math.floor(tt / P), x = tt - c * P;
+  let o = 1;
+  const b = x0 => { const d = (x - x0) / 180; if (d > 0 && d < 1) o = Math.min(o, 1 - 0.92 * Math.sin(Math.PI * d)); };
+  b(0); if (c % 3 === 1) b(260);
+  return o;
+}
+
+/* ---------- the Buddy mark: built once here, reused everywhere ---------- */
+function buddySVG(attrs = '') {
+  const pins = [];
+  [58, 80, 102].forEach(k => pins.push('M' + k + ' 32V14'));
+  [58, 80, 102].forEach(k => pins.push('M128 ' + k + 'H146'));
+  [102, 80, 58].forEach(k => pins.push('M' + k + ' 128V146'));
+  [102, 80, 58].forEach(k => pins.push('M32 ' + k + 'H14'));
+  return '<svg class="buddy" viewBox="0 0 160 160" ' + attrs + '>' +
+    pins.map(d => '<path class="bd-pin" d="' + d + '"/>').join('') +
+    '<rect class="bd-body" x="32" y="32" width="96" height="96" rx="22"/>' +
+    '<g class="bd-eyes" filter="url(#glow)"><ellipse class="bd-eye" cx="64" cy="80" rx="9" ry="15"/><ellipse class="bd-eye" cx="96" cy="80" rx="9" ry="15"/></g>' +
+    '</svg>';
+}
+function Buddy(svg) {
+  const body = svg.querySelector('.bd-body'), pins = [...svg.querySelectorAll('.bd-pin')],
+    eyes = [...svg.querySelectorAll('.bd-eye')], eg = svg.querySelector('.bd-eyes');
+  let last = '';
+  return {
+    svg,
+    // d: draw-in progress 0..1, o: eye openness 0..1, a: eye alpha 0..1
+    set(d = 1, o = 1, a = 1) {
+      const key = d.toFixed(3) + '|' + o.toFixed(3) + '|' + a.toFixed(3);
+      if (key === last) return; last = key;
+      if (d >= 1) { drawIn(body, 1); body.style.fillOpacity = ''; pins.forEach(p => drawIn(p, 1)); }
+      else {
+        drawIn(body, E.io(cl(d / 0.6)));
+        body.style.fillOpacity = cl((d - 0.4) / 0.4);
+        pins.forEach((p, i) => drawIn(p, E.o(cl((d - 0.38 - i * 0.03) / 0.22))));
+      }
+      eyes.forEach(e => e.setAttribute('ry', Math.max(1.8, 15 * cl(o)).toFixed(2)));
+      op(eg, cl(a));
+    }
+  };
+}
+const chkSVG = (id = '') => '<svg class="chk" ' + (id ? 'id="' + id + '" ' : '') + 'viewBox="0 0 44 44" width="44" height="44"><circle class="chk-c" cx="22" cy="22" r="19"/><path class="chk-p" d="M13.5 22.5 L19.5 28.5 L31 16.5"/></svg>';
+function Chk(svg) { const c = svg.querySelector('.chk-c'), p = svg.querySelector('.chk-p'); return { set(x) { op(c, cl(x * 2)); drawIn(p, E.o(cl((x - 0.25) / 0.75))); } }; }
+
+/* ---------- the robot arm (side view, rotating joint groups) ---------- */
+function armMarkup(p, L1, L2) {
+  return '<g id="' + p + 'g1">' +
+    '<rect class="ft" x="-21" y="-21" width="' + (L1 + 42) + '" height="42" rx="21"/>' +
+    '<circle class="ft" r="31"/><circle r="10"/>' +
+    '<g id="' + p + 'g2">' +
+      '<rect class="ft" x="-17" y="-17" width="' + (L2 + 34) + '" height="34" rx="17"/>' +
+      '<circle class="ft" r="25"/><circle r="8"/>' +
+      '<g id="' + p + 'g3">' +
+        '<rect class="ft" x="12" y="-10" width="20" height="20" rx="3"/>' +
+        '<rect class="ft" x="30" y="-58" width="14" height="116" rx="5"/>' +
+        '<rect id="' + p + 'fa" class="ft" x="44" y="35" width="48" height="11" rx="4"/>' +
+        '<rect id="' + p + 'fb" class="ft" x="44" y="-46" width="48" height="11" rx="4"/>' +
+        '<circle class="ft" r="17"/><circle r="5.5"/>' +
+      '</g>' +
+    '</g>' +
+  '</g>';
+}
+function armEls(p) { return { g1: $(p + 'g1'), g2: $(p + 'g2'), g3: $(p + 'g3'), fa: $(p + 'fa'), fb: $(p + 'fb') }; }
+function poseArm(a, th1, a2, a3, f, ox, oy, L1, L2) {
+  a.g1.setAttribute('transform', 'translate(' + ox + ' ' + oy + ') rotate(' + th1.toFixed(3) + ')');
+  a.g2.setAttribute('transform', 'translate(' + L1 + ' 0) rotate(' + a2.toFixed(3) + ')');
+  a.g3.setAttribute('transform', 'translate(' + L2 + ' 0) rotate(' + a3.toFixed(3) + ')');
+  a.fa.setAttribute('y', (f - 5.5).toFixed(2));
+  a.fb.setAttribute('y', (-f - 5.5).toFixed(2));
+}
+
+/* ======================= SCENE 1 · Downtime ======================= */
+const S1 = (() => {
+  const SX = 1340, SY = 770, L1 = 290, L2 = 270, PX = 930, D = 220, P = 4000;
+  const HP = [930, 470], GP = [930, 574], HB = [1140, 560], RB = [1140, 674];
+  const rnd = k => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return (x - Math.floor(x)) * 2 - 1; };
+  const seg = (a, b, p) => [mix(a[0], b[0], p), mix(a[1], b[1], p)];
+  function wristAt(ph) {
+    if (ph < 600) return seg(HP, GP, E.io(ph / 600));
+    if (ph < 800) return GP;
+    if (ph < 1300) return seg(GP, HP, E.io((ph - 800) / 500));
+    if (ph < 2200) { const p = E.io((ph - 1300) / 900); const w = seg(HP, HB, p); w[1] -= 46 * Math.sin(Math.PI * p); return w; }
+    if (ph < 2600) return seg(HB, RB, E.io((ph - 2200) / 400));
+    if (ph < 2750) return RB;
+    if (ph < 3150) return seg(RB, HB, E.io((ph - 2750) / 400));
+    const p = E.io((ph - 3150) / 850); const w = seg(HB, HP, p); w[1] -= 30 * Math.sin(Math.PI * p); return w;
+  }
+  function fingerAt(ph) {
+    if (ph < 600) return 52;
+    if (ph < 800) return mix(52, 40.5, E.io((ph - 600) / 200));
+    if (ph < 2600) return 40.5;
+    if (ph < 2750) return mix(40.5, 52, E.io((ph - 2600) / 150));
+    return 52;
+  }
+  const beltAt = ph => ph < 1300 ? 0 : ph < 3300 ? D * E.io((ph - 1300) / 2000) : D;
+  function ik(x, y) {
+    const dx = x - SX, dy = y - SY, d = Math.min(Math.hypot(dx, dy), L1 + L2 - 0.5);
+    const c = cl((d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2), -1, 1), a2 = -Math.acos(c);
+    const th1 = Math.atan2(dy, dx) - Math.atan2(L2 * Math.sin(a2), L1 + L2 * Math.cos(a2));
+    return [th1 * 180 / Math.PI, a2 * 180 / Math.PI];
+  }
+  function fk(th1, a2, a3) {
+    const r = Math.PI / 180, ex = SX + L1 * Math.cos(th1 * r), ey = SY + L1 * Math.sin(th1 * r), t2 = th1 + a2;
+    return { x: ex + L2 * Math.cos(t2 * r), y: ey + L2 * Math.sin(t2 * r), g: t2 + a3 };
+  }
+  const box = '<g class="box"><rect class="ft" x="-35" y="0" width="70" height="70" rx="5"/><path d="M0 0V24M-35 12H-24M24 12H35"/></g>';
+  let el = {}, tau0 = 1100;
+  return {
+    name: 'Downtime', beats: [2500, 4500],
+    html: `
+    <div id="s1m" class="layer" style="transform-origin:960px 640px">
+      <svg id="s1svg" class="layer" viewBox="0 0 1920 1080" width="1920" height="1080">
+        <g transform="translate(60 0)" class="ln">
+          <path class="mute" d="M300 880H1580"/>
+          <path d="M440 726V880M940 726V880M418 880H462M918 880H962"/>
+          <rect class="ft" x="380" y="690" width="620" height="36" rx="18"/>
+          <line id="s1belt" class="belt" x1="412" y1="708" x2="968" y2="708"/>
+          <circle class="ft" cx="398" cy="708" r="8"/><circle class="ft" cx="982" cy="708" r="8"/>
+          <clipPath id="s1clip"><rect x="440" y="0" width="1600" height="1080"/></clipPath>
+          <g id="s1boxes" clip-path="url(#s1clip)">${box}${box}${box}${box}</g>
+          <rect class="ft" x="356" y="566" width="84" height="124" rx="8"/>
+          <path d="M370 590H426M370 606H426"/>
+          <rect class="ft" x="1060" y="770" width="160" height="110" rx="6"/>
+          <path d="M1050 770H1230"/>
+          <rect x="1112" y="796" width="56" height="12" rx="6"/>
+          <rect class="ft" x="1250" y="866" width="180" height="14" rx="4"/>
+          <path class="ft" d="M1272 866 L1296 800 H1384 L1408 866 Z"/>
+          <rect class="ft" x="1306" y="764" width="68" height="40" rx="8"/>
+          ${armMarkup('s1', L1, L2)}
+        </g>
+      </svg>
+    </div>
+    <div id="s1pill" class="layer"><div class="pillpos"><div class="pill g" id="s1run"><i class="d"></i>Running</div><div class="pill r" id="s1down"><i class="d"></i>Down</div></div></div>
+    <div class="t" id="s1stat" style="left:968px;top:404px">
+      <div class="bignum" id="s1numrow"><span id="s1num">$0.0</span><span class="unit">trillion</span></div>
+      <div class="cap" id="s1cap">lost every year to unplanned downtime</div>
+      <div class="foot mono" id="s1foot">World’s 500 largest companies<br>Siemens, The True Cost of Downtime 2024</div>
+    </div>`,
+    init() {
+      el = { m: $('s1m'), svg: $('s1svg'), belt: $('s1belt'), boxes: [...$('s1boxes').children], arm: armEls('s1'),
+        pill: $('s1pill'), run: $('s1run'), down: $('s1down'), numrow: $('s1numrow'), num: $('s1num'), cap: $('s1cap'), foot: $('s1foot') };
+    },
+    enter(b, prev, mode) {
+      if (b === 2) tau0 = (mode === 'play' && prev.s === 0 && prev.b === 1) ? prev.t : 1100;
+    },
+    draw(b, t, now) {
+      const t2 = b === 2 ? t : -BIG;
+      let T, stut = 0, kk = 0, droop = 0;
+      if (b === 1) T = t;
+      else {
+        T = tau0 + cl(t2, 0, 700);
+        if (t2 > 700) { stut = 1 - pr(t2, 700, 480); kk = Math.floor((t2 - 700) / 65); }
+        droop = E.o(pr(t2, 1150, 500));
+      }
+      const c = Math.floor(T / P), ph = T - c * P;
+      const w = wristAt(ph);
+      let [th1, a2] = ik(w[0], w[1]);
+      const a3 = 90 - (th1 + a2);
+      if (stut > 0) { th1 += 2.2 * stut * rnd(kk); a2 += 3.4 * stut * rnd(kk + 17); }
+      a2 -= 6 * droop;
+      poseArm(el.arm, th1, a2, a3, fingerAt(ph), SX, SY, L1, L2);
+      const g = fk(th1, a2, a3), bx = beltAt(ph);
+      for (let n = c; n < c + 4; n++) {
+        const be = el.boxes[((n % 4) + 4) % 4], i = n - c;
+        let tr, o = 1;
+        if (i >= 1) { const x = PX - i * D + bx; tr = 'translate(' + x.toFixed(1) + ' 620)'; o = x > 380 ? 1 : 0; }
+        else if (ph < 800) tr = 'translate(' + PX + ' 620)';
+        else if (ph < 2690) tr = 'translate(' + g.x.toFixed(1) + ' ' + g.y.toFixed(1) + ') rotate(' + (g.g - 90).toFixed(2) + ') translate(0 46)';
+        else tr = 'translate(1140 ' + mix(720, 806, E.i(pr(ph, 2690, 240))).toFixed(1) + ')';
+        be.setAttribute('transform', tr); op(be, o);
+      }
+      el.belt.style.strokeDashoffset = (-(c * D + bx)).toFixed(1);
+      // status pill
+      const flip = b === 1 ? 0 : pr(t2, 700, 160);
+      op(el.run, 1 - flip); op(el.down, flip);
+      el.down.style.transform = flip > 0 && flip < 1 ? '' : (b === 2 ? 'scale(' + (1 + 0.06 * (1 - E.o(pr(t2, 700, 350)))).toFixed(3) + ')' : '');
+      // slide aside
+      const sp = b === 1 ? 0 : E.io(pr(t2, 1300, 1000));
+      el.m.style.transform = sp ? 'translate(' + (-470 * sp).toFixed(1) + 'px,' + (40 * sp).toFixed(1) + 'px) scale(' + (1 - 0.26 * sp).toFixed(4) + ')' : '';
+      el.svg.style.opacity = (1 - 0.66 * sp).toFixed(3);
+      el.pill.style.transform = sp ? 'translate(' + (-471 * sp).toFixed(1) + 'px,' + (150 * sp).toFixed(1) + 'px)' : '';
+      // the number
+      rise(el.numrow, b === 1 ? 0 : pr(t2, 1600, 400), 16);
+      el.num.textContent = '$' + (1.4 * (b === 1 ? 0 : E.o(pr(t2, 1700, 1700)))).toFixed(1);
+      rise(el.cap, b === 1 ? 0 : pr(t2, 2900, 500), 16);
+      rise(el.foot, b === 1 ? 0 : pr(t2, 3300, 500), 12);
+    }
+  };
+})();
+
+/* ======================= SCENE 2 · Out of reach ======================= */
+const S2 = (() => {
+  const RE = 1800, RO = 2320, FX = 960, FY = 790;
+  const pt = (R, deg) => { const r = deg * Math.PI / 180; return [960 + R * Math.sin(r), 2700 - R * Math.cos(r)]; };
+  const P2 = a => a[0].toFixed(1) + ' ' + a[1].toFixed(1);
+  const arc = (R, a, b) => 'M' + P2(pt(R, a)) + ' A' + R + ' ' + R + ' 0 0 1 ' + P2(pt(R, b));
+  let el = {};
+  return {
+    name: 'Out of reach', beats: [4000, 4000, 3500],
+    html: `
+    <svg class="layer" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <g id="s2all">
+        <path id="s2fill" d="${arc(RE, -36, 36)} Z" fill="url(#earthFill)"/>
+        <path id="s2atm" class="atm" d="${arc(RE + 34, -36, 36)}"/>
+        <g class="ln"><path id="s2limbL" d="M960 900 A${RE} ${RE} 0 0 0 ${P2(pt(RE, -36))}"/><path id="s2limbR" d="M960 900 A${RE} ${RE} 0 0 1 ${P2(pt(RE, 36))}"/></g>
+        <path id="s2orbit" class="orbit" d="${arc(RO, -28, 28)}"/>
+        <path id="s2cone" class="cone"/>
+        <path id="s2ghost" class="wghost" d="${arc(RO, -8, 8)}"/>
+        <path id="s2winH" class="winh"/><path id="s2win" class="win"/>
+        <g id="s2ant" class="ln">
+          <path class="ft" d="M932 901 L947 872 H973 L988 901 Z"/>
+          <path d="M960 872 V848"/>
+          <path class="ft" d="M914 816 Q960 878 1006 816 Z"/>
+          <path d="M918 818 L960 792 L1002 818"/>
+          <circle class="ft" cx="960" cy="790" r="5"/>
+        </g>
+        <g id="s2pin" class="ln">
+          <path class="ft" d="M1100 905 C1093 893 1080 880 1080 866 A20 20 0 1 1 1120 866 C1120 880 1107 893 1100 905 Z"/>
+          <circle cx="1100" cy="866" r="6.5"/>
+        </g>
+        <path id="s2p0" class="pulse"/><path id="s2p1" class="pulse"/><path id="s2p2" class="pulse"/>
+        <g id="s2rem"><path class="remdot" d="M960 768 V662"/><path class="remx" d="M947 641 L957 613 M963 641 L973 613"/></g>
+        <g id="s2sat" class="ln">
+          <path d="M-30 0H-20M20 0H30"/>
+          <rect class="ft" x="-98" y="-15" width="68" height="30" rx="2"/>
+          <path class="thin" d="M-75 -15V15M-53 -15V15"/>
+          <rect class="ft" x="30" y="-15" width="68" height="30" rx="2"/>
+          <path class="thin" d="M53 -15V15M75 -15V15"/>
+          <rect class="ft" x="-20" y="-24" width="40" height="48" rx="5"/>
+          <path class="thin" d="M-9 -11H9"/>
+          <path d="M0 24V33"/>
+          <path class="ft" d="M-14 43 Q0 29 14 43 Z"/>
+        </g>
+      </g>
+    </svg>
+    <div class="t mono lbl" id="s2wl" style="left:0;width:1920px;top:276px;text-align:center">Contact window</div>
+    <div class="t" id="s2guam" style="left:1136px;top:840px"><span class="mono guam">Guam</span><span class="mono coord">13.4°N 144.8°E</span></div>
+    <div class="t" id="s2nl" style="left:1050px;top:595px;display:flex;align-items:center"><span class="pill r"><i class="d"></i>No link</span><span class="nl2">· no internet</span></div>
+    <div class="t hline" id="s2line" style="left:0;width:1920px;top:128px;text-align:center">One failure out of reach can cost millions.</div>`,
+    init() {
+      el = { all: $('s2all'), fill: $('s2fill'), atm: $('s2atm'), limbL: $('s2limbL'), limbR: $('s2limbR'), orbit: $('s2orbit'),
+        cone: $('s2cone'), ghost: $('s2ghost'), win: $('s2win'), winH: $('s2winH'), ant: $('s2ant'), pin: $('s2pin'),
+        pulses: [$('s2p0'), $('s2p1'), $('s2p2')], rem: $('s2rem'), sat: $('s2sat'),
+        wl: $('s2wl'), guam: $('s2guam'), nl: $('s2nl'), line: $('s2line') };
+    },
+    draw(b, t, now) {
+      const t1 = b === 1 ? t : BIG, t2 = b === 2 ? t : b > 2 ? BIG : -BIG, t3 = b === 3 ? t : -BIG;
+      const pl = E.io(pr(t1, 0, 1300));
+      drawIn(el.limbL, pl); drawIn(el.limbR, pl);
+      op(el.fill, pr(t1, 300, 1000)); op(el.atm, pr(t1, 600, 900)); op(el.orbit, pr(t1, 500, 900));
+      rise(el.ant, pr(t1, 700, 500), 14);
+      rise(el.pin, E.o(pr(t1, 1100, 500)), -24);
+      rise(el.guam, pr(t1, 1300, 500), 10);
+      // satellite
+      const phi = b === 1 ? mix(-30, -8, E.o(pr(t1, 700, 2700))) : mix(-8, 19, E.io(pr(t2, 0, 3800)));
+      const sp = pt(RO, phi);
+      el.sat.setAttribute('transform', 'translate(' + P2(sp) + ') rotate(' + phi.toFixed(3) + ')');
+      // contact window: lights up in beat 1, drains as the satellite passes in beat 2
+      let wf, wt, cop;
+      if (b === 1) { const p = E.io(pr(t1, 2300, 1000)); wf = -8; wt = mix(-8, 8, p); cop = pr(t1, 2600, 700); }
+      else { wf = cl(phi, -8, 8); wt = 8; cop = 1; }
+      if (wt - wf > 0.05) {
+        const d = arc(RO, wf, wt);
+        el.win.setAttribute('d', d); el.winH.setAttribute('d', d);
+        el.cone.setAttribute('d', 'M' + FX + ' ' + FY + ' L' + P2(pt(RO, wf)) + ' A' + RO + ' ' + RO + ' 0 0 1 ' + P2(pt(RO, wt)) + ' Z');
+        op(el.win, 1); op(el.winH, 1); op(el.cone, cop);
+      } else { op(el.win, 0); op(el.winH, 0); op(el.cone, 0); }
+      op(el.ghost, b === 1 ? pr(t1, 2300, 1000) : 1);
+      const wlo = b === 1 ? pr(t1, 2900, 500) : 1 - 0.62 * pr(t2, 1900, 500);
+      rise(el.wl, wlo, b === 1 ? 10 : 0);
+      // signal pulses that break up halfway
+      const starts = [100, 550, 1000], a0 = -112 * Math.PI / 180, a1 = -68 * Math.PI / 180;
+      el.pulses.forEach((pe, i) => {
+        const lt = t2 - starts[i];
+        if (b !== 2 || lt < 0 || lt > 1000) { op(pe, 0); return; }
+        const r = 26 + 234 * E.o(lt / 1000), g = cl((r - 140) / 90);
+        pe.setAttribute('d', 'M' + (FX + r * Math.cos(a0)).toFixed(1) + ' ' + (FY + r * Math.sin(a0)).toFixed(1) + ' A' + r.toFixed(1) + ' ' + r.toFixed(1) + ' 0 0 1 ' + (FX + r * Math.cos(a1)).toFixed(1) + ' ' + (FY + r * Math.sin(a1)).toFixed(1));
+        const segL = r * (44 * Math.PI / 180) / 5;
+        if (g > 0) { pe.style.strokeDasharray = (segL * (1 - 0.8 * g)).toFixed(1) + ' ' + (segL * 0.8 * g).toFixed(1); pe.style.strokeDashoffset = (-(segL * 0.4 * g)).toFixed(1); }
+        else { pe.style.strokeDasharray = ''; pe.style.strokeDashoffset = ''; }
+        pe.style.stroke = mixc(C.ink, C.red, g);
+        op(pe, 0.95 * (1 - pr(r, 190, 70)));
+      });
+      op(el.rem, b === 1 ? 0 : pr(t2, 1700, 500));
+      rise(el.nl, b === 1 ? 0 : E.o(pr(t2, 900, 450)), 12);
+      // beat 3: the line
+      const dim = b === 3 ? 1 - 0.5 * E.io(pr(t3, 0, 700)) : 1;
+      el.all.style.opacity = dim; el.guam.style.opacity = Math.min(+el.guam.style.opacity, dim);
+      if (b === 3) { el.wl.style.opacity = 0.38 * dim; el.nl.style.opacity = 0.35 + 0.65 * dim; }
+      rise(el.line, b === 3 ? E.o(pr(t3, 250, 800)) : 0, 18);
+    }
+  };
+})();
+
+/* ======================= SCENE 3 · Reveal ======================= */
+const S3 = (() => {
+  let el = {}, mark;
+  return {
+    name: 'Reveal', beats: [5000],
+    html: `
+    <div class="markbox" style="left:820px;top:220px">${buddySVG('id="s3mk" width="280" height="280"')}</div>
+    <div class="t wm" id="s3wm" style="left:0;width:1920px;top:548px;text-align:center">Hardware Buddy</div>
+    <div class="t tag" id="s3tag" style="left:0;width:1920px;top:706px;text-align:center">The self-healing OS for hardware</div>
+    <div class="t mono sub3" id="s3sub" style="left:0;width:1920px;top:792px;text-align:center">for manufacturing &amp; robotics</div>`,
+    init() { mark = Buddy($('s3mk')); el = { wm: $('s3wm'), tag: $('s3tag'), sub: $('s3sub') }; },
+    draw(b, t, now) {
+      let o = 0.12 + 0.88 * E.o(pr(t, 1350, 320));
+      const bl = (t - 2150) / 190; if (bl > 0 && bl < 1) o = Math.min(o, 1 - 0.92 * Math.sin(Math.PI * bl));
+      if (t > 4300) o = Math.min(o, blink(now, 0));
+      mark.set(pr(t, 0, 1450), o, pr(t, 1300, 200));
+      rise(el.wm, E.o(pr(t, 1900, 700)), 26);
+      rise(el.tag, E.o(pr(t, 2600, 600)), 18);
+      rise(el.sub, E.o(pr(t, 3050, 600)), 14);
+    }
+  };
+})();
+
+/* ======================= SCENE 4 · Onboarding ======================= */
+const S4 = (() => {
+  let el = {}, badge, chks = [];
+  const NX = [400, 960, 1520], NY = 440;
+  return {
+    name: 'Onboarding', beats: [3500, 4000],
+    html: `
+    <div class="layer" id="s4grp">
+    <svg class="layer" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <g class="ln">
+        <line id="s4l1" class="lk dash" x1="506" y1="440" x2="854" y2="440"/>
+        <line id="s4l2" class="lk" x1="1414" y1="440" x2="1066" y2="440"/>
+        <circle id="s4ring" class="ring" cx="960" cy="440" r="96"/>
+        <circle id="s4c0" class="ft node" cx="400" cy="440" r="96"/>
+        <g id="s4i0">
+          <path d="M400 440 L400 398 M400 440 L364 462 M400 440 L436 462"/>
+          <circle class="ft" cx="400" cy="440" r="13"/>
+          <circle class="ft" cx="400" cy="394" r="10"/><circle class="ft" cx="360" cy="465" r="10"/><circle class="ft" cx="440" cy="465" r="10"/>
+        </g>
+        <circle id="s4c1" class="ft node" cx="960" cy="440" r="96"/>
+        <g id="s4i1">
+          <path class="ft" d="M903 488 V436 L931 416 V436 L959 416 V436 L987 416 V436 H996 V392 H1016 V488 Z"/>
+          <path d="M916 456 h14 v14 h-14 Z M944 456 h14 v14 h-14 Z M972 456 h14 v14 h-14 Z"/>
+          <path d="M890 488 H1030"/>
+        </g>
+        <circle id="s4c2" class="ft node" cx="1520" cy="440" r="96"/>
+        <g id="s4i2">
+          <rect class="ft" x="1466" y="398" width="108" height="84" rx="9"/>
+          <path d="M1466 416 H1574"/>
+          <path d="M1489 434 L1503 446 L1489 458 M1511 460 H1531"/>
+        </g>
+        <g id="s4dots"><circle class="flow" r="5" cy="440"/><circle class="flow" r="5" cy="440"/><circle class="flow" r="5" cy="440"/></g>
+        <g id="s4env" class="env"><rect class="ft" x="-31" y="-21" width="62" height="42" rx="5"/><path d="M-28 -17 L0 4 L28 -17"/></g>
+        <g id="s4badge"><circle class="bgc" r="46"/>${buddySVG('id="s4mk" x="-38" y="-38" width="76" height="76"')}</g>
+      </g>
+    </svg>
+    <div class="t mono step" id="s4st1" style="left:380px;width:600px;top:242px;text-align:center"><b>1</b> · Reach out</div>
+    <div class="t mono step" id="s4st2" style="left:890px;width:700px;top:242px;text-align:center"><b>2</b> · Set up, autonomously</div>
+    <div class="t nlab" id="s4n0" style="left:200px;width:400px;top:566px">Naïve agents</div>
+    <div class="t nlab" id="s4n1" style="left:760px;width:400px;top:566px">Hardware company</div>
+    <div class="t nlab" id="s4n2" style="left:1320px;width:400px;top:566px">Coding agents</div>
+    </div>
+    <div class="card term" id="s4term" style="left:640px;top:632px;width:640px">
+      <div class="term-h"><span class="mono">Setup</span><span class="mono st" id="s4st"><i class="d"></i><span id="s4stt">Running</span></span></div>
+      ${['connect machines', 'install local model', 'link to cloud'].map((s, i) => `<div class="term-row" id="s4r${i}"><span class="ic"><svg class="spin" id="s4sp${i}" viewBox="0 0 44 44" width="44" height="44"><circle cx="22" cy="22" r="14" fill="none" stroke="#7C9CFF" stroke-width="3" stroke-linecap="round" stroke-dasharray="26 62"/></svg>${chkSVG('s4ck' + i)}</span><span>${s}</span></div>`).join('')}
+    </div>`,
+    init() {
+      el = { grp: $('s4grp'), l1: $('s4l1'), l2: $('s4l2'), ring: $('s4ring'), c: [$('s4c0'), $('s4c1'), $('s4c2')], ic: [$('s4i0'), $('s4i1'), $('s4i2')],
+        nl: [$('s4n0'), $('s4n1'), $('s4n2')], dots: [...$('s4dots').children], env: $('s4env'), badge: $('s4badge'),
+        st1: $('s4st1'), st2: $('s4st2'), term: $('s4term'), st: $('s4st'), stt: $('s4stt'),
+        rows: [0, 1, 2].map(i => $('s4r' + i)), spins: [0, 1, 2].map(i => $('s4sp' + i)) };
+      badge = Buddy($('s4mk'));
+      chks = [0, 1, 2].map(i => Chk($('s4ck' + i)));
+    },
+    draw(b, t, now) {
+      const t1 = b === 1 ? t : BIG, t2 = b === 2 ? t : b > 2 ? BIG : -BIG;
+      for (let i = 0; i < 3; i++) {
+        const p = E.io(pr(t1, i * 150, 800));
+        drawIn(el.c[i], p); el.c[i].style.fillOpacity = p;
+        op(el.ic[i], pr(t1, 300 + i * 150, 500));
+        rise(el.nl[i], E.o(pr(t1, 400 + i * 150, 500)), 12);
+      }
+      const p1 = E.io(pr(t1, 700, 500));
+      el.l1.setAttribute('x2', mix(506, 854, p1).toFixed(1)); op(el.l1, p1 > 0 ? 1 : 0);
+      rise(el.st1, E.o(pr(t1, 500, 500)), 12);
+      const pe = E.io(pr(t1, 1100, 1400));
+      el.env.setAttribute('transform', 'translate(' + mix(520, 806, pe).toFixed(1) + ' ' + (440 - 36 * Math.sin(Math.PI * pe)).toFixed(1) + ')');
+      op(el.env, pr(t1, 1100, 200));
+      const rp = pr(t1, 2450, 800);
+      el.ring.setAttribute('r', (96 + 46 * E.o(rp)).toFixed(1));
+      op(el.ring, rp > 0 && rp < 1 ? 0.8 * (1 - rp) : 0);
+      // beat 2: the diagram glides up to make room for the setup card
+      el.grp.style.transform = 'translateY(' + mix(104, -28, E.io(pr(t2, 0, 700))).toFixed(1) + 'px)';
+      const p2 = E.io(pr(t2, 0, 600));
+      el.l2.setAttribute('x2', mix(1414, 1066, p2).toFixed(1)); op(el.l2, p2 > 0 ? 1 : 0);
+      rise(el.st2, E.o(pr(t2, 200, 500)), 12);
+      rise(el.term, E.o(pr(t2, 350, 450)), 18);
+      el.dots.forEach((d, k) => {
+        const ph = (t2 - 650 - k * 267) / 800;
+        if (b !== 2 || ph < 0 || t2 > 2950) { op(d, 0); return; }
+        const f = ph % 1;
+        d.setAttribute('cx', mix(1404, 1076, f).toFixed(1));
+        op(d, cl(Math.min(f, 1 - f) * 7) * (1 - pr(t2, 2750, 200)));
+      });
+      el.rows.forEach((r, k) => {
+        const s = 900 + 650 * k;
+        rise(r, E.o(pr(t2, s, 250)), 10);
+        const spinning = t2 >= s && t2 < s + 420;
+        op(el.spins[k], spinning ? 1 : 0);
+        if (spinning) el.spins[k].style.transform = 'rotate(' + ((now * 0.45) % 360).toFixed(1) + 'deg)';
+        chks[k].set(pr(t2, s + 420, 300));
+      });
+      const done = t2 >= 2950;
+      el.stt.textContent = done ? 'Done' : 'Running';
+      el.st.style.color = done ? C.green : C.accent;
+      const bp = pr(t2, 3000, 450);
+      op(el.badge, cl(bp * 3));
+      el.badge.setAttribute('transform', 'translate(1028 372) scale(' + (0.4 + 0.6 * E.back(bp)).toFixed(3) + ')');
+      badge.set(1, t2 > 3500 ? blink(now, 2) : 1, 1);
+    }
+  };
+})();
+
+/* ======================= SCENE 5 · Two parts ======================= */
+const S5 = (() => {
+  let el = {}, mark;
+  const X0 = 754, X1 = 1166, LY = 470;
+  return {
+    name: 'Two parts', beats: [3000, 3000, 4000],
+    html: `
+    <div class="card" id="s5L" style="left:140px;top:220px;width:600px;height:620px">
+      <div class="card-h"><span class="mono lab">Local</span><span class="sdot" id="s5dot"><i class="ring" id="s5ring"></i></span></div>
+      <svg class="cicon" viewBox="0 0 600 300">
+        <g transform="translate(284 140) scale(1.22) translate(-300 -160)">
+          <g class="ln" id="s5Lart">
+            <path class="mute" d="M150 286 H470"/>
+            <rect class="ft" x="200" y="196" width="130" height="90" rx="12"/>
+            <rect class="ft" x="243" y="174" width="44" height="26" rx="6"/>
+            <g id="s5arm" transform="translate(265 182) scale(0.4)">${armMarkup('s5', 290, 270)}</g>
+          </g>
+          ${buddySVG('id="s5mk" x="225" y="201" width="80" height="80"')}
+        </g>
+      </svg>
+      <div class="buls" id="s5Lb"><div class="bul" id="s5Lb0"><i></i>on-device LLM</div><div class="bul" id="s5Lb1"><i></i>works offline</div></div>
+    </div>
+    <div class="ghost" id="s5ghost" style="left:1180px;top:220px;width:600px;height:620px"></div>
+    <div class="card" id="s5C" style="left:1180px;top:220px;width:600px;height:620px">
+      <div class="card-h"><span class="mono lab">Cloud</span></div>
+      <svg class="cicon" viewBox="0 0 600 300">
+        <g class="ln">
+          <g transform="translate(103 11) scale(1.15)" id="s5cloud"><path id="s5cpath" class="ft" d="M98 202 A44 44 0 0 1 92 115 A70 70 0 0 1 228 100 A53 53 0 0 1 250 202 Z"/></g>
+          <g id="s5db">
+            <ellipse class="ft" cx="300" cy="150" rx="36" ry="10"/>
+            <path d="M264 150 V196 M336 150 V196 M264 196 A36 10 0 0 0 336 196 M264 173 A36 10 0 0 0 336 173"/>
+          </g>
+        </g>
+      </svg>
+      <div class="buls"><div class="bul" id="s5Cb0"><i></i>fleet memory</div><div class="bul" id="s5Cb1"><i></i>Naïve agents for<br>parts &amp; people</div></div>
+    </div>
+    <svg class="layer" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <g class="ln">
+        <line id="s5ld" class="lk-dash" x1="740" y1="${LY}" x2="1180" y2="${LY}"/>
+        <line id="s5ln" class="lk-solid" x1="740" y1="${LY}" x2="1180" y2="${LY}"/>
+        <circle id="s5p0" class="port" cx="740" cy="${LY}" r="6"/><circle id="s5p1" class="port" cx="1180" cy="${LY}" r="6"/>
+        <g id="s5pk">${'<rect class="pkt" x="-7" y="-7" width="14" height="14" rx="3"/>'.repeat(5)}</g>
+      </g>
+    </svg>
+    <div class="t mono lkl" id="s5off" style="left:740px;width:440px;top:404px;text-align:center">Offline</div>
+    <div class="t mono lkl" id="s5on" style="left:740px;width:440px;top:404px;text-align:center;color:var(--ink);letter-spacing:.06em">Syncs when online</div>`,
+    init() {
+      el = { L: $('s5L'), Cc: $('s5C'), ghost: $('s5ghost'), dot: $('s5dot'), ring: $('s5ring'), Lart: $('s5Lart'), Lb: [$('s5Lb0'), $('s5Lb1')], Cb: [$('s5Cb0'), $('s5Cb1')],
+        cpath: $('s5cpath'), db: $('s5db'), ln: $('s5ln'), ld: $('s5ld'), ports: [$('s5p0'), $('s5p1')], pk: [...$('s5pk').children],
+        off: $('s5off'), on: $('s5on') };
+      mark = Buddy($('s5mk'));
+      poseArm(armEls('s5'), -62, 95, 57, 46, 0, 0, 290, 270);
+    },
+    draw(b, t, now) {
+      const t1 = b === 1 ? t : BIG, t2 = b === 2 ? t : b > 2 ? BIG : -BIG, t3 = b === 3 ? t : -BIG;
+      // local card
+      rise(el.L, E.o(pr(t1, 0, 600)), 30);
+      op(el.Lart, pr(t1, 250, 500));
+      mark.set(pr(t1, 350, 1100), t1 > 2800 ? blink(now, 1) : 0.12 + 0.88 * E.o(pr(t1, 1350, 300)), pr(t1, 1300, 200));
+      el.Lb.forEach((x, i) => rise(x, E.o(pr(t1, 1100 + i * 220, 450)), 12));
+      // status light: keeps pulsing green
+      const off = b === 3 ? pr(t3, 1300, 200) * (1 - pr(t3, 2500, 200)) : 0;
+      op(el.dot, pr(t1, 900, 300));
+      const f = (now % 1800) / 1800;
+      el.ring.style.transform = 'scale(' + (1 + (1.6 + 0.8 * off) * E.o(f)).toFixed(3) + ')';
+      el.ring.style.opacity = ((1 - f) * (0.55 + 0.4 * off)).toFixed(3);
+      el.L.style.borderColor = mixc(C.cardline, C.green, 0.55 * off);
+      // cloud card (a dashed slot holds its place in beat 1)
+      op(el.ghost, pr(t1, 700, 600) * (1 - pr(t2, 0, 450)));
+      rise(el.Cc, E.o(pr(t2, 0, 600)), 30);
+      drawIn(el.cpath, E.io(pr(t2, 200, 1000))); el.cpath.style.fillOpacity = pr(t2, 900, 400);
+      op(el.db, pr(t2, 800, 400));
+      el.Cb.forEach((x, i) => rise(x, E.o(pr(t2, 1000 + i * 220, 450)), 12));
+      // beat 3: link, offline, resync
+      const pl = E.io(pr(t3, 0, 500));
+      drawIn(el.ln, b === 3 ? pl : 0);
+      el.ln.style.opacity = (1 - off).toFixed(3);
+      op(el.ld, off);
+      el.ports.forEach(p => op(p, b === 3 ? pr(t3, 0, 200) : 0));
+      rise(el.off, off, 0);
+      rise(el.on, b === 3 ? E.o(pr(t3, 2550, 350)) : 0, 10);
+      const pk = el.pk;
+      const place = (r, x, s, o) => { r.setAttribute('transform', 'translate(' + x.toFixed(1) + ' ' + LY + ') scale(' + s.toFixed(3) + ')'); op(r, o); };
+      // live flow (2 packets) then idle flow (1 packet)
+      [0, 1].forEach(k => {
+        const s = 250 + 350 * k, lt = (t3 - s) / 700;
+        if (b === 3 && lt >= 0 && lt <= 1 && t3 < 1300) { place(pk[k], mix(X0, X1, E.io(lt)), 1, 1 - pr(lt, 0.9, 0.1)); return; }
+        if (k === 0 && b === 3 && t3 > 3700) { const il = ((t3 - 3700) % 2600) / 1300; if (il < 1) { place(pk[k], mix(X0, X1, E.io(il)), 1, Math.min(1, il * 10, (1 - il) * 10)); return; } }
+        op(pk[k], 0);
+      });
+      // queued while offline, then a burst on reconnect
+      [0, 1, 2].forEach(k => {
+        const r = pk[2 + k], qa = 1500 + 350 * k, qx = 772 + 26 * k;
+        if (b !== 3 || t3 < qa) { op(r, 0); return; }
+        const fs = 2650 + 140 * (2 - k), lt = (t3 - fs) / 520;
+        if (lt < 0) { place(r, qx, E.back(pr(t3, qa, 220)), 0.9); return; }
+        if (lt > 1) { op(r, 0); return; }
+        place(r, mix(qx, X1, E.io(lt)), 1, 1 - pr(lt, 0.86, 0.14));
+      });
+    }
+  };
+})();
+
+/* ======================= SCENE 6 · Alive ======================= */
+const S6 = (() => {
+  const ecgC = x0 => `L${x0} 380 Q${x0 + 18} 360 ${x0 + 36} 380 L${x0 + 54} 380 L${x0 + 62} 394 L${x0 + 76} 290 L${x0 + 90} 418 L${x0 + 100} 380 L${x0 + 128} 380 Q${x0 + 150} 352 ${x0 + 172} 380`;
+  const ECG = `M-20 380 ${ecgC(450)} ${ecgC(1300)} L1940 380`;
+  const CODE = 'if (median3(dist_cm) < STOP_CM) halt();';
+  let el = {}, mark, ckA, ckB, segs = [];
+  return {
+    name: 'Alive', beats: [2500, 3500, 3500],
+    html: `
+    <div class="layer" id="s6grp">
+    <div class="t hl" id="s6h" style="left:0;width:1920px;top:112px;text-align:center">Make your hardware alive.</div>
+    <svg class="layer" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <g id="s6ecgG"><path id="s6ecgH" class="ecgh" d="${ECG}"/><path id="s6ecg" class="ecg" d="${ECG}"/></g>
+      <circle id="s6head" class="head" r="6" filter="url(#glow)"/>
+      <g id="s6mkG">${buddySVG('id="s6mk" x="885" y="305" width="150" height="150"')}</g>
+    </svg>
+    </div>
+    <div class="card" id="s6A" style="left:120px;top:548px;width:720px;height:392px">
+      <div class="ct">Need a part?</div>
+      <div class="mrow"><span class="mono ml">Gripper servo</span><span class="mono mv" id="s6mv">Wear 0%</span></div>
+      <div class="meter" id="s6meter">${'<i></i>'.repeat(24)}</div>
+      <div class="res" id="s6rA">${chkSVG('s6ckA')}<span>Ordered by agents</span></div>
+    </div>
+    <div class="card" id="s6B" style="left:880px;top:548px;width:920px;height:392px">
+      <div class="ct">Firmware issue?</div>
+      <div class="code">
+        <div class="cl del" id="s6del"><span class="sg">-</span>if (dist_cm &lt; STOP_CM) halt();<i class="strike" id="s6strike"></i></div>
+        <div class="cl add" id="s6add"><span class="sg">+</span><span id="s6typed"></span><i class="caret" id="s6caret"></i></div>
+      </div>
+      <div class="res" id="s6rB">${chkSVG('s6ckB')}<span>Fixed by the local LLM</span></div>
+    </div>`,
+    init() {
+      el = { grp: $('s6grp'), h: $('s6h'), ecgG: $('s6ecgG'), ecg: $('s6ecg'), ecgH: $('s6ecgH'), head: $('s6head'), mkG: $('s6mkG'),
+        A: $('s6A'), B: $('s6B'), mv: $('s6mv'), rA: $('s6rA'), rB: $('s6rB'), del: $('s6del'), strike: $('s6strike'),
+        add: $('s6add'), typed: $('s6typed'), caret: $('s6caret') };
+      segs = [...$('s6meter').children];
+      mark = Buddy($('s6mk')); ckA = Chk($('s6ckA')); ckB = Chk($('s6ckB'));
+    },
+    draw(b, t, now) {
+      const t1 = b === 1 ? t : BIG, t2 = b === 2 ? t : b > 2 ? BIG : -BIG, t3 = b === 3 ? t : -BIG;
+      rise(el.h, E.o(pr(t1, 0, 650)), 20);
+      op(el.mkG, pr(t1, 150, 450));
+      // heartbeat sweeps across and through the mark
+      const pe = pr(t1, 350, 1650);
+      drawIn(el.ecg, pe); drawIn(el.ecgH, pe);
+      el.ecgG.style.opacity = b === 1 ? 1 : 1 - 0.45 * pr(t2, 0, 500);
+      let eye = 1;
+      if (pe > 0 && pe < 1) {
+        const p = el.ecg.getPointAtLength(glen(el.ecg) * pe);
+        el.head.setAttribute('cx', p.x.toFixed(1)); el.head.setAttribute('cy', p.y.toFixed(1));
+        const d = (p.x - 905) / 110; if (d > 0 && d < 1) eye = 1 - 0.9 * Math.sin(Math.PI * d);
+      }
+      op(el.head, pe > 0 && pe < 1 ? 1 : 0);
+      mark.set(1, (b === 1 && t1 < 2600) ? eye : blink(now, 3), 1);
+      // beat 2: headline + heartbeat glide up to make room for the cards
+      el.grp.style.transform = 'translateY(' + (215 * (1 - E.io(pr(t2, 0, 700)))).toFixed(1) + 'px)';
+      // card A: wear meter -> ordered
+      rise(el.A, E.o(pr(t2, 250, 550)), 26);
+      const lv = 0.86 * E.io(pr(t2, 700, 1400));
+      const col = mixc(C.green, C.amber, cl((lv - 0.55) / 0.2));
+      const n = Math.round(lv * 24);
+      segs.forEach((s, i) => { s.style.background = i < n ? col : C.seg; });
+      el.mv.textContent = 'Wear ' + Math.round(lv * 100) + '%';
+      el.mv.style.color = lv > 0.7 ? C.amber : C.ink;
+      const ra = pr(t2, 2350, 600);
+      rise(el.rA, E.o(ra), 10); ckA.set(ra);
+      el.A.style.borderColor = mixc(C.cardline, C.green, 0.45 * ra);
+      // card B: diff -> fixed by local LLM
+      rise(el.B, E.o(pr(t3, 0, 550)), 26);
+      rise(el.del, E.o(pr(t3, 300, 350)), 8);
+      if (b === 3) el.del.style.opacity = (pr(t3, 300, 350) * (1 - 0.42 * pr(t3, 1100, 300))).toFixed(3);
+      const sk = E.io(pr(t3, 1000, 350));
+      el.strike.style.transform = 'scaleX(' + sk.toFixed(3) + ')'; op(el.strike, sk > 0 ? 1 : 0);
+      const ty = pr(t3, 1400, 750);
+      op(el.add, t3 >= 1350 ? 1 : 0);
+      el.typed.textContent = CODE.slice(0, Math.round(ty * CODE.length));
+      op(el.caret, t3 >= 1350 && t3 < 2350 ? ((Math.floor(t3 / 260) % 2 === 0 || ty < 1) ? 1 : 0) : 0);
+      el.add.style.background = 'rgba(61,220,151,' + (0.12 * pr(t3, 2150, 300)).toFixed(3) + ')';
+      const rb = pr(t3, 2450, 600);
+      rise(el.rB, E.o(rb), 10); ckB.set(rb);
+      el.B.style.borderColor = mixc(C.cardline, C.green, 0.45 * rb);
+    }
+  };
+})();
+
+/* ======================= SCENE 7 · Before / after ======================= */
+const S7 = (() => {
+  const icoFault = (x, y) => `<g class="ico-r"><path d="M${x} ${y - 24} L${x + 24} ${y + 18} H${x - 24} Z"/><path d="M${x} ${y - 8} V${y + 4}"/><circle class="dotf" cx="${x}" cy="${y + 11}" r="2.2"/></g>`;
+  const icoTicket = (x, y) => `<path class="ft" d="M${x - 26} ${y - 16} H${x + 26} V${y - 6} A6 6 0 0 0 ${x + 26} ${y + 6} V${y + 16} H${x - 26} V${y + 6} A6 6 0 0 0 ${x - 26} ${y - 6} Z"/><path d="M${x + 9} ${y - 10} V${y - 6} M${x + 9} ${y - 1} V${y + 2} M${x + 9} ${y + 7} V${y + 10} M${x - 16} ${y - 5} H${x + 1} M${x - 16} ${y + 4} H${x - 3}"/>`;
+  const icoTech = (x, y) => `<circle cx="${x}" cy="${y - 5}" r="9"/><path d="M${x - 13} ${y - 9} A13 13 0 0 1 ${x + 13} ${y - 9} M${x - 17} ${y - 9} H${x + 17}"/><path d="M${x - 20} ${y + 23} C${x - 20} ${y + 7} ${x + 20} ${y + 7} ${x + 20} ${y + 23}"/>`;
+  const icoFixed = (x, y) => `<path class="ico-g" d="M${x - 14} ${y + 1} L${x - 4} ${y + 11} L${x + 15} ${y - 9}"/>`;
+  const arrow = (id, x1, x2, y, cls = '') => `<path id="${id}" class="arr ${cls}" d="M${x1} ${y} H${x2} M${x2 - 10} ${y - 9} L${x2} ${y} L${x2 - 10} ${y + 9}"/>`;
+  const node = (id, x, y, cls, ico) => `<g id="${id}"><circle class="ft nd ${cls}" cx="${x}" cy="${y}" r="50"/>${ico(x, y)}</g>`;
+  const R1 = 320, R2 = 720, X = [260, 700, 1140, 1580];
+  let el = {}, mark;
+  return {
+    name: 'Before / after', beats: [3000, 3000],
+    html: `
+    <div class="layer" id="s7wrap">
+    <div class="t mono kick" id="s7k1" style="left:210px;top:198px">Today</div>
+    <div class="t mono kick" id="s7k2" style="left:210px;top:604px">With Hardware Buddy</div>
+    <svg class="layer" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <g id="s7r1" class="ln">
+        <rect id="s7band1" class="band-r" x="210" y="456" width="1420" height="60" rx="12"/>
+        ${arrow('s7a0', 324, 636, R1)}${arrow('s7a1', 764, 1076, R1)}${arrow('s7a2', 1204, 1516, R1)}
+        ${node('s7n0', X[0], R1, 'r', icoFault)}${node('s7n1', X[1], R1, '', icoTicket)}${node('s7n2', X[2], R1, '', icoTech)}${node('s7n3', X[3], R1, 'g', icoFixed)}
+      </g>
+      <g id="s7r2" class="ln">
+        <rect id="s7band2" class="band-g" x="210" y="856" width="560" height="60" rx="12"/>
+        ${arrow('s7b0', 324, 636, R2, 'ac')}
+        ${node('s7m0', X[0], R2, 'r', icoFault)}${node('s7m1', X[1], R2, 'g', icoFixed)}
+        <g id="s7mkG">${buddySVG('id="s7mk" x="432" y="672" width="96" height="96"')}</g>
+      </g>
+    </svg>
+    <div id="s7lab1">
+      <div class="t nl7" id="s7l0" style="left:60px;width:400px;top:392px">fault</div>
+      <div class="t nl7" id="s7l1" style="left:500px;width:400px;top:392px">ticket</div>
+      <div class="t nl7" id="s7l2" style="left:940px;width:400px;top:392px">technician</div>
+      <div class="t nl7" id="s7l3" style="left:1380px;width:400px;top:392px">fixed</div>
+      <div class="t bt r" id="s7bt1" style="left:238px;top:470px">line stopped · hours of human work</div>
+    </div>
+    <div class="t nl7" id="s7m0l" style="left:60px;width:400px;top:792px">fault</div>
+    <div class="t nl7" id="s7m1l" style="left:500px;width:400px;top:792px">fixed on the device</div>
+    <div class="t bt g" id="s7bt2" style="left:238px;top:870px">line keeps running</div>
+    </div>`,
+    init() {
+      el = { wrap: $('s7wrap'), k1: $('s7k1'), k2: $('s7k2'), r1: $('s7r1'), lab1: $('s7lab1'), band1: $('s7band1'), band2: $('s7band2'),
+        a: [0, 1, 2].map(i => $('s7a' + i)), n: [0, 1, 2, 3].map(i => $('s7n' + i)), l: [0, 1, 2, 3].map(i => $('s7l' + i)),
+        bt1: $('s7bt1'), bt2: $('s7bt2'), b0: $('s7b0'), m: [$('s7m0'), $('s7m1')], ml: [$('s7m0l'), $('s7m1l')], mkG: $('s7mkG') };
+      mark = Buddy($('s7mk'));
+    },
+    draw(b, t, now) {
+      const t1 = b === 1 ? t : BIG, t2 = b === 2 ? t : b > 2 ? BIG : -BIG;
+      rise(el.k1, E.o(pr(t1, 0, 400)), 10);
+      el.n.forEach((n, k) => { const p = E.o(pr(t1, 150 + 420 * k, 320)); op(n, p); rise(el.l[k], p, 8); });
+      el.a.forEach((a, k) => drawIn(a, E.io(pr(t1, 380 + 420 * k, 320))));
+      const w1 = 1420 * E.io(pr(t1, 600, 1900));
+      el.band1.setAttribute('width', Math.max(0, w1).toFixed(1)); op(el.band1, w1 > 2 ? 1 : 0);
+      rise(el.bt1, pr(t1, 1500, 500), 0);
+      const dim = b === 2 ? 1 - 0.4 * E.io(pr(t2, 0, 450)) : 1;
+      el.r1.style.opacity = dim; el.lab1.style.opacity = dim; el.k1.style.opacity = Math.min(+el.k1.style.opacity, 0.5 + 0.5 * dim);
+      el.wrap.style.transform = 'translate(40px,' + mix(178, -12, E.io(pr(t2, 0, 700))).toFixed(1) + 'px)';
+      // beat 2
+      rise(el.k2, E.o(pr(t2, 0, 400)), 10);
+      const f0 = E.o(pr(t2, 200, 300)); op(el.m[0], f0); rise(el.ml[0], f0, 8);
+      drawIn(el.b0, E.io(pr(t2, 450, 650)));
+      const mp = pr(t2, 600, 300);
+      op(el.mkG, mp);
+      let o = 1; const bl = (t2 - 950) / 200; if (bl > 0 && bl < 1) o = 1 - 0.9 * Math.sin(Math.PI * bl);
+      if (t2 > 2400) o = blink(now, 4);
+      mark.set(1, o, 1);
+      const f1 = E.o(pr(t2, 1050, 300)); op(el.m[1], f1); rise(el.ml[1], f1, 8);
+      const w2 = 560 * E.io(pr(t2, 1200, 500));
+      el.band2.setAttribute('width', Math.max(0, w2).toFixed(1)); op(el.band2, w2 > 2 ? 1 : 0);
+      rise(el.bt2, pr(t2, 1500, 400), 0);
+    }
+  };
+})();
+
+/* ======================= SCENE 8 · Demo bridge ======================= */
+const S8 = (() => {
+  let el = {};
+  return {
+    name: 'Demo bridge', beats: [4000],
+    html: `
+    <div class="t" id="s8k" style="left:0;width:1920px;top:368px;text-align:center"><span class="kick8 mono"><i class="d" id="s8d"></i>Live demo</span></div>
+    <div class="t title8" id="s8t" style="left:0;width:1920px;top:430px;text-align:center">A chip-packing line</div>
+    <div class="rule8" id="s8r" style="left:900px;top:612px;width:120px"></div>
+    <div class="t mono meta8" id="s8m" style="left:0;width:1920px;top:646px;text-align:center">SO-101 arm<span class="sep">·</span>ultrasonic sensor<span class="sep">·</span>STM32 firmware</div>`,
+    init() { el = { k: $('s8k'), d: $('s8d'), t: $('s8t'), r: $('s8r'), m: $('s8m') }; },
+    draw(b, t, now) {
+      rise(el.k, E.o(pr(t, 0, 450)), 10);
+      rise(el.t, E.o(pr(t, 200, 700)), 24);
+      const rp = E.io(pr(t, 600, 600)); el.r.style.transform = 'scaleX(' + rp.toFixed(3) + ')'; op(el.r, rp > 0 ? 1 : 0);
+      rise(el.m, E.o(pr(t, 800, 600)), 12);
+      el.d.style.opacity = (0.55 + 0.45 * (0.5 + 0.5 * Math.cos(now / 1600 * 2 * Math.PI))).toFixed(3);
+    }
+  };
+})();
+
+/* ======================= SCENE 9 · Closing ======================= */
+const S9 = (() => {
+  let el = {}, mark;
+  return {
+    name: 'Closing', beats: [3500, Infinity],
+    html: `
+    <div class="t l9a" id="s9a" style="left:0;width:1920px;top:426px;text-align:center">Software is automating everything.</div>
+    <div class="t l9b" id="s9b" style="left:0;width:1920px;top:516px;text-align:center">Hardware has to get smarter.</div>
+    <div class="markbox" id="s9mkbox" style="left:820px;top:250px">${buddySVG('id="s9mk" width="280" height="280"')}</div>
+    <div class="t wm" id="s9wm" style="left:0;width:1920px;top:578px;text-align:center">Hardware Buddy</div>
+    <div class="t tag9" id="s9tag" style="left:0;width:1920px;top:738px;text-align:center">Self-healing hardware for robotics &amp; manufacturing</div>`,
+    init() { el = { a: $('s9a'), b: $('s9b'), mk: $('s9mkbox'), wm: $('s9wm'), tag: $('s9tag') }; mark = Buddy($('s9mk')); },
+    draw(b, t, now) {
+      const t1 = b === 1 ? t : BIG, t2 = b === 2 ? t : -BIG;
+      const out = b === 2 ? E.io(pr(t2, 0, 450)) : 0;
+      const a = E.o(pr(t1, 100, 700)), bb = E.o(pr(t1, 900, 800));
+      op(el.a, a * (1 - out)); el.a.style.transform = 'translateY(' + ((1 - a) * 16 - out * 30).toFixed(1) + 'px)';
+      op(el.b, bb * (1 - out)); el.b.style.transform = 'translateY(' + ((1 - bb) * 22 - out * 30).toFixed(1) + 'px)';
+      const mp = E.o(pr(t2, 380, 650));
+      op(el.mk, mp); el.mk.style.transform = mp >= 1 ? '' : 'scale(' + (0.92 + 0.08 * mp).toFixed(4) + ')';
+      let o = 0.12 + 0.88 * E.o(pr(t2, 850, 300));
+      if (t2 > 2200) o = Math.min(o, blink(now, 5));
+      mark.set(1, o, pr(t2, 800, 200));
+      rise(el.wm, E.o(pr(t2, 900, 600)), 24);
+      rise(el.tag, E.o(pr(t2, 1350, 600)), 16);
+    }
+  };
+})();
+
+/* ======================= engine ======================= */
+const scenes = [S1, S2, S3, S4, S5, S6, S7, S8, S9];
+const stage = $('stage'), hud = $('hud');
+scenes.forEach((sc, i) => {
+  const sec = document.createElement('section');
+  sec.className = 'scene'; sec.id = 'sc' + (i + 1); sec.innerHTML = sc.html;
+  stage.insertBefore(sec, hud); sc.el = sec;
+});
+scenes.forEach(sc => sc.init());
+hud.innerHTML = scenes.map(() => '<i></i>').join('');
+
+const qs = new URLSearchParams(location.search);
+let auto = qs.get('auto') === '1', hudHidden = false;
+let cur = { s: -1, b: 1, t0: 0, autoT0: 0 };
+
+function fit() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  stage.style.transform = 'translate(' + ((innerWidth - 1920 * s) / 2).toFixed(2) + 'px,' + ((innerHeight - 1080 * s) / 2).toFixed(2) + 'px) scale(' + s + ')';
+}
+function updHud() {
+  [...hud.children].forEach((d, i) => d.classList.toggle('on', i === cur.s));
+  hud.classList.toggle('hide', hudHidden || auto);
+}
+function setScene(i, b, mode) {
+  const now = performance.now();
+  const prev = { s: cur.s, b: cur.b, t: now - cur.t0 };
+  const sc = scenes[i];
+  cur = { s: i, b: b, t0: mode === 'snap' ? now - SNAP : now, autoT0: now };
+  if (sc.enter) sc.enter(b, prev, mode);
+  sc.draw(b, now - cur.t0, now);          // render the first frame before it becomes visible
+  scenes.forEach((x, k) => x.el.classList.toggle('on', k === i));
+  const h = '#' + (i + 1);
+  if (location.hash !== h) { try { history.replaceState(null, '', location.pathname + location.search + h); } catch (e) {} }
+  updHud();
+}
+function next() {
+  const sc = scenes[cur.s];
+  if (cur.b < sc.beats.length) setScene(cur.s, cur.b + 1, 'play');
+  else if (cur.s < scenes.length - 1) setScene(cur.s + 1, 1, 'play');
+}
+function prev() {
+  if (cur.b > 1) setScene(cur.s, cur.b - 1, 'snap');
+  else if (cur.s > 0) setScene(cur.s - 1, scenes[cur.s - 1].beats.length, 'snap');
+}
+function instant(fn) {
+  stage.classList.add('instant'); fn(); void stage.offsetWidth;
+  requestAnimationFrame(() => requestAnimationFrame(() => stage.classList.remove('instant')));
+}
+function toggleFS() {
+  const d = document, de = d.documentElement;
+  if (d.fullscreenElement || d.webkitFullscreenElement) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+  else (de.requestFullscreen || de.webkitRequestFullscreen).call(de);
+}
+let errLogged = false;
+function autoTick() {
+  if (auto && performance.now() - cur.autoT0 >= scenes[cur.s].beats[cur.b - 1]) next();
+}
+function frame(now) {
+  const sc = scenes[cur.s];
+  try { sc.draw(cur.b, now - cur.t0, now); } catch (e) { if (!errLogged) { console.error(e); errLogged = true; } }
+  autoTick();
+  requestAnimationFrame(frame);
+}
+setInterval(autoTick, 100);   // autoplay keeps time even if frames are throttled
+
+window.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === 'ArrowRight' || k === ' ' || k === 'Spacebar' || k === 'PageDown' || k === 'Enter') { e.preventDefault(); next(); }
+  else if (k === 'ArrowLeft' || k === 'PageUp') { e.preventDefault(); prev(); }
+  else if (k === 'Home') { e.preventDefault(); setScene(0, 1, 'play'); }
+  else if (/^[1-9]$/.test(k)) { setScene(+k - 1, 1, 'play'); }
+  else if (k === 'a' || k === 'A') { auto = !auto; cur.autoT0 = performance.now(); updHud(); }
+  else if (k === 'f' || k === 'F') { toggleFS(); }
+  else if (k === 'h' || k === 'H') { hudHidden = !hudHidden; updHud(); }
+});
+window.addEventListener('click', e => { if (e.button === 0) next(); });
+window.addEventListener('resize', fit);
+window.addEventListener('hashchange', () => {
+  const n = parseInt(location.hash.slice(1), 10);
+  if (n >= 1 && n <= 9 && n - 1 !== cur.s) setScene(n - 1, 1, 'play');
+});
+
+window.__pitch = {
+  go(s, b = 1) {
+    const i = cl(Math.round(s), 1, scenes.length) - 1;
+    const bb = cl(Math.round(b), 1, scenes[i].beats.length);
+    instant(() => setScene(i, bb, 'snap'));
+    return this.state();
+  },
+  state() {
+    return { scene: cur.s + 1, beat: cur.b, beats: scenes[cur.s].beats.length, name: scenes[cur.s].name, autoplay: auto, hud: !(hudHidden || auto), t: Math.round(performance.now() - cur.t0) };
+  }
+};
+
+fit();
+const h0 = parseInt(location.hash.slice(1), 10);
+instant(() => setScene(h0 >= 1 && h0 <= 9 ? h0 - 1 : 0, 1, 'play'));
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

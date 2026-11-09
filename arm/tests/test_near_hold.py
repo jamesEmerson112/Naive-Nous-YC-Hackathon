@@ -1,7 +1,8 @@
 """The v1.8 bad image and the looped, watched job it's demonstrated with.
 
-v1.8 adds a near-object hold to the HC-SR04 driver, and its keep-alive tests the held distance instead of the new
-reading: right until something comes within 250 mm, right while it's there, and stuck at it after it leaves.
+v1.8 adds a near-object hold to the HC-SR04 driver that holds the nearest near reading and never lets go of it (no
+release: HCSR04_HOLD_MS is defined but never used): right until something comes within 200 mm, right while it's
+there, and stuck at it after it leaves.
 These tests compile near_hold() from the patch with gcc and check it (and the fix) against the simulator's port,
 then run the arm's job (safe_replay.py --loops --watch) on the simulated pod and arm with a simulated hand.
 
@@ -34,20 +35,28 @@ def test_patch_applies_to_v10_and_adds_the_hold_to_the_distance(tmp_path):
     patch = (V18 / "bug.patch").read_text()
     assert re.findall(r"^\+\+\+ b/(\S+)", patch, re.M) == ["src/hcsr04.c", "src/hcsr04.h"]
     code = "\n".join(added_lines())
-    assert "out->dist_mm = near_hold(" in code and "if (held_mm < HCSR04_HOLD_NEAR_MM)" in code
-    assert "echo_us" not in code                       # the echo time stays the raw measurement
+    assert "out->dist_mm = near_hold(" in code and "held_ms = now_ms;" in code
+    c_lines = patch.split("+++ b/src/hcsr04.h")[0]
+    assert "HCSR04_HOLD_MS" not in c_lines.replace("for HCSR04_HOLD_MS. */", "")   # the bug: the hold time is never used
+    assert "held_mm = 0" not in code                   # ... so nothing ever lets go
+    assert "echo_us" not in code and "out->status" not in code     # echo time and status stay v1.0's
+
+
+RELEASE = ("    if (held_mm && now_ms - held_ms >= HCSR04_HOLD_MS)\n"
+           "        held_mm = 0;                    /* nothing near for HCSR04_HOLD_MS: let go */\n")
 
 
 def hold_program(fixed):
-    """near_hold() and its constants, exactly as the patch adds them (fixed: the keep-alive tests mm)."""
+    """near_hold() and its constants, exactly as the patch adds them (fixed: with the release it was meant to have)."""
     lines = added_lines()
     text = "\n".join(lines)
     defines = "\n".join(ln for ln in lines if ln.startswith("#define HCSR04_"))
-    statics = re.search(r"static uint32_t held_mm[^\n]*\nstatic uint32_t held_ms;", text).group(0)
+    statics = re.search(r"static uint32_t held_mm;[^\n]*\nstatic uint32_t held_ms;[^\n]*", text).group(0)
     func = re.search(r"static uint32_t near_hold\(.*?\n\}", text, re.S).group(0)
     if fixed:
-        assert func.count("if (held_mm < HCSR04_HOLD_NEAR_MM)") == 1
-        func = func.replace("if (held_mm < HCSR04_HOLD_NEAR_MM)", "if (mm < HCSR04_HOLD_NEAR_MM)")
+        head = "uint32_t now_ms)\n{\n"
+        assert func.count(head) == 1
+        func = func.replace(head, head + RELEASE)
     return """#include <stdint.h>
 #include <stdio.h>
 %s

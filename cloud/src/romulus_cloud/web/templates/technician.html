@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block title %}Romulus · {{ v.device_id }} · Naïve technician{% endblock %}
+{% block content %}
+{# The Naïve Technician case page (design §8, demo-clip "Page requirements", redesign
+   README §4). Needs `v` (services.technician.view), plus `fleet` and `tz` for base.html.
+   The body is partials/technician_case.html, which polls itself every 2 s while `v.poll`. #}
+<style>
+  /* The Technician case (.tc-*), on the Sunlit Workshop tokens (docs/impeccable-redesign
+     DESIGN.md). Built for 125–150% browser zoom on video: the verdict is the largest text,
+     and every status carries a mark or a word, never colour alone. Sun means a person;
+     sky means the agent is working. /learning reuses these classes, so keep their names. */
+  .tc { padding-top: 4px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* Header: who is acting, on the ground, and the three measured figures */
+  .tc-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 40px; padding: 32px 0 28px; }
+  .tc-head-l { min-width: 0; flex: 1 1 26rem; }
+  .tc-agent { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 1.44rem; font-weight: 680; letter-spacing: -0.015em; line-height: 1.25; color: var(--ink); }
+  .tc-naive { text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+  .tc-seg { display: inline-flex; align-items: center; gap: 12px; white-space: nowrap; }
+  .tc-dot-sep { color: var(--line-strong); font-weight: 400; }
+  .tc-badge-live { display: inline-flex; align-items: center; gap: 7px; font-size: 0.833rem; font-weight: 600; letter-spacing: 0; color: var(--leaf-ink); background: var(--leaf-wash); padding: 3px 11px; border-radius: 999px; }
+  .tc-badge-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--leaf); }
+  .tc-rec-line { margin: 10px 0 0; }
+  .tc-badge-rec { display: inline-block; background: var(--ink); color: var(--surface); font-size: 0.833rem; font-weight: 600; padding: 3px 11px; border-radius: 999px; }
+  .tc-sub { margin: 6px 0 0; color: var(--ink-2); font-size: 1rem; overflow-wrap: anywhere; max-width: 52rem; }
+  .tc-nums { margin: 0; display: flex; flex-wrap: wrap; gap: 12px 36px; }
+  .tc-fig { display: flex; flex-direction: column; font-size: 0.833rem; color: var(--muted); white-space: nowrap; }
+  .tc-num { font-size: 1.728rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; color: var(--ink); border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .tc-fig.is-human .tc-num { color: var(--sun-ink); }
+  .tc-nums > .tc-dot-sep { display: none; }
+
+  /* The heal line (DESIGN.md signature move): one station per stage. The track out of a
+     station follows its state; a gradient appears only inside the track. */
+  .tc-stages { list-style: none; margin: 0; padding: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .tc-stages li { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+  .tc-stages li::before { content: ""; position: absolute; top: 10px; left: 0; right: 0; height: 3px; border-radius: 3px; background: var(--line); }
+  .tc-stages li:first-child::before { left: 11px; }
+  .tc-stages li:last-child::before { right: auto; width: 11px; }
+  .tc-stages .st-done::before { background: var(--leaf); }
+  .tc-stages .st-active::before { background: linear-gradient(90deg, var(--leaf), var(--sky) 40%); }
+  .tc-stages .is-you::before { background: linear-gradient(90deg, var(--leaf), var(--sun) 40%); }
+  .tc-stages .st-failed::before, .tc-stages .st-denied::before { background: linear-gradient(90deg, var(--leaf), var(--clay) 40%); }
+  .tc-stages .st-skipped::before { background: repeating-linear-gradient(90deg, var(--line-strong) 0 6px, transparent 6px 11px); }
+  .tc-st-mark { position: relative; z-index: 1; flex: none; width: 23px; height: 23px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid var(--line-strong); color: var(--on-leaf); }
+  .tc-st-mark .icon { font-size: 13px; stroke-width: 3; }
+  .tc-stages .st-done .tc-st-mark { background: var(--leaf); border-color: var(--leaf); }
+  .tc-stages .st-active .tc-st-mark { border-color: var(--sky); }
+  .tc-stages .st-active:not(.is-you) .tc-st-mark::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--sky); }
+  .tc-stages .is-you .tc-st-mark { background: var(--sun); border-color: var(--sun); color: var(--on-sun); }
+  .tc-stages .st-failed .tc-st-mark, .tc-stages .st-denied .tc-st-mark { background: var(--clay); border-color: var(--clay); color: var(--surface); }
+  .tc-stages .st-skipped .tc-st-mark { border-style: dashed; border-color: var(--muted); }
+  /* The one loop on the page: a soft ring on the live station, as on the shared heal line, but
+     2 s instead of 2.4 s so the 2 s poll swap lands on a cycle boundary instead of a jump */
+  .tc-stages .st-active .tc-st-mark::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid color-mix(in oklch, var(--sky) 55%, transparent); animation: tc-ring 2s var(--ease) infinite; }
+  .tc-stages .st-active.is-you .tc-st-mark::after { border-color: color-mix(in oklch, var(--sun) 55%, transparent); }
+  .tc-stages .st-active ~ .st-active .tc-st-mark::after { animation: none; opacity: 0.6; }
+  .tc-st-label { display: block; font-size: 1rem; font-weight: 600; line-height: 1.3; color: var(--ink-2); padding-right: 8px; overflow-wrap: anywhere; border-radius: 6px; }
+  .tc-st-label::first-letter { text-transform: uppercase; } /* sentence case without changing the stage words */
+  .tc-stages .st-todo .tc-st-label { color: var(--muted); font-weight: 500; }
+  .tc-stages .st-skipped .tc-st-label { color: var(--muted); }
+  .tc-stages .st-active .tc-st-label { color: var(--sky-ink); }
+  .tc-stages .is-you .tc-st-label { color: var(--sun-ink); }
+  .tc-stages .st-failed .tc-st-label, .tc-stages .st-denied .tc-st-label { color: var(--clay-ink); }
+  .tc-st-off, .tc-st-now { font-size: 0.833rem; font-weight: 600; color: var(--muted); }
+  .tc-st-now { color: var(--sky-ink); }
+
+  /* Verdict: the largest text on the page (2.488rem = 42 px at the 17 px root) */
+  .tc-verdict { margin-top: 36px; }
+  .tc-verdict-text { margin: 0; font-size: 2.488rem; font-weight: 700; letter-spacing: -0.024em; line-height: 1.12; color: var(--ink); max-width: 30ch; text-wrap: balance; }
+  #tech-case .tc-verdict-text:not(.tc-verdict-wait):not(.tc-verdict-bad) { text-indent: -0.42em; } /* hanging opening quote */
+  .tc-verdict-bad { color: var(--clay-ink); }
+  .tc-verdict-wait { color: var(--ink); }
+  .tc-shimmer { color: inherit; }
+  .tc-dots { display: none; }
+  .tc-why { margin: 10px 0 0; color: var(--ink-2); font-size: 1rem; max-width: 46rem; }
+  .tc-why-bad { color: var(--clay-ink); font-weight: 600; }
+  /* A quiet meta line: sentence case, small, muted, with room on both sides, so it reads well
+     wherever it sits (this page puts it after a heading; /learning reuses it too) */
+  .tc-kicker { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; font-size: 0.833rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); }
+  .tc-kicker:empty { display: none; }
+  .tc-card > .tc-kicker:last-child { margin-bottom: 0; }
+  .tc-kicker-note { font-size: 0.833rem; font-weight: 500; color: var(--muted); }
+
+  /* The two cards: the part (with the one approval) and the email */
+  .tc-cards { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; margin-top: 32px; align-items: start; }
+  .tc-card { position: relative; min-width: 0; background: var(--surface); border-radius: var(--r-card); box-shadow: var(--shadow); padding: 22px 24px; }
+  .tc-card.is-pending { background: transparent; box-shadow: none; border: 1.5px dashed var(--line-strong); }
+  .tc-ghost { color: var(--muted) !important; }
+  .tc-part { transition: box-shadow 250ms var(--ease); }
+  .tc-part.is-waiting { box-shadow: 0 0 0 1.5px var(--sun), 0 10px 28px color-mix(in oklch, var(--sun) 22%, transparent); }
+  .tc-part.is-approved { box-shadow: 0 0 0 1.5px var(--leaf), 0 10px 28px color-mix(in oklch, var(--leaf) 16%, transparent); }
+  .tc-part-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .tc-part-name { min-width: 0; flex: 1 1 auto; }
+  .tc-part-title { margin: 0; font-size: 1.44rem; font-weight: 680; letter-spacing: -0.015em; line-height: 1.2; overflow-wrap: anywhere; text-wrap: balance; }
+  .tc-part-vendor { margin: 4px 0 0; color: var(--ink-2); }
+  .tc-part-vendor .pill, .tc-part-vendor .tc-rec-tag { vertical-align: 0.1em; }
+  .tc-price { margin: 0; flex: none; white-space: nowrap; font-size: 2.074rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1; text-align: right; font-variant-numeric: tabular-nums; }
+  .tc-price-none { font-size: 1.2rem; color: var(--muted); }
+  .tc-price small { display: block; margin-top: 6px; font-size: 0.833rem; font-weight: 500; letter-spacing: 0; color: var(--muted); }
+  .tc-checks { list-style: none; padding: 0; margin: 18px 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+  .tc-checks li { display: inline-flex; align-items: center; gap: 7px; font-size: 1rem; font-weight: 600; white-space: nowrap; padding: 5px 12px 5px 8px; border-radius: 999px; }
+  .tc-checks li.ok { background: var(--leaf-wash); color: var(--leaf-ink); }
+  .tc-checks li.no { background: var(--clay-wash); color: var(--clay-ink); }
+  .tc-tick { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--on-leaf); }
+  .tc-tick .icon { font-size: 12px; stroke-width: 3.2; }
+  .tc-checks li.ok .tc-tick { background: var(--leaf); }
+  .tc-checks li.no .tc-tick { background: var(--clay); }
+  .tc-checks.is-ghost li { color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+  .tc-checks.is-ghost .tc-tick { border: 1.5px dashed var(--line-strong); }
+  .tc-blocked { margin: 14px 0 0; padding: 10px 14px; border-radius: var(--r-control); background: var(--clay-wash); color: var(--clay-ink); font-weight: 600; }
+  .tc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 22px; }
+  .tc-btn:disabled { opacity: 0.6; cursor: progress; }
+  .tc-fine { margin: 12px 0 0; color: var(--muted); font-size: 0.833rem; }
+  .tc-fine b { color: var(--ink-2); font-weight: 600; }
+  .tc-linkbtn { font: inherit; background: none; border: 0; padding: 0; color: var(--leaf-ink); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .tc-resolved { margin: 22px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 1.2rem; font-weight: 650; }
+  .tc-resolved.is-good { color: var(--leaf-ink); }
+  .tc-resolved.is-bad { color: var(--clay-ink); }
+  .tc-resolved a { display: inline-flex; align-items: center; gap: 4px; font-size: 1rem; font-weight: 600; color: var(--leaf-ink); }
+
+  .tc-email-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .tc-email-top .tc-kicker { margin: 0; }
+  .tc-envelope { display: inline-flex; flex: none; font-size: 26px; color: var(--sky-ink); }
+  .tc-email.is-pending .tc-envelope, .tc-email.is-skipped .tc-envelope, .tc-email.is-failed .tc-envelope { color: var(--muted); }
+  .tc-subject { margin: 14px 0 0; font-size: 1.2rem; font-weight: 650; line-height: 1.3; letter-spacing: -0.01em; overflow-wrap: anywhere; text-wrap: pretty; }
+  .tc-email-top .tc-subject { margin: 0; }
+  .tc-draft { display: inline-block; vertical-align: 0.15em; font-size: 0.833rem; font-weight: 600; letter-spacing: 0; color: var(--muted); background: var(--well); padding: 3px 11px; line-height: 1.45; border-radius: 999px; }
+  .tc-email-to { margin: 6px 0 0; color: var(--ink-2); overflow-wrap: anywhere; }
+  .tc-email-to b { color: var(--ink); font-weight: 600; }
+  .tc-from { margin: 10px 0 0; color: var(--muted); font-size: 0.833rem; }
+  .tc-via { margin: 2px 0 0; color: var(--muted); font-size: 0.833rem; }
+  .tc-via-strong { color: var(--ink-2); font-weight: 600; }
+  .tc-note { margin: 12px 0 0; padding: 8px 12px; border-radius: var(--r-control); background: var(--well); color: var(--ink-2); font-size: 0.833rem; }
+
+  /* The agent's feed: mono times, prose lines, the newest in ink */
+  .tc-feed { margin-top: 16px; padding: 18px 24px 14px; }
+  .tc-feed-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+  .tc-feed-h .tc-kicker-note { margin-left: auto; }
+  .tc-feed-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; }
+  .tc-feed-list li { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); gap: 12px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 1rem; color: var(--ink-2); }
+  .tc-feed-list li:first-child { border-top: 0; }
+  .tc-feed-list time { font-family: var(--mono); font-size: 0.833rem; color: var(--muted); padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .tc-feed-list span { overflow-wrap: anywhere; }
+  .tc-feed .tc-feed-list li.is-last { color: var(--ink); font-weight: 600; }
+
+  /* Below the fold */
+  .tc-more { margin-top: 48px; }
+  .tc-more-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .tc-h3 { margin: 0; font-size: 1rem; font-weight: 650; letter-spacing: -0.005em; }
+  .tc-more .tc-h3 { margin-bottom: 10px; }
+  .tc-h3 .muted { margin-left: 4px; font-size: 0.833rem; font-weight: 500; }
+  .tc-hyps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .tc-hyps .claim { font-weight: 600; }
+  .tc-hyps .how { color: var(--ink-2); }
+  .tc .why-label { text-transform: none; letter-spacing: 0; font-size: inherit; font-weight: 600; color: var(--ink-2); margin-right: 2px; }
+  .tc-brief-subject { font-weight: 650; }
+  .tc-brief { margin-top: 6px; white-space: pre-wrap; color: var(--ink-2); overflow-wrap: anywhere; }
+  .tc-dl { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+  .tc-dl div { display: grid; grid-template-columns: 8rem minmax(0, 1fr); gap: 12px; }
+  .tc-dl dt { color: var(--muted); font-size: 0.833rem; font-weight: 600; padding-top: 2px; }
+  .tc-dl dd { margin: 0; min-width: 0; }
+  .tc-dl .check { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .tc-dl .check.ok { color: var(--leaf-ink); }
+  .tc-dl .check.no { color: var(--clay-ink); }
+  .tc-wrap { overflow-wrap: anywhere; }
+  .tc-sources { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  .tc-sources .muted { margin-left: 4px; font-size: 0.833rem; }
+  .tc-log { margin-top: 16px; }
+  .tc-ids { margin-top: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: var(--muted); font-size: 0.833rem; }
+  .tc-studio { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+
+  /* Replay honesty: the recorded tag sits in the header and on every card, never over content.
+     Solid ink, not yellow: sun now means a person. */
+  .tc-rec-tag { display: inline-block; font-size: 0.833rem; font-weight: 600; letter-spacing: 0; background: var(--ink); color: var(--surface); padding: 3px 11px; line-height: 1.45; border-radius: 999px; white-space: nowrap; }
+
+  .tc-toast {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; max-width: min(36rem, calc(100vw - 32px));
+    background: var(--ink); color: var(--surface); padding: 10px 18px; border-radius: var(--r-control); font-weight: 600; box-shadow: var(--shadow);
+  }
+  .tc-toast.is-bad { background: var(--clay-wash); color: var(--clay-ink); box-shadow: 0 0 0 1.5px var(--clay), var(--shadow); }
+  .tc-toast[hidden] { display: none; }
+
+  @keyframes tc-ring { 0% { transform: scale(0.8); opacity: 1; } 70%, 100% { transform: scale(1.35); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .tc-stages .st-active .tc-st-mark::after { animation: none; opacity: 0.6; }
+    .tc-part { transition-duration: 1ms; }
+  }
+  @media (max-width: 52rem) {
+    .tc-cards, .tc-more-grid { grid-template-columns: 1fr; }
+    .tc-stages { grid-auto-flow: row; gap: 12px; }
+    .tc-stages li { flex-direction: row; align-items: center; }
+    .tc-stages li::before { display: none; }
+    .tc-nums { gap: 12px 20px; }
+    .tc-part-main { flex-wrap: wrap; }
+    .tc-price { font-size: 1.728rem; text-align: left; }
+    .tc-feed-list li { grid-template-columns: 1fr; gap: 0; }
+  }
+  @media (max-width: 36rem) { .tc-verdict-text { font-size: 2.074rem; } #tech-case .tc-verdict-text:not(.tc-verdict-wait):not(.tc-verdict-bad) { text-indent: 0; } }
+</style>
+
+{% include "partials/technician_case.html" %}
+
+<p id="tc-toast" class="tc-toast" role="status" aria-live="polite" hidden></p>
+<script>
+// Approve / Deny on the staged part (design §8). Approve opens the cart FIRST, synchronously
+// inside the click, because browsers block a tab opened after an await; then it POSTs the
+// work order's resolve route (APIs §4, D19b: a named person and a reason) and re-renders the case.
+(() => {
+  const KEY = "romulus.operator";
+  const getBy = () => {
+    try { return (localStorage.getItem(KEY) || "").trim() || "operator"; } catch (e) { return "operator"; }
+  };
+  const showBy = () => document.querySelectorAll("[data-tech-by]").forEach((el) => { el.textContent = getBy(); });
+  const toastEl = document.getElementById("tc-toast");
+  let toastTimer = null;
+  const toast = (text, bad) => {
+    toastEl.textContent = text;
+    toastEl.className = "tc-toast" + (bad ? " is-bad" : "");
+    toastEl.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, bad ? 9000 : 4000);
+  };
+  // While a resolve is in flight, or the pointer is on the buttons, the 2 s poll must not swap
+  // the case: it would drop the click, or bring back enabled buttons (a second cart tab, a 409).
+  let busy = false, hold = false, forcing = false;
+  const onCase = (ev) => { const t = ev.detail && (ev.detail.target || ev.detail.elt); return !!t && t.id === "tech-case"; };
+  const paused = (ev) => (busy || hold) && !forcing && onCase(ev);
+  document.body.addEventListener("htmx:beforeRequest", (ev) => { if (paused(ev)) ev.preventDefault(); });
+  document.body.addEventListener("htmx:beforeSwap", (ev) => { if (paused(ev)) ev.detail.shouldSwap = false; });
+  document.addEventListener("pointerover", (ev) => { hold = !!(ev.target.closest && ev.target.closest(".tc-actions")); });
+  document.addEventListener("pointerout", (ev) => { if (!ev.relatedTarget) hold = false; });
+  const refresh = (url) => {
+    busy = false; hold = false;
+    if (!(window.htmx && url)) { location.reload(); return; }
+    forcing = true;
+    Promise.resolve(htmx.ajax("GET", url, {target: "#tech-case", swap: "outerHTML"})).finally(() => { forcing = false; });
+  };
+
+  document.addEventListener("click", async (ev) => {
+    if (ev.target.closest("[data-tech-rename]")) {
+      const name = prompt("Your name (the work order records it as human:<name>):", getBy());
+      if (name !== null && name.trim()) { try { localStorage.setItem(KEY, name.trim()); } catch (e) {} }
+      showBy();
+      return;
+    }
+    const btn = ev.target.closest("[data-tech-action]");
+    if (!btn || btn.disabled || busy) return;
+    busy = true;
+    const action = btn.dataset.techAction;
+    let blocked = false;
+    if (action === "approve" && btn.dataset.cart) {
+      const tab = window.open(btn.dataset.cart, "_blank");  // first, before any await
+      if (tab) tab.opener = null; else blocked = true;
+    }
+    if (action === "deny" && !confirm("Deny " + btn.dataset.what + "? The work order closes and no cart is staged.")) { busy = false; return; }
+    const by = getBy();
+    const why = action === "approve"
+      ? "Approved the staged spare part, " + btn.dataset.what + ", on the Technician page; the cart opened for checkout."
+      : "Denied the staged spare part, " + btn.dataset.what + ", on the Technician page.";
+    const row = btn.closest(".tc-actions");
+    (row ? row.querySelectorAll("button") : [btn]).forEach((b) => { b.disabled = true; });
+    btn.textContent = action === "approve" ? "Approving…" : "Denying…";
+    try {
+      const resp = await fetch(btn.dataset.url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({action: action, by: by, why: why}),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) toast(body.detail || body.why || ("Request failed: HTTP " + resp.status), true);
+      else if (blocked) toast("Approved by " + by + ". The browser blocked the cart tab: use “open the cart again”.", true);
+      else toast((action === "approve" ? "Approved by " : "Denied by ") + by + ".");
+    } catch (e) {
+      toast("Could not reach the server: " + e, true);
+    }
+    refresh(btn.dataset.partial);
+  });
+
+  document.body.addEventListener("htmx:afterSwap", showBy);
+  showBy();
+})();
+</script>
+{% endblock %}

@@ -4,13 +4,13 @@ Sections match the boxes in the stack hub's diagram. Done lines move to
 FINISHED with their box in front, like "Romulus: build plan <--- Kent".
 BY PERSON, IN PHASE ORDER (next) ranks each person's work by phase. It has
 no claims: claim lines in the box sections below it.
-Updated Sun Nov 8, 12:20 AM PST from CLAUDE.md, commits and docs/.
+Updated Mon Nov 9, 3:08 AM PST from CLAUDE.md, commits and docs/.
 
 BY PERSON, IN PHASE ORDER
 Phases from James's phased plan (a proposal), on Kent's build-plan clock (PST):
 P0 decide and claim: 8:45 → 9:15 PM
 P1 the core loop in simulation: 9:15 PM → bedtime (minimum by 12:30 AM: a typed command moves the sim arm; a planted fault gives a spoken sentence)
-P2 overnight, hands off: 12:30 → 7 AM
+P2 overnight: 12:30 → 7 AM (Kent's run is hands off; James's prototype builds in sim)
 P3 the real arm: Sun 7 → 10 AM (code freeze at 10)
 P4 freeze, rehearse, present: Sun 10 AM → 1 PM
 P5 Hermes plugin entry: due Wed Nov 11, 5 PM EST (2 PM PST)
@@ -25,6 +25,7 @@ P1 Fleet Doctor follow-ups: K17 list → SAFETY_PATHS_CONFIRMED; real token pric
 P2 Overnight launch: chaos schedule, laptop awake, demo tag
 P2 Morning digest by 7:30 AM: agent vs human actions
 P3 Real arm + polish, 9-10 AM: F2 and F3 on the real arm (with Olir, Andre)
+P3 Naive technician: hard failure -> Naive report + email + checked cart, 1 human click (docs/naive-technician/) <--- Kent
 Done: Romulus M0-M7 and M8 up to the canary (#19, #28, #38; B7 open), STM32 toolchain (B8, #24), Fleet Doctor L1 + L2 + Teach + L3 contract (#22-#44, all merged, off by default), edge bridge: pod healer → cloud (D29, #25)
 
 OLIR
@@ -52,12 +53,12 @@ P3 Real arm + polish (with Kent, Olir): F2 and F3 on the real arm
 
 JAMES
 P0 Tell Kent the Stripe step is optional (it is still on his P0 line)
-P1 Open a PR for james/arm-sim (the four sim prototypes, fault factory, ChatTS test)
-P2 Firmware API and data doc (docs/firmware-apis.md), Olir reviews; 7 AM: commit a slice of the overnight podd logs (samples/pod/)
-P3 7:30-9 AM with Andre: swap the sim arm for the real one, wrist HC-SR04 through podd, first labeled real runs
+P2 Prototype in sim overnight (james/arm-sim): virtual pod read by Olir's podd, arm host reads and heals through podd, Romulus on James's Mac (pod-1 via the edge bridge, arm-1), Naive card → Hermes, one script per story
+P3 7-10 AM on the Pi with Andre: both stories on the real arm and pod (real-arm adapter on Andre's prims), first real runs into samples/; then a PR for james/arm-sim
 P3 Optional: MuJoCo twin next to the real arm
+P4 10 AM freeze: rehearse both stories x3, backup video from the sim recording
 P5 Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video under 90 s
-Done: Naive console + fault lab (pi vs Hermes), Hermes install, stack hub; P0 decisions (8:45 PM); P1 in simulation: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory (1,000 runs), ChatTS level-2 test; CLAUDE.md notice PRs #47-#51
+Done: Naive console + fault lab (pi vs Hermes), Hermes install, stack hub; P0 decisions (8:45 PM); P1 in simulation: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory (1,000 runs), ChatTS level-2 test; firmware API and data doc (235e30d); CLAUDE.md notice PRs #47-#51; main and Andre's arm/prims merged into james/arm-sim
 
 EVERYONE
 P0 Redeem credits and mark them in SPONSORS AND CREDITS
@@ -73,7 +74,7 @@ P3 Monid step in the order flow
 P3 AgentMail incident email
 P3 Emotion moves on the real arm (James's lamp gestures as the model)
 P5 pre_tool_call guard, cron pulls cards, gateway alerts, catalog submission
-P6 Level 3: MuJoCo fault factory, bench recordings, fine-tune a small model
+P6 Level 3: MuJoCo fault factory, bench recordings, fine-tune a small model (docs/healer-data-levels.md) <--- James
 If time runs short, cut in this order: ChatTS test, MuJoCo twin, Monid, Tavily, emotion moves.
 Never cut: command → break → heal → resume, the work-order card, the overnight run, the backup video.
 
@@ -89,8 +90,6 @@ Daily digest and budgets
 AgentMail incident email
 
 BOARD
-Arm job card format
-Planner creates arm job cards
 Bench board token (scoped MCP session)
 
 MODELS
@@ -109,16 +108,15 @@ Hermes install on the bench             <--- James
 Hermes arm plugin tools                 <--- James
 pre_tool_call safety guard              <--- James
 Board link via Hermes MCP client
-Cron pulls next board card
 Gateway phone alerts
 Hermes plugin catalog submission
 pi vs Hermes comparison (Naive console)  <--- James
 Hermes compaction fix (summarizer login)
+Eye: camera to table cm (eye.py)        <--- James
 
 ROMULUS
 Live Naive card spike + I0 contract review (M0 rest) <--- Kent
-Coder sandbox egress: LLM proxy only (B5, #46) <--- Kent
-Code replay hardening vs test gaming (K6, #53) <--- Kent
+Naive Technician: hard failure → Naive report + actions <--- Kent
 
 PI 5
 Device side owner (D14)                 <--- Ishaan
@@ -131,6 +129,7 @@ Snapshot and park on fault
 Overlay patches with self-revert
 Visor: check in, pull, install
 Local model on the Pi
+Laptop cloud for Pi bridge (server/)    <--- Olir
 
 SO-101
 Arm assembly                            <--- Olir, Andre
@@ -144,15 +143,15 @@ Pod healer tools: podd, triage rules, 38 heal tools <--- Olir
 Pod healer bench runs + baseline (firmware/harness/HANDOFF.md) <--- Olir
 Frozen-ultrasonic triage rule (gap found)
 Teleop recording + motion primitives (arm/teleop-recording) <--- Andre
-MuJoCo arm sim + fault factory (james/arm-sim) <--- James
 
 DEMO AND FAULTS
 Plant demo faults D1-D3                 <--- Ishaan
 STM32 C bug demo (6 bad pod images ready, firmware/demo, 69fc292) <--- Olir
-Ultrasonic bad image 07 + arm heal test (agent rolls back, arm runs) <--- Olir
 Camera-cover hero demo
 Demo script and rehearsal
 Backup demo video
+Pitch animation: Hardware Buddy (pitch/)  <--- Andre
+Chips pick-and-place generate-and-test (gentest.py) <--- James
 
 HUB AND DOCS
 Stack hub: put it all together          <--- James
@@ -177,6 +176,15 @@ Hermes plugin: $20K cash, $10K first
 Other sponsors: HubSpot, Vercel, OpenRouter, Luxor, Neon
 
 FINISHED
+Romulus: Sunlit Workshop UI redesign, all pages + learning (#80 #83-#85 #88 #90 #91) <--- Kent
+Board: Arm job card format (armsim/orders.py) <--- James
+Board: Planner creates arm job cards (orders -> ARM JOB cards) <--- James
+Models: Worker model benchmark (workerbench/RESULTS.md, Runpod L40S) <--- James
+Hermes: Dispatcher pulls the next board card (armsim/dispatch.py) <--- James
+Hermes: Worker/manager healer loop, in sim (armsim/worker.py) <--- James
+Demo: Overnight sim soak runner (prototypes/arm-sim/SOAK.md) <--- James
+Demo: Mission Control page, three looks (prototypes/arm-sim) <--- James
+Hub: Worker/manager healer design (docs/worker-manager-healer.md) <--- James
 Hub: team status sync in CLAUDE.md      <--- James
 Hub: SO-101 research notes              <--- James
 Hub: stack hub artifact v1              <--- James
@@ -222,3 +230,16 @@ Romulus: Fleet Doctor L3 device-tool contract, draft (#30) <--- Kent
 SO-101: Pod healer agent loop + blind eval (HARNESS.md) <--- Ishaan
 Models: Laptop serves qwen3.5:4b to the Pi over Ethernet (server/) <--- Olir
 Romulus: Real device/ code in coder path (B1, #38) <--- Kent
+Demo and faults: Ultrasonic bad image 07 + arm heal test (agent rolls back, arm runs) <--- Olir
+SO-101: MuJoCo arm sim + fault factory (james/arm-sim) <--- James
+Romulus: Code replay hardening vs test gaming (K6, #53) <--- Kent
+Romulus: Coder sandbox egress: LLM proxy only (B5, #46) <--- Kent
+Romulus: Doctor repro reads result seal (#56)    <--- Kent
+Romulus: Gate waits for held-out verify (#58) <--- Kent
+Naive: Naive TS SDK client + read-only check (naive/) <--- Olir
+Romulus: Heal-agent run reports on the dashboard <--- Olir
+Demo and faults: Ultrasonic v1.8 near-hold image + heal test <--- Olir
+Romulus: Fleet learning: verified heal traces → training data <--- Kent
+Hermes: Camera look before/after card jobs (vision) <--- James
+Demo and faults: Real-arm gentest write-up + charts (report.py) <--- James
+Hub and docs: Root README See it GIFs + sim recipe <--- James

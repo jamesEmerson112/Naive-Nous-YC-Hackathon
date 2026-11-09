@@ -54,6 +54,8 @@ Without `--scenario` the arms just check in and follow their assignments (flow F
 | `bad-late` | Same, but the next firmware passes its install check, then the device checks in `failing` and repeats `camera_occluded` once, until the gate assigns its last good version. | F4 |
 | `park` | Fault **D3**-style `servo_absent`: `park`, `resolved: false`, `suspected_cause: hardware`, no overlay. The arm then checks in `failing`. | F6 |
 
+**No scenario sends an agent run report** (APIs §3.11). `DeviceClient.put_agent_run` and the fake cloud's route exist, but the fake arms only describe their agent through the incident's `agent` field and a JSONL `agent_trace`. The real pod sends agent runs, and that's the format real agent logs arrive in. For run data in tests, use `edge_bridge.fake_healer` and the bridge, as in `cloud/tests/flows/test_f13_agent_runs.py` ([`cloud/CLAUDE.md`](../../cloud/CLAUDE.md), "Real device data").
+
 ## Chaos schedule (overnight run, flow F10)
 
 `--chaos overnight` follows the flows doc: a software fault about every 10 min across the

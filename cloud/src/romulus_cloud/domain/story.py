@@ -20,6 +20,11 @@ one that needs a person (`NEEDS_PERSON`). All doctor kinds share one `STAGE`, so
 tied `ts` they keep the order they were written in; so does a Doctor fix's `overlay.applied`
 (`stage`), which therefore reads after its `doctor.proposal_result`.
 
+Agent runs (APIs §3.11): `agent.*` steps carry their event's data as `agent`. A finished
+run's outcome picks the badge (`AGENT_OUTCOME_STATUS`): fixed, still broken, or unknown.
+Bookkeeping kinds (`BOOKKEEPING`: blobs stored, links, regression cases, labels) are steps
+like any other, but pages show them as one quiet line, since they aren't news.
+
 Order is by when things happened (`ts`, the device's `occurred_at` for device events),
 never by when the server received them (K9). Events with the same `ts` are ordered by
 their stage in the loop (`STAGE`), then by the order they were given in.
@@ -55,6 +60,12 @@ class Step:
     refs: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] | None = None  # recording steps only (M4)
     doctor: dict[str, Any] | None = None  # doctor.* steps only: the event's data (PR 6)
+    agent: dict[str, Any] | None = None  # agent.* steps only: the event's data (§3.11)
+
+    @property
+    def bookkeeping(self) -> bool:
+        """A follow-up a page can show as one quiet line (`BOOKKEEPING`)."""
+        return self.kind in BOOKKEEPING
 
 
 @dataclass(frozen=True)
@@ -135,7 +146,9 @@ class Story:
                 before = _settled(self.steps[:i])
                 return before if before in NEEDS_PERSON else found
             if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
-                return WORK_ORDER_STATUS[s.refs["status"]]
+                return _wo_status(s)
+            if s.kind in AGENT_OUTCOME_KINDS:
+                return _agent_status(s)
             if s.kind in STATUS and s.label:
                 return STATUS[s.kind]
         return ("no events", "info") if not self.steps else ("open", "bad")
@@ -178,8 +191,16 @@ def _overlay_line(verb: str) -> Callable[[EventLike], str]:
     return lambda e: f"Overlay {e.refs.get('overlay')} {verb} on {_device(e)}."
 
 
+def _action_name(a: Any) -> str:
+    """An action as words: a string as is, a `{"tool": …}` record by its tool (its arguments
+    are on the agent run and in the trace), anything else as text."""
+    if isinstance(a, Mapping) and isinstance(a.get("tool"), str):
+        return a["tool"] + ("" if a.get("ok", True) else " (failed)")
+    return a if isinstance(a, str) else str(a)
+
+
 def _actions(e: EventLike) -> str:
-    acts = [a if isinstance(a, str) else str(a) for a in _data(e).get("actions") or []]
+    acts = [_action_name(a) for a in _data(e).get("actions") or []]
     return ", ".join(acts) if acts else "no recorded actions"
 
 
@@ -222,9 +243,26 @@ def _size(n: Any) -> str:
     return f"{n} B"
 
 
+# What each recording kind is, in words, for step lines and the evidence list.
+RECORDING_NAMES: dict[str, str] = {
+    "log_window": "logs around the fault",
+    "agent_trace": "the agent's tool-call trace",
+    "agent_transcript": "the agent's full transcript",
+    "episode": "a sensor episode",
+    "incident_window": "the incident window",
+}
+
+
+def recording_name(kind: Any) -> str:
+    """`log_window` → `pod logs around the fault`; unknown kinds as words."""
+    return RECORDING_NAMES.get(str(kind), _words(kind or "recording"))
+
+
 def _evidence_line(e: EventLike) -> str:
     ev = _evidence(e) or {}
-    what = f"{ev.get('kind', 'recording')} ({ev.get('format', '?')}, {_size(ev.get('size_bytes'))})"
+    what = (
+        f"{recording_name(ev.get('kind'))} ({ev.get('format', '?')}, {_size(ev.get('size_bytes'))})"
+    )
     link = f" Download: {ev.get('download')}" if ev.get("stored") else ""
     return f"Evidence from {_device(e)}: {what}.{link}"
 
@@ -232,7 +270,7 @@ def _evidence_line(e: EventLike) -> str:
 def _stored_line(e: EventLike) -> str:
     ev = _evidence(e) or {}
     return (
-        f"The {ev.get('kind', 'recording')} bytes arrived and matched their sha256. "
+        f"Saved {recording_name(ev.get('kind'))} ({_size(ev.get('size_bytes'))}, checksum OK). "
         f"Download: {ev.get('download')}"
     )
 
@@ -241,7 +279,7 @@ def _linked_line(e: EventLike) -> str:
     ev = _evidence(e) or {}
     added = _data(e).get("labels_added") or []
     labels = f"; labels added: {', '.join(map(str, added))}" if added else ""
-    return f"The {ev.get('kind', 'recording')} recording was linked to this incident{labels}."
+    return f"Filed {recording_name(ev.get('kind'))} under this incident{labels}."
 
 
 def _wo(e: EventLike) -> str:
@@ -368,6 +406,12 @@ LINES.update(
             f"The gate put {_cand(e)} on canary {e.refs.get('device')}."
         ),
         "candidate.awaiting_canary": lambda e: f"{_cand(e).capitalize()} waits for a canary.",
+        "candidate.awaiting_verify": lambda e: (
+            f"{_cand(e).capitalize()} waits for held-out verify scripts."
+        ),
+        "candidate.unverified": lambda e: (
+            f"Warning: {_cand(e)} passed on in-process tests only (no held-out verify)."
+        ),
         "candidate.frozen": lambda e: f"{_cand(e).capitalize()} froze with the fleet.",
         "candidate.restarted": lambda e: f"{_cand(e).capitalize()} restarts from replay.",
         "candidate.promoted": lambda e: f"{_cand(e).capitalize()} went to the fleet.",
@@ -392,6 +436,8 @@ LABELS.update(
         "candidate.replayed": _replay_label,
         "candidate.canary_started": lambda e: f"canary {e.refs.get('device')}",
         "candidate.awaiting_canary": lambda e: "awaiting canary",
+        "candidate.awaiting_verify": lambda e: "awaiting verify",
+        "candidate.unverified": lambda e: "unverified",
         "candidate.frozen": lambda e: "frozen",
         "candidate.restarted": lambda e: "unfrozen",
         "candidate.promoted": lambda e: "fleet",
@@ -423,8 +469,8 @@ def _code_rev(e: EventLike) -> str:
 LINES.update(
     {
         "regression.case_added": lambda e: (
-            f"The incident joined the regression corpus: every future candidate must fire "
-            f"{_data(e).get('expected_action', 'the same action')} on its signals."
+            f"Added to the regression tests: future firmware must also answer these signals "
+            f"with {_data(e).get('expected_action', 'the same action')}."
         ),
         "label.changed": lambda e: f"Labels on recording {e.refs.get('recording')} changed.",
         "coder.started": lambda e: "The coding agent started on a code fix.",
@@ -443,6 +489,59 @@ LABELS.update(
         "coder.tests_passed": lambda e: "coder tests ✓",
         "coder.tests_failed": lambda e: "coder tests ✗",
         "code.version_created": lambda e: f"code {_code_rev(e)}",
+    }
+)
+
+# --- Agent runs (APIs §3.11) ----------------------------------------------------------
+
+AGENT_OUTCOME_STATUS: dict[str, tuple[str, str]] = {
+    "fixed": ("fixed", "good"),
+    "broken": ("still broken", "bad"),
+    "unknown": ("agent finished: unverified", "info"),
+    "working": ("agent working", "wait"),
+}
+AGENT_OUTCOME_KINDS = frozenset({"agent.run_finished", "agent.outcome_changed"})
+
+
+def _agent_status(s: "Step") -> tuple[str, str]:
+    status = str((s.agent or {}).get("status") or "unknown")
+    return AGENT_OUTCOME_STATUS.get(status, AGENT_OUTCOME_STATUS["unknown"])
+
+
+def _agent_outcome_label(prefix: str) -> Callable[[EventLike], str]:
+    def label(e: EventLike) -> str:
+        status = str(_data(e).get("status") or "unknown")
+        return f"{prefix}: {AGENT_OUTCOME_STATUS.get(status, (_words(status), ''))[0]}"
+
+    return label
+
+
+def _help_label(e: EventLike) -> str:
+    return "asked a person" if _data(e).get("to") == "person" else "asked a stronger model"
+
+
+LINES.update(
+    {
+        "agent.run_started": lambda e: f"The heal agent on {_device(e)} started a run.",
+        "agent.help_requested": lambda e: (
+            f"{'The run' if _data(e).get('source') == 'harness' else 'The agent'} needs "
+            f"{'a person' if _data(e).get('to') == 'person' else 'a stronger model'}: "
+            f"{_data(e).get('summary') or 'no details given'}"
+        ),
+        "agent.run_finished": lambda e: str(_data(e).get("headline") or "The agent's run ended."),
+        "agent.outcome_changed": lambda e: str(
+            _data(e).get("headline") or "The run's outcome changed."
+        ),
+        "agent.run_linked": lambda e: f"Agent run {e.refs.get('agent_run')} was filed here.",
+    }
+)
+LABELS.update(
+    {
+        "agent.run_started": lambda e: "agent started",
+        "agent.help_requested": _help_label,
+        "agent.run_finished": _agent_outcome_label("agent"),
+        "agent.outcome_changed": _agent_outcome_label("bench"),
+        "agent.run_linked": lambda e: "",  # bookkeeping, not news
     }
 )
 
@@ -482,6 +581,13 @@ LABELS.update(
         "doctor.gave_up": lambda e: "Fleet Doctor gave up",
     }
 )
+
+
+def _agent(e: EventLike) -> dict[str, Any] | None:
+    """An agent step's data, for its badge."""
+    if not e.kind.startswith("agent."):
+        return None
+    return dict(e.data) if isinstance(e.data, Mapping) else {}
 
 
 def _doctor(e: EventLike) -> dict[str, Any] | None:
@@ -730,6 +836,8 @@ NOT_IN_CHAINS: frozenset[str] = frozenset(
 # Where an incident stands after a step of this kind: (words for a badge, tone), with tone
 # one of good / bad / wait / info. Kinds not listed don't change the status.
 STATUS: dict[str, tuple[str, str]] = {
+    "agent.run_started": ("agent working", "wait"),
+    "agent.help_requested": ("help requested", "bad"),
     "incident.reported": ("open", "bad"),
     "incident.agent_acted": ("agent acted", "wait"),
     "overlay.applied": ("overlay on trial", "wait"),
@@ -742,6 +850,8 @@ STATUS: dict[str, tuple[str, str]] = {
     "candidate.rolled_back": ("rolled back", "bad"),
     "candidate.frozen": ("frozen", "bad"),
     "candidate.awaiting_canary": ("awaiting canary", "wait"),
+    "candidate.awaiting_verify": ("awaiting verify", "wait"),
+    "candidate.unverified": ("unverified pass", "bad"),
     "workorder.created": ("work order", "wait"),
     "workorder.card_posted": ("work order posted", "wait"),
     "workorder.status_changed": ("work order updated", "wait"),
@@ -764,7 +874,32 @@ WORK_ORDER_STATUS: dict[str, tuple[str, str]] = {
     "stopped": ("order stopped", "bad"),
     "denied": ("work order denied", "info"),
 }
+# A Naïve Technician approval (refs `technician_case`) means a person approved a checked
+# cart, not that a part was ordered (D30): it never reads "part ordered".
+CART_APPROVED: tuple[str, str] = ("cart approved", "good")
+
+
+def _wo_status(s: "Step") -> tuple[str, str]:
+    """The badge a work-order step sets (its `refs.status`)."""
+    if s.refs.get("status") == "done" and s.refs.get("technician_case"):
+        return CART_APPROVED
+    return WORK_ORDER_STATUS[s.refs["status"]]
+
+
 STATUS_TONES = ("good", "bad", "wait", "info")
+
+# Follow-ups that aren't news: pages show them as one quiet line (their step still says
+# who did what and why).
+BOOKKEEPING: frozenset[str] = frozenset(
+    {
+        "recording.blob_stored",
+        "recording.linked",
+        "regression.case_added",
+        "label.changed",
+        "agent.run_linked",
+        "overlay.superseded",
+    }
+)
 
 # Where a kind sits in the loop, to order events that share a timestamp (an incident,
 # the agent's actions and its overlay all carry the incident's `occurred_at`).
@@ -775,6 +910,11 @@ STAGE: dict[str, int] = {
     "recording.received": 10,
     "recording.blob_stored": 11,
     "recording.linked": 12,
+    "agent.run_started": 20,
+    "agent.run_linked": 21,
+    "agent.help_requested": 22,
+    "agent.run_finished": 23,
+    "agent.outcome_changed": 24,
     # One worker tick can open, post and update a work order at the same `now`.
     "workorder.created": 60,
     "workorder.post_held": 61,
@@ -787,6 +927,8 @@ STAGE: dict[str, int] = {
     "candidate.created": 71,
     "candidate.replayed": 72,
     "candidate.awaiting_canary": 73,
+    "candidate.awaiting_verify": 72,
+    "candidate.unverified": 72,
     "candidate.canary_started": 73,
     "candidate.frozen": 74,
     "candidate.restarted": 74,
@@ -829,6 +971,86 @@ CONSULT_OUTCOME_STATUS: dict[str, tuple[str, str] | None] = {
     "gave_up": ("Fleet Doctor gave up", "bad"),
 }
 
+# --- Naïve Technician (docs/naive-technician/design.md §11) --------------------------------
+# A work order with no catalogued part goes to a Naïve agent: it diagnoses, Romulus emails
+# the technician and stages a checked part on the order; a person approves through the
+# work order, whose `workorder.*` events then move the badge on (done / denied).
+
+
+def _tc(e: EventLike) -> str:
+    return f"Naïve technician case {e.refs.get('technician_case') or ''}".rstrip()
+
+
+def _tc_diagnosed_line(e: EventLike) -> str:
+    d = _data(e)
+    part = d.get("part_title")
+    staged = f" Staged {part} for approval." if part and d.get("staged") else ""
+    return f"{_tc(e)}: {d.get('verdict') or 'diagnosed'}.{staged}"
+
+
+LINES.update(
+    {
+        "technician.opened": lambda e: f"{_tc(e)} opened for {_wo(e)}.",
+        "technician.diagnosed": _tc_diagnosed_line,
+        "technician.emailed": lambda e: (
+            f"{_tc(e)} emailed the technician: {_data(e).get('subject') or 'brief'}"
+        ),
+        "technician.failed": lambda e: f"{_tc(e)} failed: {e.why}",
+    }
+)
+LABELS.update(
+    {
+        "technician.opened": lambda e: "Naïve technician on it",
+        "technician.diagnosed": lambda e: "diagnosed by Naïve technician",
+        "technician.emailed": lambda e: "technician emailed",
+        "technician.failed": lambda e: "Naïve technician failed",
+    }
+)
+STATUS.update(
+    {
+        "technician.opened": ("Naïve technician on it", "info"),
+        "technician.diagnosed": ("diagnosed: waiting on you", "bad"),
+        "technician.failed": ("Naïve technician failed", "bad"),
+    }
+)
+# After the work-order stages (60-62): one tick can create the order and open the case.
+STAGE.update(
+    {
+        "technician.opened": 63,
+        "technician.diagnosed": 64,
+        "technician.emailed": 65,
+        "technician.failed": 65,
+    }
+)
+
+# --- Fleet learning T1: the promoted playbook mirrored to Naïve Skills (design.md §9) -------
+LINES.update(
+    {
+        "review.published": lambda e: (
+            f'Naïve agent fleet-doctor\'s lesson "{_data(e).get("title") or "lesson"}" is in '
+            f"Naïve Skills: {_data(e).get('slug') or 'playbook'} v{_data(e).get('version') or '?'}."
+        ),
+    }
+)
+LABELS.update({"review.published": lambda e: "lesson in Naïve Skills"})
+# After the gate's promote (75) and its follow-ups (76).
+STAGE.update({"review.published": 77})
+
+# Fleet learning: cluster review (docs/recursive-self-improvement/design.md §4). Its events
+# carry the first evidence run's incident, so that incident's story shows the review.
+# `review.cleared` names a kind, not an incident.
+LABELS.update(
+    {
+        "review.session_opened": lambda e: "cluster review opened",
+        "review.staged": lambda e: (
+            f"staged for {(_data(e).get('result') or {}).get('owner') or 'its owner'}"
+        ),
+        "review.accepted": lambda e: "skill accepted",
+        "review.rejected": lambda e: "review rejected",
+    }
+)
+NOT_IN_CHAINS = NOT_IN_CHAINS | {"review.cleared"}
+
 # Statuses a person has to act on. Nothing the Fleet Doctor does covers them up; a later
 # non-Doctor step (the work order moving on, an unfreeze) still can.
 NEEDS_PERSON: frozenset[tuple[str, str]] = frozenset(
@@ -837,6 +1059,7 @@ NEEDS_PERSON: frozenset[tuple[str, str]] = frozenset(
         WORK_ORDER_STATUS["needs_human"],
         WORK_ORDER_STATUS["stopped"],
         STATUS["candidate.frozen"],
+        STATUS["technician.diagnosed"],
     }
 )
 
@@ -861,7 +1084,7 @@ def _settled(steps: Iterable[Step]) -> tuple[str, str] | None:
         if s.kind.startswith("doctor."):
             continue
         if s.kind.startswith("workorder.") and s.refs.get("status") in WORK_ORDER_STATUS:
-            return WORK_ORDER_STATUS[s.refs["status"]]
+            return _wo_status(s)
         if s.kind in STATUS and s.label:
             return STATUS[s.kind]
     return None
@@ -908,6 +1131,7 @@ def build_story(events: Iterable[EventLike], incident_id: str) -> Story:
             refs=dict(e.refs),
             evidence=_evidence(e) if "recording" in e.refs else None,
             doctor=_doctor(e),
+            agent=_agent(e),
         )
         for _, e in indexed
     )

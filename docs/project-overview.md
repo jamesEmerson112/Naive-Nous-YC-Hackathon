@@ -115,7 +115,7 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
 - **Ultrasonic (decision pending, see §5):**
   - On the Pi: gpiozero with the `lgpio` pin factory. RPi.GPIO doesn't work on the Pi 5 (https://gpiozero.readthedocs.io/en/stable/api_pins.html; https://bugs.launchpad.net/raspbian/+bug/2058658).
   - Through the STM32 (`firmware` branch): the standalone `stm32f042k6-hcsr04` build streams CSV lines `t_ms,dist_mm,echo_us,status` on `/dev/ttyACM0` at 115200. `status` is `ok`, `out_of_range`, `no_echo` or `busy`. In the newer pod firmware (`69fc292`), the Pi daemon `podd` owns that port and logs each distance reading as a JSON `D` record: `{"t": <device ms>, "mm", "us", "st", "ts": <host time>}` (`firmware/healer/README.md`). The arm's servo bus stays on its own serial port, so the Pi has two serial devices, each with one owner *(inferred)*.
-  - A 30 s sample stamped Sat 6:44 PM (James's copy, not in the repo; its source is still being checked) has 300 `ok` readings at 10 Hz, with an object held still at 49 mm. The echo time jitters between 285 and 286 µs, and the longest identical run is 18 readings. A real sensor's jitter is what tells "still object" apart from "frozen sensor" *(inferred)*.
+  - A 30 s sample recorded Sat 6:44 PM is Olir's real pod output. He committed it as `firmware/ultrasonic-sample.json` (`b9819cc`, 7:00 PM). It's in exactly the format `heal telemetry_recent kind=D` prints, and every row matches the firmware's integer formula `(us*343+1000)/2000` (`pod/src/hcsr04.c`). It has 300 `ok` readings at 10 Hz, with an object held still at 49 mm. The echo time jitters between 285 and 286 µs, and the longest identical run is 18 readings. A real sensor's jitter is what tells "still object" apart from "frozen sensor" *(inferred)*.
 - **Camera:** OpenCV, through LeRobot's `OpenCVCamera`. It accepts a device index, a device path, or a video file (`src/lerobot/cameras/opencv/configuration_opencv.py` on GitHub).
 - **Firmware** (`firmware` branch, by Olir; latest `69fc292`, Sat 6:08 PM; not merged into `main`). Everything here is from `firmware/README.md` on that branch, unless noted:
   - Bare-metal C on the CMSIS register headers, with no HAL.
@@ -169,6 +169,8 @@ Other parts of the team plan, from the team status in `CLAUDE.md`:
 8. **Record** the incident (what broke, the evidence, the fix, the result) in a local outbox that waits for the cloud. The report format is in §5.3 of the v0 plan, and the overlay's diff goes with it (D5, D8).
 
 Long heals are fine, because the robot is parked and the process is autonomous. *(team)* The LLM is never part of the real-time control or safety loop; it acts only while the arm is parked (Romulus design rule; *(team)*).
+
+**As built:** one pass through this loop, from the arm-sim prototype, is animated in the root README ([How the pieces fit](../README.md#how-the-pieces-fit)). A stuck sensor parks the arm, and Hermes heals it from a Naïve card, with nobody typing after the order.
 
 ### 8.2 Health tiers *(team)*
 

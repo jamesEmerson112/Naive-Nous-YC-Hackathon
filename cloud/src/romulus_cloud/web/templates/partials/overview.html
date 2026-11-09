@@ -1,0 +1,57 @@
+{# The status sentence at the top of Fleet, then the day's numbers and the your-turn card.
+   Needs `overview` (api/web.py `_overview`). The headline is the first case that's true:
+   frozen, needs you, still broken, agent working, all healthy, no check-ins yet. #}
+{% from "partials/ui.html" import icon %}
+{% macro sentence(text) %}{{ text }}{% if text and text[-1:] not in ".!?" %}.{% endif %}{% endmacro %}
+{% set o = overview %}
+{% set arms = o.devices %}
+<section class="status-sentence" aria-label="Fleet status">
+  {% if o.frozen %}
+  <h1 class="status-h"><span class="is-bad">Fleet frozen.</span></h1>
+  <p class="status-p" title="{{ o.frozen_why }}">{{ sentence(o.frozen_why | shortid) if o.frozen_why else "Rollouts are stopped and every arm is pinned to its last good version until someone unfreezes." }}</p>
+  {% elif o.you %}
+  {% set t = o.turn %}
+  <h1 class="status-h"><span class="is-you">{{ o.you }} arm{{ 's' if o.you != 1 }} need{{ 's' if o.you == 1 }} you.</span>{% if o.rest_healthy %} The rest are healthy.{% endif %}</h1>
+  {% if t.case_url %}
+  <p class="status-p">{{ t.device }} reported a {{ t.kind | kindword | lower }}. A Naïve technician diagnosed it{% if t.part_staged %} and staged a spare part for you to approve{% else %}; its case is waiting for your review{% endif %}.</p>
+  {% else %}
+  <p class="status-p">{{ t.device }}: {{ sentence(t.summary or (t.status | capitalize)) }}</p>
+  {% endif %}
+  {% elif o.broken or o.open %}
+  {% set b = o.first_bad %}
+  <h1 class="status-h"><span class="is-bad">{% if o.broken %}{{ o.broken }} still broken.{% else %}{{ o.open }} incident{{ 's' if o.open != 1 }} still open.{% endif %}</span></h1>
+  {% if b %}<p class="status-p">Newest: {{ b.device }}, {{ b.kind | kindword | lower }}{% if b.summary %}: {{ sentence(b.summary) }}{% else %}.{% endif %}</p>{% endif %}
+  {% elif o.busy %}
+  {% set w = o.first_working %}
+  <h1 class="status-h">The healer is working on {% if o.busy == 1 %}{{ w.device }}{% else %}{{ o.busy }} incidents{% endif %}.</h1>
+  {% if w %}<p class="status-p">{{ w.device }}, {{ w.kind | kindword | lower }}: {{ w.status }}. Nothing needs a person yet.</p>{% endif %}
+  {% elif arms and o.healthy == arms %}
+  <h1 class="status-h">All {{ arms }} arm{{ 's' if arms != 1 }} healthy.</h1>
+  <p class="status-p">Nothing needs a person. When an arm reports a fault, its healer takes it first, and the incident shows below within a few seconds.</p>
+  {% elif not o.checked %}
+  <h1 class="status-h">Waiting for the first check-in.</h1>
+  <p class="status-p">{% if arms %}{{ arms }} arm{{ 's are' if arms != 1 else ' is' }} registered; each one shows its health here after its first report.{% else %}No arms yet. Run <code>make seed</code>, then <code>make sim</code> or start an arm.{% endif %}</p>
+  {% else %}
+  <h1 class="status-h">{{ o.healthy }} of {{ arms }} arms healthy.</h1>
+  <p class="status-p">No incident is open; the arms without a healthy check-in are listed below.</p>
+  {% endif %}
+  <p class="today" aria-label="Numbers">
+    <span><b>{{ o.incidents }}</b> incident{{ 's' if o.incidents != 1 }}</span>
+    <span><b>{{ o.fixed }}</b> fixed by the agent</span>
+    <span><b>{{ o.broken }}</b> still broken</span>
+    <span{% if o.you %} class="is-you"{% endif %}><b>{{ o.you }}</b> waiting on a person</span>
+    <span><b>{{ o.help }}</b> help request{{ 's' if o.help != 1 }}</span>
+    {% if o.working %}<span class="is-work"><b>{{ o.working }}</b> agent working now</span>{% endif %}
+  </p>
+</section>
+{% if o.turn %}
+{% set t = o.turn %}
+<a class="turn" href="{{ t.case_url or ('/incidents/' ~ t.id) }}">
+  <span class="turn-mark">{{ icon("hand") }}</span>
+  <span class="turn-body">
+    <span class="turn-t">{{ t.device }} · <span title="{{ t.kind }}">{{ t.kind | kindword }}</span></span>
+    <span class="turn-s">{% if t.ask %}{{ t.ask }}{% elif t.case_url %}Read the technician's diagnosis and decide what happens next.{% else %}{{ t.status | capitalize }}: open the incident to decide.{% endif %}</span>
+  </span>
+  <span class="turn-cta">Review{{ icon("arrow") }}</span>
+</a>
+{% endif %}

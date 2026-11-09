@@ -1,0 +1,45 @@
+{
+ "schema": "arm-escalation/v1",
+ "incident_id": "inc-369c2201-4-1",
+ "device_id": "arm-twin-1",
+ "category": "fault",
+ "opened_at": "2026-11-08T12:06:52+00:00",
+ "findings": [
+  {
+   "src": "watchdog",
+   "kind": "us_frozen",
+   "severity": "critical",
+   "summary": "Ultrasonic output is frozen: 39 readings, echo time identical at 758 us (zero noise)"
+  }
+ ],
+ "worker": null,
+ "window": "WINDOW src=arm-sim span=6.0s kinematics=on holding=no\nD01 +0.0 mm=130 us=758 st=ok pred=130.1\nD02 +0.1 mm=130 us=758 st=ok pred=130.1\nD03 +0.2 mm=130 us=758 st=ok pred=130.1\nD04 +0.3 mm=130 us=759 st=ok pred=130.1\nD05 +0.4 mm=130 us=758 st=ok pred=130.1\nD06 +0.5 mm=130 us=758 st=ok pred=130.1\nD07 +0.6 mm=130 us=759 st=ok pred=130.1\nD08 +0.7 mm=130 us=758 st=ok pred=130.1\nD09 +0.8 mm=130 us=759 st=ok pred=130.1\nD10 +0.9 mm=130 us=758 st=ok pred=130.1\nD11 +1.0 mm=130 us=758 st=ok pred=130.1\nD12 +1.1 mm=130 us=758 st=ok pred=130.1\nD13 +1.2 mm=130 us=758 st=ok pred=130.1\nD14 +1.3 mm=130 us=758 st=ok pred=130.1\nD15 +1.4 mm=130 us=759 st=ok pred=130.1\nD16 +1.5 mm=130 us=758 st=ok pred=130.1\nD17 +1.6 mm=130 us=758 st=ok pred=130.1\nD18 +1.7 mm=130 us=758 st=ok pred=130.1\nD19 +1.9 mm=130 us=758 st=ok pred=130.1\nD20 +2.0 mm=130 us=758 st=ok pred=130.1\nD21 +2.1 mm=130 us=758 st=ok pred=130.1\nD22 +2.2 mm=130 us=758 st=ok pred=130.1\nD23 +2.3 mm=130 us=758 st=ok pred=130.1\nD24 +2.4 mm=130 us=758 st=ok pred=130.1\nD25 +2.5 mm=130 us=758 st=ok pred=130.1\nD26 +2.6 mm=130 us=758 st=ok pred=130.1\nD27 +2.7 mm=130 us=758 st=ok pred=130.1\nD28 +2.8 mm=130 us=758 st=ok pred=130.1\nD29 +2.9 mm=130 us=758 st=ok pred=130.1\nD30 +3.0 mm=130 us=758 st=ok pred=130.1\nD31 +3.1 mm=130 us=758 st=ok pred=130.1\nD32 +3.2 mm=130 us=758 st=ok pred=130.1\nD33 +3.3 mm=130 us=758 st=ok pred=130.1\nD34 +3.4 mm=130 us=758 st=ok pred=130.1\nD35 +3.5 mm=130 us=758 st=ok pred=130.1\nD36 +3.6 mm=130 us=758 st=ok pred=130.1\nD37 +3.7 mm=130 us=758 st=ok pred=130.1\nD38 +3.8 mm=130 us=758 st=ok pred=130.1\nD39 +3.9 mm=130 us=758 st=ok pred=130.1\nD40 +4.0 mm=130 us=758 st=ok pred=130.1\nD41 +4.1 mm=130 us=758 st=ok pred=130.1\nD42 +4.2 mm=130 us=758 st=ok pred=130.1\nD43 +4.3 mm=130 us=758 st=ok pred=130.1\nD44 +4.4 mm=130 us=758 st=ok pred=130.1\nD45 +4.5 mm=130 us=758 st=ok pred=130.5\nD46 +4.6 mm=130 us=758 st=ok pred=131.3\nD47 +4.7 mm=130 us=758 st=ok pred=132.2\nD48 +4.8 mm=130 us=758 st=ok pred=133.3\nD49 +4.9 mm=130 us=758 st=ok pred=134.5\nD50 +5.0 mm=130 us=758 st=ok pred=135.8\nD51 +5.1 mm=130 us=758 st=ok pred=136.8\nD52 +5.2 mm=130 us=758 st=ok pred=137.7\nD53 +5.3 mm=130 us=758 st=ok pred=138.5\nD54 +5.5 mm=130 us=758 st=ok pred=139.1\nD55 +5.6 mm=130 us=758 st=ok pred=109.3\nD56 +5.7 mm=130 us=758 st=ok pred=109.0\nD57 +5.8 mm=130 us=758 st=ok pred=108.5\nD58 +5.9 mm=130 us=758 st=ok pred=107.7\nJS pos=0.0,-95.0,90.0,55.0,90.8,-0.0 st=0,0,0,0,0,0 gripper_load=0.029\nL podd=up image=good\nINC1 src=watchdog kind=us_frozen severity=critical summary=\"Ultrasonic output is frozen: 39 readings, echo time identical at 758 us (zero noise)\"",
+ "state": {
+  "mode": "sim",
+  "kinematics": true,
+  "parked": true,
+  "pod_image": "good",
+  "job": {
+   "card_id": "crd_861768d92f93",
+   "steps": [
+    "go_home",
+    "reach",
+    "approach",
+    "grip",
+    "lift",
+    "release",
+    "go_home"
+   ],
+   "failed_step": "reach"
+  },
+  "tried": []
+ },
+ "allowed_actions": [
+  "restart_sensor",
+  "verify",
+  "park",
+  "handoff_human",
+  "no_action"
+ ],
+ "deadline_s": 90.0
+}

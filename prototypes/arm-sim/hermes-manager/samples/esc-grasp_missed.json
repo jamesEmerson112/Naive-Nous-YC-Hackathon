@@ -1,0 +1,49 @@
+{
+ "schema": "arm-escalation/v1",
+ "incident_id": "inc-aa78147c-wa-1-1",
+ "device_id": "arm-twin-1",
+ "category": "wrong_action",
+ "opened_at": "2026-11-08T12:59:27+00:00",
+ "findings": [
+  {
+   "src": "dispatcher",
+   "kind": "grasp_missed",
+   "severity": "warn",
+   "summary": "grip closed on nothing: the jaws shut to 0.0 (0 = closed) at 0.23 N*m; the approach read 140 -> 75 mm over 14 steps"
+  }
+ ],
+ "worker": null,
+ "window": "WINDOW src=arm-sim span=6.0s kinematics=on holding=no\nD01 +0.0 mm=105 us=615 st=ok pred=105.2\nD02 +0.1 mm=105 us=612 st=ok pred=105.0\nD03 +0.3 mm=105 us=613 st=ok pred=105.0\nD04 +0.4 mm=105 us=612 st=ok pred=105.0\nD05 +0.5 mm=105 us=610 st=ok pred=104.4\nD06 +0.6 mm=103 us=598 st=ok pred=102.1\nD07 +0.7 mm=100 us=583 st=ok pred=100.2\nD08 +0.8 mm=100 us=582 st=ok pred=100.0\nD09 +0.9 mm=100 us=582 st=ok pred=100.0\nD10 +1.0 mm=100 us=581 st=ok pred=99.7\nD11 +1.1 mm=98 us=570 st=ok pred=97.6\nD12 +1.2 mm=96 us=557 st=ok pred=95.4\nD13 +1.3 mm=95 us=554 st=ok pred=95.0\nD14 +1.4 mm=95 us=554 st=ok pred=95.0\nD15 +1.5 mm=95 us=553 st=ok pred=95.0\nD16 +1.6 mm=95 us=552 st=ok pred=94.9\nD17 +1.7 mm=92 us=539 st=ok pred=93.1\nD18 +1.8 mm=91 us=528 st=ok pred=90.8\nD19 +1.9 mm=90 us=525 st=ok pred=90.0\nD20 +2.0 mm=90 us=525 st=ok pred=90.0\nD21 +2.1 mm=90 us=524 st=ok pred=90.0\nD22 +2.2 mm=90 us=523 st=ok pred=89.9\nD23 +2.3 mm=88 us=511 st=ok pred=88.1\nD24 +2.4 mm=85 us=498 st=ok pred=85.8\nD25 +2.5 mm=85 us=495 st=ok pred=85.0\nD26 +2.6 mm=85 us=495 st=ok pred=85.0\nD27 +2.7 mm=85 us=496 st=ok pred=85.0\nD28 +2.8 mm=85 us=494 st=ok pred=85.0\nD29 +2.9 mm=83 us=482 st=ok pred=83.6\nD30 +3.0 mm=80 us=469 st=ok pred=80.0\nD31 +3.1 mm=80 us=466 st=ok pred=80.0\nD32 +3.2 mm=80 us=466 st=ok pred=80.0\nD33 +3.3 mm=80 us=466 st=ok pred=80.0\nD34 +3.4 mm=80 us=464 st=ok pred=78.6\nD35 +3.5 mm=78 us=452 st=ok pred=76.2\nD36 +3.6 mm=75 us=440 st=ok pred=75.0\nD37 +3.7 mm=75 us=436 st=ok pred=75.0\nD38 +3.8 mm=75 us=437 st=ok pred=75.0\nD39 +3.9 mm=75 us=437 st=ok pred=74.7\nD40 +4.0 mm=74 us=433 st=ok pred=73.6\nD41 +4.1 mm=73 us=426 st=ok pred=72.1\nD42 +4.2 mm=71 us=414 st=ok pred=70.3\nD43 +4.3 mm=69 us=403 st=ok pred=68.4\nD44 +4.4 mm=67 us=393 st=ok pred=66.8\nD45 +4.5 mm=66 us=385 st=ok pred=65.6\nD46 +4.6 mm=65 us=380 st=ok pred=65.1\nD47 +4.7 mm=65 us=379 st=ok pred=65.0\nD48 +4.8 mm=65 us=380 st=ok pred=65.0\nD49 +4.9 mm=65 us=379 st=ok pred=65.0\nD50 +5.0 mm=65 us=379 st=ok pred=65.0\nD51 +5.1 mm=65 us=379 st=ok pred=65.0\nD52 +5.2 mm=65 us=378 st=ok pred=47.7\nD53 +5.3 mm=- us=43 st=out_of_range pred=7.3\nD54 +5.4 mm=- us=42 st=out_of_range pred=7.3\nD55 +5.5 mm=- us=42 st=out_of_range pred=7.3\nD56 +5.7 mm=38 us=220 st=ok pred=64.9\nD57 +5.8 mm=65 us=378 st=ok pred=64.9\nD58 +5.9 mm=65 us=378 st=ok pred=64.9\nD59 +6.0 mm=65 us=378 st=ok pred=64.9\nJS pos=3.8,-11.1,6.2,94.9,90.8,60.0 st=0,0,0,0,0,0 gripper_load=0.003\nL podd=up image=good\nINC1 src=dispatcher kind=grasp_missed severity=warn summary=\"grip closed on nothing: the jaws shut to 0.0 (0 = closed) at 0.23 N*m; the approach read 140 -> 75 mm over 14 steps\"",
+ "state": {
+  "mode": "sim",
+  "kinematics": true,
+  "parked": false,
+  "pod_image": "good",
+  "job": {
+   "card_id": "crd_b48bbee642f0",
+   "steps": [
+    "go_home",
+    "reach",
+    "approach",
+    "grip",
+    "lift",
+    "release",
+    "go_home"
+   ],
+   "failed_step": "grip"
+  },
+  "tried": [],
+  "corrections": [
+   "relocate",
+   "offset",
+   "none"
+  ]
+ },
+ "allowed_actions": [
+  "redo_step",
+  "park",
+  "handoff_human",
+  "no_action"
+ ],
+ "deadline_s": 90.0
+}

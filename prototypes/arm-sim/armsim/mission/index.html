@@ -1,0 +1,2888 @@
+<!doctype html>
+<html lang="en" data-look="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Romulus Mission Control</title>
+<!--
+  Romulus Mission Control: the demo screen, served by armsim/mission.py (python -m armsim.mission).
+  One file, no network: inline CSS and JS, system fonts. It polls /api/arm (~10 Hz, the 3D twin)
+  and /api/state (~1 Hz, everything else), and posts the presenter's buttons to /api/*.
+
+  Three looks, all from CSS custom properties on <html data-look="...">; the canvas twin and the
+  timeline read the same tokens through getComputedStyle, so everything re-themes together:
+    mission  near-black navy, glassy panels, one cyan accent (the default)
+    neon     deep purple, magenta + cyan glow, condensed display type, scanlines
+    light    white panels, soft shadows, dark text: for a bright room
+  Pick one with ?look=mission|neon|light, the swatches next to the "sim" chip, or the L key (cycles).
+  During an incident the banner over the twin shows its four beats at once (BROKE > PARKED > HEALING >
+  RESUMED, or PERSON / FIXED); the pill above says the state and its reason. Both read the arm snapshot.
+  The choice is remembered in localStorage. The clock shows the viewer's own time zone;
+  ?tz=America/Los_Angeles overrides it if the laptop's zone is wrong.
+  Under the beats, the worker -> manager exchange (armsim/worker.py, docs/worker-manager-healer.md), in the
+  beats' own columns: WORKER -asks-> MANAGER -answers-> PLAIN CODE -approves-> ARM, from the event log's
+  escalation / fix_plan / plan_check / plan_action lines. A packet flies each hop, one hop every 1.2 s, and
+  MANAGER shows its thinking for at least 1.6 s: pacing only, the times on the arrows are the real ones.
+  No plan (manager off, unreachable, late or refused) shows FALLBACK: scripted heal.
+  A wrong move (category 2, armsim/redo.py) is the worker's own incident, read from the event log: the
+  beats become WRONG MOVE > REVERSED > CORRECTED > REDONE (or PERSON), and the twin draws where the block
+  should be, where it is, the relocate scan and what it found.
+  Split view: the twin and a "Live camera" panel side by side (the toggle in the twin's header, or the V key;
+  remembered in localStorage as mc-view). The camera panel reads armsim/camserve.py on the Mac that has the
+  camera (default http://localhost:8790, ?cam=URL overrides): /latest.jpg about once a second, /eye.json for
+  the bag of chips in table cm and the frame's age, drawn over the image. No server, no frame or an
+  uncalibrated eye each say so in the panel; nothing else on the page depends on it. The bag also shows in
+  the twin as a ring on the table (the eye's frame is the model's: origin at the base, x forward, y left).
+  Presenter keys: 1-9 (9 buttons), C clear, F freeze, W wrong move, L look, V split view. POSTs carry X-Mission-Token
+  from ?token= or the meta tag mission.py adds on loopback.
+-->
+<script>
+// The look before first paint: ?look= wins (and is remembered), then the remembered one, then light.
+(function () {
+  var LOOKS = ["mission", "neon", "light"], look = null;
+  try { look = new URLSearchParams(location.search).get("look"); } catch (e) {}
+  if (LOOKS.indexOf(look) >= 0) { try { localStorage.setItem("mc-look", look); } catch (e) {} }
+  else { try { look = localStorage.getItem("mc-look"); } catch (e) { look = null; } }
+  if (LOOKS.indexOf(look) < 0) look = "light";
+  document.documentElement.setAttribute("data-look", look);
+})();
+</script>
+<style>
+/* =====================================================================================
+   LOOKS. Every color, glow, border and shadow below is a token. :root is "mission".
+   ===================================================================================== */
+:root {
+  color-scheme: dark;
+  --sans: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter Display", "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --text-font: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, "DejaVu Sans Mono", monospace;
+  --display: var(--sans);             /* the big words and numbers */
+  --display-weight: 760;
+  --display-stretch: normal;
+  --head-track: 0.2em;
+  --r: 18px;
+  --r-sm: 12px;
+  --gap: clamp(10px, 0.75vw, 16px);
+  --glow: 1;                           /* 0 = flat (light), above 1 = neon */
+  /* a type floor: the small labels never drop below what a projector shows (the root clamps to 11.5px) */
+  --t-cap: max(0.76rem, 10.5px);       /* tracked caps labels */
+  --t-meta: max(0.84rem, 11px);        /* times, ids, secondary lines */
+
+  --bg: #04070e;
+  --bg2: #081223;
+  --bg-glow-a: rgba(58, 209, 247, 0.10);
+  --bg-glow-b: rgba(90, 110, 255, 0.08);
+  --bg-vignette: rgba(0, 0, 0, 0.65);
+  --bg-grid: rgba(140, 180, 255, 0.045);
+  --bg-grid-size: 48px;
+  --fx-opacity: 0;                     /* scanlines and grain (neon) */
+  --fx-scan: rgba(0, 0, 0, 0.13);
+  --btn-sheen: rgba(255, 255, 255, 0.35);  /* the top edge of a filled button */
+  --btn-kbd: rgba(255, 255, 255, 0.18);
+  --btn-kbd-edge: rgba(255, 255, 255, 0.4);
+  --alarm-filter: brightness(1.18) saturate(1.2);
+  --vignette-a: 0.38;
+
+  --panel: rgba(13, 22, 40, 0.62);
+  --panel-hi: rgba(22, 36, 62, 0.55);
+  --panel-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 20px 50px rgba(0, 0, 0, 0.35);
+  --panel-blur: blur(16px) saturate(140%);
+  --panel-topline: rgba(58, 209, 247, 0.55);
+  --line: rgba(130, 175, 255, 0.16);
+  --line-hi: rgba(150, 200, 255, 0.34);
+
+  --text: #eaf1fb;
+  --text-2: #b4c3da;
+  --muted: #7d8ea9;
+  --faint: #4f5f7a;
+  --head: #b4c3da;
+  --accent: #3ad1f7;  --accent-rgb: 58, 209, 247;
+  --accent2: #3ad1f7; --accent2-rgb: 58, 209, 247;
+  --ok: #33d69f;      --ok-rgb: 51, 214, 159;
+  --warn: #fbbf3a;    --warn-rgb: 251, 191, 58;
+  --bad: #ff4d63;     --bad-rgb: 255, 77, 99;
+  --idle-rgb: 159, 176, 201;
+  --off-rgb: 120, 135, 160;
+  --ice: #9fe6ff;     --ice-rgb: 159, 230, 255;
+  --on-ice: #04121f;
+  --on-bad: #ffffff;
+
+  --fill-1: rgba(255, 255, 255, 0.025);
+  --fill-2: rgba(255, 255, 255, 0.035);
+  --fill-3: rgba(255, 255, 255, 0.05);
+  --fill-4: rgba(255, 255, 255, 0.08);
+  --edge-1: rgba(255, 255, 255, 0.04);
+  --edge-2: rgba(255, 255, 255, 0.18);
+  --sheen: rgba(255, 255, 255, 0.07);
+  --track: rgba(255, 255, 255, 0.07);
+  --track-mid: rgba(255, 255, 255, 0.18);
+  --card: rgba(14, 26, 46, 0.85);
+  --card-hot: rgba(50, 10, 20, 0.8);
+  --card-shadow: none;
+  --hud-bg: rgba(6, 12, 24, 0.55);
+  --toast-bg: rgba(10, 18, 34, 0.92);
+  --drop: rgba(0, 0, 0, 0.5);
+  --pill-word: #ffffff;
+  --title-grad: linear-gradient(90deg, #ffffff, #3ad1f7);
+  --mark-1: #bff3ff; --mark-2: #3ad1f7; --mark-ink: #ffffff;
+  --banner-bad: rgba(60, 6, 18, 0.82);
+  --banner-warn: rgba(50, 34, 4, 0.82);
+  --banner-ok: rgba(4, 40, 30, 0.82);
+  --blk-text: rgba(255, 140, 150, 0.98);
+  --xchg-bg: rgba(2, 6, 14, 0.42);     /* the worker -> manager row under the beats */
+
+  /* the heal timeline (SVG, drawn in JS) */
+  --tl-font: 'Inter Display', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --tl-grid: rgba(140, 180, 255, 0.08);
+  --tl-axis: rgba(140, 180, 255, 0.25);
+  --tl-tick: #6f80a0;
+  --tl-lane: #5b6b88;
+  --tl-kind: #8a9bb5;
+  --tl-ok-text: #bff5df;
+  --tl-bad-text: #ffc2ca;
+  --tl-warn-text: #ffe3a3;
+
+  /* the 3D twin (canvas, drawn in JS) */
+  --tw-stage: transparent;
+  --tw-floor-rgb: 58, 209, 247;  --tw-floor-a: 0.09;
+  --tw-grid-rgb: 58, 209, 247;   --tw-grid-a: 0.3;
+  --tw-plate: rgba(9, 18, 34, 0.92);
+  --tw-shadow: rgba(0, 0, 0, 0.42);
+  --tw-link-hi: #d3e1f4;  --tw-link-mid: #6a81a6;  --tw-link-lo: #18253d;
+  --tw-house-hi: #4a5d7e; --tw-house-mid: #1d2a44; --tw-house-lo: #070d18;
+  --tw-cap: #0c1524;
+  --tw-rim-rgb: 58, 209, 247;  --tw-rim-a: 0.8;
+  --tw-ring-rgb: 58, 209, 247;
+  --tw-spec: rgba(255, 255, 255, 0.5);
+  --tw-glow: 1;
+  --tw-block-rgb: 214, 224, 240; --tw-block-edge: rgba(255, 255, 255, 0.8);
+  --tw-label: rgba(220, 235, 255, 0.92);
+  --tw-pred: rgba(220, 235, 255, 0.6);
+  --tw-blend: lighter;
+  --eye-rgb: 255, 138, 42;          /* the camera's bag marker, on the image and in the twin */
+  --cam-bg: rgba(0, 0, 0, 0.35);
+}
+
+/* ---- neon: cyberpunk. Deep purple-black, magenta + cyan glow, condensed display type ---- */
+html[data-look="neon"] {
+  --display: "Avenir Next Condensed", "DIN Condensed", "Bahnschrift", "Roboto Condensed", "Arial Narrow", "Inter Display", "Inter", sans-serif;
+  --display-weight: 800;
+  --display-stretch: condensed;
+  --head-track: 0.26em;
+  --r: 8px;
+  --r-sm: 6px;
+  --glow: 1.6;
+
+  --bg: #05010b;
+  --bg2: #13052b;
+  --bg-glow-a: rgba(255, 43, 214, 0.22);
+  --bg-glow-b: rgba(25, 240, 255, 0.15);
+  --bg-vignette: rgba(0, 0, 0, 0.8);
+  --bg-grid: rgba(255, 43, 214, 0.08);
+  --bg-grid-size: 36px;
+  --fx-opacity: 1;
+  --alarm-filter: brightness(1.35) saturate(1.3);
+  --vignette-a: 0.45;
+
+  --panel: rgba(16, 5, 32, 0.8);
+  --panel-hi: rgba(44, 11, 72, 0.62);
+  --panel-shadow: inset 0 0 0 1px rgba(255, 43, 214, 0.08), inset 0 0 44px rgba(255, 43, 214, 0.07), 0 0 22px rgba(255, 43, 214, 0.2), 0 18px 50px rgba(0, 0, 0, 0.55);
+  --panel-blur: blur(10px) saturate(160%);
+  --panel-topline: rgba(25, 240, 255, 0.95);
+  --line: rgba(255, 43, 214, 0.42);
+  --line-hi: rgba(25, 240, 255, 0.6);
+
+  --text: #fdf4ff;
+  --text-2: #dfccf4;
+  --muted: #ab90d0;
+  --faint: #6f5596;
+  --head: #19f0ff;
+  --accent: #19f0ff;  --accent-rgb: 25, 240, 255;
+  --accent2: #ff2bd6; --accent2-rgb: 255, 43, 214;
+  --ok: #2bffa8;      --ok-rgb: 43, 255, 168;
+  --warn: #ffd23f;    --warn-rgb: 255, 210, 63;
+  --bad: #ff3b6e;     --bad-rgb: 255, 59, 110;
+  --idle-rgb: 205, 175, 245;
+  --off-rgb: 140, 115, 175;
+  --ice: #8ff8ff;     --ice-rgb: 143, 248, 255;
+
+  --fill-1: rgba(255, 43, 214, 0.035);
+  --fill-2: rgba(255, 43, 214, 0.055);
+  --fill-3: rgba(25, 240, 255, 0.07);
+  --fill-4: rgba(25, 240, 255, 0.1);
+  --edge-1: rgba(255, 43, 214, 0.16);
+  --edge-2: rgba(25, 240, 255, 0.38);
+  --sheen: rgba(255, 255, 255, 0.06);
+  --track: rgba(255, 43, 214, 0.14);
+  --track-mid: rgba(25, 240, 255, 0.4);
+  --card: rgba(26, 7, 48, 0.92);
+  --card-hot: rgba(64, 4, 32, 0.88);
+  --hud-bg: rgba(14, 3, 28, 0.72);
+  --toast-bg: rgba(16, 4, 30, 0.95);
+  --title-grad: linear-gradient(90deg, #ff2bd6, #19f0ff);
+  --mark-1: #ff2bd6; --mark-2: #19f0ff; --mark-ink: #fdf4ff;
+  --banner-bad: rgba(70, 0, 30, 0.86);
+  --banner-warn: rgba(60, 40, 0, 0.86);
+  --banner-ok: rgba(0, 52, 36, 0.86);
+  --blk-text: #ff9bbd;
+  --xchg-bg: rgba(8, 0, 20, 0.5);
+
+  --tl-font: 'Avenir Next Condensed', 'DIN Condensed', Bahnschrift, 'Roboto Condensed', 'Inter Display', Inter, sans-serif;
+  --tl-grid: rgba(255, 43, 214, 0.1);
+  --tl-axis: rgba(255, 43, 214, 0.5);
+  --tl-tick: #b89be0;
+  --tl-lane: #9375c0;
+  --tl-kind: #cbb0ee;
+  --tl-ok-text: #b4ffdc;
+  --tl-bad-text: #ffc0d4;
+  --tl-warn-text: #fff0b0;
+
+  --tw-floor-rgb: 255, 43, 214;  --tw-floor-a: 0.15;
+  --tw-grid-rgb: 255, 43, 214;   --tw-grid-a: 0.42;
+  --tw-plate: rgba(22, 4, 42, 0.94);
+  --tw-shadow: rgba(0, 0, 0, 0.55);
+  --tw-link-hi: #9b62dc;  --tw-link-mid: #3a1766;  --tw-link-lo: #0e0322;
+  --tw-house-hi: #43226e; --tw-house-mid: #1a0937; --tw-house-lo: #060110;
+  --tw-cap: #0b0218;
+  --tw-rim-rgb: 255, 43, 214;  --tw-rim-a: 0.95;
+  --tw-ring-rgb: 25, 240, 255;
+  --tw-spec: rgba(255, 190, 245, 0.45);
+  --tw-glow: 1.5;
+  --tw-block-rgb: 236, 222, 255; --tw-block-edge: rgba(25, 240, 255, 0.95);
+  --tw-label: rgba(252, 238, 255, 0.95);
+  --tw-pred: rgba(25, 240, 255, 0.7);
+}
+
+/* ---- light: a clean product dashboard for a bright room ---- */
+html[data-look="light"] {
+  color-scheme: light;
+  --display-weight: 750;
+  --r: 16px;
+  --glow: 0;
+
+  --bg: #eaeff6;
+  --bg2: #f7f9fc;
+  --bg-glow-a: rgba(37, 99, 235, 0.07);
+  --bg-glow-b: rgba(14, 165, 233, 0.06);
+  --bg-vignette: rgba(15, 23, 42, 0.035);
+  --bg-grid: rgba(15, 23, 42, 0.03);
+  --alarm-filter: none;
+  --vignette-a: 0.16;
+
+  --panel: #ffffff;
+  --panel-hi: #ffffff;
+  --panel-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 10px 30px rgba(16, 24, 40, 0.07);
+  --panel-blur: none;
+  --panel-topline: transparent;
+  --line: rgba(15, 23, 42, 0.09);
+  --line-hi: rgba(15, 23, 42, 0.2);
+
+  --text: #0f172a;
+  --text-2: #334155;
+  --muted: #475569;
+  --faint: #8391a7;
+  --head: #475569;
+  --accent: #2563eb;  --accent-rgb: 37, 99, 235;
+  --accent2: #2563eb; --accent2-rgb: 37, 99, 235;
+  /* status colors at 4.5:1 or better on white (a bright room washes out the lighter ones) */
+  --ok: #047857;      --ok-rgb: 4, 120, 87;
+  --warn: #b45309;    --warn-rgb: 180, 83, 9;
+  --bad: #b91c1c;     --bad-rgb: 185, 28, 28;
+  --idle-rgb: 71, 85, 105;
+  --off-rgb: 148, 163, 184;
+  --ice: #0284c7;     --ice-rgb: 2, 132, 199;
+  --on-ice: #ffffff;
+  --eye-rgb: 194, 65, 12;
+  --cam-bg: #e2e8f0;
+
+  --fill-1: #f8fafc;
+  --fill-2: #f8fafc;
+  --fill-3: #f1f5f9;
+  --fill-4: #ffffff;
+  --edge-1: rgba(15, 23, 42, 0.06);
+  --edge-2: rgba(15, 23, 42, 0.2);
+  --sheen: rgba(255, 255, 255, 0.7);
+  --track: rgba(15, 23, 42, 0.08);
+  --track-mid: rgba(15, 23, 42, 0.25);
+  --card: #ffffff;
+  --card-hot: #fef2f2;
+  --card-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --hud-bg: rgba(255, 255, 255, 0.88);
+  --toast-bg: rgba(255, 255, 255, 0.98);
+  --drop: rgba(15, 23, 42, 0.16);
+  --title-grad: linear-gradient(90deg, #0f172a, #2563eb);
+  --mark-1: #60a5fa; --mark-2: #2563eb; --mark-ink: #0f172a;
+  --banner-bad: #fff5f5;
+  --banner-warn: #fffbeb;
+  --banner-ok: #ecfdf5;
+  --blk-text: #b91c1c;
+  --xchg-bg: rgba(255, 255, 255, 0.72);
+
+  --tl-grid: rgba(15, 23, 42, 0.06);
+  --tl-axis: rgba(15, 23, 42, 0.22);
+  --tl-tick: #64748b;
+  --tl-lane: #94a3b8;
+  --tl-kind: #64748b;
+  --tl-ok-text: #047857;
+  --tl-bad-text: #b91c1c;
+  --tl-warn-text: #b45309;
+
+  --tw-stage: radial-gradient(95% 80% at 50% 80%, #e6ecf5 0%, #f3f6fa 55%, #ffffff 100%);
+  --tw-floor-rgb: 37, 99, 235;   --tw-floor-a: 0.06;
+  --tw-grid-rgb: 51, 65, 85;     --tw-grid-a: 0.2;
+  --tw-plate: #dfe5ee;
+  --tw-shadow: rgba(15, 23, 42, 0.2);
+  --tw-link-hi: #ffffff;  --tw-link-mid: #e2e8f1;  --tw-link-lo: #9fadc2;
+  --tw-house-hi: #5b6b82; --tw-house-mid: #2b3648; --tw-house-lo: #0f172a;
+  --tw-cap: #1e293b;
+  --tw-rim-rgb: 51, 65, 85;  --tw-rim-a: 0.55;
+  --tw-ring-rgb: 37, 99, 235;
+  --tw-spec: rgba(255, 255, 255, 0.95);
+  --tw-glow: 0;
+  --tw-block-rgb: 251, 191, 36; --tw-block-edge: rgba(146, 64, 14, 0.7);
+  --tw-label: rgba(15, 23, 42, 0.85);
+  --tw-pred: rgba(51, 65, 85, 0.6);
+  --tw-blend: source-over;
+}
+
+/* =====================================================================================
+   LAYOUT (look-independent; colors only through the tokens above)
+   ===================================================================================== */
+* { box-sizing: border-box; }
+html { font-size: clamp(11.5px, calc(0.42vw + 0.6vh), 17px); background: var(--bg); }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--text-font);
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--gap);
+  padding: var(--gap) calc(var(--gap) * 1.3);
+}
+.bg {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(1200px 700px at 18% -10%, var(--bg-glow-a), transparent 60%),
+    radial-gradient(900px 600px at 100% 110%, var(--bg-glow-b), transparent 60%),
+    radial-gradient(140% 120% at 50% 40%, transparent 55%, var(--bg-vignette) 100%),
+    linear-gradient(180deg, var(--bg2), var(--bg));
+}
+.bg::after {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: var(--bg-grid-size) var(--bg-grid-size);
+  mask-image: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
+  -webkit-mask-image: radial-gradient(120% 90% at 50% 45%, #000 30%, transparent 85%);
+}
+body.alarm .bg { animation: alarmbg 2.4s ease-in-out infinite; }
+@keyframes alarmbg { 50% { filter: var(--alarm-filter); } }
+/* scanlines and grain (neon only: --fx-opacity) */
+.fx { position: fixed; inset: 0; z-index: 40; pointer-events: none; opacity: var(--fx-opacity);
+  background: repeating-linear-gradient(180deg, var(--fx-scan) 0 1px, transparent 1px 3px); }
+.fx::after { content: ""; position: absolute; inset: 0; opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+/* ---------- header ---------- */
+header.top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 1.5rem;
+  min-height: 5.2rem;
+}
+.brand { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+.mark { width: 3.3rem; height: 3.3rem; flex: none; filter: drop-shadow(0 0 calc(14px * var(--glow)) rgba(var(--accent-rgb), 0.45)); }
+.name { font-family: var(--sans); font-size: 1.9rem; font-weight: 650; letter-spacing: -0.015em; line-height: 1.05; white-space: nowrap; }
+.name b { font-weight: 650; background: var(--title-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.tag { margin-top: 0.3rem; font-size: 0.82rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); white-space: nowrap; display: flex; gap: 0.7rem; align-items: center; }
+.chip { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; padding: 0.18rem 0.5rem; border: 1px solid var(--line-hi); border-radius: 999px; color: var(--text-2); text-transform: uppercase; }
+/* the look switcher: three small swatches, out of the way */
+.looks { display: inline-flex; gap: 0.32rem; padding: 0.2rem 0.32rem; border-radius: 999px; border: 1px solid var(--line); background: var(--fill-1); }
+.looks button { width: 0.9rem; height: 0.9rem; padding: 0; border-radius: 50%; border: 1px solid var(--edge-2); opacity: 0.5; transition: opacity .2s, transform .2s, box-shadow .2s; }
+.looks button:hover { opacity: 1; transform: scale(1.15); }
+.looks button.on { opacity: 1; box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accent); }
+.looks [data-look="mission"] { background: radial-gradient(circle at 50% 50%, #3ad1f7 0 26%, #0a1528 32%); }
+.looks [data-look="neon"] { background: linear-gradient(135deg, #ff2bd6 0 50%, #19f0ff 50%); }
+.looks [data-look="light"] { background: linear-gradient(180deg, #ffffff, #dbe3ee); }
+
+.pillwrap { display: flex; flex-direction: column; align-items: center; gap: 0.45rem; min-width: 0; }
+.pill {
+  --c: var(--idle-rgb);
+  display: flex; align-items: center; gap: 0.9rem;
+  padding: 0.65rem 1.9rem 0.65rem 1.4rem;
+  border-radius: 999px;
+  font-family: var(--display); font-stretch: var(--display-stretch);
+  font-size: 2.35rem; font-weight: var(--display-weight); letter-spacing: 0.05em;
+  color: rgb(var(--c));
+  background: linear-gradient(180deg, rgba(var(--c), 0.20), rgba(var(--c), 0.08));
+  border: 1.5px solid rgba(var(--c), 0.55);
+  box-shadow: 0 0 calc(46px * var(--glow)) rgba(var(--c), calc(0.28 * var(--glow))), 0 0 calc(120px * var(--glow)) rgba(var(--c), calc(0.10 * var(--glow)));
+  transition: box-shadow .5s;          /* the word and its color change together: no color fade */
+  white-space: nowrap; max-width: 46vw; overflow: hidden;
+}
+.pill .word { color: var(--pill-word); text-shadow: 0 0 calc(22px * var(--glow)) rgba(var(--c), 0.9); }
+.pill .why { font-weight: 600; letter-spacing: 0.01em; color: rgb(var(--c)); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pill .u { font-size: 0.78em; font-weight: 600; margin-left: 0.12em; }
+.pill .dot { width: 0.85rem; height: 0.85rem; border-radius: 50%; background: rgb(var(--c)); box-shadow: 0 0 calc(14px * var(--glow)) rgb(var(--c)); flex: none; animation: breathe 2.2s ease-in-out infinite; }
+.pill.ok { --c: var(--ok-rgb); }
+.pill.warn { --c: var(--warn-rgb); }
+.pill.warn .dot { animation-duration: 0.9s; }
+.pill.bad { --c: var(--bad-rgb); }
+.pill.bad .dot { animation-duration: 0.7s; }
+.pill.person { --c: var(--bad-rgb); background: linear-gradient(180deg, rgba(var(--c), 0.55), rgba(var(--c), 0.30)); }
+.pill.person .why { color: var(--pill-word); }
+.pill.off { --c: var(--off-rgb); }
+.pill.queued { --c: var(--accent-rgb); }
+.pill.queued .dot { animation-duration: 1.6s; }
+.pill.off .dot { animation: none; }
+@keyframes breathe { 50% { opacity: 0.35; transform: scale(0.8); } }
+.pillsub { font-size: 1.32rem; font-weight: 550; color: var(--text); max-width: 46vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 1.2em; line-height: 1.2; }
+
+.hright { display: flex; align-items: center; justify-content: flex-end; gap: 1.2rem; min-width: 0; }
+.clock { text-align: right; }
+#clock { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.6rem; font-weight: 600; letter-spacing: 0.01em; line-height: 1; white-space: nowrap; color: var(--text-2); }
+#clock small { font-size: 0.55em; color: var(--muted); font-weight: 600; margin-left: 0.25em; }
+#clock small.tz { color: var(--text-2); font-size: 0.42em; letter-spacing: 0.1em; padding: 0.15em 0.4em; border: 1px solid var(--line-hi); border-radius: 6px; vertical-align: 0.35em; margin-left: 0.4em; }
+.date { font-size: var(--t-cap); color: var(--muted); letter-spacing: 0.14em; text-transform: uppercase; margin-top: 0.35rem; }
+.fleetbox { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; padding-left: 1.2rem; border-left: 1px solid var(--line); }
+.fleetbox .k { font-size: var(--t-cap); letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }
+.fleetbox .v { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.15rem; font-weight: 700; letter-spacing: 0.06em; display: flex; align-items: center; gap: 0.5rem; white-space: nowrap; }
+.fleetbox .v .d { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 calc(10px * var(--glow)) currentColor; }
+.fleetbox .v.live { color: var(--ok); }
+.fleetbox .v.frozen { color: var(--ice); }
+.fleetbox .v.unknown { color: var(--muted); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.freeze {
+  font-family: var(--display); font-stretch: var(--display-stretch); font-weight: 760; letter-spacing: 0.08em; font-size: 1.12rem;
+  padding: 0.95rem 1.4rem; border-radius: 14px; white-space: nowrap;
+  color: var(--on-bad); background: linear-gradient(180deg, rgba(var(--bad-rgb), 1), rgba(var(--bad-rgb), 0.78));
+  border: 1px solid rgba(var(--bad-rgb), 0.65);
+  box-shadow: 0 8px 30px rgba(var(--bad-rgb), 0.35), inset 0 1px 0 var(--btn-sheen);
+  transition: transform .12s, filter .2s, background .3s;
+}
+.freeze:hover { filter: brightness(1.1); }
+.freeze:active, .freeze.press { transform: scale(0.96); }
+.freeze.unfreeze { background: linear-gradient(180deg, rgba(var(--ice-rgb), 1), rgba(var(--ice-rgb), 0.78)); color: var(--on-ice); border-color: rgba(var(--ice-rgb), 0.8); box-shadow: 0 8px 30px rgba(var(--ice-rgb), 0.35), inset 0 1px 0 var(--btn-sheen); }
+.freeze kbd { margin-left: 0.6rem; color: inherit; background: var(--btn-kbd); border-color: var(--btn-kbd-edge); }
+/* at rest the kill switch is an outline: red is for the arm's state, not the chrome. It fills when touched;
+   a frozen fleet (UNFREEZE) stays filled because that is a real state */
+.freeze:not(.unfreeze) { color: rgb(var(--bad-rgb)); background: rgba(var(--bad-rgb), 0.07); border: 1.5px solid rgba(var(--bad-rgb), 0.6); box-shadow: none; }
+.freeze:not(.unfreeze) kbd { background: transparent; border-color: rgba(var(--bad-rgb), 0.5); }
+.freeze:not(.unfreeze):not([disabled]):hover, .freeze:not(.unfreeze).press { color: var(--on-bad); background: linear-gradient(180deg, rgba(var(--bad-rgb), 1), rgba(var(--bad-rgb), 0.8)); box-shadow: 0 8px 30px rgba(var(--bad-rgb), 0.35), inset 0 1px 0 var(--btn-sheen); filter: none; }
+.freeze:not(.unfreeze):not([disabled]):hover kbd, .freeze:not(.unfreeze).press kbd { background: var(--btn-kbd); border-color: var(--btn-kbd-edge); }
+.freeze[disabled], .freeze[disabled]:hover { color: var(--faint); background: transparent; border: 1.5px dashed var(--line-hi); box-shadow: none; filter: none; cursor: default; }
+.freeze[disabled] kbd { border-color: var(--line-hi); opacity: 0.7; }
+/* a narrow screen: the status pill wins; the fleet state is still on the freeze button and in the Fleet panel */
+@media (max-width: 1500px) {
+  .fleetbox { display: none; }
+  .pill { font-size: 2rem; max-width: 40vw; }
+  .pillsub { max-width: 38vw; font-size: 1.25rem; }
+  .tag { letter-spacing: 0.14em; gap: 0.5rem; }
+  .freeze { padding: 0.8rem 1.1rem; }
+}
+
+/* ---------- panels ---------- */
+main { display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(0, 1fr); gap: var(--gap); min-height: 0; min-width: 0; }
+.col { display: grid; gap: var(--gap); min-height: 0; min-width: 0; }
+.col.left { grid-template-rows: minmax(0, 1fr) auto; }
+.col.right { grid-template-rows: minmax(0, 1.05fr) minmax(0, 1fr) minmax(0, 0.82fr); }
+@media (max-height: 920px) {
+  .col.right { grid-template-rows: minmax(0, 1fr) minmax(0, 0.92fr) minmax(0, 1fr); }
+  .phead { padding: 0.75rem 1.1rem 0.45rem; }
+}
+.duo { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: var(--gap); min-height: 0; }
+.panel {
+  position: relative; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+  border-radius: var(--r);
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel) 30%);
+  border: 1px solid var(--line);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: var(--panel-blur);
+  -webkit-backdrop-filter: var(--panel-blur);
+  overflow: hidden;
+  transition: border-color .5s, box-shadow .5s, background .4s;
+}
+.panel::before {
+  content: ""; position: absolute; left: 8%; right: 8%; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--panel-topline), transparent);
+  opacity: 0.7;
+}
+.phead { display: flex; align-items: baseline; gap: 0.8rem; padding: 0.95rem 1.2rem 0.6rem; flex: none; min-width: 0; }
+.phead h2 { margin: 0; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 0.86rem; font-weight: 700; letter-spacing: var(--head-track); text-transform: uppercase; color: var(--head); white-space: nowrap; }
+.phead .sub { font-size: 0.86rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.phead .spacer { flex: 1; }
+.live { display: inline-flex; align-items: center; gap: 0.45rem; font-size: var(--t-cap); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.live i { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ok); box-shadow: 0 0 calc(10px * var(--glow)) var(--ok); animation: breathe 1.6s ease-in-out infinite; }
+.live.dead i { background: var(--faint); box-shadow: none; animation: none; }
+.empty-state { margin: auto; text-align: center; color: var(--muted); font-size: 1rem; line-height: 1.5; padding: 1rem; }
+.empty-state b { display: block; color: var(--text-2); font-weight: 600; font-size: 1.08rem; margin-bottom: 0.2rem; }
+.empty-state code { font-family: var(--mono); font-size: 0.85em; color: var(--text-2); background: var(--fill-3); padding: 0.1rem 0.4rem; border-radius: 6px; }
+
+/* ---------- split view: the twin and the live camera side by side ---------- */
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--gap); min-height: 0; min-width: 0; }
+.stage[data-view="twin"] { grid-template-columns: minmax(0, 1fr); }
+.stage[data-view="twin"] .cam { display: none; }
+.viewtog { display: inline-flex; border: 1px solid var(--line-hi); border-radius: 8px; overflow: hidden; align-self: center; flex: none; }
+.viewtog button { font: inherit; font-size: var(--t-cap); letter-spacing: 0.12em; text-transform: uppercase; padding: 0.22rem 0.6rem; color: var(--muted); background: transparent; border: 0; cursor: pointer; }
+.viewtog button + button { border-left: 1px solid var(--line-hi); }
+.viewtog button.on { color: var(--text); background: rgba(var(--accent-rgb), 0.16); }
+.viewtog button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.stage[data-view="split"] .twin .hud-r { width: 10.5rem; padding: 0.6rem 0.7rem; }
+.stage[data-view="split"] .twin .hud-tl { left: 0.8rem; }
+.stage[data-view="split"] .twin .hud-bl { left: 0.8rem; gap: 1rem; }
+.stage[data-view="split"] .twin .sensor .v { font-size: 1.9rem; }
+.stage[data-view="split"] .twin .stat .v { font-size: 1.25rem; }
+.cam.stale .camfit img, .cam.stale .eyemark { opacity: 0.45; filter: grayscale(0.7); transition: opacity .6s, filter .6s; }
+.cambody { position: relative; flex: 1; min-height: 0; background: var(--cam-bg); border-top: 1px solid var(--edge-1); overflow: hidden; }
+.camfit { position: absolute; inset: 0; }
+.camfit img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+.eyemark { position: absolute; width: 0; height: 0; pointer-events: none; display: none; }
+/* the labelled grid Astra sees (gentest.gridded): 12 x 9 cells, A-L across, 1-9 down; G toggles */
+.camgrid { position: absolute; pointer-events: none; display: none; overflow: visible; }
+.camgrid line { stroke: rgba(255, 255, 255, 0.7); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.camgrid text { fill: #fff; stroke: rgba(0, 0, 0, 0.85); stroke-width: 0.045; paint-order: stroke; font-size: 0.2px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cam.off .camgrid { visibility: hidden; }
+.cam.stale .camgrid { opacity: 0.45; }
+.gridtog { margin-left: 0.5rem; }
+.eyemark i { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border-radius: 50%; border: 2.5px solid rgb(var(--eye-rgb)); box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85), 0 0 calc(12px * var(--glow)) rgba(var(--eye-rgb), 0.9); }
+.eyemark i::before, .eyemark i::after { content: ""; position: absolute; background: rgb(var(--eye-rgb)); }
+.eyemark i::before { left: 50%; top: -7px; bottom: -7px; width: 2px; margin-left: -1px; }
+.eyemark i::after { top: 50%; left: -7px; right: -7px; height: 2px; margin-top: -1px; }
+.eyemark b { position: absolute; left: 22px; top: -14px; white-space: nowrap; font-size: var(--t-meta); font-weight: 700; color: #fff; background: rgba(var(--eye-rgb), 0.92); padding: 0.1rem 0.45rem; border-radius: 6px; }
+.eyebar { flex: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 1.3rem; padding: 0.55rem 1.1rem 0.7rem; border-top: 1px solid var(--edge-1); font-size: var(--t-meta); color: var(--text-2); }
+.eyebar b { color: var(--text); font-weight: 650; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.15rem; }
+.eyebar .k { font-size: var(--t-cap); letter-spacing: 0.16em; color: var(--muted); text-transform: uppercase; margin-right: 0.4rem; }
+.eyebar b.bad, .eyebar .bad { color: var(--bad); }
+.eyebar b.warn, .eyebar .warn { color: var(--warn); }
+.eyebar b.ok, .eyebar .ok { color: var(--ok); }
+.cam .camoff { position: absolute; inset: 0; display: none; }
+.cam.off .camoff { display: flex; }
+.cam.off .camfit, .cam.off .eyemark { visibility: hidden; }
+/* ---------- twin ---------- */
+.twin.alarm { border-color: rgba(var(--bad-rgb), 0.55); box-shadow: inset 0 0 0 1px rgba(var(--bad-rgb), 0.25), 0 0 calc(60px * var(--glow) + 16px) rgba(var(--bad-rgb), 0.18); }
+.twin.healing { border-color: rgba(var(--warn-rgb), 0.5); box-shadow: 0 0 calc(50px * var(--glow) + 14px) rgba(var(--warn-rgb), 0.14); }
+.twinbody { position: relative; flex: 1; min-height: 0; background: var(--tw-stage); }
+.twin.stale #cv, .twin.stale .hud { opacity: 0.4; filter: grayscale(0.85); transition: opacity .6s, filter .6s; }
+#cv { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#cv.drag { cursor: grabbing; }
+.vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .6s; background: radial-gradient(120% 100% at 50% 50%, transparent 55%, rgba(var(--bad-rgb), var(--vignette-a)) 100%); }
+.twin.alarm .vignette { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.hud { position: absolute; pointer-events: none; }
+.hud-tl { left: 1.2rem; top: 0.3rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.stat .k { font-size: var(--t-cap); letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }
+.stat .v { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.55rem; font-weight: 650; letter-spacing: 0.005em; margin-top: 0.1rem; white-space: nowrap; }
+.stat .v small { font-size: 0.6em; color: var(--text-2); font-weight: 600; margin-left: 0.35em; }
+.stat .v.run { color: var(--accent); }
+.stat .v .spin { display: inline-block; width: 0.7em; height: 0.7em; margin-left: 0.4em; border: 2px solid rgba(var(--accent-rgb), 0.3); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: 0.05em; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hud-r { right: 1.1rem; top: 0.2rem; width: 13.5rem; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.8rem 0.95rem; border-radius: 14px; background: var(--hud-bg); border: 1px solid var(--line); box-shadow: var(--card-shadow); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.hud-r:empty { display: none; }
+.hud-r .t { font-size: var(--t-cap); letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; margin-bottom: 0.1rem; }
+.joint { display: grid; grid-template-columns: 4.3rem 1fr; align-items: baseline; row-gap: 0.25rem; }
+.joint .n { font-size: var(--t-cap); letter-spacing: 0.12em; color: var(--text-2); text-transform: uppercase; }
+.joint .a { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.12rem; font-weight: 600; text-align: right; }
+.joint .a small { color: var(--muted); font-size: 0.75em; margin-left: 0.1em; }
+.joint .g { grid-column: 1 / -1; height: 4px; border-radius: 3px; background: var(--track); position: relative; overflow: hidden; }
+.joint .g i { position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -3px; border-radius: 3px; background: var(--accent); box-shadow: 0 0 calc(8px * var(--glow)) var(--accent); transition: left .25s linear; }
+.joint .g b { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--track-mid); }
+.twin.alarm .joint .g i { background: var(--bad); box-shadow: 0 0 calc(8px * var(--glow)) var(--bad); }
+.hud-bl { left: 1.2rem; bottom: 1rem; display: flex; gap: 1.8rem; align-items: flex-end; }
+.sensor .v { font-size: 2.6rem; font-weight: 700; }
+.sensor .v.ok { color: var(--ok); }
+.sensor .v.warn { color: var(--warn); }
+.sensor .v.bad { color: var(--bad); }
+.sensor .v.calm { color: var(--text-2); }       /* out of range at home: the jaw sits in the beam, that's normal */
+.sensor .e { font-size: 0.95rem; color: var(--text-2); margin-top: 0.15rem; white-space: nowrap; }
+.sensor .e b { color: var(--text); font-weight: 650; }
+.hint { position: absolute; right: 0.8rem; bottom: 0.6rem; padding: 0.22rem 0.5rem; border-radius: 6px; background: var(--hud-bg); font-size: var(--t-cap); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); pointer-events: none; transition: opacity .4s; opacity: 0; }
+.twinbody:hover .hint { opacity: 1; }      /* operator help: only while the mouse is on the stage */
+.twin.alarm .hint, .twin.healing .hint { opacity: 0; }
+/* the state banner: in the panel's flow, above the stage, so it can never cover the arm */
+.banner { --c: var(--bad-rgb); --bb: var(--banner-bad); display: grid; grid-template-rows: 0fr; margin: 0 1.1rem; transition: grid-template-rows .45s cubic-bezier(.2, .8, .2, 1), margin .45s; flex: none; }
+.banner.on { grid-template-rows: 1fr; margin-bottom: 0.4rem; }
+.banner.warn { --c: var(--warn-rgb); --bb: var(--banner-warn); }
+.banner.ok { --c: var(--ok-rgb); --bb: var(--banner-ok); }
+.banner .bwrap { min-height: 0; overflow: hidden; }
+.bcard { border-radius: var(--r-sm); min-width: 0; overflow: hidden;
+  border: 1px solid rgba(var(--c), 0.62); background: linear-gradient(90deg, rgba(var(--c), 0.24), var(--bb) 55%);
+  box-shadow: 0 0 calc(36px * var(--glow)) rgba(var(--c), 0.24), inset 3px 0 0 rgb(var(--c)); }
+/* The banner's two rows share one grid, so they share column lines: four columns, each a node and the arrow
+   after it. A beat spans its column; a node sits in the column's first track, its arrow in the second. */
+.bcard { --xlw: 4.6rem; --xgap: 0.55rem; }
+.bin { display: block; padding: 0.55rem 1.1rem 0.5rem; min-width: 0; }
+.banner.person .bcard { background: linear-gradient(90deg, rgba(var(--c), 0.5), rgba(var(--c), 0.16) 70%), var(--bb); }
+/* the incident as a story, all four beats on screen at once: BROKE > PARKED > HEALING > RESUMED (or PERSON / FIXED).
+   One row of fixed height whatever the state, so the twin under it never changes size mid-incident */
+.beats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr) var(--xlw)); column-gap: var(--xgap); min-width: 0; margin: 0; padding: 0; list-style: none; }
+.beats li { grid-column: span 2; min-width: 0; border-top: 4px solid var(--track); padding-top: 0.38rem; color: var(--faint); transition: color .3s, border-color .3s; }
+.beats .bw { display: flex; align-items: center; gap: 0.42rem; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.5rem; font-weight: 800; letter-spacing: 0.08em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.beats .bw svg { width: 0.85em; height: 0.85em; flex: none; }
+.beats .bt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* every beat has the same 0.85em mark, so the four words start at the same offset: a dashed ring still to come,
+   a ring with a pulsing centre now, a check when done, a cross when it failed */
+.beats .bm { width: 0.85em; height: 0.85em; flex: none; box-sizing: border-box; border-radius: 50%; border: 2px dashed currentColor; opacity: 0.6; }
+.beats li.now .bm { position: relative; opacity: 1; border: 2px solid rgb(var(--c)); }
+.beats li.now .bm::after { content: ""; position: absolute; inset: 20%; border-radius: 50%; background: rgb(var(--c)); animation: breathe 1.1s ease-in-out infinite; }
+.beats small { display: block; font-size: 1.02rem; font-weight: 550; color: var(--muted); margin-top: 0.18rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.25; }
+.beats li.done { color: var(--text-2); border-color: rgba(var(--c), 0.5); }
+.beats li.done small { color: var(--text-2); }
+.beats li.now { color: rgb(var(--c)); border-color: rgb(var(--c)); text-shadow: 0 0 calc(18px * var(--glow)) rgba(var(--c), 0.6); animation: beatnow 1.1s ease-in-out infinite; }
+.beats li.now small { color: var(--text); text-shadow: none; }
+.beats li.fail { color: var(--bad); border-color: var(--bad); }
+.beats li.fail small { color: var(--bad); }
+.banner.person .beats li.now { color: var(--text); text-shadow: 0 0 calc(18px * var(--glow)) rgba(var(--c), 0.9); }
+@keyframes beatnow { 50% { border-color: rgba(var(--c), 0.3); } }
+.twinempty { position: absolute; inset: 0; display: flex; pointer-events: none; }
+
+/* ---------- the worker -> manager exchange: the banner's second row ----------
+   WORKER -asks-> MANAGER -answers-> PLAIN CODE -approves-> ARM, in the beats' columns. Two lines a node: the
+   title with its role chip, then one line of what it did. Built once and updated in place (classes and text
+   only), so the packet's flight is never restarted by a re-render. Done steps go quiet (a small green badge);
+   only the step happening now, the packet and a failure carry colour. */
+.xchg { display: none; padding: 0.42rem 1.1rem 0.48rem; min-width: 0;
+  border-top: 1px solid rgba(var(--c), 0.28); background: var(--xchg-bg); }
+.xchg.on { display: block; }
+.xflow { min-width: 0; display: grid; align-items: center; column-gap: var(--xgap); grid-template-columns: repeat(4, minmax(0, 1fr) var(--xlw)); }
+.xflow .xn:last-child { grid-column: span 2; }
+.xn { --k: var(--idle-rgb); display: flex; flex-direction: column; min-width: 0; transition: opacity .35s; }
+.xn .xh1 { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.xn .xi { position: relative; flex: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; display: grid; place-items: center;
+  color: rgb(var(--k)); background: rgba(var(--k), 0.13); border: 1.5px solid rgba(var(--k), 0.6); transition: color .3s, background .3s, border-color .3s; }
+.xn .xi > svg { width: 0.98rem; height: 0.98rem; }
+.xn .xb { position: absolute; right: -0.3rem; bottom: -0.25rem; width: 0.92rem; height: 0.92rem; border-radius: 50%; display: none; place-items: center;
+  background: rgb(var(--k)); color: var(--on-ice); box-shadow: 0 0 0 2px var(--panel); }
+.xn .xb svg { width: 0.66rem; height: 0.66rem; stroke-width: 3.4; }
+.xn.done .xb, .xn.fail .xb { display: grid; }
+.xn b { display: flex; align-items: center; gap: 0.45rem; min-width: 0; overflow: hidden; font-family: var(--display); font-stretch: var(--display-stretch); font-size: 0.9rem; font-weight: 800; letter-spacing: 0.1em; color: rgb(var(--k)); white-space: nowrap; }
+.xn b span { flex: none; }
+.xn b i { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; font-family: var(--mono); font-size: max(0.68rem, 10px); font-weight: 700; letter-spacing: 0.02em; padding: 0.06rem 0.4rem; border-radius: 999px; border: 1px solid rgba(var(--k), 0.5); color: rgba(var(--k), 1); }
+.xn b i:empty { display: none; }
+.xn .xd { display: block; font-style: normal; font-size: 0.98rem; font-weight: 650; line-height: 1.25; color: var(--text); margin-top: 0.22rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xn.pend { opacity: 0.45; }
+.xn.pend .xd { color: var(--text-2); font-weight: 550; }
+.xn.now, .xn.think { --k: var(--accent-rgb); }
+.xn.now .xi, .xn.fall .xi, .xn.think .xi { animation: xping 1.5s ease-out infinite; }
+.xn.think .xi > svg { animation: spin 2.8s linear infinite; }
+.xn.think .xd { color: var(--accent); }
+@keyframes xping { 0% { box-shadow: 0 0 0 0 rgba(var(--k), 0.6); } 100% { box-shadow: 0 0 0 0.7rem rgba(var(--k), 0); } }
+.xn.done { --k: var(--idle-rgb); }
+.xn.done b { color: var(--text-2); }
+.xn.done .xb { background: rgb(var(--ok-rgb)); }
+.xn.fail { --k: var(--bad-rgb); }
+.xn.fail .xd { color: var(--bad); }
+.xn.fall { --k: var(--warn-rgb); }
+.xn.skip { --k: var(--off-rgb); opacity: 0.62; }
+.xn.skip .xi { border-style: dashed; background: transparent; }
+.xn.skip .xd { color: var(--muted); font-weight: 550; }
+/* the manager's answer: quoted, and it lands with a pop */
+.xn .xd.q { color: var(--text); }
+.xn.ans .xd { display: inline-block; max-width: 100%; vertical-align: top; transform-origin: 0 50%; animation: ans .9s cubic-bezier(.2, .8, .2, 1); }
+@keyframes ans { 0% { transform: scale(1.12); text-shadow: 0 0 calc(18px * var(--glow) + 2px) rgba(var(--accent-rgb), 0.8); color: var(--accent); } 100% { transform: none; } }
+.xl { --k: var(--off-rgb); display: grid; grid-template-rows: auto 0.8rem auto; align-items: center; min-width: 0; text-align: center; }
+.xl .xc { font-size: max(0.8rem, 10.5px); font-weight: 700; letter-spacing: 0.04em; color: rgba(var(--k), 0.95); white-space: nowrap; overflow: visible; }
+.xl .xw { position: relative; height: 2px; margin-right: 0.3rem; border-radius: 2px; background: repeating-linear-gradient(90deg, rgba(var(--k), 0.55) 0 5px, transparent 5px 10px); }
+.xl .xw::after { content: ""; position: absolute; right: -0.25rem; top: 50%; width: 0.42rem; height: 0.42rem; border-top: 2px solid rgba(var(--k), 0.85); border-right: 2px solid rgba(var(--k), 0.85); transform: translateY(-50%) rotate(45deg); }
+.xl .xs { font-family: var(--mono); font-size: var(--t-meta); font-weight: 600; color: var(--text-2); white-space: nowrap; min-height: 1.2em; margin-top: 0.1rem; }
+.xl.done { --k: var(--idle-rgb); }
+.xl.done .xw { background: linear-gradient(90deg, rgba(var(--k), 0.3), rgba(var(--k), 0.75)); }
+.xl.wait { --k: var(--accent-rgb); }
+.xl.wait .xw { background: repeating-linear-gradient(90deg, rgba(var(--k), 0.95) 0 6px, transparent 6px 12px); background-size: 12px 2px; animation: xflow .55s linear infinite; }
+.xl.wait .xs { color: var(--accent); }
+@keyframes xflow { to { background-position: 12px 0; } }
+.xl.fail { --k: var(--bad-rgb); }
+.xl.fail .xs { color: var(--bad); }
+.xl.skip { opacity: 0.35; }
+/* the packet: big enough to follow across a room */
+.xl .pkt { position: absolute; top: 50%; left: 0; width: 2.2rem; height: 0.7rem; margin-top: -0.35rem; border-radius: 999px; opacity: 0; pointer-events: none;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0), rgb(var(--accent-rgb)) 55%, #fff); box-shadow: 0 0 calc(14px * var(--glow) + 4px) rgba(var(--accent-rgb), 0.95); }
+.xl.fly .pkt { animation: xfly 1s cubic-bezier(.45, 0, .25, 1) both; }
+@keyframes xfly { 0% { left: -1.2rem; opacity: 0; } 14% { opacity: 1; } 86% { opacity: 1; } 100% { left: calc(100% - 1.4rem); opacity: 0; } }
+html[data-look="light"] .xl .pkt { background: linear-gradient(90deg, rgba(var(--accent-rgb), 0), rgb(var(--accent-rgb))); box-shadow: 0 2px 10px rgba(var(--accent-rgb), 0.5); }
+html[data-look="light"] .xn .xb { color: #ffffff; box-shadow: 0 0 0 2px #ffffff; }
+html[data-look="light"] .xn.pend { opacity: 0.62; }
+html[data-look="neon"] .xn.now b, html[data-look="neon"] .xn.think b, html[data-look="neon"] .xn.fail b { text-shadow: 0 0 10px rgba(var(--k), 0.7); }
+html[data-look="neon"] .xn.now .xi, html[data-look="neon"] .xn.think .xi { box-shadow: 0 0 14px rgba(var(--k), 0.45); }
+@media (max-width: 1500px) {
+  .bcard { --xlw: 4.4rem; --xgap: 0.32rem; }
+  .bin { padding: 0.5rem 0.9rem 0.45rem; }
+  .xchg { padding: 0.38rem 0.9rem 0.42rem; }
+  .xl .xs { font-size: 10px; letter-spacing: -0.02em; }
+  .xl .xc { font-size: 10.5px; letter-spacing: 0; }
+  .xn .xi { width: 1.55rem; height: 1.55rem; }
+  .xn b { letter-spacing: 0.06em; }
+  .xn b i { display: none; }               /* no room for the role chip: the titles carry the story */
+}
+/* ---------- heal timeline ---------- */
+.heal { height: clamp(150px, 24vh, 270px); }
+.healbody { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 2fr); gap: 1.1rem; padding: 0 1.2rem 1rem; }
+.counters { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 0.6rem; min-height: 0; }
+.ctr { border-radius: var(--r-sm); background: var(--fill-2); border: 1px solid var(--line); padding: 0.55rem 0.85rem; display: flex; flex-direction: column; justify-content: center; min-width: 0; overflow: hidden; }
+.ctr .v { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 2.45rem; font-weight: 700; line-height: 1; letter-spacing: -0.01em; }
+.ctr .v small { font-size: 0.48em; font-weight: 600; color: var(--text-2); margin-left: 0.15em; letter-spacing: 0; }
+.ctr .k { font-size: 0.95rem; font-weight: 600; letter-spacing: 0.01em; color: var(--text-2); margin-top: 0.35rem; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ctr.ok .v { color: var(--ok); }
+.ctr.bad .v { color: var(--bad); }
+.ctr.zero .v { color: var(--faint); }
+.tl { position: relative; min-width: 0; min-height: 0; }
+.tl svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
+.tl .tlempty { position: absolute; left: 0; right: 0; top: 34%; text-align: center; color: var(--muted); font-size: 0.98rem; }
+
+/* ---------- jobs ---------- */
+.kanban { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.6rem; padding: 0 1rem 1rem; }
+.kcol { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 0.45rem; border-radius: var(--r-sm); padding: 0.5rem; background: var(--fill-1); border: 1px solid var(--edge-1); overflow: hidden; }
+.kcol h3 { margin: 0 0 0.1rem; display: flex; justify-content: space-between; align-items: center; font-size: var(--t-cap); letter-spacing: 0.18em; color: var(--muted); font-weight: 700; text-transform: uppercase; padding: 0.1rem 0.25rem; }
+.kcol h3 .n { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 0.95rem; letter-spacing: 0; color: var(--text-2); }
+.kcol.doing h3 .n { color: var(--accent); }
+.kcol.blocked h3 .n { color: var(--bad); }
+.kcol.done h3 .n { color: var(--ok); }
+.kcol h3 .n.z { color: var(--faint); }                /* an empty column is not an alarm */
+.kc { border-radius: 10px; padding: 0.5rem 0.6rem; background: var(--card); border: 1px solid var(--line); box-shadow: var(--card-shadow); min-width: 0; flex: none; }
+.kc .o { font-family: var(--mono); font-size: var(--t-meta); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; justify-content: space-between; gap: 0.4rem; }
+.kc .o span:last-child { color: var(--faint); }
+.kc .j { font-size: 0.98rem; font-weight: 600; margin-top: 0.15rem; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.kc .r { font-size: var(--t-meta); color: var(--text-2); margin-top: 0.25rem; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.kc .r.res { color: rgba(var(--ok-rgb), 0.95); }
+.kc .r.blk { color: var(--blk-text); }
+.kc.doing { border-color: rgba(var(--accent-rgb), 0.6); box-shadow: 0 0 calc(22px * var(--glow)) rgba(var(--accent-rgb), 0.18), inset 0 0 0 1px rgba(var(--accent-rgb), 0.15); background: linear-gradient(110deg, var(--card) 30%, rgba(var(--accent-rgb), 0.16) 50%, var(--card) 70%); background-size: 250% 100%; animation: shimmer 2.4s linear infinite; }
+.kc.doing.parked { border-color: rgba(var(--bad-rgb), 0.7); box-shadow: 0 0 calc(22px * var(--glow)) rgba(var(--bad-rgb), 0.2); background: var(--card-hot); animation: none; }
+.kc.doing.parked.healing { border-color: rgba(var(--warn-rgb), 0.75); box-shadow: 0 0 calc(22px * var(--glow)) rgba(var(--warn-rgb), 0.2); background: linear-gradient(180deg, rgba(var(--warn-rgb), 0.12), rgba(var(--warn-rgb), 0.04)), var(--card); }
+.kc.parked.healing .step { color: var(--warn); }   /* the card agrees with the pill: amber while it heals */
+@keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+.kc.blocked { border-color: rgba(var(--bad-rgb), 0.45); }
+.kc.done { opacity: 0.92; }
+.kc .step { margin-top: 0.3rem; font-size: var(--t-meta); color: var(--accent); display: flex; align-items: center; gap: 0.35rem; }
+.kc.parked .step { color: var(--bad); }
+.kmore { font-size: var(--t-meta); color: var(--faint); text-align: center; padding: 0.1rem; }
+.kempty { color: var(--faint); font-size: var(--t-meta); text-align: center; padding: 0.6rem 0.2rem; }
+
+/* ---------- feed ---------- */
+.feedlist { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; overscroll-behavior: contain; padding: 0 0.9rem 0.6rem; display: flex; flex-direction: column; gap: 0.32rem; mask-image: linear-gradient(180deg, #000 78%, transparent); -webkit-mask-image: linear-gradient(180deg, #000 78%, transparent); }
+.fi { display: grid; grid-template-columns: 1.9rem 4.9rem minmax(0, 1fr); align-items: center; gap: 0.6rem; padding: 0.42rem 0.6rem; border-radius: 10px; border: 1px solid transparent; flex: none; }
+.fi .ic { width: 1.75rem; height: 1.75rem; border-radius: 8px; display: grid; place-items: center; background: var(--fill-3); color: var(--text-2); }
+.fi .ic svg { width: 1.05rem; height: 1.05rem; }
+.fi .tm { font-family: var(--mono); font-size: var(--t-meta); color: var(--muted); white-space: nowrap; }
+.fi .tx { font-size: 0.98rem; line-height: 1.3; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fi .tx .src { font-size: var(--t-cap); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-right: 0.5rem; font-weight: 600; }
+.fi.dim .tx { color: var(--text-2); font-size: 0.9rem; }
+.fi.dim .ic { background: transparent; color: var(--faint); }
+.fi.bad { background: linear-gradient(90deg, rgba(var(--bad-rgb), 0.17), rgba(var(--bad-rgb), 0.04)); border-color: rgba(var(--bad-rgb), 0.32); }
+.fi.bad .ic { background: rgba(var(--bad-rgb), 0.22); color: var(--bad); }
+.fi.bad .tx { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.fi.ok { background: linear-gradient(90deg, rgba(var(--ok-rgb), 0.15), rgba(var(--ok-rgb), 0.03)); border-color: rgba(var(--ok-rgb), 0.28); }
+.fi.ok .ic { background: rgba(var(--ok-rgb), 0.2); color: var(--ok); }
+.fi.warn .ic { background: rgba(var(--warn-rgb), 0.18); color: var(--warn); }
+.fi.acc .ic { background: rgba(var(--accent-rgb), 0.16); color: var(--accent); }
+/* hover, keyboard focus or a click (sticky) opens a row in place: the whole line wrapped, plus the full time and
+   the source. The state is kept in JS by the row's key (renderFeed), so the 1 s re-render keeps it open. */
+.fi { cursor: pointer; }
+.fi:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fi .fmeta { display: none; }
+.feedlist.hasopen { mask-image: none; -webkit-mask-image: none; }
+.fi.open { align-items: start; background-color: var(--fill-2); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.45); }
+.fi.open .tx, .fi.bad.open .tx { white-space: normal; overflow: visible; text-overflow: clip; display: block; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
+.fi.open .fmeta { display: block; margin-top: 0.3rem; font-family: var(--mono); font-size: var(--t-meta); color: var(--muted); line-height: 1.35; }
+/* a new row slides in highlighted, never from transparent: the feed is never blank at the moment that matters.
+   New rows are revealed one at a time, oldest first (renderFeed), so the feed tells the exchange in order */
+.fi.new { animation: slidein .6s cubic-bezier(.2,.8,.2,1); }
+@keyframes slidein { from { transform: translateX(-14px); background-color: rgba(var(--accent-rgb), 0.22); } }
+
+/* ---------- pod + fleet ---------- */
+.podbody, .fleetbody { flex: 1; min-height: 0; padding: 0 1.1rem 0.8rem; display: flex; flex-direction: column; gap: 0.45rem; overflow: hidden; }
+.kv { display: flex; justify-content: space-between; align-items: center; gap: 0.6rem; font-size: 0.95rem; min-width: 0; }
+.kv .k { color: var(--muted); font-size: var(--t-cap); letter-spacing: 0.15em; text-transform: uppercase; white-space: nowrap; }
+.kv .v { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.hd { width: 0.62rem; height: 0.62rem; border-radius: 50%; flex: none; background: var(--faint); }
+.hd.ok { background: var(--ok); box-shadow: 0 0 calc(10px * var(--glow)) rgba(var(--ok-rgb), 0.8); }
+.hd.warn { background: var(--warn); box-shadow: 0 0 calc(10px * var(--glow)) rgba(var(--warn-rgb), 0.8); }
+.hd.bad { background: var(--bad); box-shadow: 0 0 calc(10px * var(--glow)) rgba(var(--bad-rgb), 0.9); animation: breathe 0.9s ease-in-out infinite; }
+.fw { border-radius: var(--r-sm); padding: 0.55rem 0.75rem; border: 1px solid var(--line); background: var(--fill-2); }
+.fw .k { font-size: var(--t-cap); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.fw .v { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.3rem; font-weight: 700; margin-top: 0.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw .s { font-size: var(--t-meta); color: var(--text-2); margin-top: 0.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fw.ok { border-color: rgba(var(--ok-rgb), 0.35); }
+.fw.ok .v { color: var(--ok); }
+.fw.bad { border-color: rgba(var(--bad-rgb), 0.6); background: rgba(var(--bad-rgb), 0.1); }
+.fw.bad .v { color: var(--bad); }
+.fw.warn { border-color: rgba(var(--warn-rgb), 0.55); background: rgba(var(--warn-rgb), 0.08); }
+.fw.warn .v { color: var(--warn); }
+.pinc { font-size: 0.82rem; color: var(--text-2); display: flex; gap: 0.45rem; align-items: baseline; min-width: 0; }
+.pinc .kd { font-family: var(--mono); font-size: var(--t-meta); color: var(--warn); white-space: nowrap; }
+.pinc.critical .kd { color: var(--bad); }
+.pinc .kd.healed { color: var(--ok); }
+.pinc span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.devs { display: flex; flex-direction: column; gap: 0.2rem; min-height: 0; flex: 1 1 auto; overflow: hidden; position: relative; }
+.wos { display: flex; flex-direction: column; gap: 0.3rem; flex: none; }
+.dev { display: grid; grid-template-columns: 0.8rem minmax(0, 1fr) auto; gap: 0.55rem; align-items: center; font-size: 0.9rem; }
+.dev .id { font-family: var(--mono); font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev .id small { font-family: var(--text-font); color: var(--muted); font-size: var(--t-meta); margin-left: 0.4rem; }
+.dev .h { font-size: var(--t-meta); color: var(--muted); white-space: nowrap; }
+.dev .h.ok { color: var(--ok); } .dev .h.warn { color: var(--warn); } .dev .h.bad { color: var(--bad); }
+.sect { font-size: var(--t-cap); letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin-top: 0.05rem; display: flex; justify-content: space-between; }
+.wo { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; align-items: center; font-size: 0.84rem; }
+.wo .p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wo .p small { font-family: var(--mono); color: var(--muted); font-size: var(--t-meta); margin-right: 0.4rem; }
+.st { font-size: var(--t-cap); letter-spacing: 0.08em; text-transform: uppercase; padding: 0.15rem 0.5rem; border-radius: 999px; border: 1px solid var(--line-hi); color: var(--text-2); white-space: nowrap; }
+.st.ok { color: var(--ok); border-color: rgba(var(--ok-rgb), 0.45); }
+.st.warn { color: var(--warn); border-color: rgba(var(--warn-rgb), 0.5); }
+.st.bad { color: var(--bad); border-color: rgba(var(--bad-rgb), 0.55); }
+.st.acc { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.5); }
+.offline { margin: auto; text-align: center; color: var(--muted); font-size: 0.9rem; line-height: 1.45; }
+.offline .big { font-family: var(--display); font-stretch: var(--display-stretch); font-size: 1.25rem; font-weight: 700; color: var(--text-2); letter-spacing: 0.04em; display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+.frozenbar { border-radius: 10px; padding: 0.4rem 0.7rem; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--on-ice); background: linear-gradient(90deg, var(--ice), rgba(var(--ice-rgb), 0.65)); text-align: center; }
+
+/* ---------- presenter bar ---------- */
+footer.bar { display: flex; align-items: center; gap: 0.8rem; min-width: 0; position: relative; }
+.barlabel { font-size: var(--t-cap); letter-spacing: 0.22em; text-transform: uppercase; color: var(--muted); writing-mode: horizontal-tb; white-space: nowrap; padding-right: 0.3rem; }
+.btns { display: grid; grid-template-columns: repeat(9, minmax(0, auto)); gap: 0.55rem; flex: 1; min-width: 0; }   /* nine labels of different lengths: equal columns clip "Bad pod image 07" at 1920 */
+.pb {
+  --c: var(--accent-rgb);
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: 0.7rem; min-width: 0;
+  padding: 0.85rem 0.95rem; border-radius: 14px;
+  font-size: 1.02rem; font-weight: 650; text-align: left;
+  /* calm at rest: one neutral bar, each button's hue only on its left rule and its small label */
+  background: linear-gradient(180deg, var(--fill-3), var(--fill-1)), var(--card);
+  border: 1px solid var(--line);
+  color: var(--text);
+  box-shadow: inset 3px 0 0 rgba(var(--c), 0.85), inset 0 1px 0 var(--sheen), var(--card-shadow);
+  transition: transform .12s, background .2s, border-color .2s, box-shadow .2s;
+}
+.pb .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pb .l .s { display: none; }
+.pb .l small { display: block; font-size: var(--t-cap); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(var(--c), 1); margin-bottom: 0.1rem; }
+.pb:hover { background: linear-gradient(180deg, rgba(var(--c), 0.22), rgba(var(--c), 0.08)), var(--card); border-color: rgba(var(--c), 0.7); }
+.pb:active, .pb.press { transform: scale(0.965); }
+.pb.press { box-shadow: 0 0 0 2px rgba(var(--c), 0.9), 0 0 30px rgba(var(--c), 0.45); }
+.pb.fault { --c: var(--warn-rgb); }
+.pb.danger { --c: var(--bad-rgb); }
+.pb.fix { --c: var(--ok-rgb); }
+.pb.ice { --c: var(--ice-rgb); }
+@media (max-width: 1500px) {
+  .barlabel { display: none; }
+  .btns { gap: 0.4rem; }
+  .pb { padding: 0.75rem 0.6rem; gap: 0.45rem; }
+  .pb .l .g { display: none; }
+  .pb .l .s { display: inline; }
+}
+.pb .ripple { position: absolute; border-radius: 50%; background: rgba(var(--c), 0.45); transform: scale(0); animation: ripple .6s ease-out; pointer-events: none; }
+@keyframes ripple { to { transform: scale(4); opacity: 0; } }
+.pb .st8 { position: absolute; right: 0.6rem; top: 0.5rem; font-size: var(--t-cap); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(var(--c), 1); opacity: 0; transition: opacity .3s; }
+.pb.sent .st8, .pb.done .st8, .pb.failed .st8 { opacity: 1; }
+.pb.done { border-color: rgba(var(--c), 0.95); box-shadow: 0 0 calc(24px * var(--glow) + 4px) rgba(var(--c), 0.35); }
+.pb.failed { --c: var(--bad-rgb); }
+kbd { font-family: var(--mono); font-size: 0.8rem; font-weight: 700; min-width: 1.75rem; height: 1.75rem; padding: 0 0.4rem; display: inline-grid; place-items: center; border-radius: 7px; color: var(--text); background: var(--fill-4); border: 1px solid var(--edge-2); border-bottom-width: 2px; flex: none; }
+.toast { position: absolute; left: 50%; bottom: calc(100% + 0.7rem); translate: -50% 0; padding: 0.6rem 1rem; border-radius: 12px; font-size: 0.95rem; color: var(--text); background: var(--toast-bg); border: 1px solid var(--line-hi); box-shadow: 0 10px 40px var(--drop); opacity: 0; transform: translateY(8px); transition: opacity .3s, transform .3s; pointer-events: none; max-width: 48vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 5; }
+.toast.on { opacity: 1; transform: none; }
+.toast.ok { border-color: rgba(var(--ok-rgb), 0.6); }
+.toast.bad { border-color: rgba(var(--bad-rgb), 0.7); }
+.toast b { font-weight: 700; }
+.toast .dim { color: var(--muted); margin-left: 0.4rem; }
+
+/* =====================================================================================
+   LOOK-SPECIFIC TREATMENTS (shape and type; colors still from the tokens)
+   ===================================================================================== */
+/* neon: a bolder display treatment, corner brackets, glowing headings */
+html[data-look="neon"] .name { font-family: var(--display); font-stretch: var(--display-stretch); font-weight: 800; text-transform: uppercase; letter-spacing: 0.07em; }
+html[data-look="neon"] .name b { font-weight: 800; filter: drop-shadow(0 0 10px rgba(var(--accent2-rgb), 0.55)); }
+html[data-look="neon"] .phead h2 { text-shadow: 0 0 10px rgba(var(--accent-rgb), 0.75); }
+html[data-look="neon"] .pill { border-width: 2px; border-radius: 10px; letter-spacing: 0.1em; text-transform: uppercase; max-width: 40vw; }   /* wide caps: leave the title its room */
+html[data-look="neon"] .panel::after {
+  content: ""; position: absolute; inset: 5px; pointer-events: none; z-index: 3;
+  background:
+    linear-gradient(var(--accent2), var(--accent2)) left top / 16px 2px no-repeat,
+    linear-gradient(var(--accent2), var(--accent2)) left top / 2px 16px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right bottom / 16px 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right bottom / 2px 16px no-repeat;
+  filter: drop-shadow(0 0 4px rgba(var(--accent2-rgb), 0.9));
+}
+html[data-look="neon"] .ctr .v, html[data-look="neon"] .stat .v, html[data-look="neon"] #clock, html[data-look="neon"] .fw .v { text-shadow: 0 0 14px currentColor; }
+html[data-look="neon"] .ctr.zero .v { text-shadow: none; }
+html[data-look="neon"] .beats .bw { font-size: 1.6rem; letter-spacing: 0.1em; }
+html[data-look="neon"] .pill .why { text-shadow: none; filter: drop-shadow(0 0 8px rgba(var(--c), 0.7)); }   /* drawn after the clip: no glow box */
+html[data-look="neon"] .pill .u { text-transform: none; }
+@media (max-width: 1500px) {                       /* "WRONG MOVE" fits its column at 1280 in every look */
+  .beats .bw, html[data-look="neon"] .beats .bw { font-size: 1.28rem; letter-spacing: 0.05em; }
+}
+html[data-look="neon"] #clock { text-shadow: none; }
+html[data-look="neon"] .freeze { border-radius: 8px; text-transform: uppercase; }
+html[data-look="neon"] .freeze:not(.unfreeze):not([disabled]):hover, html[data-look="neon"] .freeze:not(.unfreeze).press { box-shadow: 0 0 26px rgba(var(--bad-rgb), 0.55), inset 0 1px 0 var(--btn-sheen); }
+html[data-look="neon"] .pb { border-radius: 8px; }
+html[data-look="neon"] .kc { border-radius: 6px; }
+html[data-look="neon"] .looks button.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accent2), 0 0 12px var(--accent2); }
+/* light: solid status badges, crisp borders, no glow */
+html[data-look="light"] .pill { background: rgb(var(--c)); border-color: rgb(var(--c)); color: var(--pill-word); box-shadow: 0 8px 22px rgba(var(--c), 0.28); }
+html[data-look="light"] .pill .why { color: var(--pill-word); opacity: 0.92; }
+html[data-look="light"] .pill .dot { background: var(--pill-word); }
+html[data-look="light"] .freeze:not(.unfreeze):not(:hover):not(.press):not([disabled]) { background: #ffffff; }
+html[data-look="light"] .name { font-weight: 700; }
+html[data-look="light"] .name b { font-weight: 700; }
+html[data-look="light"] .kc.doing { box-shadow: 0 2px 10px rgba(var(--accent-rgb), 0.15), inset 0 0 0 1px rgba(var(--accent-rgb), 0.2); }
+html[data-look="light"] .twinbody { border-top: 1px solid var(--edge-1); }
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="fx" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+      <defs>
+        <linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" style="stop-color: var(--mark-1)"/><stop offset="1" style="stop-color: var(--mark-2)"/></linearGradient>
+      </defs>
+      <circle cx="32" cy="32" r="29" fill="none" stroke="url(#mg)" stroke-width="2.5" opacity="0.9"/>
+      <circle cx="32" cy="32" r="21" style="fill: rgba(var(--accent-rgb), 0.10); stroke: rgba(var(--accent-rgb), 0.35)" stroke-width="1.5"/>
+      <path d="M22 44 V20 h12 a8 8 0 0 1 0 16 h-12 M33 36 l10 8" fill="none" style="stroke: var(--mark-ink)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="56" cy="20" r="4" style="fill: var(--mark-2)"/>
+    </svg>
+    <div>
+      <div class="name">Romulus <b>Mission Control</b></div>
+      <div class="tag">self-healing robot arm fleet <span class="chip" id="modeChip">sim</span>
+        <span class="looks" id="looks" role="group" aria-label="Look (L cycles)"><button data-look="mission" title="Mission look (L cycles)"></button><button data-look="neon" title="Neon look (L cycles)"></button><button data-look="light" title="Light look (L cycles)"></button></span>
+      </div>
+    </div>
+  </div>
+  <div class="pillwrap">
+    <div id="pill" class="pill off"><span class="dot"></span><span class="word">CONNECTING</span><span class="why"></span></div>
+    <div id="pillsub" class="pillsub">&nbsp;</div>
+  </div>
+  <div class="hright">
+    <div class="clock"><div id="clock">--:--:--</div><div class="date" id="date">&nbsp;</div></div>
+    <div class="fleetbox"><div class="k">Fleet</div><div class="v unknown" id="fleetState"><span class="d"></span><span>…</span></div></div>
+    <button class="freeze" id="freezeBtn" data-act="freeze">FREEZE FLEET<kbd>F</kbd></button>
+  </div>
+</header>
+
+<main>
+  <section class="col left">
+    <div class="stage" id="stage" data-view="split">
+    <article class="panel twin" id="twin">
+      <div class="phead"><h2>Digital twin</h2><span class="sub" id="twinSub">SO-101 arm</span><span class="spacer"></span><span class="viewtog" id="viewtog" role="group" aria-label="View (V toggles)"><button data-view="twin" title="Twin only (V toggles)">Twin</button><button data-view="split" title="Twin and live camera (V toggles)">Split</button></span><span class="live dead" id="live"><i></i><span>waiting</span></span></div>
+      <div class="banner" id="banner"><div class="bwrap"><div class="bcard"><div class="bin" id="bannerIn"></div><div class="xchg" id="xchg"></div></div></div></div>
+      <div class="twinbody">
+        <canvas id="cv"></canvas>
+        <div class="vignette"></div>
+        <div class="hud hud-tl" id="hudTL"></div>
+        <div class="hud hud-r" id="hudR"></div>
+        <div class="hud hud-bl" id="hudBL"></div>
+        <div class="twinempty" id="twinEmpty"></div>
+        <div class="hint">drag to orbit · scroll to zoom · double-click to reset</div>
+      </div>
+    </article>
+    <article class="panel cam off" id="cam">
+      <div class="phead"><h2>Live camera</h2><span class="sub" id="camSub">the bench, as the eye sees it</span><span class="spacer"></span><span class="viewtog gridtog"><button id="gridTog" title="Labelled grid, the one Astra sees (G toggles)">Grid</button></span><span class="live dead" id="camLive"><i></i><span>offline</span></span></div>
+      <div class="cambody">
+        <div class="camfit" id="camfit"><img id="camimg" alt="Live camera frame of the arm's bench" draggable="false"><div class="eyemark" id="eyemark"><i></i><b id="eyetag">bag</b></div><svg class="camgrid" id="camgrid" viewBox="0 0 12 9" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="camoff"><div class="empty-state" id="camMsg"><b>Camera offline</b></div></div>
+      </div>
+      <div class="eyebar" id="eyebar"></div>
+    </article>
+    </div>
+    <article class="panel heal">
+      <div class="phead"><h2>Heal timeline</h2><span class="sub" id="healSub">last 20 min</span></div>
+      <div class="healbody"><div class="counters" id="counters"></div><div class="tl" id="timeline"></div></div>
+    </article>
+  </section>
+  <section class="col right">
+    <article class="panel jobs"><div class="phead"><h2>Jobs</h2><span class="sub" id="jobsSub">ARM JOB cards</span></div><div class="kanban" id="kanban"></div></article>
+    <article class="panel feed"><div class="phead"><h2>Commander feed</h2><span class="sub" id="feedSub">newest first</span></div><div class="feedlist" id="feed"></div></article>
+    <div class="duo">
+      <article class="panel pod"><div class="phead"><h2>Sensor pod</h2><span class="sub" id="podSub">pod-1 · podd</span></div><div class="podbody" id="pod"></div></article>
+      <article class="panel fleetp"><div class="phead"><h2>Fleet</h2><span class="sub" id="fleetSub">Romulus</span></div><div class="fleetbody" id="fleetBody"></div></article>
+    </div>
+  </section>
+</main>
+
+<footer class="bar">
+  <div class="barlabel">Presenter</div>
+  <div class="btns" id="btns">
+    <button class="pb" data-act="order" data-job="pick" data-key="1"><kbd>1</kbd><span class="l"><small>New order</small><span class="g">Pick up the block</span><span class="s">Pick block</span></span><span class="st8">sent</span></button>
+    <button class="pb" data-act="order" data-job="wave" data-key="2"><kbd>2</kbd><span class="l"><small>New order</small><span class="g">Pack red bag</span><span class="s">Red bag</span></span><span class="st8">sent</span></button>
+    <button class="pb" data-act="order" data-job="wave_any" data-key="9"><kbd>9</kbd><span class="l"><small>New order</small><span class="g">Pack any bag</span><span class="s">Any bag</span></span><span class="st8">sent</span></button>
+    <button class="pb fault" data-act="fault" data-fault="us_frozen" data-key="3"><kbd>3</kbd><span class="l"><small>Plant fault</small><span class="g">Stuck sensor</span><span class="s">Stuck sensor</span></span><span class="st8">sent</span></button>
+    <button class="pb fault" data-act="fault" data-fault="pod_image07" data-key="4"><kbd>4</kbd><span class="l"><small>Plant fault</small><span class="g">Bad pod image 07</span><span class="s">Pod image 07</span></span><span class="st8">sent</span></button>
+    <button class="pb danger" data-act="fault" data-fault="joint_stuck" data-key="5"><kbd>5</kbd><span class="l"><small>Plant fault</small><span class="g">Dead elbow servo</span><span class="s">Dead elbow</span></span><span class="st8">sent</span></button>
+    <button class="pb fault" data-act="fault" data-fault="block_shift" data-key="6" title="Bump the block 30 mm: the next pick misses, then the worker, the manager and plain code correct it"><kbd>6</kbd><span class="l"><small><span class="g">Plant wrong move</span><span class="s">Wrong move</span></small><span class="g">Bump the block</span><span class="s">Bump block</span></span><span class="st8">sent</span></button>
+    <button class="pb fix" data-act="clear" data-key="7"><kbd>7</kbd><span class="l"><small>Hands on</small><span class="g">A person fixed it</span><span class="s">Person fixed</span></span><span class="st8">sent</span></button>
+    <button class="pb ice" data-act="freeze" data-key="8" id="freezeBar"><kbd>8</kbd><span class="l"><small>Kill switch</small><span id="freezeBarLabel">Freeze fleet</span></span><span class="st8">sent</span></button>
+  </div>
+  <div class="toast" id="toast"></div>
+</footer>
+
+<script>
+"use strict";
+// ---------- helpers ----------
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const num = (x) => typeof x === "number" && isFinite(x);
+const fmt = (x, d = 0, dash = "–") => (num(x) ? x.toFixed(d) : dash);
+function ago(s) {
+  if (!num(s) || s < 0) return "just now";
+  if (s < 60) return `${Math.floor(s)} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+const setHTML = (() => { const last = new Map(); return (el, html) => { if (last.get(el) !== html) { el.innerHTML = html; last.set(el, html); } }; })();
+
+// ---------- time: the viewer's own zone (?tz=America/Los_Angeles overrides a mis-set laptop) ----------
+const TZ = (() => {
+  try {
+    const z = new URLSearchParams(location.search).get("tz");
+    if (z) { new Intl.DateTimeFormat("en-US", { timeZone: z }); return z; }
+  } catch (e) {}
+  return undefined;
+})();
+const dtf = (o) => new Intl.DateTimeFormat("en-US", { timeZone: TZ, ...o });
+const F_CLOCK = dtf({ hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" });
+const F_DATE = dtf({ weekday: "short", month: "short", day: "numeric" });
+const F_HMS = dtf({ hour: "numeric", minute: "2-digit", second: "2-digit" });
+const F_HM = dtf({ hour: "numeric", minute: "2-digit" });
+const F_FULL = dtf({ weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" });
+const fullTs = (ts) => (num(ts) ? F_FULL.format(new Date(ts * 1000)) : "");
+function parts(f, d) { const o = {}; for (const p of f.formatToParts(d)) o[p.type] = (o[p.type] || "") + p.value; return o; }
+function hms(ts) { if (!num(ts)) return ""; const p = parts(F_HMS, new Date(ts * 1000)); return `${p.hour}:${p.minute}:${p.second}`; }
+function hm(ts) { const p = parts(F_HM, new Date(ts * 1000)); return `${p.hour}:${p.minute}`; }
+
+// ---------- looks: the tokens live in CSS; JS reads them for the canvas and the timeline ----------
+const LOOKS = ["mission", "neon", "light"];
+const LOOK_NAME = { mission: "Mission", neon: "Neon", light: "Light" };
+let TH = null;
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const g = (n) => cs.getPropertyValue(n).trim();
+  const rgb = (n) => g(n).replace(/\s+/g, "");
+  const nm = (n, d) => { const v = parseFloat(g(n)); return isFinite(v) ? v : d; };
+  TH = {
+    look: document.documentElement.dataset.look,
+    accent: rgb("--accent-rgb"), eye: rgb("--eye-rgb"), idle: rgb("--idle-rgb"), ok: rgb("--ok-rgb"), warn: rgb("--warn-rgb"), bad: rgb("--bad-rgb"), onBad: g("--on-bad"),
+    glow: nm("--glow", 1), mono: g("--mono"), tlFont: g("--tl-font"),
+    tlGrid: g("--tl-grid"), tlAxis: g("--tl-axis"), tlTick: g("--tl-tick"), tlLane: g("--tl-lane"), tlKind: g("--tl-kind"),
+    tlOk: g("--tl-ok-text"), tlBad: g("--tl-bad-text"), tlWarn: g("--tl-warn-text"),
+    tw: {
+      floor: rgb("--tw-floor-rgb"), floorA: nm("--tw-floor-a", 0.09), grid: rgb("--tw-grid-rgb"), gridA: nm("--tw-grid-a", 0.3),
+      plate: g("--tw-plate"), shadow: g("--tw-shadow"),
+      linkHi: g("--tw-link-hi"), linkMid: g("--tw-link-mid"), linkLo: g("--tw-link-lo"),
+      houseHi: g("--tw-house-hi"), houseMid: g("--tw-house-mid"), houseLo: g("--tw-house-lo"), cap: g("--tw-cap"),
+      rim: rgb("--tw-rim-rgb"), rimA: nm("--tw-rim-a", 0.8), ring: rgb("--tw-ring-rgb"), spec: g("--tw-spec"), glow: nm("--tw-glow", 1),
+      block: rgb("--tw-block-rgb").split(",").map(Number), blockEdge: g("--tw-block-edge"), label: g("--tw-label"), pred: g("--tw-pred"),
+      blend: g("--tw-blend") === "source-over" ? "source-over" : "lighter", font: g("--tl-font"),
+    },
+  };
+}
+function markLook() {
+  const l = document.documentElement.dataset.look;
+  document.querySelectorAll("#looks [data-look]").forEach((b) => b.classList.toggle("on", b.dataset.look === l));
+}
+function setLook(look, announce) {
+  if (!LOOKS.includes(look)) look = "mission";
+  document.documentElement.dataset.look = look;
+  try { localStorage.setItem("mc-look", look); } catch (e) {}
+  try { const u = new URL(location.href); u.searchParams.set("look", look); history.replaceState(null, "", u.pathname + u.search + u.hash); } catch (e) {}
+  readTheme(); markLook();
+  if (S) render();
+  if (announce) toast(`Look · <b>${esc(LOOK_NAME[look])}</b><span class="dim">L cycles</span>`);
+}
+function cycleLook() { setLook(LOOKS[(LOOKS.indexOf(document.documentElement.dataset.look) + 1) % LOOKS.length], true); }
+document.querySelectorAll("#looks [data-look]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); setLook(b.dataset.look, true); b.blur(); }));
+readTheme(); markLook();
+
+const SHORT = { us_frozen: "stuck sensor", us_stuck: "stuck sensor", us_scale: "sensor scale wrong", us_offset: "sensor offset",
+  us_residual: "sensor mismatch", us_noisy: "noisy sensor", us_missing_echo: "no echo", joint_stall: "joint stalled",
+  pod_us_mismatch: "bad pod firmware", pod_clock_skew: "pod clock skew", pod_link_garbled: "pod link garbled", pod_us_no_echo: "pod: no echo" };
+function short(kind) {
+  if (!kind) return "fault";
+  if (SHORT[kind]) return SHORT[kind];
+  if (kind.startsWith("pod_")) return "sensor pod: " + kind.slice(4).replace(/_/g, " ");
+  return kind.replace(/_/g, " ");
+}
+const cap1 = (s) => String(s || "").replace(/^\w/, (c) => c.toUpperCase());
+// A watchdog summary for the projector: "Elbow flex stopped 25 deg short of its target (load 0.0 N*m)"
+//   -> "Elbow flex stopped 25° short of its target"
+const clean = (s) => String(s || "").replace(/\s*\(load [^)]*\)/g, "").replace(/\s*\(\d+(?:\.\d+)?x\)/g, "").replace(/(\d)\s?deg\b/g, "$1°").replace(/N\*m/g, "N·m")
+  .replace(/~(\d)/g, "≈$1").replace(/(\d) us\b/g, "$1 µs").replace(/\.\s*$/, "").trim();
+// Machine text (event log, card comments) in words a judge reads: ids become "#xxxx", fault codes become
+// their short names, snake_case becomes words. Display only: the data on the wire is untouched.
+function tidy(s, order) {
+  const oid = order ? "#" + String(order).slice(-4) : "";
+  return clean(String(s ?? "")
+    .replace(/\(fake(?:-[\w]+)?\)/g, "(stand-in)").replace(/\bfake manager(?: \([\w-]+\))?:\s*/g, "")   // the sim's stand-in manager
+    .replace(/[\s,;:(]+[^\s…]*…\)*$/, " …")                                  // a cut ends on a whole word
+    .replace(/^presenter:\s*/i, "")
+    .replace(/^order (ord-\S+) \(([^)]*)\) is card \S+$/, "new order $1: $2")
+    .replace(/\s*\(ARM JOB [^)]*\)/g, "")
+    .replace(/\s*\((?:pick|wave|wave_any), (?:ord-[^)]*|no order id)\)/g, "")
+    .replace(/\s*\((?:us|pod|joint|block)_[a-z0-9_]+\)/g, "")
+    .replace(/\b(?:ARM JOB\s+)?ord-\d{8}-\d{6}-([0-9a-f]{4})\b/g, "#$1")
+    .replace(/\bcard crd_[0-9a-z]+\b/g, oid ? "order " + oid : "the card")
+    .replace(/\bcrd_[0-9a-z]+\b/g, oid || "the card")
+    .replace(/on the file board brd_\w+/g, "on the local board")
+    .replace(/ as inc-[0-9a-f]{6,}-[\w-]+/g, "")
+    .replace(/\bredo_step\b/g, "redo").replace(/\bhandoff_human\b/g, "hand to a person").replace(/\bno_action\b/g, "no action")
+    .replace(/\bpod_rollback\b/g, "pod rollback").replace(/\brestart_sensor\b/g, "restart the sensor")
+    .replace(/^the scripted commander /, "")
+    .replace(/ (?:by|for|with) the scripted commander/g, "")
+    .replace(/\bis blocked: BLOCKED:/g, "is blocked:").replace(/ arrived=False/g, " didn't arrive").replace(/ arrived=True/g, " arrived")
+    .replace(/\b(?:us|pod|joint)_[a-z0-9_]+\b/g, (k) => short(k))
+    .replace(/\b[a-z]+_[a-z_]+\b/g, (m) => m.replace(/_/g, " "))
+    .replace(/\s{2,}/g, " ")).replace(/^\w/, (c) => c.toUpperCase());
+}
+const JOINTS = [["shoulder_pan", "Pan", -110, 110], ["shoulder_lift", "Lift", -100, 100], ["elbow_flex", "Elbow", -97, 97],
+  ["wrist_flex", "Wrist", -95, 95], ["wrist_roll", "Roll", -157, 163], ["gripper", "Grip", 0, 100]];
+
+// ---------- icons (24x24, stroked) ----------
+const IC = {
+  order: "M3 7.5 12 3l9 4.5-9 4.5-9-4.5Z M3 7.5v9L12 21l9-4.5v-9 M12 12v9",
+  claim: "M4 13h4l2 3h4l2-3h4 M4 13l2.5-8h11L20 13v6H4Z",
+  start: "M8 5.5v13l10.5-6.5Z",
+  skill: "M4 12h13 M12 6l6 6-6 6",
+  incident: "M12 3.5 21.5 20h-19Z M12 10v4.5 M12 17.2v.3",
+  heal: "M12 3l8 3v6c0 4.8-3.4 8-8 9-4.6-1-8-4.2-8-9V6Z M8.5 12.2l2.4 2.4 4.6-5",
+  person: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z M4.5 21c.8-3.8 3.7-6 7.5-6s6.7 2.2 7.5 6",
+  done: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z M8 12.3l2.8 2.8L16.2 9.5",
+  blocked: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z M9 9l6 6 M15 9l-6 6",
+  bolt: "M13 2.5 4.5 14h6.5l-1 7.5L18.5 10H12Z",
+  spark: "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.6 2.6 M15.4 15.4 18 18 M18 6l-2.6 2.6 M8.6 15.4 6 18",
+  presenter: "M4 10v4l11 4.5V5.5Z M15 9a3 3 0 0 1 0 6 M7 15l1.2 4.5h3L10.4 16",
+  soak: "M17 3l3.5 3.5L17 10 M4 11.5V9.5a3 3 0 0 1 3-3h13.5 M7 21l-3.5-3.5L7 14 M20 12.5v2a3 3 0 0 1-3 3H3.5",
+  error: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z M12 7.5v6 M12 16.5v.3",
+  dot: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z",
+  pod: "M7 4h10v16H7Z M10 8h4 M12 17v.3",
+  park: "M6 4h8a5 5 0 0 1 0 10H6Z M6 14v6",
+  relay: "M4 8.5h14 M14.5 5 18 8.5 14.5 12 M20 15.5H6 M9.5 12 6 15.5 9.5 19",
+  chip: "M7 7h10v10H7Z M10 10h4v4h-4Z M10 3v4 M14 3v4 M10 17v4 M14 17v4 M3 10h4 M3 14h4 M17 10h4 M17 14h4",
+  hive: "M12 3.2a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8Z M5.2 15.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8Z M18.8 15.6a2.4 2.4 0 1 1 0 4.8 2.4 2.4 0 0 1 0-4.8Z M10.8 8 6.4 15.6 M13.2 8l4.4 7.6 M7.6 18h8.8",
+  wrench: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z",
+  homeok: "M3.5 11 12 4l8.5 7 M5.5 9.5V20h13V9.5 M9 14.5l2.2 2.2 4-4.2",
+  check: "M5 12.5l4.2 4.2L19 7",
+  cross: "M6.5 6.5l11 11 M17.5 6.5l-11 11",
+  undo: "M9 14 4 9l5-5 M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  scan: "M3 8V5a2 2 0 0 1 2-2h3 M16 3h3a2 2 0 0 1 2 2v3 M21 16v3a2 2 0 0 1-2 2h-3 M8 21H5a2 2 0 0 1-2-2v-3 M12 12m-3 0a3 3 0 1 0 6 0 3 3 0 1 0-6 0",
+};
+const svg = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${IC[name] || IC.dot}"/></svg>`;
+const KIND = {
+  order_placed: ["order", "acc"], card_claimed: ["claim", "acc"], job_started: ["start", "acc"], skill: ["skill", "dim"],
+  incident: ["incident", "bad"], heal: ["heal", "ok"], handoff: ["person", "bad"], job_result: ["done", "ok"], card_done: ["done", "ok"],
+  card_blocked: ["blocked", "bad"], fault_planted: ["bolt", "warn"], fault_cleared: ["spark", "ok"], presenter: ["presenter", "warn"],
+  soak_tick: ["soak", "dim"], soak_outcome: ["soak", "acc"], error: ["error", "bad"],
+  dispatcher: ["claim", "dim"], job_summary: ["done", "acc"], waiting: ["dot", "dim"], commander_line: ["skill", "dim"],
+  escalation: ["relay", "acc"], fix_plan: ["hive", "acc"], plan_check: ["heal", "acc"], plan_action: ["wrench", "ok"],
+  plan_gate: ["heal", "acc"], reverse: ["undo", "warn"], redo: ["scan", "acc"],
+};
+const SRC = { order: "order", dispatch: "dispatcher", commander: "commander", soak: "soak", mission: "presenter", host: "arm host", watchdog: "watchdog", "pod healer": "pod healer",
+  worker: "worker", manager: "manager" };
+
+// ---------- data ----------
+let S = null;          // /api/state
+let A = null;          // /api/arm (fresh, ~10 Hz)
+let lastStateOk = 0;
+async function getJSON(url) { const r = await fetch(url, { cache: "no-store" }); return r.json(); }
+async function pollArm() {
+  try { A = await getJSON("/api/arm"); } catch (e) { A = { error: "Mission Control server unreachable" }; }
+  setTimeout(pollArm, A && !A.error ? 90 : 800);
+}
+async function pollState() {
+  try { S = await getJSON("/api/state"); lastStateOk = Date.now(); render(); }
+  catch (e) { S = null; render(); }
+  setTimeout(pollState, 800);
+}
+
+const HEAL_IDS = new Set();            // incidents that started healing: they stay HEALING until they close
+const AFTER_S = 12;                    // how long HEALED / FIXED stays up after the incident closes
+function lastIncident(arm) {
+  let last = null;
+  for (const i of arm.history || []) if (num(i.opened_at) && (!last || i.opened_at >= last.opened_at)) last = i;
+  return last;
+}
+function jointName(i) {
+  const hit = i && /joint|stall|servo/i.test(i.kind || "") && JOINT_AT.find(([re]) => re.test(`${i.summary || ""} ${i.kind || ""}`));
+  return hit ? hit[2].toLowerCase() : null;
+}
+const whyOf = (i) => { const jn = jointName(i); return jn ? `${jn} stalled` : short(i.kind); };
+// ---------- the healer's events: the worker -> manager exchange, and wrong moves (category 2) ----------
+// The worker's events chain by their `escalation` id (inc-<token>-<host id>-<n>); only the escalation itself
+// names the host incident. A wrong move is the worker's own incident (wa-<n>), never the host's: it lives in the
+// event log only, from the commander's `incident` (category wrong_action) to its `heal` (ok or not).
+const EVS = () => (S && S.events) || [];
+const BLOCK_AT = [0.21, 0, 0.015];               // where the poses expect the block (armsim/model.py BLOCK_POS)
+function mgrLabel(e) { const m = /the manager \(([\w.:-]+)\)/.exec((e && e.text) || ""); return m ? m[1] : null; }   // a label, not a reason in brackets
+function escFor(i) {
+  // the latest escalation for a host incident, and its fix plan: {esc, fix}
+  const out = { esc: null, fix: null, inc: null, heal: null };
+  if (!i || !num(i.opened_at)) return out;
+  const t0 = i.opened_at - 3;
+  const mine = (e) => e.incident && e.incident.id === i.id && e.ts >= t0 && e.category !== "wrong_action";
+  for (const e of EVS()) {
+    if (e.kind === "escalation" && e.src === "worker" && mine(e)) out.esc = e;
+    else if (e.kind === "incident" && e.src === "commander" && mine(e)) out.inc = out.inc || e;
+    else if (e.kind === "heal" && e.src === "commander" && mine(e)) out.heal = e;
+  }
+  if (out.esc) for (const e of EVS()) if (e.escalation === out.esc.escalation && e.kind === "fix_plan") out.fix = e;
+  return out;
+}
+function blockOff(arm) {
+  // [dx, dy] mm when the block sits on the table at least 8 mm from where the poses expect it, else null
+  const b = arm && arm.positions && arm.positions.block && arm.positions.block.pos;
+  if (!b || arm.holding || Math.abs(b[2] - BLOCK_AT[2]) > 0.01) return null;
+  const dx = (b[0] - BLOCK_AT[0]) * 1000, dy = (b[1] - BLOCK_AT[1]) * 1000;
+  return Math.hypot(dx, dy) >= 8 ? [dx, dy] : null;
+}
+const sgn = (v) => (v >= 0 ? "+" : "−") + Math.abs(Math.round(v));
+const offWords = (o) => `${sgn(o[0])}, ${sgn(o[1])} mm`;
+function wrongMove() {
+  const evs = EVS();
+  let k = -1;
+  for (let j = evs.length - 1; j >= 0; j--) if (evs[j].kind === "incident" && evs[j].category === "wrong_action") { k = j; break; }
+  if (k < 0) return null;
+  const card = evs[k].card, iid = (evs[k].incident || {}).id;
+  let a = k;                                      // back to the chain's first miss (its redos reuse the id)
+  for (let j = k - 1; j >= 0; j--) {
+    const e = evs[j];
+    if (e.card !== card) continue;
+    if (e.kind === "job_started") break;
+    if (e.kind === "incident" && e.category === "wrong_action" && (e.incident || {}).id === iid) a = j;
+  }
+  const chain = evs.slice(a).filter((e) => e.card === card);
+  const ei = chain.findIndex((e) => e.kind === "heal" && e.category === "wrong_action");
+  const end = ei >= 0 ? chain[ei] : null, live = end ? chain.slice(0, ei + 1) : chain;
+  // this attempt: from its miss. A chain that ended shows its last escalated attempt (after the last failed
+  // redo the worker logs one more miss before it hands off, with no escalation of its own)
+  let la = 0, lastEsc = -1;
+  live.forEach((e, j) => { if (e.kind === "escalation") lastEsc = j; });
+  live.forEach((e, j) => { if (e.kind === "incident" && e.category === "wrong_action" && (!end || lastEsc < 0 || j < lastEsc)) la = j; });
+  const att = live.slice(la);
+  const esc = att.filter((e) => e.kind === "escalation").pop() || null, id = esc && esc.escalation;
+  const by = (kind) => (id && att.filter((e) => e.escalation === id && e.kind === kind).pop()) || null;
+  const W = { t0: evs[a].ts, card, order: evs[a].order, iid, first: evs[a], miss: att[0], esc, label: mgrLabel(esc),
+    attempt: Math.max(1, live.filter((e) => e.kind === "escalation").length),
+    fix: by("fix_plan"), chk: by("plan_check"), act: by("plan_action"), end,
+    rev: att.filter((e) => e.kind === "reverse"), redo: att.filter((e) => e.kind === "redo" && e.step !== "locate"),
+    locate: att.filter((e) => e.kind === "redo" && e.step === "locate").pop() || null };
+  W.plan = W.fix && W.fix.plan;
+  W.corr = (W.plan && W.plan.args && W.plan.args.correction) || "none";
+  const now = Date.now() / 1000;
+  if (end) {
+    const after = evs.slice(evs.indexOf(end) + 1);
+    const fixed = after.find((e) => e.src === "mission" && e.kind === "presenter" && e.action === "clear");
+    const next = after.some((e) => e.kind === "job_started" && e.card !== card);   // a new job: the story is over
+    if (end.ok) { if (now - end.ts > AFTER_S || next) return null; W.phase = "redone"; }
+    else if (fixed) { if (now - fixed.ts > AFTER_S || next) return null; W.phase = "fixed"; }
+    else if (after.some((e) => e.kind === "job_started") || now - end.ts > 600) return null;
+    else W.phase = "person";
+  } else {
+    if (now - live[live.length - 1].ts > 240) return null;   // a chain that stopped mid-way: not a live story
+    W.phase = esc ? "correcting" : "wrong";
+  }
+  return W;
+}
+function personWhy(W) {
+  const m = /\(a wrong action\): (.*?)(?: \(\d+ s\))?$/.exec((W.end && W.end.text) || "");
+  return m ? tidy(m[1]).replace(/^The /, "the ") : "the grasp still misses";
+}
+function correctingSub(W) {
+  if (!W.fix) return "Asking the manager for one bounded correction";
+  if (W.fix.ok === false || (W.chk && !W.chk.ok)) return "No usable plan: the arm parks for a person";
+  const last = W.redo[W.redo.length - 1];
+  if (last) return `Redoing ${last.step}${last.offset_mm ? `, shifted ${offWords(last.offset_mm)}` : ""} · try ${W.attempt} of 2`;
+  if (W.corr === "relocate") {
+    const r = W.locate && W.locate.result;
+    if (!W.locate) return "Relocate: scanning for the block with the wrist sensor";
+    return r && r.found ? `Found it ${offWords(r.offset_mm)} from where the arm expected it` : "The scan found no block";
+  }
+  if (W.corr === "offset") return `Offset the approach ${offWords([W.plan.args.dx_mm || 0, W.plan.args.dy_mm || 0])}`;
+  return `Redo from ${(W.plan && W.plan.args && W.plan.args.from_step) || "the approach"} as before`;
+}
+function wrongMode(W, arm) {
+  const off = blockOff(arm);
+  const where = off ? ` · the block sits ${Math.round(Math.hypot(off[0], off[1]))} mm from where the arm expected it` : "";
+  if (W.phase === "wrong") return { cls: "bad", word: "WRONG MOVE:", why: "missed grasp", sub: `The grip closed on nothing${where}`, wrong: W };
+  if (W.phase === "correcting") return { cls: "warn", word: "CORRECTING:", why: "missed grasp", sub: correctingSub(W), wrong: W };
+  if (W.phase === "redone") return { cls: "ok", word: "REDONE", why: num(W.end.seconds) ? `in ${fmt(W.end.seconds, 0)} s` : "",
+    sub: "Missed grasp · reversed, corrected by the manager, redone, checked", wrong: W };
+  if (W.phase === "fixed") return { cls: "ok", word: "FIXED", why: "by a person", sub: "Missed grasp · a person put the block back", wrong: W, person: true };
+  return { cls: "person", word: "NEEDS A PERSON:", why: "missed grasp", sub: cap1(personWhy(W)), wrong: W };
+}
+
+// ---------- what state is the arm in ----------
+// Everything about a host incident comes from the arm's own snapshot (10 Hz): its open list and its history
+// (resolved_at, handed_off), so the pill, the banner and the twin change on the same frame. Memoized per
+// (snapshot, state) pair: the canvas asks every frame.
+let MODE = { A: undefined, S: undefined, v: null };
+function armMode(arm, st) {
+  if (MODE.v && MODE.A === arm && MODE.S === st) return MODE.v;
+  const v = armMode0(arm, st);
+  MODE = { A: arm, S: st, v };
+  return v;
+}
+function armMode0(arm, st) {
+  if (!arm || arm.error) return { cls: "off", word: "OFFLINE", why: "", sub: arm && arm.error ? "Waiting for the arm host" : "Connecting to Mission Control" };
+  if (arm.stale) return { cls: "off", word: "NO SIGNAL", why: "", sub: `The arm host has been silent for ${ago(arm.age_s)}` };
+  const open = arm.incidents || [];
+  const pod = arm.pod || {};
+  const act = (arm.activity && arm.activity.what) || "";
+  if (open.length && open.some((i) => i.handed_off)) {
+    const i = open.find((x) => x.handed_off);
+    return { cls: "person", word: "NEEDS A PERSON:", why: whyOf(i), sub: clean(i.summary) || cap1(short(i.kind)), incident: i };
+  }
+  if (open.length) {
+    const i = open[0], key = `${arm.pid}/${i.id}`;
+    let what = null;
+    if (act.startsWith("repair: restart_sensor")) what = "restarting the sensor";
+    else if (act.startsWith("repair")) what = "a checked retry at home";
+    else if (act.startsWith("verify")) what = "checking the fix at home";
+    else if (pod.healer_busy) what = "rolling the pod firmware back";
+    else if (open.some((x) => x.pod_healed)) what = "checking the fix at home";
+    if (!what) {                                  // the worker asked the manager: that is healing already
+      const ch = escFor(i);
+      if (ch.esc) what = !ch.fix ? "asking the manager" : ch.fix.ok === false ? "falling back to the scripted heal" : "running the manager's fix";
+    }
+    if (what) HEAL_IDS.add(key);
+    else if (HEAL_IDS.has(key)) what = "checking the fix at home";   // between two healer steps: still healing, not parked again
+    if (what) return { cls: "warn", word: "HEALING:", why: whyOf(i), sub: clean(i.summary) || cap1(short(i.kind)), incident: i, healing: what };
+    return { cls: "bad", word: "PARKED:", why: whyOf(i), sub: clean(i.summary), incident: i };
+  }
+  const W = wrongMove();
+  if (W && (W.phase === "wrong" || W.phase === "correcting" || W.phase === "person")) return wrongMode(W, arm);
+  const last = lastIncident(arm);
+  if (last && num(last.resolved_at) && num(arm.ts) && arm.ts - last.resolved_at < AFTER_S) {
+    const heal_s = healSecs(last);
+    if (last.handed_off) return { cls: "ok", word: "FIXED", why: "by a person", sub: `${cap1(whyOf(last))} · fixed by hand, checked at home`, done: last, person: true };
+    if (personCleared(last)) return { cls: "ok", word: "FIXED", why: "by a person", sub: `${cap1(whyOf(last))} · a person stepped in, checked at home`, done: last, person: true };
+    return { cls: "ok", word: "HEALED", why: `in ${fmt(heal_s, 1)} s`, sub: `${cap1(whyOf(last))} · fixed without a person, checked at home`, done: last, heal_s };
+  }
+  if (W) return wrongMode(W, arm);
+  const sk = arm.skill;
+  const cards = (st && st.board && st.board.cards) || [];
+  const doing = cards.filter((c) => c.status === "doing");
+  if (sk && (sk.running || (num(sk.ended) && arm.ts - sk.ended < 4)) || doing.length) {
+    const job = doing[0];
+    const what = sk && sk.running ? sk.name.replace(/_/g, " ") : "between steps";
+    const pl = planted(arm);
+    return { cls: "ok", word: "WORKING", why: "", sub: pl ? `${pl} · ${what}` : (job ? `Order #${(job.order || job.id || "").slice(-4)} · ${jobTitle(job)} · ` : "") + what };
+  }
+  const todo = cards.filter((c) => c.status === "todo");
+  if (todo.length) {                              // an order waits for the dispatcher: not idle
+    const next = todo[todo.length - 1];           // newest first: the dispatcher takes the oldest
+    return { cls: "queued", word: "QUEUED", why: todo.length > 1 ? `${todo.length} orders` : "",
+      sub: `Order #${(next.order || next.id || "").slice(-4)} · ${jobTitle(next)} · waiting for the dispatcher` };
+  }
+  const pl = planted(arm);
+  return { cls: "idle", word: "IDLE", why: "", sub: pl ? `${pl} · ready for orders` : blockOff(arm) ? "Ready for orders · the block has been bumped" : "Ready for orders" };
+}
+// The heal time the timeline and the counters show (mission.py's), so the pill never says 7.3 where they say 7.2
+function healSecs(i) {
+  const d = ((S && S.derived && S.derived.incidents) || []).find((x) => x.id === i.id && Math.abs(x.opened - i.opened_at) < 0.01);
+  return d && num(d.heal_s) ? d.heal_s : Math.round((i.resolved_at - i.opened_at) * 10) / 10;
+}
+// "A person fixed it" pressed while the incident was open, and it closed after: a person fixed it, not the healer
+// (mission.py's timeline and counters say the same: by_person)
+function personCleared(i) {
+  if (!i || !num(i.opened_at)) return false;
+  const end = num(i.resolved_at) ? i.resolved_at + 0.5 : Infinity;
+  return EVS().some((e) => e.src === "mission" && e.kind === "presenter" && e.action === "clear" && e.ts >= i.opened_at - 1 && e.ts <= end);
+}
+// A fault the presenter just planted that hasn't fired yet: the screen says so at once, before the watchdog sees it
+const PLANTED = { us_frozen: "stuck sensor", us_no_echo: "sensor with no echo", pod_image07: "bad pod image 07", pod_image02: "bad pod image 02",
+  joint_stuck: "dead elbow servo" };
+function planted(arm) {
+  const evs = EVS(), now = Date.now() / 1000;
+  let p = null;
+  for (let j = evs.length - 1; j >= 0; j--) {
+    const e = evs[j];
+    if (now - e.ts > 40) break;
+    if (e.src === "mission" && e.kind === "presenter" && e.action === "fault" && PLANTED[e.fault]) { p = e; break; }
+  }
+  if (!p || (arm.history || []).some((i) => num(i.opened_at) && i.opened_at >= p.ts - 1)) return null;
+  return `${cap1(PLANTED[p.fault])} planted · the watchdog is watching`;
+}
+function jobTitle(c) {
+  const t = (c.title || "").replace(/^ARM JOB\s*/, "").replace(/^ord-[0-9-]+[a-f0-9]*:\s*/, "");
+  return t || c.job || "job";
+}
+
+// ---------- render: header ----------
+function renderHeader(mode) {
+  const pill = $("pill");
+  pill.className = "pill " + mode.cls;
+  const why = esc(mode.why || "").replace(/(\d) s$/, '$1<small class="u">s</small>');   // "IN 7.3 s", not "IN 7.3 S" in neon caps
+  setHTML(pill, `<span class="dot"></span><span class="word">${esc(mode.word)}</span>${mode.why ? `<span class="why">${why}</span>` : ""}`);
+  setText($("pillsub"), mode.sub || " ");
+  document.body.classList.toggle("alarm", mode.cls === "bad" || mode.cls === "person");
+  const arm = A && !A.error ? A : null;
+  setText($("modeChip"), arm ? (arm.arm === "real" ? "real arm" : "sim") + (arm.romulus ? " · " + arm.romulus.device : "") : "no arm");
+}
+function frozenState() {
+  const r = S && S.romulus;
+  if (r && !r.error && typeof r.frozen === "boolean") return r.frozen;
+  const ar = A && A.romulus;
+  if (ar && typeof ar.frozen === "boolean") return ar.frozen;
+  return null;
+}
+function renderFleetHeader() {
+  const fz = frozenState();
+  const off = !S || !S.romulus || S.romulus.error;
+  const el = $("fleetState");
+  el.className = "v " + (fz === true ? "frozen" : fz === false ? "live" : "unknown");
+  setHTML(el, `<span class="d"></span><span>${fz === true ? "FROZEN" : fz === false ? "LIVE" : off ? "OFFLINE" : "…"}</span>`);
+  const b = $("freezeBtn");
+  b.classList.toggle("unfreeze", fz === true);
+  b.disabled = !!off;
+  setHTML(b, `${fz === true ? "UNFREEZE" : "FREEZE FLEET"}<kbd>F</kbd>`);
+  $("freezeBarLabel").textContent = fz === true ? "Unfreeze fleet" : "Freeze fleet";
+}
+function tickClock() {
+  const d = new Date(), p = parts(F_CLOCK, d);
+  setHTML($("clock"), `${esc(p.hour)}:${esc(p.minute)}:${esc(p.second)}${p.dayPeriod ? `<small>${esc(p.dayPeriod)}</small>` : ""}${p.timeZoneName ? `<small class="tz">${esc(p.timeZoneName)}</small>` : ""}`);
+  $("date").textContent = F_DATE.format(d);
+}
+
+// ---------- render: twin HUD and the state banner ----------
+function renderTwinHud(mode) {
+  const arm = A && !A.error ? A : null;
+  const twin = $("twin");
+  twin.classList.toggle("alarm", mode.cls === "bad" || mode.cls === "person");
+  twin.classList.toggle("healing", mode.cls === "warn");
+  twin.classList.toggle("stale", !!(A && !A.error && A.stale));
+  const live = $("live");
+  live.classList.toggle("dead", !arm || arm.stale);
+  setHTML(live, `<i></i><span>${!arm ? "no snapshot" : arm.stale ? "stale " + ago(arm.age_s) : "live · " + (arm.arm === "real" ? "real arm" : "MuJoCo")}</span>`);
+  setText($("twinSub"), arm && arm.romulus && arm.romulus.device ? `${arm.romulus.device} · SO-101` : "SO-101 arm");
+  if (!arm) {
+    setHTML($("hudTL"), ""); setHTML($("hudR"), ""); setHTML($("hudBL"), "");
+    setHTML($("twinEmpty"), `<div class="empty-state"><b>Waiting for the arm host</b>Start it with <code>python -m armsim.host --pod sim</code><br>${esc((A && A.error) || "")}</div>`);
+  } else {
+    setHTML($("twinEmpty"), arm.positions ? "" : `<div class="empty-state"><b>No 3D view on this arm yet</b>The real arm's twin needs its measured kinematics (real_calibration.json).<br>Joint angles are live on the right.</div>`);
+    const sk = arm.skill;
+    let skill = `<div class="stat"><div class="k">Skill</div><div class="v">${sk ? esc(sk.name.replace(/_/g, " ")) : "–"}`;
+    if (sk && sk.running) skill = `<div class="stat"><div class="k">Skill</div><div class="v run">${esc(sk.name.replace(/_/g, " "))}<span class="spin"></span>`;
+    else if (sk) skill += `<small>${sk.halted ? "halted" : sk.aborted ? "aborted" : sk.arrived === false ? "missed" : "done"}</small>`;
+    skill += `</div></div>`;
+    const grip = `<div class="stat"><div class="k">Gripper</div><div class="v">${arm.holding ? ((arm.incidents || []).length ? "Gripping" : "Holding block") : num(arm.gripper) ? (arm.gripper > 30 ? "Open" : "Closed") : "–"}<small>${num(arm.gripper) ? fmt(arm.gripper, 0) + "%" : ""}</small></div></div>`;
+    setHTML($("hudTL"), skill + grip);
+    const j = arm.joints || {};
+    let rows = `<div class="t">Joints · degrees</div>`;
+    for (const [key, label, lo, hi] of JOINTS) {
+      const v = j[key];
+      const f = num(v) ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : null;
+      rows += `<div class="joint"><span class="n">${label}</span><span class="a">${num(v) ? fmt(v, 1) : "–"}<small>${key === "gripper" ? "%" : "°"}</small></span>` +
+        `<span class="g"><b></b>${f === null ? "" : `<i style="left:${(f * 100).toFixed(1)}%"></i>`}</span></div>`;
+    }
+    setHTML($("hudR"), rows);
+    const s = arm.sensor || {};
+    const sensorBad = (arm.incidents || []).some((i) => /^us_|^pod_/.test(i.kind || ""));
+    const reading = s.st === "ok" && num(s.mm);
+    // at home the jaw sits in the beam, so "out of range" is the normal home reading (armsim/worker.py's prompt):
+    // calm while nothing is open and nothing moves; a warning only while a skill runs or an incident is open
+    const calm = !reading && s.st === "out_of_range" && !(arm.incidents || []).length && !(sk && sk.running);
+    const st = reading ? (sensorBad ? "bad" : Math.abs((s.pred_mm ?? s.mm) - s.mm) > 20 ? "warn" : "ok") : calm ? "calm" : "warn";
+    const exp = calm ? "jaw in the beam · normal at home" : num(s.pred_mm) ? `pose expects <b>${fmt(s.pred_mm, 0)} mm</b>` : "no prediction";
+    setHTML($("hudBL"), `<div class="stat sensor"><div class="k">Wrist distance</div><div class="v ${st}">${reading ? fmt(s.mm, 0) + "<small>mm</small>" : calm ? "—<small>mm</small>" : esc((s.st || "no data").replace(/_/g, " "))}</div><div class="e">${exp}</div></div>`);
+  }
+  const ban = $("banner");
+  const beats = arm && beatsFor(mode, arm);
+  if (beats) {
+    ban.className = "banner on " + (mode.cls === "person" ? "bad person" : mode.cls);
+    const mark = (c) => (c === "done" ? svg("done") : c === "fail" ? svg("blocked") : `<i class="bm"></i>`);
+    setHTML($("bannerIn"), `<ol class="beats">` +
+      beats.map(([w, s, c]) => `<li class="${c}"><span class="bw">${mark(c)}<span class="bt">${esc(w)}</span></span><small>${esc(s)}</small></li>`).join("") + `</ol>`);
+  } else ban.classList.remove("on");
+  renderXchg(beats ? mode : {}, arm);
+}
+// The four beats of an incident: [word, small line, done | now | fail | "" (still to come)]
+function planFor(kind) {
+  return /^us_/.test(kind || "") ? "restart the sensor" : /^pod_/.test(kind || "") ? "roll the pod firmware back" : "a checked retry";
+}
+// The beats' small lines say only the state, in three words or so: the plan lives on MANAGER's answer chip and
+// the result on ARM, in the row under them, so nothing is said twice.
+const HEAL_WORD = { "asking the manager": "asking the manager", "running the manager's fix": "fixing", "falling back to the scripted heal": "falling back",
+  "checking the fix at home": "checking at home", "a checked retry at home": "retrying at home", "restarting the sensor": "fixing",
+  "rolling the pod firmware back": "fixing" };
+function beatsFor(mode, arm) {
+  if (mode.wrong) return wrongBeats(mode, arm);
+  const i = mode.incident || mode.done;
+  if (!i || !["bad", "person", "warn", "ok"].includes(mode.cls)) return null;
+  const broke = ["BROKE", `${hms(i.opened_at)} · ${whyOf(i)}`, "done"];
+  const sk = arm.skill;
+  const resumed = sk && sk.running ? `job resumed · ${sk.name.replace(/_/g, " ")}` : "back to work";
+  if (mode.cls === "bad") return [broke, ["PARKED", "safe, at home", "now"], ["HEALING", "up next", ""], ["RESUMED", "the job waits", ""]];
+  if (mode.cls === "warn") return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", HEAL_WORD[mode.healing] || "fixing", "now"], ["RESUMED", "the job waits", ""]];
+  if (mode.cls === "person") return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", "retry failed", "fail"], ["PERSON", "work order opened", "now"]];
+  if (mode.person) return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", mode.done && !mode.done.handed_off ? "a person took over" : "retry failed", "fail"],
+    ["FIXED", "by a person, checked", "done"]];
+  return [broke, ["PARKED", "safe, at home", "done"], ["HEALING", "no person needed", "done"], ["RESUMED", resumed, sk && sk.running ? "now" : "done"]];
+}
+
+// The wrong move's beats: WRONG MOVE > REVERSED > CORRECTED > REDONE (or PERSON / FIXED)
+function wrongBeats(mode, arm) {
+  const W = mode.wrong, ph = W.phase;
+  const over = ph === "redone" || ph === "person" || ph === "fixed";
+  const wm = ["WRONG MOVE", `${hms(W.t0)} · grip missed`, "done"];
+  const revd = !!W.esc || over;
+  const lastRev = W.rev[W.rev.length - 1];
+  const rv = ["REVERSED", revd ? "jaws open, backed off" : lastRev ? (lastRev.undo === "release" ? "jaws open" : lastRev.undo === "lift" ? "backing off" : "back over it") : "up next",
+    revd ? "done" : "now"];
+  let co;
+  const r = W.locate && W.locate.result;
+  if (!W.esc) co = ["CORRECTED", "up next", ""];
+  else if (!W.fix) co = ["CORRECTED", "asking", "now"];
+  else if (W.fix.ok === false) co = ["CORRECTED", "no answer", "fail"];
+  else if (W.chk && !W.chk.ok) co = ["CORRECTED", "plan refused", "fail"];
+  else if (W.corr === "relocate" && !W.locate) co = ["CORRECTED", "relocating", "now"];
+  else if (W.corr === "relocate" && !(r && r.found)) co = ["CORRECTED", "no block found", "fail"];
+  else co = ["CORRECTED", W.corr === "relocate" ? "relocated" : W.corr === "offset" ? "shifted" : "as before", "done"];
+  let rd;
+  if (ph === "person") rd = ["PERSON", W.attempt >= 2 ? `${W.attempt} tries missed` : "parked", "now"];
+  else if (ph === "fixed") rd = ["FIXED", "by a person", "done"];
+  else if (ph === "redone") rd = ["REDONE", "no person needed", "done"];
+  else if (W.redo.length) rd = ["REDONE", `try ${W.attempt} of 2`, "now"];
+  else rd = ["REDONE", `try ${W.attempt} of 2`, ""];
+  if (ph === "person" || ph === "fixed") { if (co[2] === "now" || co[2] === "") co[2] = "fail"; }
+  return [wm, rv, co, rd];
+}
+
+// ---------- render: the worker -> manager exchange ----------
+// Four nodes and the three hops between them, from the events, in the beats' columns. The reveal moves one hop
+// per X_STEP_MS and holds MANAGER in its thinking state for THINK_MS, so a manager that answers in 0.5 s (inside
+// one poll) is still seen to think, then answer. Pacing only: the times on the arrows are the real ones.
+const X_STEP_MS = 1200, THINK_MS = 1600, ANS_MS = 900;
+const XN = [["worker", "chip"], ["manager", "hive"], ["code", "heal"], ["arm", "wrench"]];
+const PD_FAULT = ["spots it, asks", "picks ONE fix", "checks it", "does it, checks at home"];
+const PD_WRONG = ["spots the miss, asks", "picks ONE correction", "checks it: ±40 mm", "redoes it, checks the grip"];
+let XD = null;
+const XS = { key: null, shown: 0, at: 0, ans: 0 };
+function secsTxt(s) { if (!num(s) || s < 0) return ""; return s < 1 ? `${Math.max(1, Math.round(s * 1000))} ms` : s < 10 ? `${s.toFixed(1)} s` : `${Math.round(s)} s`; }
+const isFake = (label) => /^fake/.test(label || "");
+// before this incident's ask, the manager the dispatcher used last time (so the chip doesn't flip on the ask)
+const lastMgr = () => { const evs = EVS(); for (let j = evs.length - 1; j >= 0; j--) { const m = mgrLabel(evs[j]); if (m) return m; } return null; };
+const mgrChip = (label) => (isFake(label || lastMgr()) ? "stand-in" : "Hermes");
+const mgrThink = (label) => (isFake(label) ? "Thinking…" : "Triage, analysts, critic…");
+function workerChip(esc) {
+  // the answer itself decides: a wrong move's escalation has no worker_lm field, only `worker`
+  return esc && esc.worker ? "small model" : "rules";
+}
+function noPlanWhy(fix) {
+  const m = /no plan from the manager \([^)]*\): (.*?); the scripted heal/.exec(fix.text || "") || /no plan from the manager \([^)]*\): (.*?); there is no/.exec(fix.text || "");
+  const w = m ? m[1] : "no answer";
+  return /refused|Errno 111|ConnectionRefused/i.test(w) && !/HTTP \d+/.test(w) ? "Unreachable" : /deadline|timed out|timeout|running/i.test(w) ? "No answer in time"
+    : /HTTP \d+/.test(w) ? `Error: ${w.match(/HTTP \d+/)[0]}` : tidy(w);
+}
+// the manager's answer, as the words on its chip
+function ansWords(p) {
+  if (!p || !p.action) return "A fix";
+  const a = p.args || {};
+  switch (p.action) {
+    case "restart_sensor": return "Restart the sensor";
+    case "pod_rollback": return "Roll back firmware";
+    case "verify": return "Retry it, checked";
+    case "no_action": return "No action, then check";
+    case "park": return "Keep it parked";
+    case "handoff_human": return "Hand it to a person";
+    case "redo_step": {
+      const c = a.correction || "none";
+      return c === "relocate" ? "Relocate, redo" : c === "offset" ? `Shift ${Math.round(Math.hypot(a.dx_mm || 0, a.dy_mm || 0))} mm, redo` : `Redo from ${a.from_step || "approach"}`;
+    }
+    default: return cap1(p.action.replace(/_/g, " "));
+  }
+}
+function doingWords(p) {
+  // pod_rollback: plain code can't flash the pod; it waits for the pod's own healer (worker.py execute)
+  const w = { restart_sensor: "Restarting the sensor", pod_rollback: "Waiting for the pod's own healer", verify: "Retrying, checked",
+    no_action: "Checking at home", park: "Parking", handoff_human: "Handing to a person" };
+  return (p && w[p.action]) || `${ansWords(p)}`;
+}
+const XN0 = (t, st, d, chip = "", extra = {}) => ({ t, st, d, chip, ...extra });
+function xFault(mode, arm) {
+  const i = mode.incident || mode.done;
+  const ch = escFor(i), { esc, fix, heal } = ch;
+  const id = esc && esc.escalation;
+  const by = (k) => { let r = null; if (id) for (const e of EVS()) if (e.escalation === id && e.kind === k) r = e; return r; };
+  const chk = by("plan_check"), act = by("plan_action");
+  const activity = (arm.activity && arm.activity.what) || "";
+  const closed = !!mode.done && !mode.person, person = mode.cls === "person" || !!(mode.done && mode.person);
+  const scripted = !esc && (!!heal || /^(repair|verify)/.test(activity) || !!mode.done || person);
+  const label = mgrLabel(esc || fix);
+  const now = Date.now() / 1000;
+  const doing = ((S && S.board && S.board.cards) || []).some((c) => c.status === "doing");
+  const N = [], L = [];
+  // WORKER: it spots the incident and asks
+  if (esc) N.push(XN0("WORKER", "done", "Sent 6 s of logs", workerChip(esc)));
+  else if (scripted) N.push(XN0("WORKER", "done", "Didn't ask", "rules"));
+  else N.push(XN0("WORKER", "now", ch.inc || doing ? "Incident in…" : "Waits for the next job", "rules"));
+  // MANAGER: one fix
+  const mc = mgrChip(label);
+  if (scripted) N.push(XN0("MANAGER", "skip", "Not asked", ""));
+  else if (!esc) N.push(XN0("MANAGER", "pend", "", mc));
+  else if (!fix) N.push(XN0("MANAGER", "think", mgrThink(label), mc));
+  else if (fix.ok === false) N.push(XN0("MANAGER", "fail", noPlanWhy(fix), mc, { think: mgrThink(label) }));
+  else if (!fix.plan) N.push(XN0("MANAGER", "fail", "Answer isn't a plan", mc, { think: mgrThink(label) }));
+  else N.push(XN0("MANAGER", "done", `“${ansWords(fix.plan)}”`, mc, { q: true, think: mgrThink(label) }));
+  const noPlan = fix && (fix.ok === false || !fix.plan);
+  // PLAIN CODE: the gate
+  const safety = chk && !chk.ok && /^touches_safety/.test(chk.reason || "");
+  if (scripted || noPlan) N.push(XN0("PLAIN CODE", "skip", "No plan to check", "gate"));
+  else if (!chk) N.push(XN0("PLAIN CODE", fix ? "now" : "pend", "Checking…", "gate"));
+  else if (chk.ok) N.push(XN0("PLAIN CODE", "done", "Allowed, in budget", "gate"));
+  else N.push(XN0("PLAIN CODE", "fail", safety ? "Refused: touches safety" : `Refused: ${tidy(chk.reason || "").replace(/^\w/, (c) => c.toLowerCase())}`, "gate"));
+  // ARM: does the one checked action; verify() at home decides
+  const fallback = scripted || noPlan || (chk && !chk.ok && !safety);
+  const ended = closed || person || !!heal;
+  const verifying = /^verify/.test(activity) || mode.healing === "checking the fix at home";
+  if (safety) N.push(XN0("PARK", "fail", "Stays parked: a person", ""));
+  else if (fallback) {
+    const st = closed || (heal && heal.ok) ? "done" : ended ? "fail" : "fall";
+    N.push(XN0("FALLBACK", st, st === "done" ? "Scripted heal worked" : st === "fail" ? (mode.person && mode.done && !mode.done.handed_off ? "A person took over" : "Retry failed: a person")
+      : verifying ? "Checking at home…" : `Script: ${planFor(i.kind)}`, "script"));
+  }
+  else if (!chk || !chk.ok) N.push(XN0("ARM", "pend", "", ""));
+  else if (closed) N.push(XN0("ARM", "done", "Healed, checked at home", ""));
+  else if (act && !act.verified && /^(park|handoff_human|none)$/.test(act.action || "")) N.push(XN0("ARM", "fail", "Stays parked: a person", ""));
+  else if (person || (act && !act.verified) || (heal && !heal.ok)) N.push(XN0("ARM", "fail", mode.person && mode.done && !mode.done.handed_off ? "A person took over" : "Retry failed: a person", ""));
+  else if ((act && act.verified) || (heal && heal.ok)) N.push(XN0("ARM", "done", "Checked at home", ""));
+  else if (verifying) N.push(XN0("ARM", "now", "Checking at home…", ""));
+  else N.push(XN0("ARM", "now", `${doingWords(fix.plan)}…`, ""));
+  // the hops: a verb each; times only where they mean something (the manager's, plain code's)
+  L.push({ c: "asks", st: esc ? "done" : scripted ? "skip" : "pend", s: "" });
+  L.push({ c: noPlan ? "no plan" : "answers", st: fix ? (noPlan ? "fail" : "done") : esc ? "wait" : scripted ? "skip" : "pend",
+    s: fix ? secsTxt(num(fix.seconds) ? fix.seconds : fix.ts - esc.ts) : esc ? secsTxt(now - esc.ts) : "" });
+  L.push({ c: chk && !chk.ok ? "refuses" : "approves", st: chk ? (chk.ok ? "done" : "fail") : fallback ? "skip" : "pend", s: chk && fix ? secsTxt(chk.ts - fix.ts) : "" });
+  return { key: `f/${arm.pid}/${i.id}/${i.opened_at}/${id || (scripted ? "script" : "wait")}`, nodes: N, links: L, pd: PD_FAULT,
+    final: ended || !!act };
+}
+function xWrong(mode, arm) {
+  const W = mode.wrong, { esc, fix, chk, act, end } = W;
+  const now = Date.now() / 1000;
+  const N = [], L = [];
+  if (esc) N.push(XN0("WORKER", "done", "Missed · reversed", workerChip(esc)));
+  else N.push(XN0("WORKER", "now", W.rev.length ? "Reversing the grip…" : "Grip missed", workerChip(null)));
+  const noPlan = fix && (fix.ok === false || !fix.plan);
+  const mc = W.attempt > 1 ? `ask ${W.attempt}/2` : mgrChip(W.label);
+  if (!esc) N.push(XN0("MANAGER", "pend", "", mc));
+  else if (!fix) N.push(XN0("MANAGER", "think", mgrThink(W.label), mc));
+  else if (noPlan) N.push(XN0("MANAGER", "fail", fix.ok === false ? noPlanWhy(fix) : "Answer isn't a plan", mc, { think: mgrThink(W.label) }));
+  else N.push(XN0("MANAGER", "done", `“${ansWords(fix.plan)}”`, mc, { q: true, think: mgrThink(W.label) }));
+  if (noPlan) N.push(XN0("PLAIN CODE", "skip", "No plan to check", "±40 mm"));
+  else if (!chk) N.push(XN0("PLAIN CODE", fix ? "now" : "pend", "Checking…", "±40 mm"));
+  else if (chk.ok) N.push(XN0("PLAIN CODE", "done", "In bounds, in budget", "±40 mm"));
+  else N.push(XN0("PLAIN CODE", "fail", `Refused: ${tidy(chk.reason || "").replace(/^\w/, (c) => c.toLowerCase())}`, "±40 mm"));
+  const r = W.locate && W.locate.result, lastRedo = W.redo[W.redo.length - 1];
+  const lost = W.locate && !(r && r.found);
+  if (noPlan || (chk && !chk.ok)) N.push(XN0("PARK", end ? "fail" : "fall", "No scripted redo: a person", ""));
+  else if (!chk) N.push(XN0("ARM", "pend", "", "IK"));
+  else if (W.phase === "redone" || (act && act.verified)) N.push(XN0("ARM", "done", "Holds the block, checked", "IK"));
+  else if (W.phase === "person" || W.phase === "fixed") N.push(XN0("ARM", "fail", lost ? "No block found: a person" : "Still missing: a person", "IK"));
+  else if (act && !act.ok) N.push(XN0("ARM", "fail", lost ? "No block found" : "Missed again: asks again", "IK"));
+  else if (lastRedo) N.push(XN0("ARM", "now", /grip|lift/.test(lastRedo.step) ? "Checking the grip…" : `Redo ${lastRedo.step}${lastRedo.offset_mm ? ` · ${offWords(lastRedo.offset_mm)}` : ""}…`, "IK"));
+  else if (W.corr === "relocate") N.push(XN0("ARM", "now", W.locate ? (r && r.found ? `Found it ${offWords(r.offset_mm)}` : "No block found") : "Scanning ±40 mm…", "IK"));
+  else N.push(XN0("ARM", "now", `${ansWords(fix.plan)}…`, "IK"));
+  L.push({ c: "asks", st: esc ? "done" : "pend", s: "" });
+  L.push({ c: noPlan ? "no plan" : "answers", st: fix ? (noPlan ? "fail" : "done") : esc ? "wait" : "pend", s: fix ? secsTxt(num(fix.seconds) ? fix.seconds : fix.ts - esc.ts) : esc ? secsTxt(now - esc.ts) : "" });
+  L.push({ c: chk && !chk.ok ? "refuses" : "approves", st: chk ? (chk.ok ? "done" : "fail") : noPlan ? "skip" : "pend", s: chk && fix ? secsTxt(chk.ts - fix.ts) : "" });
+  return { key: `w/${W.card}/${W.iid}/${esc ? esc.escalation : "rev"}`, nodes: N, links: L, pd: PD_WRONG, final: !!end || !!act };
+}
+function xBuild() {
+  const root = $("xchg");
+  root.innerHTML = `<div class="xflow">` + XN.map(([n, ic], k) =>
+    (k ? `<div class="xl pend"><span class="xc"></span><span class="xw"><i class="pkt"></i></span><span class="xs"></span></div>` : "") +
+    `<div class="xn pend" data-n="${n}"><span class="xh1"><span class="xi">${svg(ic)}<span class="xb"></span></span><b><span></span><i></i></b></span><em class="xd"></em></div>`).join("") + `</div>`;
+  XD = { nodes: [...root.querySelectorAll(".xn")].map((el) => ({ el, t: el.querySelector("b span"), chip: el.querySelector("b i"), d: el.querySelector(".xd"), b: el.querySelector(".xb") })),
+    links: [...root.querySelectorAll(".xl")].map((el) => ({ el, c: el.querySelector(".xc"), s: el.querySelector(".xs") })) };
+}
+function xFly(k) {
+  const L = XD && XD.links[k];
+  if (!L) return;
+  L.el.classList.remove("fly");
+  void L.el.offsetWidth;                          // restart the flight
+  L.el.classList.add("fly");
+  clearTimeout(L.t); L.t = setTimeout(() => L.el.classList.remove("fly"), 1100);
+}
+function renderXchg(mode, arm) {
+  const root = $("xchg");
+  const X = arm && (mode.wrong ? xWrong(mode, arm) : (mode.incident || mode.done) ? xFault(mode, arm) : null);
+  if (!X) { root.classList.remove("on"); XS.key = null; return; }
+  if (!XD) xBuild();
+  root.classList.add("on");
+  let stage = 0;
+  X.nodes.forEach((n, k) => { if (n.st !== "pend") stage = k; });
+  const t = performance.now();
+  if (X.key !== XS.key) { XS.key = X.key; XS.shown = X.final ? stage : 0; XS.at = t - X_STEP_MS; XS.ans = 0; }
+  const asked = X.nodes[1].st !== "skip";
+  const hold = XS.shown === 1 && asked ? THINK_MS : X_STEP_MS;      // the manager is seen to think
+  if (XS.shown > stage) XS.shown = stage;
+  else if (XS.shown < stage && t - XS.at >= hold) {
+    XS.shown++; XS.at = t; xFly(XS.shown - 1);
+    if (XS.shown === 2 && X.nodes[1].st === "done") XS.ans = t + ANS_MS;   // the answer lands
+  }
+  const holding = XS.shown === 1 && stage > 1 && asked;           // its answer is in, still shown thinking
+  X.nodes.forEach((n, k) => {
+    const D = XD.nodes[k], seen = k <= XS.shown;
+    let st = !seen ? "pend" : k === XS.shown && XS.shown < stage && n.st === "done" ? "now" : n.st;
+    let d = seen && n.st !== "pend" ? n.d : X.pd[k];
+    if (k === 1 && holding) { st = "think"; d = n.think || "Thinking…"; }
+    const cls = `xn ${st}${k === 1 && st === "done" && t < XS.ans ? " ans" : ""}`;
+    if (D.el.className !== cls) D.el.className = cls;
+    setText(D.t, n.t); setText(D.chip, n.chip || "");
+    setText(D.d, d);
+    D.d.classList.toggle("q", !!n.q && st === "done");
+    setHTML(D.b, st === "done" ? svg("check") : st === "fail" ? svg("cross") : "");
+  });
+  X.links.forEach((l, k) => {
+    const D = XD.links[k];
+    let st = k < XS.shown ? l.st : k === XS.shown && l.st === "wait" ? "wait" : "pend";
+    if (k === 1 && holding) st = "wait";
+    const cls = `xl ${st}${D.el.classList.contains("fly") ? " fly" : ""}`;
+    if (D.el.className !== cls) D.el.className = cls;
+    setText(D.c, l.c);
+    setText(D.s, st === "pend" || (k === 1 && holding) ? "" : l.s || "");
+  });
+}
+
+// ---------- render: heal timeline ----------
+const MEAS = document.createElement("canvas").getContext("2d");
+function textW(s, font) { if (!s) return 0; MEAS.font = font; return MEAS.measureText(s).width; }
+function spanFor(d, now) {
+  const starts = [...(d.incidents || []).map((i) => i.opened), ...(d.jobs || []).map((j) => j.start)].filter((t) => num(t) && t > now - 1800);
+  const first = starts.length ? Math.min(...starts) : now;
+  return Math.min(1800, Math.max(90, (now - first) * 1.12 + 20));    // zoomed to the action: a heal fills the lane
+}
+function renderHeal() {
+  const T = TH;
+  const d = (S && S.derived) || {};
+  const sm = d.summary || {};
+  const c = (v, k, cls, unit = "") => `<div class="ctr ${cls}"><div class="v">${v}${unit ? `<small>${unit}</small>` : ""}</div><div class="k">${k}</div></div>`;
+  setHTML($("counters"),
+    c(num(sm.jobs_done) ? sm.jobs_done : "0", "Jobs done", sm.jobs_done ? "" : "zero") +
+    c(num(sm.faults_healed) ? sm.faults_healed : "0", "Faults healed", sm.faults_healed ? "ok" : "zero") +
+    c(num(sm.median_heal_s) ? fmt(sm.median_heal_s, 1) : "–", "Median heal time", num(sm.median_heal_s) ? "" : "zero", num(sm.median_heal_s) ? "s" : "") +
+    c(num(sm.needs_person) ? sm.needs_person : "0", "Needs a person", sm.needs_person ? "bad" : "zero"));
+  const box = $("timeline");
+  const W = Math.max(200, box.clientWidth), H = Math.max(80, box.clientHeight);
+  const now = (S && S.now) || Date.now() / 1000;
+  const SPAN_S = spanFor(d, now);
+  const t0 = now - SPAN_S;
+  const spanWords = SPAN_S < 120 ? `${Math.round(SPAN_S)} s` : `${Math.round(SPAN_S / 60)} min`;
+  $("healSub").textContent = `last ${spanWords}`;
+  const NOWX = W - 6, RIGHT = W - 12;              // labels stay left of the NOW line
+  const x = (t) => 6 + (NOWX - 6) * Math.max(0, Math.min(1, (t - t0) / SPAN_S));
+  const tick = SPAN_S <= 150 ? 30 : SPAN_S <= 420 ? 60 : SPAN_S <= 900 ? 120 : 300;
+  const tickText = (k) => (tick < 60 ? hms(k) : hm(k));
+  const axisY = H - 22;
+  const fam = esc(T.tlFont), mono = esc(T.mono);
+  const LS = Math.round(Math.max(13, Math.min(17, H / 11))), KS = LS - 3;   // label sizes grow with the panel
+  const BH = H < 170 ? 16 : 22;                                               // incident bar height
+  const FL = `700 ${LS}px ${T.tlFont}`, FK = `500 ${KS}px ${T.tlFont}`;
+  let out = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">`;
+  out += `<defs><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="8" height="8" fill="rgba(${T.warn},0.35)"/><rect width="3" height="8" fill="rgba(${T.warn},0.85)"/></pattern></defs>`;
+  for (let k = Math.ceil(t0 / tick) * tick; k <= now - tick * 0.25; k += tick) {
+    const X = x(k);
+    const tl = tickText(k), half = textW(tl, `400 12.5px ${T.mono}`) / 2;   // a tick label never hangs off the left edge
+    out += `<line x1="${X}" x2="${X}" y1="6" y2="${axisY}" stroke="${T.tlGrid}"/>` + (X - half < 2 ? "" : `<text x="${X}" y="${H - 5}" fill="${T.tlTick}" font-size="12.5" text-anchor="middle" font-family="${mono}">${tl}</text>`);
+  }
+  out += `<line x1="6" x2="${NOWX}" y1="${axisY}" y2="${axisY}" stroke="${T.tlAxis}"/>`;
+  const laneJ = axisY - 12, lane0 = axisY - 34 - BH / 2, laneI = [lane0, lane0 - (BH + LS + 9)];
+  out += `<text x="8" y="${laneJ - 8}" fill="${T.tlLane}" font-size="11.5" letter-spacing="1.6" font-family="${fam}">JOBS</text>`;
+  const capW = textW("INCIDENTS", `400 11.5px ${T.tlFont}`) + 10 * 1.6 + 8;   // its caption shares lane 1's label row
+  const jobs = (d.jobs || []).filter((j) => (j.end || now) >= t0);
+  for (const j of jobs) {
+    const a = x(j.start), b = Math.max(a + 4, x(j.end || now));
+    const col = j.end ? (j.ok ? `rgba(${T.accent},0.55)` : `rgba(${T.bad},0.7)`) : `rgba(${T.accent},0.35)`;
+    out += `<rect x="${a}" y="${laneJ - 4}" width="${b - a}" height="8" rx="4" fill="${col}"/>`;
+  }
+  const incs = (d.incidents || []).filter((i) => (i.closed || now) >= t0);
+  const laneEnd = [-1e9, -1e9];
+  let lane1From = 1e9;                           // where lane 1's first label starts
+  const nowW = textW("NOW", `400 11.5px ${T.tlFont}`) + 3 * 1.4;
+  const rightOf = [RIGHT, laneI[1] - BH / 2 - 5 - LS < 14 + 4 ? NOWX - 4 - nowW - 10 : RIGHT];   // lane 1's row meets the NOW caption
+  for (const i of incs) {
+    const a = Math.min(x(i.opened), NOWX - 28), b = Math.max(a + 28, x(i.closed || now));   // the newest heal is never a sliver
+    const lost = i.outcome === "lost";
+    const fixed = !!i.by_person;                 // a person fixed it while it was open: not the healer's
+    let label = fixed ? "fixed by hand" : i.outcome === "healed" ? `${fmt(i.heal_s, 1)} s` : i.outcome === "person" ? "needs a person" : lost ? "host restarted" : `open ${fmt(i.open_s, 0)} s`;
+    let kind = short(i.kind), lane = -1, box = null, lx = a;
+    for (const compact of [false, true]) {
+      if (compact) { kind = ""; label = i.outcome === "person" || fixed ? "person" : i.outcome === "healed" ? label : lost ? "lost" : `${fmt(i.open_s, 0)} s`; }
+      const lw = textW(label, FL) + (kind ? textW(" " + kind, FK) : 0);
+      for (const ln of [0, 1]) {
+        const R = rightOf[ln];
+        const sx = a + lw <= R ? a : Math.min(b, R) - lw;           // start at the bar, else end at it
+        if (sx < 4 || sx + lw > R + 0.5 || sx <= laneEnd[ln] + 16) continue;   // two labels never read as one
+        lane = ln; lx = sx; box = [sx, sx + lw];
+        break;
+      }
+      if (lane >= 0) break;
+    }
+    const quiet = lane < 0;                      // no room for any label: the bar alone (its title has it)
+    if (quiet) lane = laneEnd[0] <= laneEnd[1] ? 0 : 1;
+    laneEnd[lane] = Math.max(laneEnd[lane], quiet ? b : box[1], b);   // a bar with no label never pulls its lane's end back
+    if (!quiet && lane === 1) lane1From = Math.min(lane1From, box[0]);
+    const y = laneI[lane];
+    const rgb = fixed ? T.idle : i.outcome === "healed" ? T.ok : i.outcome === "person" ? T.bad : T.warn;
+    const fill = i.outcome === "open" ? "url(#hatch)" : lost ? T.tlLane : `rgb(${rgb})`;
+    const glow = T.glow > 0 && !lost && !fixed ? ` style="filter: drop-shadow(0 0 ${(6 * T.glow).toFixed(1)}px rgba(${rgb},0.6))"` : "";
+    out += `<rect x="${a}" y="${y - BH / 2}" width="${Math.min(b, NOWX) - a}" height="${BH}" rx="7" fill="${fill}"${glow}><title>${esc(clean(i.summary) || i.kind)}</title></rect>`;
+    if (!quiet) out += `<text x="${lx}" y="${y - BH / 2 - 5}" fill="${fixed || lost ? T.tlKind : i.outcome === "healed" ? T.tlOk : i.outcome === "person" ? T.tlBad : T.tlWarn}" font-size="${LS}" font-weight="700" font-family="${fam}">${esc(label)}${kind ? `<tspan fill="${T.tlKind}" font-weight="500" font-size="${KS}"> ${esc(kind)}</tspan>` : ""}</text>`;
+  }
+  if (lane1From > capW + 6) out += `<text x="8" y="${laneI[1] - BH / 2 - 5}" fill="${T.tlLane}" font-size="11.5" letter-spacing="1.6" font-family="${fam}">INCIDENTS</text>`;
+  out += `<line x1="${NOWX}" x2="${NOWX}" y1="4" y2="${axisY + 4}" stroke="rgba(${T.accent},0.7)" stroke-dasharray="3 3"/><text x="${NOWX - 4}" y="14" fill="rgb(${T.accent})" font-size="11.5" text-anchor="end" letter-spacing="1.4" font-family="${fam}">NOW</text>`;
+  out += `</svg>`;
+  if (!incs.length && !jobs.length) out += `<div class="tlempty">No incidents in the last ${spanWords}${S && S.arm && !S.arm.error ? " · the arm is healthy" : ""}</div>`;
+  setHTML(box, out);
+}
+
+// ---------- render: jobs ----------
+function renderJobs(mode) {
+  const b = (S && S.board) || {};
+  const nj = (b.cards || []).length;
+  $("jobsSub").textContent = b.error ? "board unavailable" : `${b.kind === "naive" ? "Naïve board" : "Local board"} · ${nj} ${nj === 1 ? "job" : "jobs"}`;
+  if (b.error) return setHTML($("kanban"), `<div class="empty-state" style="grid-column:1/-1"><b>Job board unavailable</b>${esc(b.error)}</div>`);
+  const cards = b.cards || [];
+  const arm = A && !A.error ? A : null;
+  const cols = [["todo", "To do"], ["doing", "Doing"], ["blocked", "Blocked"], ["done", "Done"]];
+  let html = "";
+  for (const [key, label] of cols) {
+    const mine = cards.filter((c) => c.status === key);
+    html += `<div class="kcol ${key}" data-extra="${Math.max(0, mine.length - 12)}"><h3><span>${label}</span><span class="n${mine.length ? "" : " z"}">${mine.length}</span></h3>`;
+    if (!mine.length) html += `<div class="kempty">${key === "todo" && !cards.length ? "Press 1 to place an order" : "–"}</div>`;
+    for (const c of mine.slice(0, 12)) {
+      const isRes = /^RESULT:/i.test(c.last || ""), isBlk = /^BLOCKED:/i.test(c.last || "");
+      const parked = key === "doing" && (mode.cls === "bad" || mode.cls === "person" || mode.cls === "warn");
+      const oid = c.order ? "#" + c.order.slice(-4) : (c.id || "").slice(-6);
+      html += `<div class="kc ${key}${parked ? " parked" : ""}${parked && mode.cls === "warn" ? " healing" : ""}"><div class="o"><span>${esc(oid)}</span><span>${esc(ago(c.age_s))}</span></div><div class="j">${esc(jobTitle(c))}</div>`;
+      if (key === "doing") {
+        const sk = arm && arm.skill;
+        const step = parked ? (mode.wrong ? (mode.cls === "warn" ? "correcting the grasp…" : "wrong move: reversing")
+          : mode.cls === "warn" ? "healing…" : "parked: " + short(mode.incident && mode.incident.kind)) : sk && sk.running ? sk.name.replace(/_/g, " ") : "working";
+        html += `<div class="step">${svg(parked ? (mode.cls === "warn" ? "heal" : "incident") : "skill").replace("<svg", '<svg width="13" height="13"')} ${esc(step)}</div>`;
+      } else if (c.last && key !== "todo") html += `<div class="r ${isRes ? "res" : isBlk ? "blk" : ""}">${esc(tidy(c.last.replace(/^(RESULT|BLOCKED):\s*/i, ""), c.order))}</div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+  setHTML($("kanban"), html);
+  document.querySelectorAll("#kanban .kcol").forEach((c) => fit(c, ".kc"));
+}
+
+// ---------- render: feed ----------
+// The healer's own lines in words a judge reads, from the event itself (its plan, action, offsets), not its
+// machine text; one line per finished job; and new rows revealed one at a time, oldest first, FEED_STEP_MS
+// apart, so the four or five lines one poll brings (incident, ask, answer, check) read in order.
+const FEED_STEP_MS = 650, FEED_NEW_MS = 640;
+function evOf(it) {
+  if (it.synth) return null;
+  const evs = EVS();
+  for (let j = evs.length - 1; j >= 0; j--) if (evs[j].ts === it.ts && evs[j].kind === it.kind) return evs[j];
+  return null;
+}
+const UNDO = { release: "jaws open", lift: "backed off 30 mm", reach: "back over the block" };
+// what ran (plan_action's `action`; the plan's own action is `planned`): a pod_rollback plan runs as wait_for_pod
+const DID = { restart_sensor: "Restarted the sensor", verify: "Ran a checked retry", no_action: "Checked at home" };
+const didWords = (a) => DID[a] || (/^wait_for_pod/.test(a || "") ? "Waited for the pod's own healer" : cap1(String(a || "acted").replace(/_/g, " ")));
+function feedWords(it) {
+  const e = evOf(it) || {};
+  const wrong = e.category === "wrong_action" || /\(a wrong action\)/.test(it.text || "") || /-wa-/.test(e.escalation || "");
+  const lc = (s) => String(s || "").replace(/^\w/, (c) => c.toLowerCase());
+  const secs = num(e.seconds) ? e.seconds : +((/\((\d+(?:\.\d+)?) s\)$/.exec(it.text || "") || [])[1]);
+  const inS = num(secs) ? ` in ${fmt(secs, 0)} s` : "";
+  const kindOf = () => (wrong ? "the missed grasp" : short(((e.incident || {}).kind) || (/^(?:healed|couldn't heal|escalated) (\w+)/.exec(it.text || "") || [])[1]));
+  switch (it.kind) {
+    case "escalation":
+      return `Asked the manager about ${wrong ? "the missed grasp" : "the " + kindOf()}${e.step ? ` during ${e.step}` : ""}${e.worker ? " · written by its small model" : ""}`;
+    case "fix_plan":
+      if (it.ok === false) return `No plan from the manager (${lc(noPlanWhy(e.text ? e : it))}): ${wrong ? "the arm parks for a person" : "the scripted heal runs"}`;
+      if (!e.plan) return "The manager answered, but not with a plan";
+      return `Answered${num(e.seconds) ? ` in ${secsTxt(e.seconds)}` : ""}: ${lc(ansWords(e.plan))}${num(e.plan.confidence) ? ` (confidence ${e.plan.confidence})` : ""}`;
+    case "plan_check":
+      return it.ok ? `Plain code approved it: ${wrong ? "inside ±40 mm" : "on the allowlist"}, in budget` : `Plain code refused it: ${lc(tidy(e.reason || ""))}`;
+    case "plan_action":
+      if (e.action === "handoff_human") return /plan was refused/.test(it.text || "") ? "Handed to a person: the plan was refused" : "Handed to a person: the manager's choice";
+      if (e.action === "park") return "Kept parked for a person: the manager's choice";
+      if (e.action === "none") return e.stale === "closed" ? "Nothing ran: the incident closed on its own first" : "Nothing ran: a person has it";
+      if (e.action === "redo_step") return it.ok ? "Redone: the gripper holds the block" : "The redo missed again";
+      return `${didWords(e.action)}${it.ok ? ": the check at home passed" : ": still failing at home"}`;
+    case "reverse":
+      return `Reversed the grip: ${UNDO[e.undo] || lc(tidy(it.text))}`;
+    case "redo":
+      if (e.step === "locate") {
+        const r = e.result || {};
+        return r.found ? `Scan found the block ${offWords(r.offset_mm)} off (${r.probes} probes, ${fmt(r.seconds, 1)} s)` : `Scan found no block${r.reason ? `: ${lc(tidy(r.reason))}` : ""}`;
+      }
+      return `Redo ${e.step}${e.offset_mm ? ` shifted ${offWords(e.offset_mm)}` : ""}: ${!it.ok ? "missed" : e.step === "grip" ? "holding the block" : "arrived"}`;
+    case "incident":
+      if (wrong) return `Wrong move during ${e.step || "grip"}: the grip closed on nothing`;
+      break;
+    case "heal":
+      if (it.src === "commander") {
+        // a fault's time is the incident's own (the timeline's number), not the commander's clock
+        const inc = !wrong && ((S && S.derived && S.derived.incidents) || []).find((x) => x.id === (e.incident || {}).id && x.opened <= it.ts && x.opened > it.ts - 300);
+        const took = inc && num(inc.heal_s) ? ` in ${fmt(inc.heal_s, 1)} s` : inS;
+        const how = /the manager \([^)]*\) planned/.test(it.text || "") ? " with the manager's plan" : /the scripted heal|no plan from the manager/.test(it.text || "") ? " with the scripted heal" : "";
+        // a wrong move's own heal line carries the why ("the grasp still missed after 2 redos"): say it once, here
+        const why = wrong && /\(a wrong action\): (.*?)(?: \(\d+ s\))?$/.exec(it.text || "");
+        return it.ok === false ? `Couldn't heal ${kindOf()}${inS}: ${why ? lc(tidy(why[1])) + ", parked for a person" : "a person takes it"}` : `Healed ${kindOf()}${took}${how}`;
+      }
+      break;
+    case "handoff":
+      if (it.src !== "watchdog") return `Handed to a person: ${lc(tidy((it.text || "").replace(/^handed to a person:\s*/i, "")))}`;
+      break;
+    case "dispatcher":
+      if (/^dispatcher up\b/.test(it.text || "")) return `Dispatcher up: takes ARM JOB cards from the ${/naive|Naïve/i.test(it.text) ? "Naïve" : "local"} board`;
+      break;
+    case "job_summary": {
+      const t = tidy(it.text, it.order), m = /^(Order #\w+): blocked in (\d+ s) \((.*)$/.exec(t);
+      if (m) return `${m[1]}: blocked in ${m[2]} · ${lc(m[3].split(/[:;(]|, the| ·/)[0].trim())}`;
+      return t;
+    }
+  }
+  return tidy(it.text, it.order);
+}
+function feedItems(items0) {
+  const items = items0.map((it, n) => [it, n]).sort((a, b) => (b[0].ts - a[0].ts) || (b[1] - a[1])).map((x) => x[0]);
+  const sums = items.filter((it) => it.kind === "job_summary");
+  const failed = items.filter((it) => it.kind === "heal" && it.ok === false && !it.synth);
+  const out = [];
+  for (const it of items) {
+    // one line per finished job: the dispatcher's summary says what the commander's result and the card's close say
+    if (["job_result", "card_done", "card_blocked"].includes(it.kind) && sums.some((s) => s.card && s.card === it.card && Math.abs(s.ts - it.ts) < 5)) continue;
+    // a failed heal is said once: by the commander's "couldn't heal" line, not by the step before it or the watchdog after
+    if (((it.kind === "plan_action" && it.ok === false) || it.kind === "handoff") && failed.some((f) => Math.abs(f.ts - it.ts) < 20)) continue;
+    out.push({ ...it, words: feedWords(it) });
+  }
+  return out;
+}
+let seenFeed = new Set(), feedPrimed = false, feedQ = [], feedAt = 0;
+const feedShown = new Map();                       // key -> when it was revealed (performance.now)
+function renderFeed() {
+  const items = feedItems(((S && S.derived && S.derived.feed) || []).slice(0, 40));
+  if (!items.length) return setHTML($("feed"), `<div class="empty-state"><b>Quiet so far</b>Orders, skills, incidents and heals show up here as they happen.</div>`);
+  const keyOf = feedKey;
+  const keys = new Set(items.map(keyOf));
+  const t = performance.now();
+  if (!feedPrimed) { keys.forEach((k) => seenFeed.add(k)); feedPrimed = true; }
+  feedQ = feedQ.filter((k) => keys.has(k));
+  for (const it of items.slice().reverse()) { const k = keyOf(it); if (!seenFeed.has(k) && !feedQ.includes(k)) feedQ.push(k); }
+  while (feedQ.length > 6) seenFeed.add(feedQ.shift());       // a burst (a reload, a soak): the old ones at once
+  if (feedQ.length && !feedHover && t - feedAt >= FEED_STEP_MS) {   // not while a row is hovered: the list must not move under the pointer
+    const k = feedQ.shift(); seenFeed.add(k); feedShown.set(k, t); feedAt = t;
+  }
+  let html = "", n = 0, anyOpen = false;
+  for (const it of items) {
+    const key = keyOf(it);
+    if (!seenFeed.has(key)) continue;
+    if (++n > 30) break;
+    let [icon, tone] = KIND[it.kind] || ["dot", "dim"];
+    if (it.ok === false && tone !== "dim") { tone = "bad"; icon = "blocked"; }   // a failed heal or a blocked job is not green
+    const fresh = t - (feedShown.get(key) || -1e9) < FEED_NEW_MS;
+    const src = SRC[it.src] || it.src || "", open = key === feedHover || key === feedSticky || key === feedFocus;
+    if (open) anyOpen = true;
+    // data-fk, not data-key: the 1-9 hotkeys look up [data-key]
+    html += `<div class="fi ${tone}${fresh ? " new" : ""}${open ? " open" : ""}" data-fk="${esc(key)}" tabindex="0" role="button" aria-expanded="${open}" aria-label="${esc(`${fullTs(it.ts)}, ${src}: ${it.words}`)}"><span class="ic">${svg(icon)}</span><span class="tm">${esc(hms(it.ts))}</span><span class="tx"><span class="src">${esc(src)}</span>${esc(it.words)}<span class="fmeta">${esc([fullTs(it.ts), src, it.kind].filter(Boolean).join(" · "))}</span></span></div>`;
+  }
+  seenFeed = new Set([...seenFeed].filter((k) => keys.has(k)));
+  for (const k of feedShown.keys()) if (!keys.has(k)) feedShown.delete(k);
+  feedRestoring = true;                      // replacing the rows blurs the focused one: not a real blur
+  setHTML($("feed"), html);
+  $("feed").classList.toggle("hasopen", anyOpen);
+  // a re-render replaces the rows: put keyboard focus back on the row that had it
+  const fe = $("feed");
+  if (feedActive && !fe.contains(document.activeElement)) {
+    const row = feedRow(feedActive);
+    if (row) row.focus({ preventScroll: true });
+  }
+  feedRestoring = false;
+  $("feedSub").textContent = "newest first";
+}
+// Which feed row is open is kept here by the row's identity, not by the DOM, so the 1 s re-render (which
+// rebuilds the rows) never closes it: hover, keyboard focus, or a click (sticky; Escape clears all three).
+function feedKey(it) {
+  let h = 0; const t = String(it.text || "");
+  for (let i = 0; i < t.length; i++) h = (Math.imul(h, 31) + t.charCodeAt(i)) | 0;
+  return `${it.ts}|${it.src}|${it.kind}|${(h >>> 0).toString(36)}`;
+}
+let feedHover = null, feedSticky = null, feedFocus = null, feedActive = null, feedRestoring = false;
+const feedRow = (k) => [...$("feed").children].find((r) => r.dataset && r.dataset.fk === k) || null;
+const feedRowKey = (t) => { const r = t.closest && t.closest(".fi[data-fk]"); return r ? r.dataset.fk : null; };
+(() => {
+  const fe = $("feed");
+  const toggle = (k) => { feedSticky = feedSticky === k ? null : k; renderFeed(); const r = feedRow(k); if (r) r.scrollIntoView({ block: "nearest" }); };
+  fe.addEventListener("mouseover", (e) => { const k = feedRowKey(e.target); if (k !== feedHover) { feedHover = k; renderFeed(); } });
+  fe.addEventListener("mouseleave", () => { if (feedHover) { feedHover = null; renderFeed(); } });
+  fe.addEventListener("focusin", (e) => {
+    if (feedRestoring) return;
+    const k = feedRowKey(e.target); feedActive = k;
+    if (k && e.target.matches(":focus-visible")) { feedFocus = k; renderFeed(); }   // a mouse click focuses too: only the keyboard's focus opens
+  });
+  fe.addEventListener("focusout", (e) => {
+    if (feedRestoring) return;
+    feedActive = null;
+    // later, not now: the next row is receiving focus, and rebuilding the rows here would remove it
+    if (feedFocus) { feedFocus = null; setTimeout(renderFeed, 0); }
+  });
+  fe.addEventListener("click", (e) => { const k = feedRowKey(e.target); if (k) toggle(k); });
+  fe.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".fi")) { e.preventDefault(); e.stopPropagation(); toggle(feedRowKey(e.target)); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && (feedHover || feedSticky || feedFocus)) { feedHover = feedSticky = feedFocus = null; renderFeed(); }
+  });
+})();
+
+// ---------- render: pod ----------
+const IMAGES = { good: ["v1.1 · known good", "ok", "the image that ran clean"], "07": ["v1.7 · bad image 07", "bad", "distance math cut to 16 bits"], "02": ["v1.2 · bad image 02", "bad", "clock runs at half speed"] };
+function renderPod() {
+  const arm = A && !A.error ? A : null;
+  const pod = arm && arm.pod;
+  if (!arm) return setHTML($("pod"), `<div class="offline"><div class="big">No arm host</div>The pod is read through the arm host's podd link.</div>`);
+  if (!pod) return setHTML($("pod"), `<div class="offline"><div class="big">No pod link</div>This arm host runs without podd (start it with <code>--pod sim</code>).</div>`);
+  const img = IMAGES[pod.image] || (pod.image ? [pod.image, "", ""] : ["real pod", "", "build from the pod itself"]);
+  const healing = pod.healer_busy;
+  let html = arm.stale ? `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd"></span>no signal</span></div>`
+    : `<div class="kv"><span class="k">podd</span><span class="v"><span class="hd ${pod.podd_up ? "ok" : "bad"}"></span>${pod.podd_up ? "running" : "down"}</span></div>`;
+  html += `<div class="fw ${healing ? "warn" : img[1]}"><div class="k">Firmware</div><div class="v">${esc(healing ? "rolling back…" : img[0])}</div><div class="s">${esc(healing ? "pod healer flashing the known-good image" : img[2])}</div></div>`;
+  const incs = pod.incidents || [];
+  const crit = incs.some((i) => i.severity === "critical");
+  html += `<div class="kv"><span class="k">Pod incidents</span><span class="v">${incs.length ? `<span class="hd ${crit ? "bad" : "warn"}"></span>${incs.length} open` : `<span class="hd ok"></span>none`}</span></div>`;
+  for (const i of incs.slice(0, 2)) html += `<div class="pinc ${esc(i.severity || "")}"><span class="kd">${esc(i.kind)}</span><span>${esc(i.summary || "")}</span></div>`;
+  const hl = pod.healer_last;
+  if (!incs.length && hl) html += `<div class="pinc"><span class="kd healed">healed</span><span>rolled back at ${esc(hms(hl.at))}</span></div>`;
+  setHTML($("pod"), html);
+}
+
+// ---------- render: fleet ----------
+function healthCls(h) { return h === "ok" ? "ok" : h === "degraded" ? "warn" : h === "failing" ? "bad" : ""; }
+function woCls(s) { return s === "done" ? "ok" : s === "needs_human" || s === "blocked_over_cap" || s === "denied" ? "bad" : s === "posted" || s === "in_progress" ? "acc" : "warn"; }
+function renderFleet() {
+  const r = S && S.romulus;
+  if (!r || r.error) {
+    $("fleetSub").textContent = "Romulus cloud"; $("fleetSub").title = (r && r.url) || "";
+    return setHTML($("fleetBody"), `<div class="offline"><div class="big"><span class="hd"></span>Romulus offline</div>Healing still runs on the arm; its reports wait in the outbox until the cloud is back.</div>`);
+  }
+  $("fleetSub").textContent = "Romulus cloud"; $("fleetSub").title = r.url || "";
+  const now = S.now;
+  let html = r.frozen ? `<div class="frozenbar">Fleet frozen${r.frozen_why ? " · " + esc(r.frozen_why) : ""}</div>` : "";
+  const mine = new Set([A && A.romulus && A.romulus.device, "arm-twin-1", "arm-1", "pod-1"]);
+  const rank = (d) => (mine.has(d.id) ? 0 : d.health === "failing" ? 1 : d.health === "degraded" ? 2 : 3);
+  const devs = (r.devices || []).slice().sort((a, b) => rank(a) - rank(b) || String(a.id).localeCompare(String(b.id)));
+  html += `<div class="sect"><span>Devices</span><span>${devs.length}</span></div><div class="devs">`;
+  if (!devs.length) html += `<div class="kempty">${r.errors && r.errors.devices ? esc(r.errors.devices) : "No devices yet"}</div>`;
+  for (const d of devs.slice(0, 8)) {
+    const seen = d.last_seen_at ? now - Date.parse(d.last_seen_at) / 1000 : null;
+    const stale = num(seen) && seen > 60;
+    html += `<div class="dev"><span class="hd ${stale ? "" : healthCls(d.health)}"></span><span class="id">${esc(d.id)}<small>${esc(d.device_class === "sensor_pod" ? "pod" : d.kind)}${d.role === "canary" ? " · canary" : ""}</small></span><span class="h ${stale ? "" : healthCls(d.health)}">${esc(d.health || "not seen")}${num(seen) ? " · " + esc(ago(seen)) : ""}</span></div>`;
+  }
+  html += `</div>`;
+  const wos = r.work_orders || [];
+  html += `<div class="sect"><span>Work orders</span><span>${wos.length}</span></div>`;
+  if (!wos.length) html += `<div class="kempty">${r.errors && r.errors.work_orders ? esc(r.errors.work_orders) : "None open: nothing needs hands"}</div>`;
+  html += `<div class="wos">`;
+  for (const w of wos.slice(0, 3)) html += `<div class="wo"><span class="p"><small>${esc(w.device_id)}</small>${esc(w.part || "inspection")}</span><span class="st ${woCls(w.status)}">${esc((w.status || "").replace(/_/g, " "))}</span></div>`;
+  html += `</div>`;
+  setHTML($("fleetBody"), html);
+  fit($("fleetBody").querySelector(".devs"), ".dev");
+}
+
+// ---------- render: presenter ----------
+let lastTicket = 0;
+const ticketBtn = new Map();       // ticket id -> the button that sent it
+function btnState(btn, cls, label, ms) {
+  if (!btn) return;
+  btn.classList.remove("sent", "done", "failed");
+  if (cls) btn.classList.add(cls);
+  const st = btn.querySelector(".st8"); if (st) st.textContent = label || "";
+  clearTimeout(btn._t);
+  if (ms) btn._t = setTimeout(() => btn.classList.remove("sent", "done", "failed"), ms);
+}
+function renderPresenter() {
+  const p = S && S.presenter;
+  if (!p || !p.last || p.last.id === lastTicket) return;
+  lastTicket = p.last.id;
+  const btn = ticketBtn.get(p.last.id);
+  ticketBtn.delete(p.last.id);
+  if (Date.now() / 1000 - (p.last.done_at || 0) > 15) return;
+  if (p.last.ok) btnState(btn, "done", "done ✓", 2600);
+  else { btnState(btn, "failed", "failed", 5000); toast(`<b>Failed</b> · ${esc(p.last.label)}: ${esc(p.last.error || "")}`, "bad"); }
+}
+let toastTimer = null;
+function toast(html, cls = "") {
+  const t = $("toast");
+  t.className = "toast on " + cls;
+  t.innerHTML = html;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = "toast"), 4200);
+}
+
+function fit(box, sel) {
+  // Hide the rows that don't fit (no half-clipped rows on a small screen) and say how many.
+  if (!box) return;
+  const rows = [...box.querySelectorAll(sel)];
+  rows.forEach((r) => (r.style.display = ""));
+  const more = box.querySelector(".kmore.fit"); if (more) more.remove();
+  let hidden = 0;
+  const extra = +(box.dataset.extra || 0);
+  const limit = box.clientHeight;
+  for (const r of rows) if (r.offsetTop + r.offsetHeight > limit + 1) { r.style.display = "none"; hidden++; }
+  if (hidden + extra) {
+    const m = document.createElement("div"); m.className = "kmore fit"; m.textContent = `+${hidden + extra} more`;
+    box.appendChild(m);
+    if (m.offsetTop + m.offsetHeight > limit + 1) { const vis = rows.filter((r) => r.style.display !== "none").pop(); if (vis) { vis.style.display = "none"; m.textContent = `+${hidden + extra + 1} more`; } }
+  }
+}
+function render() {
+  const mode = armMode(A, S);
+  renderHeader(mode);
+  renderFleetHeader();
+  renderTwinHud(mode);
+  renderHeal();
+  renderJobs(mode);
+  renderFeed();
+  renderPod();
+  renderFleet();
+  renderPresenter();
+}
+
+// ---------- presenter actions ----------
+const TOKEN = (() => {
+  try { const t = new URLSearchParams(location.search).get("token"); if (t) return t; } catch (e) {}
+  // the meta the server adds on loopback (mission.py); the name is spelled in two parts so a page served
+  // without a token never carries the word (tests/test_mission.py checks that)
+  const m = [...document.getElementsByTagName("meta")].find((x) => x.getAttribute("name") === "mission-" + "token");
+  return (m && m.getAttribute("content")) || "";
+})();
+async function act(btn) {
+  const a = btn.dataset.act;
+  let url = "/api/" + a, body = {};
+  if (a === "order") body = { job: btn.dataset.job };
+  if (a === "fault") body = { fault: btn.dataset.fault };
+  if (a === "freeze") url = frozenState() === true ? "/api/unfreeze" : "/api/freeze";
+  btn.classList.add("press");
+  const r = btn.getBoundingClientRect();
+  const rip = document.createElement("span");
+  rip.className = "ripple"; const size = Math.max(r.width, r.height);
+  rip.style.cssText = `width:${size}px;height:${size}px;left:${r.width / 2 - size / 2}px;top:${r.height / 2 - size / 2}px`;
+  if (btn.classList.contains("pb")) btn.appendChild(rip);
+  setTimeout(() => btn.classList.remove("press"), 180);
+  setTimeout(() => rip.remove(), 700);
+  const twin = btn.id === "freezeBtn" ? $("freezeBar") : btn;
+  btnState(twin, "sent", "sending…", 20000);
+  try {
+    const headers = { "Content-Type": "application/json" };
+    if (TOKEN) headers["X-Mission-Token"] = TOKEN;
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    const j = await res.json();
+    if (!j.ok) { btnState(twin, "failed", "refused", 5000); toast(`<b>Refused</b> · ${esc(j.error || res.status)}`, "bad"); }
+    else ticketBtn.set(j.ticket.id, twin);
+  } catch (e) { btnState(twin, "failed", "not sent", 5000); toast(`<b>Not sent</b> · Mission Control unreachable`, "bad"); }
+}
+document.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b)));
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "l") { e.preventDefault(); cycleLook(); return; }
+  if (k === "v") { e.preventDefault(); setView(STAGE.dataset.view === "split" ? "twin" : "split"); return; }
+  if (k === "g") { e.preventDefault(); toggleGrid(); return; }
+  const b = k === "f" ? $("freezeBtn") : k === "c" ? document.querySelector('[data-act="clear"]') : k === "w" ? document.querySelector('[data-fault="block_shift"]')
+    : /^[1-9]$/.test(k) ? document.querySelector(`[data-key="${k}"]`) : null;
+  if (b && !b.disabled) { e.preventDefault(); act(b); }
+});
+
+// =====================================================================================
+// THE 3D TWIN. The snapshot's chain is MuJoCo's body origins, which sit on the joint axes:
+//   chain[0] base (floor)    chain[1] shoulder_pan (top of the base servo)
+//   chain[2] shoulder_lift   chain[3] elbow_flex   chain[4] wrist_flex   chain[5] wrist_roll
+// so base -> pan -> upper arm -> forearm -> wrist -> gripper is the SO-101's real chain. The arm is
+// drawn as a pedestal, tapered links and servo housings on the hinge axes, from a fixed 3/4 side
+// view fitted to the box every skill stays inside.
+// =====================================================================================
+const cv = $("cv"), ctx = cv.getContext("2d");
+const HOME_VIEW = { yaw: -1.2, pitch: 0.34 };    // from the -y side, a little in front: base left, block right
+const cam = { yaw: HOME_VIEW.yaw, pitch: HOME_VIEW.pitch, dist: 1.05, zoom: 1, target: [0.12, 0, 0.17], userAt: -1e9 };
+const ENVELOPE = [];                             // the base, the pick zone and a working arm; the frame grows to the arm
+for (const x of [-0.06, 0.265]) for (const y of [-0.05, 0.05]) for (const z of [0, 0.255]) ENVELOPE.push([x, y, z]);
+let W = 0, H = 0, DPR = 1;
+const FIT = { F: 0, cx: 0, cy: 0, safe: null, safeAt: -1e9 };
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  FIT.safeAt = -1e9;
+  FIT.snapUntil = performance.now() + 650;        // the banner slides for .45 s: follow it, don't ease behind it
+}
+let drag = null;
+cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY, yaw: cam.yaw, pitch: cam.pitch }; cv.setPointerCapture(e.pointerId); cv.classList.add("drag"); });
+cv.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  cam.yaw = drag.yaw - (e.clientX - drag.x) * 0.008;
+  cam.pitch = Math.max(0.05, Math.min(1.3, drag.pitch + (e.clientY - drag.y) * 0.006));
+  cam.userAt = performance.now();
+});
+const endDrag = () => { drag = null; cv.classList.remove("drag"); };
+cv.addEventListener("pointerup", endDrag); cv.addEventListener("pointercancel", endDrag);
+cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.zoom = Math.max(0.55, Math.min(2.6, cam.zoom * Math.exp(-e.deltaY * 0.001))); cam.userAt = performance.now(); }, { passive: false });
+cv.addEventListener("dblclick", () => { cam.userAt = -1e9; });
+
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const mul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+function qrot(q, v) {
+  const [w, x, y, z] = q;
+  const tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]);
+  return [v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx)];
+}
+let C, R, U, Fw, F = 1;
+function setCamera() {
+  const cp = Math.cos(cam.pitch);
+  C = add(cam.target, [cam.dist * cp * Math.cos(cam.yaw), cam.dist * cp * Math.sin(cam.yaw), cam.dist * Math.sin(cam.pitch)]);
+  Fw = norm(sub(cam.target, C));
+  R = norm(cross(Fw, [0, 0, 1]));
+  U = cross(R, Fw);
+}
+function safeRect(now) {
+  // The part of the stage the HUD leaves free: right of the skill/sensor column, left of the joints card.
+  if (FIT.safe && now - FIT.safeAt < 400) return FIT.safe;
+  const cr = cv.getBoundingClientRect();
+  const box = (id) => { const el = $(id); if (!el || !el.childElementCount) return null; const r = el.getBoundingClientRect(); return r.width && r.height ? r : null; };
+  let x0 = 18, x1 = W - 18;
+  const y0 = 16, y1 = H - 30;
+  const tl = box("hudTL"), bl = box("hudBL"), hr = box("hudR");
+  if (tl) x0 = Math.max(x0, tl.right - cr.left + 18);
+  if (bl) x0 = Math.max(x0, bl.right - cr.left + 18);
+  if (hr) x1 = Math.min(x1, hr.left - cr.left - 18);
+  if (x1 - x0 < W * 0.34) { x0 = 18; x1 = W - 18; }
+  FIT.huds = [tl, bl, hr].filter(Boolean).map((r) => ({ l: r.left - cr.left, r: r.right - cr.left, t: r.top - cr.top, b: r.bottom - cr.top }));
+  FIT.safe = { x: x0, y: y0, w: Math.max(60, x1 - x0), h: Math.max(60, y1 - y0) };
+  FIT.safeAt = now;
+  return FIT.safe;
+}
+function fitView(dt, now, m) {
+  // Fit the box and the arm's current reach (smoothly, so a wave zooms out instead of leaving the frame).
+  const s = safeRect(now);
+  let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9;
+  const pts = ENVELOPE.slice();
+  if (m) for (const p of [...m.chain, m.tip, m.jf[1], m.jm[1]]) pts.push(add(p, [0, 0, 0.03]), add(p, [0.02, 0, 0]), add(p, [-0.02, 0, 0]));
+  for (const p of pts) {
+    const d = sub(p, C), z = Math.max(0.02, dot(d, Fw)), u = dot(d, R) / z, v = dot(d, U) / z;
+    u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+  }
+  const f = Math.min(s.w / (u1 - u0), s.h / (v1 - v0)) * cam.zoom;
+  const cx = s.x + s.w / 2 - (f * (u0 + u1)) / 2, cy = s.y + s.h / 2 + (f * (v0 + v1)) / 2;
+  if (!FIT.F || now < (FIT.snapUntil || 0)) Object.assign(FIT, { F: f, cx, cy });
+  else { const k = 1 - Math.exp(-dt * 2.2); FIT.F += (f - FIT.F) * k; FIT.cx += (cx - FIT.cx) * k; FIT.cy += (cy - FIT.cy) * k; }
+  F = FIT.F;
+}
+function P(p) {
+  const v = sub(p, C);
+  const z = Math.max(0.02, dot(v, Fw));
+  return [FIT.cx + (dot(v, R) * F) / z, FIT.cy - (dot(v, U) * F) / z, z];
+}
+
+// smoothed twin state
+const SM = { have: false, vec: null };
+function targetVec(arm) {
+  const p = arm.positions;
+  const out = [];
+  for (const q of p.chain) out.push(...q);
+  out.push(...p.tip, ...p.jaw.fixed[0], ...p.jaw.fixed[1], ...p.jaw.moving[0], ...p.jaw.moving[1], ...p.block.pos);
+  const s = arm.sensor || {};
+  out.push(...(s.pos || p.tip), ...(s.axis || [0, 0, -1]));
+  out.push(s.st === "ok" && num(s.mm) ? s.mm / 1000 : -1, num(s.pred_mm) ? s.pred_mm / 1000 : -1);
+  return out;
+}
+function smooth(arm, dt) {
+  if (!arm || arm.error || !arm.positions) { SM.have = false; return null; }
+  const t = targetVec(arm);
+  if (!SM.have || !SM.vec || SM.vec.length !== t.length) { SM.vec = t.slice(); SM.have = true; }
+  const k = 1 - Math.exp(-dt * 13);
+  for (let i = 0; i < t.length; i++) {
+    if ((i === t.length - 1 || i === t.length - 2) && (t[i] < 0 || SM.vec[i] < 0)) SM.vec[i] = t[i];
+    else SM.vec[i] += (t[i] - SM.vec[i]) * k;
+  }
+  const v = SM.vec, pt = (i) => [v[i * 3], v[i * 3 + 1], v[i * 3 + 2]];
+  const n = arm.positions.chain.length;
+  return { chain: Array.from({ length: n }, (_, i) => pt(i)), tip: pt(n), jf: [pt(n + 1), pt(n + 2)], jm: [pt(n + 3), pt(n + 4)],
+    block: pt(n + 5), spos: pt(n + 6), saxis: norm(pt(n + 7)), mm: v[v.length - 2], pred: v[v.length - 1],
+    mmNow: t[t.length - 2], predNow: t[t.length - 1] };
+}
+
+function rgba(rgb, a) { return `rgba(${rgb},${a})`; }
+function pathPts(pts) { ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]))); }
+function polyPath(pts) { pathPts(pts); ctx.closePath(); }
+function ring(center, radius, n = 48) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) { const a = (i / n) * Math.PI * 2; pts.push(P([center[0] + radius * Math.cos(a), center[1] + radius * Math.sin(a), center[2]])); }
+  return pts;
+}
+function circlePts(c, axis, r, k = 28) {
+  // a circle of radius r around c, in the plane normal to axis, projected
+  const ref = Math.abs(axis[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const u = norm(cross(axis, ref)), v = cross(axis, u);
+  const pts = [];
+  for (let i = 0; i < k; i++) { const t = (i / k) * Math.PI * 2; pts.push(P(add(c, add(mul(u, r * Math.cos(t)), mul(v, r * Math.sin(t)))))); }
+  return pts;
+}
+function hull(pts) {
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  lo.pop(); up.pop();
+  return lo.concat(up);
+}
+function upNormal(dx, dy) {
+  // the screen normal of a segment that points up (the lit side)
+  const L = Math.hypot(dx, dy);
+  if (L < 1e-6) return [0, -1];
+  let n = [-dy / L, dx / L];
+  if (n[1] > 0 || (n[1] === 0 && n[0] > 0)) n = [-n[0], -n[1]];
+  return n;
+}
+function shade(M, n, w, stops) {
+  const g = ctx.createLinearGradient(M[0] + n[0] * w, M[1] + n[1] * w, M[0] - n[0] * w, M[1] - n[1] * w);
+  for (const [o, c] of stops) g.addColorStop(o, c);
+  return g;
+}
+
+function drawGrid() {
+  const T = TH.tw, cx = 0.12, cy = 0;
+  ctx.lineWidth = 1;
+  const step = 0.025, ext = 0.4;
+  for (let dir = 0; dir < 2; dir++) {
+    for (let k = -ext; k <= ext + 1e-9; k += step) {
+      const major = Math.abs(Math.round(k / step)) % 4 === 0;
+      for (let s = -ext; s < ext - 1e-9; s += step) {
+        const a = dir ? [cx + k, cy + s, 0] : [cx + s, cy + k, 0];
+        const b = dir ? [cx + k, cy + s + step, 0] : [cx + s + step, cy + k, 0];
+        const r = Math.hypot((a[0] + b[0]) / 2 - cx, (a[1] + b[1]) / 2 - cy) / ext;
+        if (r >= 1) continue;
+        const al = (major ? 1 : 0.4) * T.gridA * Math.pow(1 - r, 1.6);
+        const A2 = P(a), B2 = P(b);
+        ctx.strokeStyle = rgba(T.grid, al);
+        ctx.beginPath(); ctx.moveTo(A2[0], A2[1]); ctx.lineTo(B2[0], B2[1]); ctx.stroke();
+      }
+    }
+  }
+}
+
+// A tapered link with round ends: the outer tangents of its two end circles.
+function linkPath(A2, B2, wa, wb) {
+  const dx = B2[0] - A2[0], dy = B2[1] - A2[1], L = Math.hypot(dx, dy);
+  ctx.beginPath();
+  if (L <= Math.abs(wa - wb) + 0.5) { ctx.arc(A2[0], A2[1], Math.max(wa, wb), 0, Math.PI * 2); return; }
+  const ang = Math.atan2(dy, dx), t = Math.acos(Math.max(-1, Math.min(1, (wa - wb) / L)));
+  ctx.arc(A2[0], A2[1], wa, ang + t, ang - t + Math.PI * 2);
+  ctx.arc(B2[0], B2[1], wb, ang - t, ang + t);
+  ctx.closePath();
+}
+function halo(st, rgb) {
+  // under-glow for the dark looks; a soft drop shadow for the light one
+  if (st.glow > 0) { ctx.shadowColor = rgba(rgb, 0.7); ctx.shadowBlur = 15 * st.glow; ctx.fillStyle = rgba(rgb, 0.5); }
+  else { ctx.shadowColor = TH.tw.shadow; ctx.shadowBlur = 12; ctx.shadowOffsetY = 5; ctx.fillStyle = TH.tw.linkMid; }
+}
+function drawLink(a, b, ra, rb, st) {
+  const T = TH.tw, A2 = P(a), B2 = P(b);
+  const wa = Math.max(1.5, (ra * F) / A2[2]), wb = Math.max(1.2, (rb * F) / B2[2]);
+  const n = upNormal(B2[0] - A2[0], B2[1] - A2[1]);
+  const M = [(A2[0] + B2[0]) / 2, (A2[1] + B2[1]) / 2], wm = Math.max(wa, wb);
+  linkPath(A2, B2, wa, wb);
+  ctx.save(); halo(st, st.rim); ctx.fill(); ctx.restore();
+  ctx.fillStyle = shade(M, n, wm, [[0, T.linkMid], [0.18, T.linkHi], [0.52, T.linkMid], [1, T.linkLo]]);
+  ctx.fill();
+  ctx.strokeStyle = rgba(st.rim, st.rimA); ctx.lineWidth = Math.max(1, wm * 0.1); ctx.stroke();
+  // a machined spine along the lit side
+  ctx.strokeStyle = T.spec; ctx.lineWidth = Math.max(1, wm * 0.12); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(A2[0] + n[0] * wa * 0.5, A2[1] + n[1] * wa * 0.5); ctx.lineTo(B2[0] + n[0] * wb * 0.5, B2[1] + n[1] * wb * 0.5); ctx.stroke();
+}
+// A servo housing: a short cylinder on a joint axis, its silhouette the hull of its two end circles.
+function drawHousing(c, axis, r, h, st, capStyle = "ring") {
+  const T = TH.tw;
+  const a = add(c, mul(axis, -h)), b = add(c, mul(axis, h));
+  const ra = circlePts(a, axis, r), rb = circlePts(b, axis, r);
+  const sil = hull(ra.concat(rb));
+  const M = P(c), rs = (r * F) / M[2];
+  const A2 = P(a), B2 = P(b);
+  const n = upNormal(B2[0] - A2[0], B2[1] - A2[1]);
+  polyPath(sil);
+  ctx.save(); halo(st, st.ring); ctx.fill(); ctx.restore();
+  ctx.fillStyle = shade(M, n, rs * 1.05, [[0, T.houseMid], [0.22, T.houseHi], [0.6, T.houseMid], [1, T.houseLo]]);
+  ctx.fill();
+  ctx.strokeStyle = rgba(st.rim, st.rimA * 0.75); ctx.lineWidth = 1; ctx.stroke();
+  let face = null;                                  // the end cap that faces the camera
+  if (dot(axis, sub(C, b)) > 0) face = [rb, b]; else if (dot(axis, sub(C, a)) < 0) face = [ra, a];
+  if (!face || capStyle === "none") return;
+  polyPath(face[0]);
+  ctx.fillStyle = capStyle === "plain" ? T.houseMid : T.cap; ctx.fill();
+  ctx.save();
+  if (st.glow > 0) { ctx.shadowColor = rgba(st.ring, 0.9); ctx.shadowBlur = 10 * st.glow; }
+  ctx.strokeStyle = rgba(capStyle === "plain" ? st.rim : st.ring, capStyle === "plain" ? st.rimA : 0.95);
+  ctx.lineWidth = capStyle === "plain" ? 1.2 : Math.max(1.6, rs * 0.15); ctx.stroke();
+  ctx.restore();
+  if (capStyle === "ring") {
+    polyPath(circlePts(face[1], axis, r * 0.4, 20));
+    ctx.fillStyle = rgba(st.ring, 0.3); ctx.fill(); ctx.strokeStyle = rgba(st.ring, 0.85); ctx.lineWidth = 1; ctx.stroke();
+  }
+}
+function hingeAxis(m) {
+  // shoulder_lift, elbow_flex and wrist_flex share one axis direction: normal to the upper arm and forearm
+  let a = cross(sub(m.chain[3], m.chain[2]), sub(m.chain[4], m.chain[3]));
+  if (Math.hypot(a[0], a[1], a[2]) < 0.0025) {      // elbow nearly straight: horizontal, across the reach
+    const d = sub(m.tip, m.chain[1]);
+    a = Math.hypot(d[0], d[1]) > 0.01 ? [-d[1], d[0], 0] : [0, 1, 0];
+  }
+  a = norm(a);
+  if (SM.axis && dot(a, SM.axis) < 0) a = mul(a, -1);
+  SM.axis = a;
+  return a;
+}
+function drawBase(m, st) {
+  const T = TH.tw, pan = m.chain[1];
+  const top = pan[2] - 0.008;
+  polyPath(circlePts([pan[0], pan[1], 0.001], [0, 0, 1], 0.068, 56));
+  ctx.fillStyle = T.plate; ctx.fill(); ctx.strokeStyle = rgba(st.ring, 0.35); ctx.lineWidth = 1.2; ctx.stroke();
+  drawHousing([pan[0], pan[1], top / 2 + 0.002], [0, 0, 1], 0.042, top / 2 - 0.002, st, "plain");   // the pan servo's case
+  drawHousing([pan[0], pan[1], top + 0.0045], [0, 0, 1], 0.034, 0.0045, st, "ring");                 // the turntable
+  const d = sub(m.chain[2], pan); d[2] = 0;                                                             // which way it points
+  if (Math.hypot(d[0], d[1]) > 1e-4) {
+    const dn = norm(d), c0 = [pan[0], pan[1], top + 0.009], A2 = P(add(c0, mul(dn, 0.012))), B2 = P(add(c0, mul(dn, 0.03)));
+    ctx.save(); if (st.glow > 0) { ctx.shadowColor = rgba(st.ring, 0.9); ctx.shadowBlur = 8 * st.glow; }
+    ctx.strokeStyle = rgba(st.ring, 0.95); ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(A2[0], A2[1]); ctx.lineTo(B2[0], B2[1]); ctx.stroke(); ctx.restore();
+  }
+}
+function drawBlock(pos, quat, half, holding) {
+  const T = TH.tw;
+  const corners = [];
+  for (let i = 0; i < 8; i++) corners.push(add(pos, qrot(quat, [(i & 1 ? 1 : -1) * half[0], (i & 2 ? 1 : -1) * half[1], (i & 4 ? 1 : -1) * half[2]])));
+  const faces = [[0, 2, 6, 4, [-1, 0, 0]], [1, 5, 7, 3, [1, 0, 0]], [0, 4, 5, 1, [0, -1, 0]], [2, 3, 7, 6, [0, 1, 0]], [0, 1, 3, 2, [0, 0, -1]], [4, 6, 7, 5, [0, 0, 1]]];
+  const L = norm([0.35, -0.55, 0.85]);
+  const vis = [];
+  for (const f of faces) {
+    const n = qrot(quat, f[4]);
+    const c = mul(add(add(corners[f[0]], corners[f[1]]), add(corners[f[2]], corners[f[3]])), 0.25);
+    if (dot(n, sub(C, c)) <= 0) continue;
+    vis.push({ f, light: 0.5 + 0.5 * Math.max(0, dot(n, L)), z: P(c)[2] });
+  }
+  vis.sort((a, b) => b.z - a.z);
+  for (const v of vis) {
+    const pts = v.f.slice(0, 4).map((i) => P(corners[i]));
+    polyPath(pts);
+    const l = v.light, [r, g, b] = T.block;
+    ctx.fillStyle = `rgba(${Math.round(r * l)},${Math.round(g * l)},${Math.round(b * l)},0.96)`;
+    ctx.fill();
+    ctx.strokeStyle = holding ? rgba(TH.ok, 0.95) : T.blockEdge; ctx.lineWidth = holding ? 2 : 1.2; ctx.stroke();
+  }
+}
+let LABELS = [];                                  // the stage labels drawn this frame (they must not overlap)
+function stageText(text, x, y) {
+  // fillText, kept inside the stage and above the hint line; a label that would sit on one already drawn
+  // this frame moves above it (near the floor both clamp to the same line)
+  const w = ctx.measureText(text).width, h = (parseFloat((ctx.font.match(/(\d+(?:\.\d+)?)px/) || [])[1]) || 14) * 0.8;
+  const X = Math.max(8, Math.min(W - w - 10, x));
+  let Y = Math.max(22, Math.min(H - 38, y));
+  for (let k = 0; k < 4; k++) {
+    const hit = LABELS.find((r) => X < r.x + r.w + 8 && X + w + 8 > r.x && Y > r.y - r.h - h - 6 && Y - h - 6 < r.y);
+    if (!hit) break;
+    Y = hit.y - hit.h - 8;
+  }
+  ctx.fillText(text, X, Math.max(h + 4, Y));
+  LABELS.push({ x: X, y: Math.max(h + 4, Y), w, h });
+}
+function labelOff(p2) {
+  // clear of the block when the beam ends on or beside it
+  const b = SM.blockScreen;
+  return b && Math.abs(p2[1] - b[1]) < b[2] * 1.6 && p2[0] < b[0] + b[2] * 1.4 ? Math.max(18, b[0] + b[2] * 1.25 - p2[0]) : 18;
+}
+function drawBeam(m, color, time, quiet = false) {
+  const T = TH.tw;
+  const s = m.spos, a = m.saxis;
+  const S2 = P(s);
+  let predLabel = null;                              // drawn after the reading, which keeps its place
+  if (m.pred > 0) {
+    const e = P(add(s, mul(a, m.pred)));
+    ctx.save(); ctx.setLineDash([5, 6]); ctx.strokeStyle = T.pred; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(S2[0], S2[1]); ctx.lineTo(e[0], e[1]); ctx.stroke(); ctx.restore();
+    ctx.strokeStyle = T.pred; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(e[0] - 8, e[1]); ctx.lineTo(e[0] + 8, e[1]); ctx.stroke();
+    if (!quiet && m.mm > 0 && Math.abs(m.mm - m.pred) > 0.02) {
+      const eM = P(add(s, mul(a, m.mm)));
+      const dy = Math.abs(eM[1] - e[1]) < 26 ? 26 * (e[1] >= eM[1] ? 1 : -1) : 0;
+      predLabel = [`pose expects ${Math.round((m.predNow > 0 ? m.predNow : m.pred) * 1000)} mm`, e[0] + labelOff(e) + 4, e[1] + 4 + dy];
+    }
+  }
+  const len = m.mm > 0 ? m.mm : 0.2;
+  const E = add(s, mul(a, len));
+  const E2 = P(E);
+  const dx = E2[0] - S2[0], dy = E2[1] - S2[1], dl = Math.hypot(dx, dy) || 1;
+  const nx = -dy / dl, ny = dx / dl;
+  const wEnd = Math.max(4, (len * 0.13 * F) / E2[2]);
+  const g = ctx.createLinearGradient(S2[0], S2[1], E2[0], E2[1]);
+  g.addColorStop(0, rgba(color, m.mm > 0 ? 0.55 : 0.35)); g.addColorStop(1, rgba(color, m.mm > 0 ? 0.12 : 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.moveTo(S2[0], S2[1]); ctx.lineTo(E2[0] + nx * wEnd, E2[1] + ny * wEnd); ctx.lineTo(E2[0] - nx * wEnd, E2[1] - ny * wEnd); ctx.closePath(); ctx.fill();
+  ctx.save(); if (TH.tw.glow > 0) { ctx.shadowColor = rgba(color, 0.9); ctx.shadowBlur = 10; }
+  ctx.strokeStyle = rgba(color, 0.95); ctx.lineWidth = 2; if (!(m.mm > 0)) ctx.setLineDash([4, 5]);
+  ctx.beginPath(); ctx.moveTo(S2[0], S2[1]); ctx.lineTo(E2[0], E2[1]); ctx.stroke(); ctx.restore();
+  if (m.mm > 0) {
+    const ph = (time / 1100) % 1;
+    for (const k of [0, 0.5]) {
+      const f = (ph + k) % 1;
+      pathPts(ring(E, 0.006 + 0.022 * f, 36));
+      ctx.strokeStyle = rgba(color, 0.85 * (1 - f)); ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.fillStyle = rgba(color, 1); ctx.beginPath(); ctx.arc(E2[0], E2[1], 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = `700 ${Math.round(14 + W / 260)}px ${T.font}`; ctx.fillStyle = rgba(color, 1);
+    if (!quiet) stageText(`${Math.round((m.mmNow > 0 ? m.mmNow : m.mm) * 1000)} mm`, E2[0] + labelOff(E2), E2[1] + 5);
+  }
+  if (predLabel) {
+    ctx.font = `600 ${Math.round(12.5 + W / 300)}px ${T.font}`; ctx.fillStyle = T.label;
+    stageText(...predLabel);
+  }
+  pathPts(ring(s, 0.007, 20)); ctx.fillStyle = rgba(color, 0.9); ctx.fill();
+}
+
+// A stalled joint: pulse its housing and name it, so "the elbow died" reads from across the room.
+const JOINT_AT = [[/shoulder.?pan|\bpan\b/i, 1, "SHOULDER PAN"], [/shoulder.?lift|\blift\b/i, 2, "SHOULDER"], [/elbow/i, 3, "ELBOW"],
+  [/wrist.?flex/i, 4, "WRIST"], [/wrist.?roll|\broll\b/i, 5, "WRIST ROLL"], [/gripper|\bjaw/i, 5, "GRIPPER"]];
+function stalledJoint(mode) {
+  const i = mode.incident;
+  if (!i || !/joint|stall|servo/i.test(i.kind || "")) return null;
+  const hit = JOINT_AT.find(([re]) => re.test(`${i.summary || ""} ${i.kind || ""}`));
+  return hit ? { idx: hit[1], name: hit[2] } : null;
+}
+function drawStall(m, idx, name, time) {
+  const P2 = P(m.chain[idx]), r0 = Math.max(10, (0.03 * F) / P2[2]);
+  // the tag goes on the side away from the joint's two links, clear of the HUD cards
+  let ax = 0, ay = 0;
+  for (const q of [m.chain[idx - 1], m.chain[idx + 1] || m.tip]) {
+    const Q = P(q), dx = Q[0] - P2[0], dy = Q[1] - P2[1], l = Math.hypot(dx, dy) || 1;
+    ax -= dx / l; ay -= dy / l;
+  }
+  const al = Math.hypot(ax, ay);
+  if (al < 0.2) { ax = -1; ay = 0; } else { ax /= al; ay /= al; }
+  drawTag(P2, r0, `${name} · STALLED`, TH.bad, time, ax, ay);
+}
+function drawTag(P2, r0, text, rgb, time, ax, ay) {
+  // pulsing rings on a point, and a pill tag on a leader line, away from (ax, ay) and clear of the HUD cards
+  const T = TH.tw, ph = (time / 950) % 1;
+  for (const k of [0, 0.5]) {
+    const f = (ph + k) % 1;
+    ctx.strokeStyle = rgba(rgb, 0.95 * (1 - f)); ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(P2[0], P2[1], r0 * (1 + 1.1 * f), 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.font = `800 ${Math.round(12 + W / 300)}px ${T.font}`;
+  const tw = ctx.measureText(text).width, th = Math.round(22 + W / 220), pad = 10, bw = tw + pad * 2;
+  const reach = r0 * 1.9 + Math.abs(ax) * bw / 2 + Math.abs(ay) * th / 2;
+  let x = P2[0] + ax * reach - bw / 2, y = P2[1] + ay * reach - th / 2;
+  x = Math.max(8, Math.min(W - bw - 8, x)); y = Math.max(6, Math.min(H - th - 40, y));
+  for (const h of FIT.huds || []) {
+    if (x < h.r + 6 && x + bw > h.l - 6 && y < h.b + 6 && y + th > h.t - 6) x = ax <= 0 && h.l < W / 2 ? h.r + 8 : Math.min(x, h.l - bw - 8);
+  }
+  ctx.strokeStyle = rgba(rgb, 0.75); ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(P2[0] + ax * r0, P2[1] + ay * r0); ctx.lineTo(x + bw / 2, y + th / 2); ctx.stroke();
+  ctx.save();
+  if (TH.tw.glow > 0) { ctx.shadowColor = rgba(rgb, 0.8); ctx.shadowBlur = 16; }
+  ctx.fillStyle = rgba(rgb, 0.92);
+  ctx.beginPath(); ctx.roundRect(x, y, bw, th, th / 2); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = TH.onBad; ctx.textBaseline = "middle"; ctx.fillText(text, x + pad, y + th / 2 + 1); ctx.textBaseline = "alphabetic";
+}
+
+// A wrong move on the stage: where the poses expect the block (a dashed ghost), an arrow to where it really is,
+// the relocate scan sweeping its 40 mm circle, and a reticle where the scan found it. All on the table (z = 0).
+function tableRing(c, r, n = 56) { const pts = []; for (let k = 0; k <= n; k++) { const a = (k / n) * Math.PI * 2; pts.push(P([c[0] + r * Math.cos(a), c[1] + r * Math.sin(a), 0.0005])); } return pts; }
+function drawBumped(m, off, labels) {
+  const col = TH.warn, h = BLOCK_AT[2], E = BLOCK_AT;
+  const cs = [];
+  for (let i = 0; i < 8; i++) cs.push(P([E[0] + (i & 1 ? h : -h), E[1] + (i & 2 ? h : -h), i & 4 ? 2 * h : 0]));
+  ctx.save();
+  ctx.setLineDash([4, 4]); ctx.strokeStyle = rgba(col, 0.85); ctx.lineWidth = 1.5;
+  for (const [a, b] of [[0, 1], [2, 3], [4, 5], [6, 7], [0, 2], [1, 3], [4, 6], [5, 7], [0, 4], [1, 5], [2, 6], [3, 7]]) {
+    ctx.beginPath(); ctx.moveTo(cs[a][0], cs[a][1]); ctx.lineTo(cs[b][0], cs[b][1]); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  const A2 = P([E[0], E[1], 0.0005]), B2 = P([m.block[0], m.block[1], 0.0005]);
+  const dx = B2[0] - A2[0], dy = B2[1] - A2[1], L = Math.hypot(dx, dy);
+  if (L > 14) {
+    const ux = dx / L, uy = dy / L, e = [B2[0] - ux * 9, B2[1] - uy * 9];
+    if (TH.tw.glow > 0) { ctx.shadowColor = rgba(col, 0.8); ctx.shadowBlur = 8; }
+    ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2.5; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(A2[0], A2[1]); ctx.lineTo(e[0], e[1]); ctx.stroke();
+    ctx.fillStyle = rgba(col, 0.95); ctx.beginPath();
+    ctx.moveTo(e[0] + ux * 9, e[1] + uy * 9); ctx.lineTo(e[0] - uy * 6, e[1] + ux * 6); ctx.lineTo(e[0] + uy * 6, e[1] - ux * 6); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  if (labels) labels.push([`block moved ${Math.round(Math.hypot(off[0], off[1]))} mm`, rgba(col, 1), Math.min(A2[0], B2[0]) - 22, Math.max(A2[1], B2[1]) + 30, true]);
+}
+function drawScan(time, labels) {
+  const c = BLOCK_AT, r = 0.04, col = TH.accent;
+  ctx.save();
+  pathPts(tableRing(c, r)); ctx.setLineDash([5, 5]); ctx.strokeStyle = rgba(col, 0.75); ctx.lineWidth = 1.6; ctx.stroke(); ctx.setLineDash([]);
+  const a0 = (time / 1400) * Math.PI * 2, wedge = [P([c[0], c[1], 0.0005])];
+  for (let k = 0; k <= 16; k++) { const a = a0 - (k / 16) * 1.1; wedge.push(P([c[0] + r * Math.cos(a), c[1] + r * Math.sin(a), 0.0005])); }
+  const g = ctx.createRadialGradient(wedge[0][0], wedge[0][1], 0, wedge[0][0], wedge[0][1], Math.hypot(wedge[1][0] - wedge[0][0], wedge[1][1] - wedge[0][1]) + 1);
+  g.addColorStop(0, rgba(col, 0.05)); g.addColorStop(1, rgba(col, 0.42));
+  polyPath(wedge); ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(wedge[0][0], wedge[0][1]); ctx.lineTo(wedge[1][0], wedge[1][1]); ctx.stroke();
+  ctx.restore();
+  const ring = tableRing(c, r, 24), x0 = Math.min(...ring.map((q) => q[0])), yc = ring.reduce((a, q) => a + q[1], 0) / ring.length;
+  labels.push(["SCANNING ±40 MM", rgba(col, 1), x0 - 12, yc + 6, true]);
+}
+function drawFound(off, labels) {
+  const c = [BLOCK_AT[0] + off[0] / 1000, BLOCK_AT[1] + off[1] / 1000, 0], col = TH.ok;
+  ctx.save();
+  if (TH.tw.glow > 0) { ctx.shadowColor = rgba(col, 0.9); ctx.shadowBlur = 10; }
+  pathPts(tableRing(c, 0.026)); ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2; ctx.stroke();
+  for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const a = P([c[0] + ux * 0.019, c[1] + uy * 0.019, 0.0005]), b = P([c[0] + ux * 0.034, c[1] + uy * 0.034, 0.0005]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  ctx.restore();
+  const ring = tableRing(c, 0.034, 24), x1 = Math.max(...ring.map((q) => q[0])), yc = ring.reduce((a, q) => a + q[1], 0) / ring.length;
+  labels.push([`found it ${offWords(off)}`, rgba(col, 1), x1 + 12, yc + 6]);
+}
+
+let lastFrame = performance.now();
+function frame(now) { drawFrame(now); requestAnimationFrame(frame); }
+function drawFrame(now) {
+  const dt = Math.max(0, Math.min(0.1, (now - lastFrame) / 1000)); lastFrame = Math.max(lastFrame, now);
+  if (!W || !H || !TH) return;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  LABELS = [];
+  const T = TH.tw;
+  const arm = A && !A.error ? A : null;
+  const mode = armMode(A, S);
+  const alarm = mode.cls === "bad" || mode.cls === "person", healing = mode.cls === "warn";
+  if (now - cam.userAt > 8000 && !drag) {          // drift back to the home view after a hands-on
+    const k = Math.min(1, dt * 0.9);
+    cam.yaw += (HOME_VIEW.yaw + 0.09 * Math.sin(now / 9000) - cam.yaw) * k;
+    cam.pitch += (HOME_VIEW.pitch - cam.pitch) * k;
+    cam.zoom += (1 - cam.zoom) * k;
+  }
+  const m = smooth(arm, dt);
+  setCamera();
+  fitView(dt, now, m);
+  // the floor: a glow under the arm and the grid
+  const c0 = P([0.1, 0, 0]);
+  const fg = ctx.createRadialGradient(c0[0], c0[1], 0, c0[0], c0[1], Math.max(W, H) * 0.55);
+  fg.addColorStop(0, rgba(alarm ? TH.bad : T.floor, T.floorA * (alarm ? 1.25 : 1))); fg.addColorStop(1, rgba(alarm ? TH.bad : T.floor, 0));
+  ctx.fillStyle = fg; ctx.fillRect(0, 0, W, H);
+  drawGrid();
+  if (!m) return;
+  const st = alarm ? { rim: TH.bad, rimA: 0.95, ring: TH.bad } : healing ? { rim: TH.warn, rimA: 0.9, ring: TH.warn } : { rim: T.rim, rimA: T.rimA, ring: T.ring };
+  st.glow = T.glow > 0 ? T.glow * (alarm ? 1.15 : 1) : 0;
+  // the pick zone
+  ctx.save(); ctx.setLineDash([3, 5]); pathPts(ring([0.21, 0, 0], 0.035, 48)); ctx.strokeStyle = rgba(TH.accent, 0.4); ctx.lineWidth = 1.2; ctx.stroke(); ctx.restore();
+  // shadows on the table
+  ctx.save(); ctx.lineCap = "round"; ctx.strokeStyle = T.shadow; ctx.filter = "blur(7px)";
+  const flat = (p) => [p[0] + p[2] * 0.25, p[1] - p[2] * 0.2, 0];
+  const sh = [...m.chain.slice(1), m.tip];
+  for (let i = 0; i < sh.length - 1; i++) {
+    const a = P(flat(sh[i])), b = P(flat(sh[i + 1]));
+    ctx.lineWidth = Math.max(3, (0.032 * F) / a[2]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  const bq = P(flat(m.block)); ctx.fillStyle = T.shadow; ctx.beginPath(); ctx.ellipse(bq[0], bq[1], (0.03 * F) / bq[2], (0.014 * F) / bq[2], 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  // a wrong move, on the table: under the arm, labels drawn last
+  const WM = mode.wrong, labels = [];
+  const off = blockOff(arm);
+  const scanning = WM && WM.phase === "correcting" && WM.fix && WM.fix.ok !== false && WM.corr === "relocate" && !WM.locate && WM.chk && WM.chk.ok;
+  if (scanning) drawScan(now, labels);
+  const found = !arm.holding && WM && WM.phase === "correcting" && WM.locate && WM.locate.result && WM.locate.result.found ? WM.locate.result.offset_mm : null;
+  if (found) drawFound(found, labels);
+  if (off) drawBumped(m, off, scanning || found ? null : labels);
+  drawEyeBag(labels);
+  // the base, always underneath
+  drawBase(m, st);
+  // links, servo housings, jaws and the block, far to near
+  const ch = m.chain, hinge = hingeAxis(m), gax = norm(sub(m.tip, ch[5]));
+  const items = [];
+  const link = (a, b, ra, rb, bias = 0) => items.push({ z: P(mul(add(a, b), 0.5))[2] + bias, draw: () => drawLink(a, b, ra, rb, st) });
+  const house = (c, ax, r, h) => items.push({ z: P(c)[2] - 0.02, draw: () => drawHousing(c, ax, r, h, st, "ring") });
+  link(ch[1], ch[2], 0.021, 0.019);                 // shoulder bracket
+  house(ch[2], hinge, 0.023, 0.021);                // shoulder lift servo
+  link(ch[2], ch[3], 0.018, 0.0145);                // upper arm
+  house(ch[3], hinge, 0.02, 0.019);                 // elbow servo
+  link(ch[3], ch[4], 0.0165, 0.0125);               // forearm
+  house(ch[4], hinge, 0.017, 0.017);                // wrist flex servo
+  link(ch[4], ch[5], 0.0125, 0.0135);               // wrist
+  house(add(ch[5], mul(gax, 0.006)), gax, 0.0185, 0.015);       // wrist roll servo, on the gripper's axis
+  link(add(m.jf[0], mul(gax, 0.02)), m.jf[1], 0.0145, 0.004, 0.015);   // fixed jaw
+  link(m.jm[0], m.jm[1], 0.0105, 0.0032, 0.015);                        // moving jaw
+  const half = (arm.positions.block && arm.positions.block.half) || [0.015, 0.015, 0.015];
+  items.push({ z: P(m.block)[2], draw: () => drawBlock(m.block, arm.positions.block.quat || [1, 0, 0, 0], half, arm.holding) });
+  const bs = P(m.block); SM.blockScreen = [bs[0], bs[1], (0.03 * F) / bs[2]];
+  items.sort((a, b) => b.z - a.z);
+  for (const it of items) it.draw();
+  const stall = alarm && stalledJoint(mode);
+  if (stall) drawStall(m, stall.idx, stall.name, now);
+  if (WM && WM.phase === "wrong") {                 // the grip that closed on nothing
+    const tp = P(m.tip);
+    drawTag(tp, Math.max(9, (0.022 * F) / tp[2]), "GRIP · MISSED", TH.bad, now, -0.45, -0.9);
+  }
+  // the wrist sensor's beam
+  const sensorBad = (arm.incidents || []).some((i) => /^us_|^pod_/.test(i.kind || ""));
+  const beamCol = sensorBad ? TH.bad : m.mm > 0 && m.pred > 0 && Math.abs(m.mm - m.pred) > 0.02 ? TH.warn : m.mm > 0 ? TH.ok : TH.warn;
+  ctx.globalCompositeOperation = T.blend;
+  drawBeam(m, beamCol, now, !!WM);
+  ctx.globalCompositeOperation = "source-over";
+  for (const [text, color, x, y, end] of labels) {
+    ctx.font = `700 ${Math.round(13 + W / 280)}px ${T.font}`; ctx.fillStyle = color;
+    stageText(text, end ? x - ctx.measureText(text).width : x, y);
+  }
+}
+
+// =====================================================================================
+// SPLIT VIEW + LIVE CAMERA. camserve.py (on the Mac with the camera) serves /latest.jpg and /eye.json.
+// Everything here fails quietly into an "offline" panel; the twin and the rest of the page never wait on it.
+// =====================================================================================
+const STAGE = $("stage");
+function setView(v) {
+  if (v !== "twin") v = "split";
+  STAGE.dataset.view = v;
+  document.querySelectorAll("#viewtog [data-view]").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+  try { localStorage.setItem("mc-view", v); } catch (e) {}
+  if (v === "split") camKick();
+  else EYE = null;
+}
+document.querySelectorAll("#viewtog [data-view]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); setView(b.dataset.view); b.blur(); }));
+let CAM_URL = "http://localhost:8790";
+try { const c = new URLSearchParams(location.search).get("cam"); if (c) CAM_URL = c.replace(/\/+$/, ""); } catch (e) {}
+let EYE = null;                                  // the last good /eye.json with a bag (drawn in the twin), else null
+const CAMS = { okAt: 0, imgOk: false, eye: null, eyeAt: 0, eyeFail: false, imgBusy: false, eyeBusy: false };
+const camImg = $("camimg");
+function camFrame() {
+  if (STAGE.dataset.view !== "split" || CAMS.imgBusy) return;
+  CAMS.imgBusy = true;
+  const im = new Image();
+  im.onload = () => { CAMS.imgBusy = false; CAMS.imgOk = true; CAMS.okAt = Date.now(); camImg.src = im.src; placeMark(); renderCam(); };
+  im.onerror = () => { CAMS.imgBusy = false; CAMS.imgOk = false; renderCam(); };
+  im.src = `${CAM_URL}/latest.jpg?t=${Date.now()}`;
+}
+async function camEye() {
+  if (STAGE.dataset.view !== "split" || CAMS.eyeBusy) return;
+  CAMS.eyeBusy = true;
+  try {
+    const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(`${CAM_URL}/eye.json?t=${Date.now()}`, { cache: "no-store", signal: ctl.signal });
+    clearTimeout(to);
+    CAMS.eye = await r.json(); CAMS.eyeAt = Date.now(); CAMS.eyeFail = false;
+  } catch (e) { CAMS.eyeFail = true; }
+  CAMS.eyeBusy = false;
+  EYE = CAMS.eye && !CAMS.eye.error && CAMS.eye.bag && !CAMS.eyeFail ? CAMS.eye : null;
+  placeMark(); renderCam();
+}
+function camKick() { camFrame(); camEye(); }
+// where the frame is drawn inside the (object-fit: contain) image box, in CSS px
+function imgRect() {
+  const box = $("camfit"), w = box.clientWidth, h = box.clientHeight, nw = camImg.naturalWidth, nh = camImg.naturalHeight;
+  if (!nw || !nh || !w || !h) return null;
+  const k = Math.min(w / nw, h / nh);
+  return { x: (w - nw * k) / 2, y: (h - nh * k) / 2, k, nw, nh };
+}
+// the labelled grid, the same one gentest draws on every frame Astra reads (12 x 9, A-L, 1-9)
+let GRID_ON = true;
+try { GRID_ON = localStorage.getItem("mc-grid") !== "off"; } catch (e) {}
+(function buildGrid() {
+  let h = "";
+  for (let c = 1; c < 12; c++) h += `<line x1="${c}" y1="0" x2="${c}" y2="9"/>`;
+  for (let r = 1; r < 9; r++) h += `<line x1="0" y1="${r}" x2="12" y2="${r}"/>`;
+  for (let c = 0; c < 12; c++) for (let r = 0; r < 9; r++) h += `<text x="${c + 0.04}" y="${r + 0.24}">${String.fromCharCode(65 + c)}${r + 1}</text>`;
+  $("camgrid").innerHTML = h;
+})();
+function placeGrid() {
+  const g = $("camgrid"), r = imgRect();
+  $("gridTog").classList.toggle("on", GRID_ON);
+  if (!GRID_ON || !r || !CAMS.imgOk) { g.style.display = "none"; return; }
+  Object.assign(g.style, { display: "block", left: `${r.x}px`, top: `${r.y}px`, width: `${r.nw * r.k}px`, height: `${r.nh * r.k}px` });
+}
+function toggleGrid() { GRID_ON = !GRID_ON; try { localStorage.setItem("mc-grid", GRID_ON ? "on" : "off"); } catch (e) {} placeGrid(); }
+$("gridTog").addEventListener("click", (e) => { e.stopPropagation(); toggleGrid(); e.currentTarget.blur(); });
+window.addEventListener("resize", placeGrid);
+function placeMark() {
+  placeGrid();
+  const el = $("eyemark"), e = CAMS.eye, r = imgRect();
+  if (!el) return;
+  if (!r || !e || e.error || !e.bag || CAMS.eyeFail || !CAMS.imgOk) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  el.style.left = `${r.x + e.bag.pixel[0] * r.k}px`;       // the pixel is in the camera frame's own pixels
+  el.style.top = `${r.y + e.bag.pixel[1] * r.k}px`;
+  setText($("eyetag"), `${e.bag.x_cm.toFixed(1)}, ${e.bag.y_cm.toFixed(1)} cm`);
+}
+function fmtAge(s) { return s < 10 ? `${s.toFixed(1)} s` : s < 120 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`; }
+function renderCam() {
+  const now = Date.now(), cam = $("cam");
+  const e = CAMS.eye, imgAge = CAMS.imgOk ? (now - CAMS.okAt) / 1000 : null;
+  const live = CAMS.imgOk && imgAge < 5;
+  // the frame's own age: its file age at the server when /eye.json was read, plus the time since
+  const fileAge = e && typeof e.frame_age_s === "number" && !CAMS.eyeFail ? e.frame_age_s + (now - CAMS.eyeAt) / 1000 : null;
+  const stale = live && fileAge !== null && fileAge > 5;
+  cam.classList.toggle("off", !CAMS.imgOk);
+  cam.classList.toggle("stale", stale || (!live && CAMS.imgOk));
+  const lv = $("camLive");
+  lv.classList.toggle("dead", !live || stale);
+  setText(lv.lastElementChild, !CAMS.imgOk ? "offline" : stale ? "frozen" : live ? "live" : "lost");
+  if (!CAMS.imgOk) {
+    setHTML($("camMsg"), `<b>Camera offline</b>No frame from <code>${esc(CAM_URL)}</code><br>On the Mac with the camera: <code>python -m armsim.camserve</code>`);
+    setHTML($("eyebar"), `<span><span class="k">Eye</span>no camera</span>`);
+    return;
+  }
+  let h = "";
+  const ageCls = fileAge === null ? "" : fileAge > 5 ? "bad" : fileAge > 2.5 ? "warn" : "ok";
+  const ageTxt = fileAge === null ? "unknown" : fmtAge(fileAge);
+  if (CAMS.eyeFail || !e) h = `<span><span class="k">Eye</span><span class="warn">eye data unreachable</span></span>`;
+  else if (e.error) h = `<span><span class="k">Eye</span><span class="warn">${e.calibrated === false ? "eye not calibrated" : esc(e.error)}</span></span>`;
+  else if (!e.bag) h = `<span><span class="k">Bag of chips</span>not in view</span>`;
+  else {
+    const b = e.bag;
+    h = `<span><span class="k">Bag of chips</span><b>${b.x_cm.toFixed(1)}</b> cm fwd, <b>${b.y_cm.toFixed(1)}</b> cm left</span>` +
+        `<span><span class="k">From base</span><b>${b.distance_cm.toFixed(1)}</b> cm at <b>${b.bearing_deg.toFixed(0)}</b>°</span>`;
+    if (e.bag_to_box_cm !== undefined) h += `<span><span class="k">To box</span><b>${e.bag_to_box_cm.toFixed(1)}</b> cm</span>`;
+  }
+  h += `<span><span class="k">Frame age</span><b class="${ageCls}">${esc(ageTxt)}</b></span>`;
+  setHTML($("eyebar"), h);
+  setText($("camSub"), e && !e.error && e.bag ? "bag located by the eye" : "the bench, as the eye sees it");
+}
+// the bag in the twin: a ring on the table where the eye puts it, in the model's frame (metres)
+function drawEyeBag(labels) {
+  if (!EYE || !EYE.bag || STAGE.dataset.view !== "split" || Date.now() - CAMS.eyeAt > 5000) return;
+  const c = [EYE.bag.x_cm / 100, EYE.bag.y_cm / 100, 0], col = TH.eye;
+  ctx.save();
+  if (TH.tw.glow > 0) { ctx.shadowColor = rgba(col, 0.9); ctx.shadowBlur = 10; }
+  pathPts(tableRing(c, 0.032)); ctx.strokeStyle = rgba(col, 0.95); ctx.lineWidth = 2.2; ctx.stroke();
+  for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const a = P([c[0] + ux * 0.02, c[1] + uy * 0.02, 0.0005]), b = P([c[0] + ux * 0.044, c[1] + uy * 0.044, 0.0005]);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  ctx.restore();
+  const ring = tableRing(c, 0.044, 24), x1 = Math.max(...ring.map((q) => q[0])), yc = ring.reduce((a, q) => a + q[1], 0) / ring.length;
+  labels.push([`EYE · bag ${EYE.bag.x_cm.toFixed(0)}, ${EYE.bag.y_cm.toFixed(0)} cm`, rgba(col, 1), x1 + 8, yc + 5]);
+}
+(function initView() {
+  let v = null;
+  try { v = localStorage.getItem("mc-view"); } catch (e) {}
+  setView(v === "twin" ? "twin" : "split");
+  setInterval(camFrame, 1000); setInterval(camEye, 1000); setInterval(renderCam, 500);
+  new ResizeObserver(placeMark).observe($("camfit"));
+})();
+
+resize();
+// Setting the canvas size clears it, and a resize lands after this frame's draw and before the paint: redraw
+// at once, or every frame of the banner's slide paints an empty stage.
+new ResizeObserver(() => { resize(); drawFrame(performance.now()); }).observe(cv);
+tickClock(); setInterval(tickClock, 1000);
+setInterval(() => { const mode = armMode(A, S); renderHeader(mode); renderTwinHud(mode); }, 100);
+setInterval(() => { const mode = armMode(A, S); renderPod(); if (S) { renderJobs(mode); renderFeed(); } }, 250);   // the feed reveals a row at a time
+pollArm(); pollState();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

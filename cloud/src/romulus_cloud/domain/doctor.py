@@ -1166,8 +1166,10 @@ def draft_task(
 
 def pytest_results(output: str) -> dict[str, Any]:
     """The short test summary of a `pytest -rA` run: `{"passed": [id], "failed": {id:
-    reason}, "errors": [id]}`.
+    reason}, "errors": [id], "reasons": {id: reason}}` (`reasons`: FAILED and ERROR lines).
 
+    Printed text, so a test can forge it: the check takes which tests failed or passed from
+    the result seal (`services.doctor_code._run`), and from here only each failure's reason.
     Read only from the block after the **last** `short test summary info` header, up to its
     first line that isn't a summary line (the counts line). `FAILED x` / `PASSED x` lines a
     test prints earlier, or after the counts (an `atexit` print), are not results. No header,
@@ -1183,6 +1185,7 @@ def pytest_results(output: str) -> dict[str, Any]:
     passed: list[str] = []
     failed: dict[str, str] = {}
     errors: list[str] = []
+    reasons: dict[str, str] = {}
     for line in block:
         match = _RESULT_LINE.match(line)
         if not match:
@@ -1190,11 +1193,23 @@ def pytest_results(output: str) -> dict[str, Any]:
         kind, test_id, reason = match.group(1), match.group(2), match.group(3) or ""
         if kind == "PASSED":
             passed.append(test_id)
-        elif kind == "FAILED":
+            continue
+        if kind == "FAILED":
             failed.setdefault(test_id, reason)
         else:
             errors.append(test_id)
-    return {"passed": list(dict.fromkeys(passed)), "failed": failed, "errors": errors}
+        reasons.setdefault(test_id, reason)
+    return {
+        "passed": list(dict.fromkeys(passed)),
+        "failed": failed,
+        "errors": errors,
+        "reasons": reasons,
+    }
+
+
+# A repro run without the result seal's end marker: an early exit (`os._exit(0)` after
+# printing a fake summary) looks like this, so its exit code and output prove nothing.
+NO_SEAL = "no sealed pytest result: pytest didn't run to its end"
 
 
 def _in_file(test_id: str, path: str | None) -> bool:
@@ -1206,9 +1221,12 @@ def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list
     """(the ids of the repro file's tests that failed on behaviour on the base, why not when
     there are none). Proof the repro test exercises the bug:
 
+    - the run is **sealed** (`sealed` is True): the image's result seal saw pytest reach its
+      end, and `failed` holds the seal's failed ids (`services.doctor_code._run`);
     - pytest ran and exited **1** (tests failed). 0 passed, 2 is a collection error (e.g. it
       imports a name only the fix adds), 4 no such file, 5 no tests; none of those count;
-    - at least one `FAILED` test id lies in the repro file;
+    - at least one failed test id (pytest's node id, relative to the device's root, e.g.
+      `tests/test_x.py::test_a`) lies in the repro file;
     - and failed on behaviour, not only because a name the fix adds is missing (an
       `ImportError` / `ModuleNotFoundError`, or `AttributeError: module ... has no
       attribute`): a test that only imports a new flag proves nothing.
@@ -1219,6 +1237,8 @@ def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list
         return [], f"it could not be replayed ({_describe(run)})"
     if run.get("timed_out") or run.get("configured") is False:
         return [], f"it didn't run to a result ({_describe(run)})"
+    if run.get("sealed") is not True:
+        return [], f"{NO_SEAL} ({_describe(run)})"
     code = run.get("exit_code")
     if isinstance(code, bool) or code != 1:
         return [], (
@@ -1242,12 +1262,19 @@ def repro_failures(run: Mapping[str, Any] | None, repro_test: str) -> tuple[list
 
 def repro_passes(run: Mapping[str, Any] | None, ids: Iterable[str]) -> str:
     """Why the repro tests that failed before don't all pass with the full patch, or "" when
-    they do: pytest exited 0 and every one of `ids` is listed `PASSED`."""
+    they do: pytest exited 0, the run is sealed, the replay's own verdict on it passed
+    (`tests_passed`: `TestRun.passed`, exit 0 and every sealed test passed or skipped), and
+    the seal reports every one of `ids` as passed (`passed_ids`). Printed `PASSED` lines
+    never count."""
     ids = list(ids)
     if not isinstance(run, Mapping):
         return "the repro test was never run with the fix"
     if run.get("patch_error") or run.get("timed_out") or run.get("exit_code") != 0:
         return f"the repro test doesn't pass with the fix ({_describe(run)})"
+    if run.get("sealed") is not True:
+        return f"with the fix, the repro test has {NO_SEAL} ({_describe(run)})"
+    if run.get("tests_passed") is not True:
+        return f"with the fix, the sealed repro run doesn't pass ({_describe(run)})"
     passed = set(run.get("passed_ids") or [])
     missing = [i for i in ids if i not in passed]
     if missing:
@@ -1271,6 +1298,25 @@ def _describe(run: Mapping[str, Any] | None) -> str:
     return f"exit {code}" + (f", {tests}" if tests else "")
 
 
+# The held-out verify step's states when the base has no verify/ scripts. Steps 1-3 run in
+# the code under test's own pytest process, so they can be forged from there; only verify
+# (its own process) decides. Without it a real check offers nothing unless the operator opts
+# in (DOCTOR_OFFER_UNVERIFIED), and then the check says so.
+NO_VERIFY = "none available"
+OFFERED_UNVERIFIED = "none available (offered unverified)"
+UNVERIFIED_REASON = (
+    "no held-out verify/ scripts for this base (its package or CODER_VERIFY_DIR), so nothing "
+    "decisive checked the fix (DOCTOR_OFFER_UNVERIFIED=false)"
+)
+
+
+def unverified(checks: Mapping[str, Any] | None) -> bool:
+    """A real (not stub) check that passed without held-out verify scripts: offered or
+    served only while DOCTOR_OFFER_UNVERIFIED is on (`services.proposals.serve_refusal`)."""
+    checks = checks if isinstance(checks, Mapping) else {}
+    return not checks.get("stub") and checks.get("verify") in (NO_VERIFY, OFFERED_UNVERIFIED)
+
+
 def check_verdict(
     before: Mapping[str, Any] | None,
     after_repro: Mapping[str, Any] | None,
@@ -1278,6 +1324,8 @@ def check_verdict(
     repro_test: str,
     screened: Iterable[str] = (),
     verify: Mapping[str, Any] | None = None,
+    *,
+    offer_unverified: bool = False,
 ) -> dict[str, Any]:
     """The sandbox check's answer (`services.doctor_code.check_job`). Fails closed. In order:
 
@@ -1288,12 +1336,18 @@ def check_verdict(
     3. **passes after:** those same test ids pass with the full patch (`repro_passes`);
     4. the device tests (CODER_TEST_CMD) pass on the base plus the patch's **non-test**
        hunks (`code_only`), with no harness flag (`GAMING_FLAGS`, `existing_test:`);
-    5. the held-out verify scripts, when the base has any, pass on the same code: reason
-       exactly "held-out verify failed", nothing more (`verify` is `{"available", "passed"}`;
-       their output is never kept).
+    5. the held-out verify scripts pass on the same code: reason exactly "held-out verify
+       failed", nothing more (`verify` is `{"available", "passed"}`; their output is never
+       kept). With no scripts for the base (`{"available": False}`, its `note` saying why
+       when some were left out or collect no test), nothing decisive checked the fix: the
+       check fails with `UNVERIFIED_REASON` (plus the note) and outcome `advised` (a retry
+       would end the same way), unless `offer_unverified` (DOCTOR_OFFER_UNVERIFIED), when it
+       passes with `verify` = `OFFERED_UNVERIFIED`.
 
-    → `{passed, fails_before, passes_after, device_tests, verify ("passed" | "failed" |
-    "none available" | "not run"), reason (None when passed), summary, flags, repro_ids}`.
+    → `{passed, outcome (None when passed, else "failed_checks" or "advised"),
+    fails_before, passes_after, device_tests, verify ("passed" | "failed" | "none available"
+    | "none available (offered unverified)" | "not run"), reason (None when passed),
+    summary, flags, repro_ids}`.
     """
     screened = list(screened)
     after = after if isinstance(after, Mapping) else None
@@ -1308,9 +1362,12 @@ def check_verdict(
     if not isinstance(verify, Mapping):
         verify_state = "not run"
     elif not verify.get("available"):
-        verify_state = "none available"
+        verify_state = OFFERED_UNVERIFIED if offer_unverified else NO_VERIFY
     else:
         verify_state = "passed" if verify.get("passed") is True else "failed"
+    note = verify.get("note") if isinstance(verify, Mapping) else None
+    note = _clip(note, 300) if isinstance(note, str) and note else ""
+    unverified_only = False  # every other check passed; only the held-out scripts are missing
     if screened:
         reason = f"the fix is refused before any run: {'; '.join(screened)}"
     elif not fails_before:
@@ -1332,16 +1389,24 @@ def check_verdict(
         reason = "held-out verify failed"
     elif verify_state == "not run":
         reason = "the held-out verify step never ran"
+    elif verify_state == NO_VERIFY:
+        reason = UNVERIFIED_REASON + (f"; {note}" if note else "")
+        unverified_only = True
     else:
         reason = None
+    if reason is None:
+        outcome = None
+    else:
+        outcome = ADVISED if unverified_only else FAILED_CHECKS
     summary = (
         f"repro {repro_test}: {'fails' if fails_before else 'does not fail'} on the base "
         f"({_describe(before)}); {'passes' if passes_after else 'does not pass'} with the fix "
         f"({_describe(after_repro)}); device tests on the code change: {_describe(after)}; "
-        f"held-out verify: {verify_state}"
+        f"held-out verify: {verify_state}" + (f" ({note})" if note else "")
     )
     return {
         "passed": reason is None,
+        "outcome": outcome,
         "fails_before": fails_before,
         "passes_after": passes_after,
         "device_tests": device_tests,

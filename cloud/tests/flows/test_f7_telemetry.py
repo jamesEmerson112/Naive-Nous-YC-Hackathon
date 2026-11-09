@@ -286,7 +286,7 @@ def test_f7_recording_before_incident(client, arm, example, count_events, db_ses
         listed_meta["recording_id"],
     }
     assert all(e["stored"] for e in s["evidence"])
-    assert "linked to this incident" in next(
+    assert "under this incident" in next(
         st["line"] for st in s["steps"] if st["kind"] == "recording.linked"
     )
 

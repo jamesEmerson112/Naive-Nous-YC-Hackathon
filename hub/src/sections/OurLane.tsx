@@ -1,7 +1,7 @@
 import { BY_PERSON, FEATURES, type BoxId, type PhaseLine } from "../content/features";
-import { BENCHMARK, EDGE, ISAAC, LEROBOT, LLM_CHOICE, OUR_SCHEDULE, OUR_WINDOW, PODS, PROPOSAL_SRC, RESET } from "../content/proposal";
+import { BENCHMARK, EDGE, ISAAC, LEROBOT, LLM_CHOICE, OUR_PLAN, PODS, PROPOSAL_SRC, RESET } from "../content/proposal";
 import { More, Section, Sources, Table, Txt } from "../ui";
-import { BudgetBar, CanaryFlow, Icon, ResetLoop, Schedule, type IconName } from "../viz";
+import { BudgetBar, CanaryFlow, Icon, ResetLoop, type IconName } from "../viz";
 import { BOXES, MARK, SAY } from "./FeatureMap";
 
 function KV({ rows }: { rows: { k: string; v: string }[] }) {
@@ -115,12 +115,22 @@ export function OurLane() {
       status="tentative"
       sub={
         <>
-          Our lane is under way. P1 runs in simulation: MuJoCo SO-101, the Hermes <code>so101-arm</code> plugin, a level-1 watchdog that parks the arm, approach-then-grasp, a fault factory and a ChatTS test. It is on branch <code>james/arm-sim</code>, not pushed yet. The real arm comes Sunday 7:30 AM.
+          Our lane, slapping everything together. Tonight the whole loop runs in simulation on James's Mac: the MuJoCo arm, a virtual pod read by Olir's real <code>podd</code>, Romulus with the edge bridge, and a Naïve card driving Hermes. From 7 AM the same code runs on the Pi with the real arm and pod. Branch <code>james/arm-sim</code>, local until James approves a push.
         </>
       }
     >
       <h3>Our build plan</h3>
-      <Schedule blocks={OUR_SCHEDULE} from={OUR_WINDOW.from} to={OUR_WINDOW.to} scale={OUR_WINDOW.scale} />
+      <ol className="sched-list plan-list" aria-label="Our build plan, as a checklist">
+        {OUR_PLAN.map((p) => (
+          <li key={p.id} className={`plan-${p.state}`}>
+            <span className="plan-mark" aria-hidden="true">
+              {p.state === "done" ? "✓" : p.state === "now" ? "▶" : p.state === "next" ? "○" : "·"}
+            </span>{" "}
+            <b>{p.id}</b> {p.what}
+            <span className="sr-only"> ({p.state})</span>
+          </li>
+        ))}
+      </ol>
       <JamesLines />
 
       <div className="jobs">

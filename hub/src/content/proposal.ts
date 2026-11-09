@@ -1,25 +1,37 @@
 import { ext, repo, type Src } from "./meta";
-import type { SchedBlock } from "../viz";
 
 const LR = "https://huggingface.co/docs/lerobot";
 
 /** James's build plan (the phases in features.txt), on a PST clock. UTC = PST + 8 h. */
-export const OUR_WINDOW: { from: string; to: string; scale: [string, string, string] } = {
-  from: "2026-11-08T04:30:00Z",
-  to: "2026-11-08T21:00:00Z",
-  scale: ["Sat 8:30 PM", "overnight", "Sun 1:00 PM · present"],
-};
+/** Our build plan as a checklist, no clock (James, Sun ~2 AM: "ignore the timeline").
+ *  state: done · now (being built) · next · later. */
+export type PlanItem = { id: string; what: string; state: "done" | "now" | "next" | "later" };
 
-export const OUR_SCHEDULE: SchedBlock[] = [
-  { id: "P0", what: "Decide and claim · decisions made 8:45 PM; still open: tell Kent the Stripe step is optional, Olir's frozen-ultrasonic rule, one demo story for the two healers", from: "2026-11-08T04:45:00Z", to: "2026-11-08T05:15:00Z", done: false },
-  { id: "P1.1", what: "Sim arm: MuJoCo SO-101 with a wrist rangefinder, arrival, load and status checks, run records · c42339f", from: "2026-11-08T05:15:00Z", to: "2026-11-08T06:00:00Z", done: true },
-  { id: "P1.2", what: "Commander: Hermes so101-arm plugin; typed \"wave, then go home\" moves the sim arm · fd5c235", from: "2026-11-08T06:00:00Z", to: "2026-11-08T06:45:00Z", done: true },
-  { id: "P1.3", what: "Level-1 sentence: frozen sensor → spoken \"Distance stuck at 130 mm while the arm moved 29 mm\", park, verified repair · dbb361e", from: "2026-11-08T06:45:00Z", to: "2026-11-08T07:30:00Z", done: true },
-  { id: "P1.4", what: "Approach-then-grasp on the wrist sensor · 546e20f; fault factory (1,000 labeled runs) and ChatTS level-2 test · 2692e2a", from: "2026-11-08T07:30:00Z", to: "2026-11-08T08:15:00Z", done: true },
-  { id: "P2", what: "Before bed: firmware API and data doc (docs/firmware-apis.md), Olir reviews. Overnight: Olir's pod logs under podd, the only real data tonight (Kent's run is the fake fleet); nothing of ours runs. 7 AM: commit a slice of those logs to samples/pod/", from: "2026-11-08T08:30:00Z", to: "2026-11-08T15:00:00Z", night: true },
-  { id: "P3", what: "Real arm with Andre: swap the sim arm for the real one, wrist HC-SR04 through podd, first labeled real runs; Kent's real-arm slot 9–10", from: "2026-11-08T15:00:00Z", to: "2026-11-08T18:00:00Z" },
-  { id: "P4", what: "10 AM code freeze, rehearse ×3, backup video, present at 1 PM", from: "2026-11-08T18:00:00Z", to: "2026-11-08T21:00:00Z" },
-  { id: "P5", what: "Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video · due Wed Nov 11, 2 PM PST", from: "2026-11-08T21:00:00Z", to: "2026-11-11T22:00:00Z" },
+export const OUR_PLAN: PlanItem[] = [
+  { id: "P1", what: "Sim prototypes: sim arm, Hermes so101-arm plugin, level-1 spoken watchdog, approach-then-grasp, fault factory, ChatTS level-2 test", state: "done" },
+  { id: "P2", what: "Firmware API and data doc (docs/firmware-apis.md)", state: "done" },
+  { id: "1", what: "Virtual sensor pod, read by Olir's real podd", state: "done" },
+  { id: "2", what: "Arm host reads and heals through podd: one-sentence watchdog, park, check, resume", state: "done" },
+  { id: "3", what: "One command per story (A: bad pod image 07, B: stuck sensor, stall: hardware hand-off), backup-video clips", state: "done" },
+  { id: "4", what: "Romulus on James's Mac gets the arm's and the pod's incidents; a dead joint becomes a work order", state: "done" },
+  { id: "5", what: "A Naïve card drives Hermes: it does the job, heals the fault, closes the card", state: "done" },
+  { id: "6", what: "Everyone's work merged into our branch (main, Andre's arm/prims, Olir's full-test-2 with bad image 08); main has it all (#55)", state: "done" },
+  { id: "7", what: "Small items: this checklist replaces the timed bar (done); Hermes's compaction test setting reverted (on James's Mac: hermes config set compression.threshold_tokens null)", state: "now" },
+  { id: "8", what: "Autonomous loop: an order becomes an ARM JOB card on the Arm jobs board, Hermes picks it up on its own, the arm works, a fault heals, the card closes; nobody types (armsim/board.py, orders.py, dispatch.py). Sim: soak 6 of 6 done, no double claims", state: "done" },
+  { id: "Soak", what: "Overnight soak: an order every 10 min, half with a planted fault; an hourly check-in fixes breaks and logs them in MORNING.md (armsim/soak.py, SOAK.md); start it with soak run --board naive --with-dispatcher hermes --every 600", state: "done" },
+  { id: "9", what: "Romulus Mission Control: one screen (3D twin, jobs, commander feed, pod health, heal timeline, fleet + Freeze, work orders) with presenter buttons (armsim/mission.py)", state: "done" },
+  { id: "UI", what: "Mission Control polished for the projector: three looks to pick from (mission, neon, light: ?look= or the L key), worker → manager exchange row, wrong-move story, 8 presenter buttons; every state shot in runs/media/r2-*", state: "done" },
+  { id: "WM", what: "Worker/manager healer: the small local worker escalates (arm-escalation/v1), the Hermes manager answers one fix (arm-fixplan/v1), plain code checks it against an allowlist, the worker acts (armsim/worker.py, manager.py, escalation.py, hermes-manager/; docs/worker-manager-healer.md)", state: "done" },
+  { id: "C2", what: "Bug category 2, a wrong action: missed grasp → reverse → the manager corrects the approach (±40 mm, never joint angles) → redo, or a person after two misses (armsim/redo.py, dispatch --wrong-action redo)", state: "done" },
+  { id: "WB", what: "Worker-model benchmark on a Runpod L40S (~$2.13): lfm3:1.7b as the laptop worker, qwen3.5:4b the fallback; no model may open incidents alone (workerbench/RESULTS.md)", state: "done" },
+  { id: "Mgr", what: "Hermes manager profile on James's Mac with ChatGPT 6 sol (hermes-manager/setup.sh, then dispatch --exec scripted --manager hermes)", state: "next" },
+  { id: "L1", what: "Healer level 1, plain-code rules: level1.py (arm) + Olir's detect.py (pod). Fault factory: 0 of 142 healthy runs flagged, 115 of 115 dead servos caught, subtle faults 23–54%", state: "done" },
+  { id: "L2", what: "Healer level 2: ChatTS-14B ran on a Runpod L40S (~$0.11): catches dropouts and spikes, misses a frozen trace alone but catches it beside a healthy one (docs/healer-data-levels.md)", state: "done" },
+  { id: "L3a", what: "Healer level 3: a CPU classifier (armsim/level3.py) on 2,000 sim runs: on a fresh seed-99 batch 0 of 74 healthy runs flagged, every planted fault caught (level 1: 14 of 77 noisy, 23 of 78 reversed). Sim only: the real runs are the true test", state: "done" },
+  { id: "L3b", what: "Level 3 in the loop: the classifier runs beside the watchdog as a second opinion (never in the control loop); optional LoRA of Olir's qwen3.5:4b on Runpod to explain it", state: "later" },
+  { id: "10", what: "The real arm and pod replace the sim (Pi check, poses, both stories with --real)", state: "next" },
+  { id: "Demo", what: "Rehearse, record the backup video, present", state: "later" },
+  { id: "P5", what: "Hermes plugin entry: so101-arm plugin, pre_tool_call guard, catalog PR, video", state: "later" },
 ];
 
 export const SIM_JOBS: { name: string; what: string; how: string }[] = [

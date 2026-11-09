@@ -17,6 +17,7 @@ the coder or the sandbox.
 import io
 import json
 import os
+import re
 import sys
 import tarfile
 import uuid
@@ -33,8 +34,10 @@ from romulus_cloud.adapters.coder import CodeDraft, CoderError, Sandbox
 from romulus_cloud.adapters.llm import FakeLlm
 from romulus_cloud.domain import coder_retry
 from romulus_cloud.models import Blob, DoctorConsult, DoctorProposal, Event, Recording
-from romulus_cloud.services import code_lockin, datasets, doctor, doctor_code, registry
+from romulus_cloud.services import batch, code_lockin, datasets, doctor, doctor_code, registry
+from romulus_cloud.services.coder_runs import CodeReplay, TestRun, VerifyRun
 from romulus_cloud.services.doctor_jobs import InlineJobs
+from romulus_cloud.settings import SEALABLE_PYTEST
 from romulus_cloud.worker import Step, run_tick
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
@@ -474,13 +477,18 @@ def test_a_compound_test_command_is_run_as_configured_never_appended_to(
 ):
     """CODER_TEST_CMD `pytest -q; true` would become `pytest -q; true tests/x.py` if the repro
     file were appended to it. The repro step has its own fixed command; the device-test step
-    gets CODER_TEST_CMD verbatim (the image runs it through a shell; FakeDocker can't, so
-    only the commands handed to the sandbox are checked here)."""
+    gets CODER_TEST_CMD verbatim (the image runs it through a shell, and so does FakeDocker
+    now, with the image's own `run_tests`)."""
     compound = "python -m pytest -q; true"
     doc = make_doctor(ScriptedCoder(GOOD), coder_test_cmd=compound)
     clock.at(T0)
     incident_id = _report(client, example)
-    _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    t = T0 + timedelta(seconds=2)
+    for _ in range(8):  # the good fix passes every check and is applied
+        t = doc.tick(t)
+        if len(_test_cmds(doc.docker)) >= 6:
+            break
+    assert _consults(db_session, incident_id)[0].stage != "closed"  # it passed and moved on
     cmds = _test_cmds(doc.docker)
     assert cmds == [REPRO_CMD] * 4 + [compound] * 2
 
@@ -522,16 +530,17 @@ HIDDEN_CONFTEST = _patch_paths({**CODE_AND_REPRO, ".gitignore": "conftest.py\n"}
             "edits the existing test file tests/test_gripper.py",
         ),
         # Item 2: a planted test runner, at the top, under tests/, deeper, or as a package.
+        # The replay's own `patch_refusal` refuses these first (#replay-hardening).
         (
             {**CODE_AND_REPRO, "pytest.py": PLANTED_RUNNER},
-            "it plants pytest.py, which can shadow the test runner",
+            "pytest.py (it can shadow the test runner)",
         ),
-        ({**CODE_AND_REPRO, "tests/pytest.py": PLANTED_RUNNER}, "it plants tests/pytest.py"),
+        ({**CODE_AND_REPRO, "tests/pytest.py": PLANTED_RUNNER}, "tests/pytest.py (it can shadow"),
         ({**CODE_AND_REPRO, "control/sitecustomize.py": "x = 1\n"}, "sitecustomize.py"),
-        ({**CODE_AND_REPRO, "evil.pth": "import os\n"}, "it plants evil.pth"),
-        ({**CODE_AND_REPRO, "_pytest/__init__.py": "x = 1\n"}, "it plants _pytest/__init__.py"),
+        ({**CODE_AND_REPRO, "evil.pth": "import os\n"}, "evil.pth (it can shadow"),
+        ({**CODE_AND_REPRO, "_pytest/__init__.py": "x = 1\n"}, "_pytest/__init__.py (it can"),
         # Item 6: a conftest.py that a .gitignore would hide from `git add -A`.
-        (HIDDEN_CONFTEST, "test_harness: conftest.py (added)"),
+        (HIDDEN_CONFTEST, "conftest.py (test-runner config)"),
         # Item 7: the code change only adds a module-level flag.
         (
             {"control/gripper.py": FLAGGED, REPRO_PATH: IMPORT_IN_BODY},
@@ -570,7 +579,10 @@ def test_a_gaming_patch_is_refused_before_any_sandbox_run(
         for e in _events(db_session, incident_id, "doctor.consult_closed")
         if e.refs["consult"] == first.id
     ]
-    assert "refused before any run" in closed.data["why"] and reason in closed.data["why"]
+    why = closed.data["why"]
+    # The Doctor's screen ("refused before any run") or, for runner and harness files, the
+    # replay's own patch_refusal ("diff is refused") says no first; either way, no run.
+    assert ("refused before any run" in why or "diff is refused" in why) and reason in why
     assert doc.docker.calls == []  # decided from the patch alone
     assert _events(db_session, incident_id, "doctor.checked") == []
 
@@ -609,21 +621,326 @@ def test_a_fix_that_fails_the_held_out_verify_closes_with_that_reason_only(
         assert "hand_came_near" not in text and "HAND_AT_30_MM" not in text
 
 
-def test_with_no_verify_scripts_the_check_says_none_available(
-    client, example, make_doctor, db_session, clock
-):
-    doc = make_doctor(ScriptedCoder(GOOD))
-    clock.at(T0)
+def _report_no_verify(client, example, rev: str = NO_VERIFY_REV) -> str:
+    """An incident on `rev` (default `NO_VERIFY_REV`: a base package with no held-out verify
+    scripts)."""
     body = example("incident_consult_wanted") | {
         "incident_id": str(uuid.uuid4()),
         "occurred_at": (T0 - timedelta(minutes=1)).isoformat(),
-        "running": {"firmware": 1, "harness": 1, "code_rev": NO_VERIFY_REV},
+        "running": {"firmware": 1, "harness": 1, "code_rev": rev},
     }
     assert client.post("/v1/devices/arm-1/incidents", json=body).status_code == 201
-    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER)
-    (consult,) = _consults(db_session, body["incident_id"])
-    assert consult.stage == "applied" and consult.checks["verify"] == "none available"
+    return body["incident_id"]
+
+
+NO_VERIFY_REASON = (
+    "no held-out verify/ scripts for this base (its package or CODER_VERIFY_DIR), so nothing "
+    "decisive checked the fix (DOCTOR_OFFER_UNVERIFIED=false)"
+)
+OFFERED_UNVERIFIED = "none available (offered unverified)"
+
+
+def test_with_no_verify_scripts_a_good_fix_closes_advised_by_default(
+    client, example, make_doctor, db_session, clock
+):
+    """Steps 1-3 run in the code's own pytest process, so they can be forged from there;
+    without verify scripts nothing decisive checked the fix. Nothing is offered, and no
+    retry (it would end the same way)."""
+    doc = make_doctor(ScriptedCoder(GOOD))
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    assert (first.checks["fails_before"], first.checks["passes_after"]) == (True, True)
+    assert first.checks["device_tests"] is True
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["passed"] is False and checked.data["reason"] == NO_VERIFY_REASON
+    assert checked.data["verify"] == "none available" and checked.data["verify_counts"] is None
+    assert checked.data["verify_note"] is None
+    (closed,) = _events(db_session, incident_id, "doctor.consult_closed")
+    assert closed.data["outcome"] == "advised" and NO_VERIFY_REASON in closed.data["why"]
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
     assert not doc.docker.ever_saw_verify and len(doc.docker.runs) == 12  # no verify replay
+    doc.run(T0 + timedelta(minutes=1), 3)
+    assert len(_consults(db_session, incident_id)) == 1  # advised is never retried
+
+
+def _verify_dir(tmp_path, generated_from: str | None) -> str:
+    """A CODER_VERIFY_DIR like `make device-verify` writes: the toy's verify script and, when
+    `generated_from` is set, a MANIFEST.json naming the code it was generated for."""
+    vdir = tmp_path / "verify_dir"
+    vdir.mkdir()
+    (vdir / "test_verify_d1.py").write_bytes(
+        (fakes.TOY / "verify" / "test_verify_d1.py").read_bytes()
+    )
+    if generated_from:
+        manifest = {"generated_from": {"code_rev": generated_from}}
+        (vdir / "MANIFEST.json").write_text(json.dumps(manifest))
+    return str(vdir)
+
+
+def test_coder_verify_dir_gives_a_base_without_verify_its_held_out_check(
+    client, example, make_doctor, db_session, clock, tmp_path
+):
+    """Real devices ship no verify/ (`make code-register` archives device/); `make
+    device-verify` writes CODER_VERIFY_DIR, which the Doctor reads like the lock-in gate."""
+    vdir = _verify_dir(tmp_path, generated_from=NO_VERIFY_REV)
+    doc = make_doctor(ScriptedCoder(GOOD), coder_verify_dir=vdir)  # no opt-in
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER)
+    (consult,) = _consults(db_session, incident_id)
+    assert (consult.stage, consult.status) == ("applied", "waiting")
+    assert consult.checks["verify"] == "passed"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["passed"] is True and checked.data["verify_note"] is None
+    assert checked.data["verify_counts"] == {
+        "tests": 2,
+        "passed_count": 2,
+        "skipped": 0,
+        "timed_out": False,
+    }
+    assert doc.docker.ever_saw_verify and [r["verify"] for r in doc.docker.runs[-2:]] == [
+        True,
+        True,
+    ]
+
+
+def test_a_stale_coder_verify_dir_is_left_out_and_says_why(
+    client, example, make_doctor, db_session, clock, tmp_path
+):
+    vdir = _verify_dir(tmp_path, generated_from="0ther01")  # not the base or an ancestor
+    doc = make_doctor(ScriptedCoder(GOOD), coder_verify_dir=vdir)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    note = checked.data["verify_note"]
+    assert note.startswith("CODER_VERIFY_DIR left out: stale verify: ") and "0ther01" in note
+    assert checked.data["reason"] == f"{NO_VERIFY_REASON}; {note}"
+    (closed,) = _events(db_session, incident_id, "doctor.consult_closed")
+    assert "stale verify: " in closed.data["why"]
+    assert not doc.docker.ever_saw_verify  # nothing held out was left to run
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
+
+
+def test_an_unreadable_coder_verify_dir_is_left_out_and_the_tick_goes_on(
+    client, example, make_doctor, db_session, clock, tmp_path, monkeypatch
+):
+    """An OSError reading CODER_VERIFY_DIR (a file it may not read, or one removed while
+    `make device-verify` regenerates the dir) never escapes the tick: the dir is left out,
+    with the reason, like a stale one."""
+
+    def unreadable(directory: str) -> dict[str, bytes]:
+        raise PermissionError(13, "Permission denied", f"{directory}/test_verify_d1.py")
+
+    monkeypatch.setattr(doctor_code, "verify_files", unreadable)
+    vdir = _verify_dir(tmp_path, generated_from=NO_VERIFY_REV)
+    doc = make_doctor(ScriptedCoder(GOOD), coder_verify_dir=vdir)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))  # ticks "ok"
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    note = checked.data["verify_note"]
+    assert (
+        note.startswith("CODER_VERIFY_DIR left out: unreadable: ") and "Permission denied" in note
+    )
+    assert checked.data["reason"] == f"{NO_VERIFY_REASON}; {note}"
+    assert not doc.docker.ever_saw_verify
+
+
+EMPTY_VERIFY_REV = "toyev"
+
+
+def test_verify_scripts_with_no_test_count_as_none(
+    client, example, make_doctor, db_session, clock, settings
+):
+    """A base verify/ whose files hold no test: they ran and checked nothing, the same as
+    none (advised, no retry), not a failed held-out check (failed_checks, a re-draft)."""
+    files = {n: d for n, d in fakes.toy_files().items() if not n.startswith("device/verify/")}
+    files["device/verify/helpers.py"] = b"NEAR_MM = 30\n"
+    files["device/verify/test_nothing.py"] = b"# the checks were never written\n"
+    store = build_blobstore(settings.blob_dir)
+    kw = {"actor": "human:test", "actor_class": "human"}
+    registry.create_code(
+        db_session, store, registry.build_tarball(files), rev=EMPTY_VERIFY_REV, **kw
+    )
+    db_session.commit()
+    doc = make_doctor(ScriptedCoder(_patch_paths(CODE_AND_REPRO, base=files)))
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example, rev=EMPTY_VERIFY_REV)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "advised" and first.checks["verify"] == "none available"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["verify_note"] == "its verify/ scripts collect no test on the base"
+    assert (
+        checked.data["reason"]
+        == f"{NO_VERIFY_REASON}; its verify/ scripts collect no test on the base"
+    )
+    assert doc.docker.ever_saw_verify  # they did run
+    doc.run(T0 + timedelta(minutes=1), 3)
+    assert len(_consults(db_session, incident_id)) == 1  # advised is never retried
+
+
+def test_turning_the_opt_in_off_before_the_offer_closes_advised(
+    client, example, make_doctor, make_settings, db_session, clock
+):
+    """The check passed under DOCTOR_OFFER_UNVERIFIED; the worker restarts without it before
+    the offer: the offer stage re-checks and closes advised instead of making a proposal no
+    device would be served."""
+    doc = make_doctor(ScriptedCoder(GOOD), doctor_offer_unverified=True)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    t = T0 + timedelta(seconds=2)
+    for _ in range(TICKS_TO_OFFER):
+        t = doc.tick(t)
+        if _consults(db_session, incident_id)[0].stage == "offer":
+            break
+    (consult,) = _consults(db_session, incident_id)
+    assert consult.stage == "offer" and consult.checks["verify"] == OFFERED_UNVERIFIED
+    doc.settings = make_settings(**ON)  # no DOCTOR_OFFER_UNVERIFIED
+    doc.tick(t)
+    (consult,) = _consults(db_session, incident_id)
+    assert consult.outcome == "advised"
+    (closed,) = _events(db_session, incident_id, "doctor.consult_closed")
+    assert "DOCTOR_OFFER_UNVERIFIED is off" in closed.data["why"]
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
+
+
+def test_with_the_opt_in_a_fix_with_no_verify_scripts_is_offered_labeled_unverified(
+    app, client, example, make_doctor, db_session, clock
+):
+    doc = make_doctor(ScriptedCoder(GOOD), doctor_offer_unverified=True)
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    doc.run(T0 + timedelta(seconds=2), TICKS_TO_OFFER)
+    (consult,) = _consults(db_session, incident_id)
+    assert (consult.stage, consult.status, consult.outcome) == ("applied", "waiting", None)
+    assert consult.checks["verify"] == OFFERED_UNVERIFIED
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    assert checked.data["passed"] is True and checked.data["verify"] == OFFERED_UNVERIFIED
+    assert f"held-out verify: {OFFERED_UNVERIFIED}" in checked.data["summary"]
+    assert not doc.docker.ever_saw_verify and len(doc.docker.runs) == 12  # no verify replay
+    # The serve-time gate reads the API's own settings: held back until it opts in too.
+    pid = consult.raw["proposal_id"]
+    held = client.post("/v1/devices/arm-1/checkin", json=example("checkin")).json()
+    assert held["proposal"] is None
+    assert client.get(f"/v1/devices/arm-1/proposals/{pid}").status_code == 410
+    app.state.settings = app.state.settings.model_copy(update={"doctor_offer_unverified": True})
+    pointer = client.post("/v1/devices/arm-1/checkin", json=example("checkin")).json()["proposal"]
+    assert pointer is not None and pointer["proposal_id"] == pid
+    pulled = client.get(f"/v1/devices/arm-1/proposals/{pid}")
+    assert pulled.status_code == 200, pulled.text
+    assert pulled.json()["checks"]["verify"] == OFFERED_UNVERIFIED
+
+
+REPRO_ID = f"{REPRO_PATH}::test_a_hand_near_while_holding_keeps_the_gripper_closed"
+# A repro that really fails on the base, but once it sees the "fix" in the source (the
+# NOT_A_FIX comment change) prints pytest's PASSED summary past the capture and exits 0
+# before pytest ends: printed text and the exit code both say pass; the seal has no end.
+FORGER = (
+    "import os\nfrom pathlib import Path\n\n"
+    "import control.gripper as gripper\n\n\n"
+    "def test_a_hand_near_while_holding_keeps_the_gripper_closed(capsys):\n"
+    '    if "count as near" in Path(gripper.__file__).read_text():\n'
+    "        with capsys.disabled():\n"
+    '            print("=" * 20 + " short test summary info " + "=" * 20)\n'
+    f'            print("PASSED {REPRO_ID}")\n'
+    '            print("1 passed in 0.01s", flush=True)\n'
+    "        os._exit(0)\n"
+    '    assert gripper.step("HOLDING", 10.0) == ("HOLDING", "close")\n'
+)
+
+
+def test_a_repro_that_forges_its_pass_is_refused_without_a_seal(
+    client, example, make_doctor, db_session, clock
+):
+    """With no verify scripts and the opt-in on, nothing but the repro steps stands between
+    this do-nothing "fix" and an offer. Its repro prints a believable PASSED summary and
+    calls os._exit(0) with the fix; the repro steps read only the result seal, which never
+    got its end."""
+    doc = make_doctor(
+        ScriptedCoder(_patch_paths({"control/gripper.py": NOT_A_FIX, REPRO_PATH: FORGER})),
+        doctor_offer_unverified=True,  # so only the seal stands between it and an offer
+    )
+    clock.at(T0)
+    incident_id = _report_no_verify(client, example)
+    first = _first_closed(doc, db_session, incident_id, T0 + timedelta(seconds=2))
+    assert first.outcome == "failed_checks"
+    (checked,) = _events(db_session, incident_id, "doctor.checked")
+    data = checked.data
+    assert data["passed"] is False
+    assert (data["fails_before"], data["passes_after"]) == (True, False)
+    assert "no sealed pytest result" in data["reason"]
+    # It really failed on the base (sealed); with the fix the forgery reached the printed
+    # output and the exit code, but not the seal, so no id counts as passed.
+    assert data["before"]["sealed"] is True and list(data["before"]["failed"]) == [REPRO_ID]
+    after = data["after_repro"]
+    assert after["exit_code"] == 0 and f"PASSED {REPRO_ID}" in after["output_tail"]
+    assert after["sealed"] is False and after["passed_ids"] == []
+    assert data["after"] is None  # the device-test step never ran
+    (closed,) = [
+        e
+        for e in _events(db_session, incident_id, "doctor.consult_closed")
+        if e.refs["consult"] == first.id
+    ]
+    assert "no sealed pytest result" in closed.data["why"]
+    assert db_session.scalar(select(func.count()).select_from(DoctorProposal)) == 0
+    assert _test_cmds(doc.docker) == [REPRO_CMD] * 4  # base + repro only, then the full patch
+
+
+@pytest.mark.parametrize(
+    ("run", "sealed", "passed_ids"),
+    [
+        (TestRun(0, "", results={REPRO_ID: "passed"}), True, [REPRO_ID]),
+        # pytest started, a test passed, then something exited 0 before the end marker
+        (TestRun(0, "", results={REPRO_ID: "passed"}, incomplete=True), False, []),
+        (TestRun(0, f"PASSED {REPRO_ID}"), False, []),  # no seal at all: not a pytest run
+        (None, False, []),  # the patch was refused
+    ],
+    ids=["complete", "incomplete", "none", "refused"],
+)
+def test_the_checks_view_of_a_run_trusts_only_a_complete_seal(run, sealed, passed_ids):
+    no_verify = VerifyRun(False)
+    view = doctor_code._run(CodeReplay(TestRun(1, ""), no_verify, run, no_verify), [])
+    assert (view["sealed"], view["passed_ids"], view["failed"]) == (sealed, passed_ids, {})
+
+
+@pytest.mark.parametrize(
+    ("run", "none"),
+    [
+        (VerifyRun(True, tests=0, exit_code=5), True),  # pytest: no tests collected
+        (VerifyRun(True, tests=0, exit_code=3), False),  # an internal error, not "none"
+        (VerifyRun(True, tests=0, exit_code=0), False),
+        (VerifyRun(True, tests=0, exit_code=None), False),  # no exit code at all
+        (VerifyRun(True, tests=0, exit_code=5, timed_out=True), False),
+        (VerifyRun(True, tests=0, exit_code=5, incomplete=True), False),  # never finished
+        (VerifyRun(False, tests=0, exit_code=5), False),  # didn't run
+        (VerifyRun(True, tests=1, exit_code=5), False),
+        (None, False),
+    ],
+    ids=[
+        "exit5",
+        "exit3",
+        "exit0",
+        "no-exit",
+        "timed-out",
+        "incomplete",
+        "not-ran",
+        "a-test",
+        "none",
+    ],
+)
+def test_only_a_clean_no_tests_collected_verify_counts_as_none(run, none):
+    assert doctor_code._no_tests(run) is none
+
+
+def test_the_repro_command_is_a_form_the_image_seals():
+    """The image seals only `python [flags] -m pytest` (the pattern CODER_TEST_CMD must match);
+    any other repro command would never be sealed, so every repro would fail closed."""
+    assert re.search(SEALABLE_PYTEST, doctor_code.repro_command(REPRO_PATH))
 
 
 @pytest.mark.parametrize(
@@ -828,6 +1145,7 @@ def test_a_provider_blip_backs_off_is_refunded_and_retries(
     # Refunded: one coder.started, but nothing counted against the budget of 1.
     assert len(_events(db_session, incident_id, "coder.started")) == 1
     assert doctor_code.coder_budget(db_session, "default", t, 1) == (0, None)
+    assert batch._drafts_this_hour(db_session, "default", t) == 0  # the batch agrees
 
     doc.tick(retry - timedelta(seconds=1))  # still backing off: nothing happens
     assert len(coder.calls) == 1

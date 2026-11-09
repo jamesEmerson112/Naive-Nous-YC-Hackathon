@@ -4,12 +4,18 @@ Fake modes are the defaults so `make up` works offline with no keys. Going live 
 changing one variable per adapter.
 """
 
+import re
 from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# `python[3[.x]] [flags] -m pytest` anywhere in a shell command: what the coder image's
+# `pin_pytest` (cloud/coder/run_agent.py) rewrites to its sealed launcher. Keep them equal.
+SEALABLE_PYTEST = r"(?<![^\s;&|(])((?:\S*/)?python3?(?:\.\d+)?)((?:\s+-[A-Za-z]+)*?)\s+-m\s+pytest"
+SEALABLE_PYTEST += r"(?=$|[\s;&|)])"
 
 
 class Settings(BaseSettings):
@@ -81,11 +87,35 @@ class Settings(BaseSettings):
     coder_test_cmd: str = "python -m pytest -q"
     coder_step_limit: int = 30
     coder_time_limit_s: int = 600
+    # Output tokens per LLM call: the agent asks for this and its egress proxy caps it (B5).
+    coder_max_tokens: int = 2000
+
+    @field_validator("coder_test_cmd")
+    @classmethod
+    def _sealable_test_cmd(cls, value: str) -> str:
+        """Empty, or a command that runs `python [flags] -m pytest ...` somewhere: the one form
+        the coder image runs through its result seal (`cloud/coder/run_agent.py`,
+        `pin_pytest`; the same pattern). Any other way of starting the tests (bare `pytest`,
+        `uv run pytest`, `make test`) would be judged by its exit code alone, so it fails at
+        startup instead."""
+        if value.strip() and not re.search(SEALABLE_PYTEST, value):
+            raise ValueError(
+                f"CODER_TEST_CMD {value!r} can't be sealed: the coder image only seals the "
+                "results of `python -m pytest ...` (e.g. `python -m pytest -q`); use that form, "
+                "or leave it empty to rely on the held-out verify scripts alone"
+            )
+        return value
+
     # The gate's code replay (M8b): the device tests (CODER_TEST_CMD, empty = no replay, the
     # stub) and the held-out verify scripts, in fresh containers with no network. The
     # package's own `device/verify/` always runs; CODER_VERIFY_DIR adds a host directory of
-    # more verify scripts kept off the device (each file lands at `verify/<its path>`).
+    # more verify scripts kept off the device (each file lands at `verify/<its path>`). The
+    # Fleet Doctor's sandbox check runs the same set (`doctor_code.held_out`).
     coder_verify_dir: str = ""
+    # A coder or Doctor code candidate with no held-out verify scripts waits at the gate
+    # (the in-process device tests can forge their own result seal). True lets such a replay
+    # pass on the device tests alone, with a loud "unverified" event each time. Keep false.
+    coder_allow_unverified: bool = False
     coder_replay_timeout_s: int = 300
     # Where scratch copies of the device code go ("" = the system temp dir). Docker must be
     # able to mount it (Docker Desktop shares /Users, /private, /tmp and /var/folders).
@@ -127,6 +157,11 @@ class Settings(BaseSettings):
     doctor_check: Literal["stub", "sandbox"] = "stub"
     # Offer proposals whose check is only a stub (demos and F12); the event says so.
     doctor_offer_stub_checked: bool = False
+    # Offer a sandbox-checked fix whose base has no held-out verify/ scripts. While false
+    # such a consult closes `advised`: the repro and device-test steps run in the code's own
+    # pytest process and can be forged there, so only verify decides. The check says
+    # "offered unverified" when this lets one through.
+    doctor_offer_unverified: bool = False
     # False until the K17 list replaces `safety_paths`; while false every proposal is
     # discarded with "safety paths unknown" (D25).
     safety_paths_confirmed: bool = False
@@ -155,6 +190,79 @@ class Settings(BaseSettings):
     doctor_trace_tail_bytes: int = 16000
     doctor_evidence_file_bytes: int = 4000  # per file named in the log or trace
     doctor_evidence_code_bytes: int = 16000  # all code excerpts together
+
+    # Naïve Technician (docs/naive-technician/design.md §10; D30). Live by default (Kent,
+    # Nov 8); live starts sessions on its own only for `kind: real` devices (K13). A
+    # `needs_human` work order with no catalogued part opens a case: one Naïve session writes
+    # a typed report, Romulus emails TECHNICIAN_EMAIL and stages a checked cart a person
+    # approves. off | fake (recorded test fixture) | live (HttpNaive); replay is per case.
+    technician_mode: Literal["off", "fake", "live"] = "live"
+    naive_technician_agent: str = ""
+    naive_technician_identity: str = ""
+    naive_technician_inbox: str = ""
+    # The one recipient, a consenting teammate; never taken from the model. Empty = no email.
+    technician_email: str = ""
+    # Vendors the agent may pick a part from: [{origin, handle, variant_id, label}]. The
+    # variant id must be exact (the WowRobo product also sells 5- and 10-packs). The case
+    # file lists only the entries matching ARM_SERVO_VARIANT (by its prefix, e.g. C018).
+    # `label` is "<vendor> · <part title>": the page and the approval show those words.
+    technician_vendors: list[dict[str, str]] = [
+        {
+            "origin": "https://shop.wowrobo.com",
+            "handle": "feetech-sts3215-servo-12v-30kg-high-torque-servo-for-so-arm100",
+            "variant_id": "48037575033049",
+            "label": "WowRobo · Feetech STS3215 C018 12V",
+        },
+        {
+            "origin": "https://shop.wowrobo.com",
+            "handle": "feetech-sts3215-c001-servo-7-4v-19-5kg-high-torque-servo-for-so-arm100-101",
+            "variant_id": "48037674090713",
+            "label": "WowRobo · Feetech STS3215 C001 7.4V",
+        },
+    ]
+    arm_servo_variant: str = "C018-12V"  # confirm on the arm
+    technician_session_usd: float = 3
+    technician_daily_usd_cap: float = 10
+    technician_timeout_s: float = 600
+    # Only orders this new open a case on their own: turning the Technician on never
+    # backfills a session (and an email) for every old part-less order.
+    technician_max_age_s: float = 900
+    # A recorded session (fixture JSON) that `?mode=replay` plays back over N seconds; empty
+    # = the bundled demo recording (cloud/tests/fixtures/technician/joint_stall_live2.json).
+    technician_replay_file: str = ""
+    technician_replay_seconds: float = 20
+
+    # Fleet learning (docs/recursive-self-improvement/design.md §3, §9). Off by default.
+    # data: the `learning.tick` step keeps the standing `fleet-runs` dataset (plain code, no
+    # model); fixture/live add cluster review later. A snapshot plus a `trajectories` export
+    # is taken whenever labelled pass/fail runs grew by LEARNING_MIN_NEW since the last one.
+    learning_mode: Literal["off", "data", "fixture", "live"] = "off"
+    learning_min_new: int = 1
+    # Fleet learning page (/learning; docs/recursive-self-improvement/design.md §9). Until a
+    # `review.*` event exists, the page shows this recorded cluster-review session (fixture
+    # JSON); empty = an empty state. Probe scorecards are read from PROBE_DIR.
+    review_fixture: str | None = None
+    probe_dir: str = "/data/learning/probes"
+
+    # Fleet learning T1 (docs/recursive-self-improvement/design.md §8 D31, §9). Off by default.
+    # After the gate promotes a skill the Naïve agent fleet-doctor proposed, mirror the fleet's
+    # healer playbook to Naïve Skills as a new version of NAIVE_SKILL_SLUG (created on first
+    # use). The worker publishes only when this is true and LEARNING_MODE is fixture or live
+    # (`review_publish.enabled`). The Skills page is a mirror, not a rollout lane.
+    review_publish: bool = False
+    naive_skill_slug: str = "romulus-healer-playbook"
+    # A card on NAIVE_BOARD_ID (the CEO's board) to comment on per published lesson; None = none.
+    review_insights_card: str | None = None
+
+    # Cluster review (design §4, §9; draft D31), run by `learning.tick` when LEARNING_MODE is
+    # fixture or live. The Naïve agent (`fleet-doctor`), the budget per session, at most this
+    # many sessions an hour, and how long a rejected kind cools down (or until a newer run of
+    # it arrives). In fixture mode REVIEW_FIXTURE, when set, replays for every case; unset,
+    # each kind replays cloud/tests/fixtures/review/<kind>.json if there is one.
+    naive_review_agent: str | None = None
+    review_budget_usd: float = 0.50
+    review_max_sessions_per_hour: int = 2
+    review_cooldown_s: int = 900
 
 
 @lru_cache

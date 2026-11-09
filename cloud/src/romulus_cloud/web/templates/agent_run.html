@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% from "partials/ui.html" import icon %}
+{% block title %}Romulus · {{ run.device_id }} · agent run{% endblock %}
+{% block content %}
+<p class="back"><a href="/">{{ icon("chevron") }}All incidents</a></p>
+<header class="story-head run-head">
+  <h1 class="story-title"><span>{{ run.device_id }} · Agent run</span> <span class="status tone-{{ run.tone }}">{{ run.status_words }}</span></h1>
+</header>
+<div id="run" hx-get="/partials/agent-runs/{{ run.device_id }}/{{ run.run_id }}" hx-trigger="every 3s [document.visibilityState === 'visible']" hx-swap="innerHTML">
+  {% include "partials/run_page.html" %}
+</div>
+{% endblock %}

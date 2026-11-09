@@ -1,25 +1,58 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="day">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Romulus{% endblock %}</title>
+  <script>
+  // Theme: Day by default, whatever the OS says. ?theme=day|night picks one and remembers it.
+  (function () {
+    var pick = new URLSearchParams(location.search).get("theme");
+    var theme = pick === "day" || pick === "night" ? pick : null;
+    try {
+      if (theme) localStorage.setItem("romulus.theme", theme);
+      else theme = localStorage.getItem("romulus.theme");
+    } catch (e) {}
+    if (theme === "day" || theme === "night") document.documentElement.setAttribute("data-theme", theme);
+  })();
+  </script>
   <link rel="stylesheet" href="/static/romulus.css">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
+  {% include "partials/icons.html" %}
   <header class="top">
-    <a class="brand" href="/">Romulus <span>incident timeline</span></a>
-    <a class="nav" href="/data">Data</a>
-    {% include "partials/killswitch.html" %}
+    <div class="top-inner">
+      <a class="brand" href="/"><svg class="icon brand-mark" aria-hidden="true"><use href="#i-mark"/></svg>Romulus <span class="brand-sub">self-healing fleet</span></a>
+      <nav class="nav-links" aria-label="Pages">
+        <a class="nav" href="/">Fleet</a>
+        <a class="nav" href="/technician">Technician</a>
+        <a class="nav" href="/data">Data</a>
+        <a class="nav" href="/learning">Learning</a>
+      </nav>
+      <span class="live" id="live" title="Updates every 3 s"><i></i>Live</span>
+      {% include "partials/killswitch.html" %}
+    </div>
   </header>
   <p id="killswitch-result" class="switch-result" role="status" aria-live="polite"></p>
   <p id="stale" class="stale" role="alert" hidden></p>
   <main>
     {% block content %}{% endblock %}
   </main>
-  <footer class="foot">Times in {{ tz }}. The page updates every 3 s. Every step says who acted and why.</footer>
+  <footer class="foot">Times in {{ tz }}. Every step says who acted and why.</footer>
   <script>
+  // The current page, marked in the nav. Incident and agent-run pages belong to Fleet.
+  (() => {
+    const path = location.pathname;
+    for (const a of document.querySelectorAll(".nav-links a.nav")) {
+      const href = a.getAttribute("href");
+      const here = href === "/"
+        ? path === "/" || path.startsWith("/incidents/") || path.startsWith("/agent-runs/")
+        : path === href || path.startsWith(href + "/");
+      if (here) a.setAttribute("aria-current", "page");
+    }
+  })();
+
   // Kill switch (D11): POST JSON to the ops route and show what it answered.
   document.addEventListener("click", async (ev) => {
     const btn = ev.target.closest("[data-switch]");
@@ -55,17 +88,54 @@
   });
 
   // A failed poll keeps the old content, so say how old it is; the next success clears it.
+  // The header's Live label says Stale meanwhile.
   let staleSince = null;
   const stale = document.getElementById("stale");
+  const live = document.getElementById("live");
+  const setLive = (isStale) => {
+    live.classList.toggle("is-stale", isStale);
+    live.lastChild.nodeValue = isStale ? "Stale" : "Live";
+  };
   const markStale = () => {
     if (!staleSince) staleSince = new Date();
     stale.textContent = "Stale since " + staleSince.toLocaleTimeString("en-US") + ": the server is not answering; showing the last good update.";
     stale.hidden = false;
+    setLive(true);
   };
   document.body.addEventListener("htmx:sendError", markStale);
   document.body.addEventListener("htmx:responseError", markStale);
   document.body.addEventListener("htmx:afterRequest", (ev) => {
-    if (ev.detail.successful) { staleSince = null; stale.hidden = true; }
+    if (ev.detail.successful) { staleSince = null; stale.hidden = true; setLive(false); }
+  });
+
+  // Polling swaps the HTML every 3 s; keep every section the reader opened or closed as they left it.
+  const opened = {};
+  document.addEventListener("toggle", (ev) => {
+    const d = ev.target;
+    if (d.tagName === "DETAILS" && d.id) opened[d.id] = d.open;
+  }, true);
+  document.body.addEventListener("htmx:afterSwap", () => {
+    for (const [id, open] of Object.entries(opened)) {
+      const d = document.getElementById(id);
+      if (d && d.open !== open) d.open = open;
+    }
+  });
+
+  // Live changes: an element with data-live="<key>" gets .is-changed once, after a swap, when
+  // its text differs from the last render (never on the first). Only for real changes, such as
+  // the Approve moment and status words; never for entrance animations.
+  const lastLive = {};
+  const scanLive = (mark) => {
+    for (const el of document.querySelectorAll("[data-live]")) {
+      const key = el.dataset.live, text = el.textContent.trim();
+      if (mark && key in lastLive && lastLive[key] !== text) el.classList.add("is-changed");
+      lastLive[key] = text;
+    }
+  };
+  scanLive(false);
+  document.body.addEventListener("htmx:afterSwap", () => scanLive(true));
+  document.addEventListener("animationend", (ev) => {
+    if (ev.target.classList && ev.target.classList.contains("is-changed")) ev.target.classList.remove("is-changed");
   });
   </script>
 </body>

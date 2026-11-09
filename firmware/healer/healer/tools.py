@@ -584,7 +584,8 @@ def _verify(meta, t_flash, watch_seconds):
       "watch_seconds (no reboots/crashes, health flowing, normal mode). On failure it marks the image bad and, "
       "if auto_rollback, re-flashes what was running before (or the known-good image). Also returns a triage "
       "run at the end, so functional problems that don't crash are visible.", risk="flash",
-      params={"image": {"type": "string", "description": "crc from fw_build/fw_images, 'known-good', 'latest'"},
+      params={"image": {"type": "string", "description": "crc from fw_build/fw_images, 'known-good', 'latest', or a "
+                                                          "version such as 'v1.0'"},
               "watch_seconds": {"type": "number", "default": 15}, "auto_rollback": {"type": "boolean", "default": True},
               "reason": {"type": "string", "description": "why this flash (logged)"}},
       required=("image",))
@@ -639,7 +640,8 @@ def fw_flash(image, watch_seconds=15, auto_rollback=True, reason=None, _allow_ba
     return out
 
 
-@tool("fw_rollback", "Flash the known-good image (or another image) back, with the same verification as fw_flash.",
+@tool("fw_rollback", "Flash the known-good image (or another image) back, with the same verification as fw_flash. "
+      "Flashing the image that is already running changes nothing.",
       risk="flash", params={"to": {"type": "string", "default": "known-good"}, "reason": {"type": "string"}})
 def fw_rollback(to="known-good", reason=None):
     return fw_flash(to, watch_seconds=15, auto_rollback=False, reason=reason or "rollback")

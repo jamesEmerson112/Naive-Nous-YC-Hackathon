@@ -72,7 +72,7 @@ What healthy looks like (`heal telemetry_stats seconds=5`):
 | 5 | v1.5 | accelerometer reads 0.5 g at rest | `acc_gravity` | `pod_cmd "acc regs"` (FS bits) | code: mg/digit = 2 for ±4 g |
 | 6 | v1.6 | missing sensor → hang → watchdog loop → safe mode | `watchdog`, `reboot_loop` | boot `last_cp`, `chip_halt_sample` | code: restore I2C timeouts, then a human replugs |
 | 7 | v1.7 | ultrasonic reads 0–32 mm whatever is in front; the arm never starts | `us_mismatch` (critical) | `telemetry_recent kind=D` (us vs mm), `src_diff rev_a=v1.0` | arm task: `fw_rollback` to known-good, then the agent's own `arm_run` plays the wave; later code: drop the cast |
-| 8 | v1.8 | ultrasonic right until a hand comes within 25 cm, then stuck at the hand's distance; the looping arm flails | `us_mismatch` (critical), only after the hand | `telemetry_recent kind=D` (us vs mm), `src_diff rev_a=v1.0` | arm task: `fw_rollback`, `arm_run`; later code: the keep-alive tests `mm`, not `held_mm` |
+| 8 | v1.8 | ultrasonic right until a hand comes within 20 cm, then stuck at the hand's distance; the looping arm flails | `us_mismatch` (critical), only after the hand | `telemetry_recent kind=D` (us vs mm), `src_diff rev_a=v1.0` | arm task: `fw_rollback`, `arm_run`; then forward: give the hold its release (`HCSR04_HOLD_MS` is never used) |
 | P1 | v1.0 | ultrasonic covered | `us_blocked` | `telemetry_stats` | none needed: wait / human |
 | P2 | v1.0 | loose ECHO wire | `us_intermittent` (+ motion) | `pod_cmd "us check"` | human reseats the wire |
 | P3 | v1.0 | LIS3DH unplugged | `acc_error` (nack) | `pod_cmd "i2c scan"` | human reconnects; firmware keeps running |
@@ -420,21 +420,31 @@ loops its wave while watching the sensor; after the first loop, hold a hand 5–
 about a second and take it away.
 
 **The feature:** at 10 pings a second, a hand moving through the beam can fall between two pings and the arm's
-gate would miss it. So v1.8 holds a near reading (under `HCSR04_HOLD_NEAR_MM`, 250 mm) and reports the nearest
-distance until nothing has been near for `HCSR04_HOLD_MS` (500 ms). The status is judged on the reported
-distance, so a held hand in front of open space is `ok`, not `out_of_range`.
+gate would miss it. So v1.8 is meant to hold a near reading (under `HCSR04_HOLD_NEAR_MM`, 200 mm, the arm's
+gate limit) and report the nearest distance until nothing has been near for `HCSR04_HOLD_MS` (500 ms). The
+status stays v1.0's (judged on the echo time).
 
-**The bug:** the keep-alive tests the held distance instead of the new reading:
+**The bug:** the hold has no release. It records when something was last near and never reads it, and
+`HCSR04_HOLD_MS` is defined in `hcsr04.h` but used nowhere:
 ```c
-if (mm < held_mm || now_ms - held_ms >= HCSR04_HOLD_MS)
-    held_mm = mm;                   /* nearer, or the hold ran out: take the new reading */
-if (held_mm < HCSR04_HOLD_NEAR_MM)  /* v1.8; meant: if (mm < HCSR04_HOLD_NEAR_MM) */
-    held_ms = now_ms;               /* something near: keep holding */
+static uint32_t near_hold(uint32_t mm, uint32_t now_ms)
+{
+    if (mm < HCSR04_HOLD_NEAR_MM) {
+        if (held_mm == 0 || mm < held_mm)
+            held_mm = mm;               /* something near: hold the nearest */
+        held_ms = now_ms;               /* written, never read */
+    }
+    return held_mm ? held_mm : mm;      /* while something is held, report it */
+}
 ```
-Once anything has been held, `held_ms` is refreshed on every ping, so the 500 ms never runs out and
-`held_mm` only ever goes down. What it looks like:
-- **Nothing near:** readings above 250 mm pass straight through, so every distance is right. That includes the
-  arm passing through the beam at about 338 mm (the closest it came in podd's log of a wave on Nov 8, 00:13).
+Once anything has been held, `held_mm` is never cleared. It was made simpler on Nov 8, about 8 AM. The earlier
+version (a keep-alive that tested `held_mm` instead of `mm`) was fixed correctly in only 1 of 3 bench runs: the
+others wrote a hold that latched the lowest reading, one that missed a hand, and a no-op. The fix is now one
+release line at the top of `near_hold()` (`if (held_mm && now_ms - held_ms >= HCSR04_HOLD_MS) held_mm = 0;`), or
+removing the hold. What it looks like:
+- **Nothing near:** readings of 200 mm and up pass straight through, so every distance is right. That includes the
+  arm passing through the beam at about 338 mm (podd's log of a wave on Nov 8, 00:13) and at about 230 mm
+  (telemetry, Nov 8, 07:48). The old 250 mm threshold let the 230 mm pass latch the hold before any hand came.
 - **The hand:** seen right, since the nearest of its pings agrees with its echo.
 - **After the hand leaves:** the distance stays at the hand's until the pod is reset or reflashed.
 
@@ -458,7 +468,8 @@ its obstacle reflex makes it flail for 8 s. Then it gives up (exit 4).
 clue (state in RAM that only gets worse), but not a fix: the bench check wants the known-good image running.
 
 **Fix (arm task):** `fw_rollback` to known-good, then `arm_run` to launch the job and check its motion report.
-The forward fix (test `mm` in the keep-alive) is a person's follow-up.
+Then the agent may fix forward (the release above), build, flash and run the arm again. The proof loops bring
+the hand back to test that build.
 
 **Verify:** `chip_status` shows the known-good build, `us_mismatch` is gone, and the agent's own `arm_run` plays
 the whole wave. Then `heal_test.py` loops the job three more times, still watching the sensor.

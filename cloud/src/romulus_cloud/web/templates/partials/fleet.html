@@ -1,22 +1,30 @@
-{% if fleet.frozen %}<p class="frozen-note">Fleet frozen: {{ fleet.frozen_why }}</p>{% endif %}
+{# One card per device: id, a health dot and word, what it is, and the versions it runs.
+   Needs `fleet` (api/web.py `_fleet`). #}
+{% set health_words = {"ok": "healthy", "degraded": "degraded", "failing": "failing"} %}
+{% set classes = {"so101": "SO-101", "sensor_pod": "Sensor pod"} %}
+{% from "partials/ui.html" import icon %}
+{% if fleet.frozen %}<p class="frozen-note" title="{{ fleet.frozen_why }}">{{ icon("pause") }}Frozen · {{ fleet.frozen_why }}</p>{% endif %}
 {% if fleet.devices %}
 <ul class="fleet">
   {% for d in fleet.devices %}
-  <li class="device health-{{ d.health or 'unknown' }}">
-    <span class="dev-id">{{ d.id }}</span>
-    <span class="dev-meta">{{ d.kind }}{% if d.role == 'canary' %} · canary{% endif %}</span>
-    <span class="dev-health">{{ d.health or 'not seen yet' }}</span>
-    <span class="dev-ver" title="running firmware · harness (→ assigned, if different)">
-      fw {{ d.running.firmware if d.running.firmware is not none else '–' }}
-      · h {{ d.running.harness if d.running.harness is not none else '–' }}
-      {%- if d.running.firmware != d.assigned.firmware or d.running.harness != d.assigned.harness %}
-      <span class="pending">→ fw {{ d.assigned.firmware }} · h {{ d.assigned.harness }}</span>
-      {%- endif %}
-    </span>
-    {% if d.overlay_id %}<span class="dev-overlay">overlay {{ d.overlay_id }}</span>{% endif %}
+  {% set r = d.running %}{% set a = d.assigned %}
+  <li class="card device health-{{ d.health or 'unknown' }}">
+    <div class="dev-top">
+      <span class="dev-id">{{ d.id }}</span>
+      <span class="dev-health"><span class="dot" aria-hidden="true"></span>{{ health_words.get(d.health, d.health) if d.health else 'no check-in yet' }}</span>
+    </div>
+    <p class="dev-meta">{{ classes.get(d.device_class, d.device_class) }} · {{ d.kind }}{% if d.role == 'canary' %} · canary{% endif %}</p>
+    {% if d.device_class == 'sensor_pod' %}{% if r.mcu_build %}<p class="dev-meta"><span class="mono" title="MCU build reported at the last check-in">{{ r.mcu_build }}</span></p>{% endif %}
+    {% elif r.firmware is not none or r.harness is not none %}<p class="dev-meta" title="running firmware · harness">
+      {%- if r.firmware is not none %}fw {{ r.firmware }}{% endif %}{% if r.firmware is not none and r.harness is not none %} · {% endif %}{% if r.harness is not none %}harness {{ r.harness }}{% endif %}</p>
+    {% elif not d.health %}<p class="dev-meta">waiting for its first report</p>{% endif %}
+    {% if d.device_class != 'sensor_pod' and (r.firmware is not none or r.harness is not none) and (a.firmware is not none or a.harness is not none) and (r.firmware != a.firmware or r.harness != a.harness) %}
+    <p class="dev-note">updating to {% if a.firmware is not none %}fw {{ a.firmware }}{% endif %}{% if a.firmware is not none and a.harness is not none %} · {% endif %}{% if a.harness is not none %}harness {{ a.harness }}{% endif %}</p>
+    {% endif %}
+    {% if d.overlay_id %}<p class="dev-meta" title="overlay {{ d.overlay_id }}">overlay {{ d.overlay_id | shortid }}</p>{% endif %}
   </li>
   {% endfor %}
 </ul>
 {% else %}
-<p class="muted">No devices yet. Run <code>make seed</code> or check a device in.</p>
+<p class="rows-empty">No arms yet. Run <code>make seed</code> to register the four demo arms, or check one in; each appears here with its health and versions.</p>
 {% endif %}

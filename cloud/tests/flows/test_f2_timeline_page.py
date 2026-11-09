@@ -40,17 +40,18 @@ def test_timeline_lists_incidents_newest_first_with_status(client, arm, example)
     assert "unexpected_release" in page and "camera_occluded" in page
     assert "overlay held" in page  # D1's status
     assert "overlay on trial" in page  # the rules incident has no held/reverted yet
-    # The chain shows readable labels, each with its raw event kind in a tooltip.
+    # The chain shows readable labels, each with its raw event kind in a tooltip; on the
+    # timeline it sits beside the mini heal line, so the stage words read "a · b · c".
     assert (
-        '<span class="link" title="incident.agent_acted">agent acted</span> → '
-        '<span class="link" title="overlay.applied">overlay ov-d1-0001</span> → '
+        '<span class="link" title="incident.agent_acted">agent acted</span> · '
+        '<span class="link" title="overlay.applied">overlay ov-d1-0001</span> · '
         '<span class="link" title="overlay.held">held</span>'
     ) in page
     assert "3:14:05 PM" in page and "Sat Nov 7" in page  # 23:14:05Z in Pacific time
     # Fleet strip: seeded devices with their versions and health.
     for device in ("arm-1", "sim-1", "sim-2", "sim-3"):
         assert device in page
-    assert "fw 1 · h 1" in page
+    assert "fw 1 · harness 1" in page
 
     partial = _text(client.get("/partials/incidents"))
     assert "<html" not in partial and f"/incidents/{D1}" in partial
@@ -235,7 +236,9 @@ def test_static_files_are_served(client):
     js = client.get("/static/htmx.min.js")
     assert js.status_code == 200 and "htmx 2.0.4" in js.text[:200]
     css = client.get("/static/romulus.css")
-    assert css.status_code == 200 and "prefers-color-scheme: dark" in css.text
+    # Day is the default whatever the OS says; Night is a theme of its own (the redesign).
+    assert css.status_code == 200 and '[data-theme="night"]' in css.text
+    assert "prefers-color-scheme" not in css.text
 
 
 def test_polling_pauses_when_hidden_and_reports_staleness(client, arm, example):

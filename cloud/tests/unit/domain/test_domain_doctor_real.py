@@ -288,6 +288,7 @@ def _run(exit_code=1, **changes):
         "tests_passed": exit_code == 0,
         "passed": exit_code == 0,
         "tests_summary": "1 failed in 0.1s" if exit_code else "5 passed in 0.2s",
+        "sealed": True,
         "failed": {REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')"}
         if exit_code
         else {},
@@ -313,7 +314,7 @@ def test_a_repro_that_fails_on_behaviour_then_passes_with_a_clean_fix_passes():
 @pytest.mark.parametrize(
     ("verify", "state", "reason"),
     [
-        ({"available": False}, "none available", None),
+        ({"available": False}, "none available", rules.UNVERIFIED_REASON),
         (VERIFY_OK, "passed", None),
         ({"available": True, "passed": False, "tests": 2}, "failed", "held-out verify failed"),
         ({"available": True, "passed": "yes"}, "failed", "held-out verify failed"),  # strict
@@ -324,6 +325,60 @@ def test_the_held_out_verify_is_pass_fail_only(verify, state, reason):
     v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=verify)
     assert v["verify"] == state and v["reason"] == reason
     assert v["passed"] is (reason is None)
+
+
+def test_with_no_verify_scripts_a_real_check_offers_nothing_unless_opted_in():
+    """Steps 1-3 can be forged from inside the code's own pytest process; only verify can't.
+    No verify scripts: closed `advised` (a retry would end the same way), not offered."""
+    no_scripts = {"available": False}
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts)
+    assert (v["passed"], v["outcome"], v["verify"]) == (False, rules.ADVISED, "none available")
+    assert v["reason"] == (
+        "no held-out verify/ scripts for this base (its package or CODER_VERIFY_DIR), so "
+        "nothing decisive checked the fix (DOCTOR_OFFER_UNVERIFIED=false)"
+    )
+    assert (v["fails_before"], v["passes_after"], v["device_tests"]) == (True, True, True)
+    assert rules.unverified({"stub": False, "verify": v["verify"]})
+    # The operator's opt-in: it passes, and the check says it went out unverified.
+    v = rules.check_verdict(
+        _run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts, offer_unverified=True
+    )
+    assert (v["passed"], v["outcome"], v["reason"]) == (True, None, None)
+    assert v["verify"] == "none available (offered unverified)"
+    assert "held-out verify: none available (offered unverified)" in v["summary"]
+    assert rules.unverified({"stub": False, "verify": v["verify"]})
+    # The opt-in changes nothing else: an earlier failure still closes failed_checks.
+    v = rules.check_verdict(
+        _run(1), _run(1), _run(0), REPRO_PATH, verify=no_scripts, offer_unverified=True
+    )
+    assert (v["passed"], v["outcome"]) == (False, rules.FAILED_CHECKS)
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=VERIFY_OK)
+    assert v["outcome"] is None and not rules.unverified({"stub": False, "verify": "passed"})
+
+
+def test_why_held_out_scripts_were_left_out_reaches_the_reason_and_summary():
+    note = "CODER_VERIFY_DIR left out: stale verify: CODER_VERIFY_DIR was generated from code x"
+    no_scripts = {"available": False, "note": note}
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts)
+    assert v["outcome"] == rules.ADVISED and v["reason"] == f"{rules.UNVERIFIED_REASON}; {note}"
+    assert f"held-out verify: none available ({note})" in v["summary"]
+    v = rules.check_verdict(
+        _run(1), _run(0), _run(0), REPRO_PATH, verify=no_scripts, offer_unverified=True
+    )
+    assert v["passed"] is True
+    assert f"held-out verify: none available (offered unverified) ({note})" in v["summary"]
+    # Scripts that ran keep the note in the summary too (the base's own still count).
+    ran = VERIFY_OK | {"note": note}
+    v = rules.check_verdict(_run(1), _run(0), _run(0), REPRO_PATH, verify=ran)
+    assert v["passed"] is True and v["verify"] == "passed" and note in v["summary"]
+
+
+@pytest.mark.parametrize(
+    "checks",
+    [{"stub": True, "verify": "none available"}, {"stub": True}, {"stub": False}, {}, None],
+)
+def test_only_a_real_check_without_verify_counts_as_unverified(checks):
+    assert rules.unverified(checks) is False
 
 
 def test_a_collection_error_on_the_base_proves_nothing():
@@ -367,6 +422,33 @@ def test_a_repro_that_doesnt_prove_the_fault_fails_the_check(before, why):
     assert why in v["reason"]
 
 
+# The forger: the repro test prints a fake summary and calls os._exit(0) before pytest ends.
+UNSEALED = {"sealed": False, "tests_summary": "1 passed in 0.01s"}
+
+
+@pytest.mark.parametrize("sealed", [False, None, "yes", 1])  # only True counts
+def test_a_repro_without_a_sealed_result_never_proves_the_fault(sealed):
+    before = _run(1, sealed=sealed)
+    if sealed is None:
+        del before["sealed"]
+    ids, why = rules.repro_failures(before, REPRO_PATH)
+    assert ids == [] and why.startswith(rules.NO_SEAL)
+    v = rules.check_verdict(before, _run(0), _run(0), REPRO_PATH, verify=VERIFY_OK)
+    assert v["passed"] is False and v["fails_before"] is False
+    assert rules.NO_SEAL in v["reason"]
+
+
+def test_a_repro_without_a_sealed_result_never_passes_with_the_fix():
+    """Exit 0 and PASSED ids that came from printed text: no seal, no pass."""
+    after_repro = _run(0, **UNSEALED)
+    why = rules.repro_passes(after_repro, [REPRO_ID])
+    assert why == f"with the fix, the repro test has {rules.NO_SEAL} (exit 0, 1 passed in 0.01s)"
+    v = rules.check_verdict(_run(1), after_repro, _run(0), REPRO_PATH, verify=VERIFY_OK)
+    assert v["passed"] is False and v["fails_before"] is True and v["passes_after"] is False
+    assert v["reason"] == why
+    assert rules.repro_passes(_run(0, sealed="true"), [REPRO_ID]).startswith("with the fix")
+
+
 def test_only_behavioural_failures_in_the_repro_file_count():
     failed = {
         REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')",
@@ -387,6 +469,9 @@ def test_only_behavioural_failures_in_the_repro_file_count():
         (_run(0, passed_ids=[OTHER_ID]), f"these repro tests didn't pass: {REPRO_ID}"),
         (_run(0, patch_error="no"), "doesn't pass with the fix (refused: no"),
         (_run(0, timed_out=True), "doesn't pass with the fix"),
+        # exit 0 and the ids passed, but the replay's own verdict (TestRun.passed) says no
+        (_run(0, tests_passed=False), "with the fix, the sealed repro run doesn't pass"),
+        (_run(0, tests_passed=None), "with the fix, the sealed repro run doesn't pass"),
     ],
 )
 def test_the_same_repro_ids_must_pass_with_the_fix(after_repro, why):
@@ -573,8 +658,13 @@ def test_pytest_results_reads_the_short_summary():
             "tests/test_x.py::test_y": "",
         },
         "errors": ["tests/test_z.py::test_w"],
+        "reasons": {
+            REPRO_ID: "assert ('RELEASE', 'open') == ('HOLDING', 'close')",
+            "tests/test_x.py::test_y": "",
+            "tests/test_z.py::test_w": "fixture 'nope' not found",
+        },
     }
-    assert rules.pytest_results("") == {"passed": [], "failed": {}, "errors": []}
+    assert rules.pytest_results("") == {"passed": [], "failed": {}, "errors": [], "reasons": {}}
 
 
 def test_pytest_results_reads_only_the_block_after_the_last_header():
@@ -595,6 +685,7 @@ def test_pytest_results_reads_only_the_block_after_the_last_header():
         "passed": [],
         "failed": {REPRO_ID: "ImportError: cannot import na..."},
         "errors": [],
+        "reasons": {REPRO_ID: "ImportError: cannot import na..."},
     }
     # A fake header printed *before* the real one changes nothing; no header, no results.
     assert rules.pytest_results(f"{header}\nFAILED fake::x\n{output}")["failed"] == {

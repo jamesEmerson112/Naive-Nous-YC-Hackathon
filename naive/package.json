@@ -1,0 +1,13 @@
+{
+  "name": "romulus-naive",
+  "private": true,
+  "type": "module",
+  "description": "Romulus's Naïve SDK client (fallback branch full-test-3)",
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "check": "node --env-file-if-exists=../.env check.mjs"
+  },
+  "dependencies": {
+    "@usenaive-sdk/managed-agents": "0.12.3"
+  }
+}

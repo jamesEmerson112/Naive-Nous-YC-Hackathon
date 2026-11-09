@@ -1,0 +1,55 @@
+{
+  "incident_id": "7b2c4e1a-9d3f-4a6b-8c5e-1f0a2b3c4d5e",
+  "occurred_at": "2026-11-08T17:20:14Z",
+  "kind": "joint_stall",
+  "summary": "elbow_flex stalled: commanded 92 deg, holding at 61 deg with load at its limit; two clear-and-retry attempts failed, arm parked with torque off",
+  "running": null,
+  "agent": {
+    "reasoning": "elbow_flex stalled reaching for the bin: position stuck at 61 deg while the goal was 92 deg and present load sat at its limit for 3.1 s; backed off and retried twice, both stalled at the same angle, and a move back toward home stalled too; a joint blocked both ways is mechanical or a failing servo, so I parked with torque off and handed off to a person",
+    "actions": [
+      "snapshot",
+      "back_off elbow_flex -10 deg",
+      "retry reach (slow)",
+      "retry reach (slow)",
+      "move home: stalled",
+      "park",
+      "torque_off",
+      "notify_human"
+    ]
+  },
+  "overlay": null,
+  "outcome": {
+    "resolved": false,
+    "resolving_action": "notify_human",
+    "suspected_cause": "hardware",
+    "category": "park"
+  },
+  "signals": {
+    "elbow_flex_pos_deg": [58.0, 59.5, 60.6, 61.0, 61.0, 61.1, 61.0, 61.0, 61.0, 61.0, 61.0, 61.0],
+    "elbow_flex_goal_deg": [92.0, 92.0, 92.0, 92.0, 92.0, 92.0, 92.0, 92.0, 92.0, 92.0, 92.0, 92.0],
+    "elbow_flex_load_pct": [41, 63, 88, 100, 100, 100, 100, 100, 100, 100, 100, 100],
+    "elbow_flex_temp_c": [38, 38, 39, 40, 41, 42, 43, 44, 45, 46, 46, 47],
+    "bus_voltage_v": [12.1, 12.1, 12.0, 11.9, 11.9, 11.9, 11.9, 11.9, 11.9, 11.9, 11.9, 11.9]
+  },
+  "recordings": [],
+  "tier": 1,
+  "log_tail": [
+    {"id": "inc-41", "kind": "joint_stall", "summary": "elbow_flex stalled at 61 deg (goal 92)", "state": "handed_off", "fix": null, "opened_at": 1762622414.2, "resolved_at": null}
+  ],
+  "contract_version": "0.1",
+  "source": "armsim",
+  "evidence": [
+    "elbow_flex position flat at 61.0 deg for 3.1 s while goal is 92 deg",
+    "present load 100% (limit) for the whole flat stretch",
+    "elbow temperature rose 38 to 47 C during the stall",
+    "a move back toward home also stalled: blocked both ways",
+    "other five servos answer and move normally"
+  ],
+  "hypotheses": [
+    "something is jamming the elbow",
+    "elbow servo gears or motor failing"
+  ],
+  "next_steps": [
+    "a person checks the elbow by hand with torque off"
+  ]
+}

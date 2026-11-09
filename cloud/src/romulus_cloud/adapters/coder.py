@@ -19,13 +19,12 @@ Safety rules here:
 - A diff with a symlink, a submodule, a binary change or a path outside `device/` fails the
   draft (`summarize_code_patch` problems), and so does any symlink or nested `.git` left in
   the work dir. Host-side writes go through `safe_write`, which never follows a symlink.
-- The LLM key is passed to `docker run` by name only, redacted from every field returned,
-  and its appearance anywhere in the agent's output or diff fails the draft.
-
-Known gap: the agent container's network is not restricted to the LLM endpoint. That needs
-an egress allowlist proxy (ideally one that also injects the key, so the container never
-holds it); add it before the coder runs on anything but our own toy or device code, or as
-soon as a run is seen reaching another host. Test-only runs use `--network none`.
+- Egress (B5): the agent's container joins only an internal Docker network whose one other
+  member is a key-holding proxy to the LLM endpoint (`coder_egress`, `cloud/coder/llm_proxy.py`).
+  It reaches nothing else (no internet, bench LAN or host) and holds only a per-job token,
+  never the real key. There is no open-network mode. Test and verify runs use `--network none`.
+- The real key still never appears in output: it is redacted from every field returned, and
+  its appearance anywhere in the agent's output or diff fails the draft.
 """
 
 from __future__ import annotations
@@ -40,6 +39,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+from romulus_cloud.adapters.coder_egress import (
+    DEFAULT_MAX_TOKENS,
+    Egress,
+    EgressError,
+    EgressSummary,
+)
 from romulus_contracts.codepatch import CODE_ROOT, is_under, summarize_code_patch
 
 DEFAULT_IMAGE = "romulus-coder"
@@ -361,6 +366,7 @@ class Sandbox:
         timeout_s: float,
         network: str,
         stdin: str | None = None,
+        labels: Mapping[str, str] | None = None,
     ) -> SandboxRun:
         name = f"romulus-coder-{uuid.uuid4().hex[:12]}"
         argv = [
@@ -373,6 +379,8 @@ class Sandbox:
         ]  # fmt: skip
         if hasattr(os, "getuid"):  # files the agent writes stay owned by the host user
             argv += ["--user", f"{os.getuid()}:{os.getgid()}"]
+        for key, value in sorted((labels or {}).items()):  # so a teardown or prune finds it
+            argv += ["--label", f"{key}={value}"]
         for key in sorted(env):  # names only: values (the API key) never appear in argv
             argv += ["-e", key]
         argv += [self.image, mode]
@@ -441,7 +449,7 @@ class LocalAgent:
     step_limit: int = 30
     time_limit_s: int = 600
     test_timeout_s: int = 300
-    max_tokens: int = 4000
+    max_tokens: int = DEFAULT_MAX_TOKENS  # asked for by the agent and capped by the proxy
     scratch_dir: str | None = None  # where scratch copies go (Docker must be able to mount it)
 
     def draft(
@@ -454,10 +462,8 @@ class LocalAgent:
     ) -> CodeDraft:
         if files is None:
             raise CoderError(f"LocalAgent needs the code package of {code_rev} (files=...)")
-        env = {
-            "LLM_BASE_URL": self.base_url,
+        env = {  # LLM_BASE_URL and LLM_API_KEY come from the egress proxy (B5)
             "LLM_MODEL": self.model,
-            "LLM_API_KEY": self.api_key,
             "CODER_TEST_CMD": self.test_cmd,
             "CODER_STEP_LIMIT": str(self.step_limit),
             "CODER_TIME_LIMIT_S": str(self.time_limit_s),
@@ -466,24 +472,50 @@ class LocalAgent:
         }
         with tempfile.TemporaryDirectory(prefix="romulus-coder-", dir=self.scratch_dir) as tmp:
             repo = ScratchRepo.create(Path(tmp), files, exclude=[HOLDOUT_DIR])
-            run = self.sandbox.run(
-                repo.work,
-                "agent",
-                env=env,
-                stdin=task if task is not None else build_task_prompt(patch, incident, code_rev),
-                # the agent's own wall-clock limit, then the tests, then a margin
-                timeout_s=self.time_limit_s + self.test_timeout_s + 60,
-                network="bridge",
-            )
+            sandbox = self.sandbox
+            egress = Egress(image=sandbox.image, runner=sandbox.runner, docker=sandbox.docker)
+            proxy: EgressSummary | None = None
+            timeout_s = self.time_limit_s + self.test_timeout_s + 60
+            try:
+                with egress.open(
+                    self.base_url,
+                    self.api_key,
+                    model=self.model,  # forced on every request, whatever the agent asks
+                    max_tokens=self.max_tokens,
+                    # mini-swe-agent tries each step at most twice (run_agent.py), plus slack
+                    max_requests=2 * self.step_limit + 5,
+                    ttl_s=timeout_s + 120,  # an orphaned proxy stops holding the key
+                    base_env=os.environ,
+                ) as net:
+                    run = sandbox.run(
+                        repo.work,
+                        "agent",
+                        env={**env, **net.agent_env},
+                        stdin=task
+                        if task is not None
+                        else build_task_prompt(patch, incident, code_rev),
+                        # the agent's own wall-clock limit, then the tests, then a margin
+                        timeout_s=timeout_s,
+                        network=net.network,
+                        labels=net.agent_labels,
+                    )
+                    proxy = egress.summary(net)
+            except EgressError as exc:  # no result: the batch retries it later (coder_retry)
+                run = SandboxRun(None, ProcResult(-1, "", f"egress setup failed: {exc}"))
             escapes = find_escapes(repo.work)
             try:
                 found = _Inspection(repo.diff(), repo.changes(), escapes)
             except CoderError as exc:  # e.g. a nested repo git can't add
                 found = _Inspection("", [], escapes, error=str(exc))
-        return self._to_draft(run, found, incident, code_rev)
+        return self._to_draft(run, found, incident, code_rev, proxy)
 
     def _to_draft(
-        self, run: SandboxRun, found: _Inspection, incident: Mapping[str, Any], code_rev: str
+        self,
+        run: SandboxRun,
+        found: _Inspection,
+        incident: Mapping[str, Any],
+        code_rev: str,
+        proxy: EgressSummary | None = None,
     ) -> CodeDraft:
         secrets = [self.api_key]
         agent, tests, diff = run.agent, run.tests, found.diff
@@ -525,6 +557,10 @@ class LocalAgent:
         elif not found.error:
             failures.append("the agent changed nothing")
         flags = harness_flags(found.changes)
+        if proxy is not None:
+            notes.append(proxy.note())
+            if proxy.refused:  # e.g. a prompt-injected agent probing other routes
+                flags += (f"egress_refused: the LLM proxy refused {proxy.refused} request(s)",)
         if flags:
             notes.append("flagged for review: " + "; ".join(flags))
         everything = run.proc.stdout + run.proc.stderr + diff
@@ -578,6 +614,7 @@ def build_coder(
     time_limit_s: int = 600,
     runner: Runner | None = None,
     scratch_dir: str | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> Coder:
     """Factory called with CODER_PROVIDER, CODER_AGENT, CODER_IMAGE (+ the LLM endpoint)."""
     if provider == "fake":
@@ -596,6 +633,7 @@ def build_coder(
             step_limit=step_limit,
             time_limit_s=time_limit_s,
             scratch_dir=scratch_dir or None,
+            max_tokens=max_tokens,
         )
     if provider == "naive_session":
         raise NotImplementedError(

@@ -19,6 +19,11 @@ Standard `refs` keys (values are ids as strings):
                 `doctor.advised` events are the record)
     consult     "cons_…", a Fleet Doctor consult (`doctor_consults`)
     proposal    "prop_…", a Fleet Doctor proposal (`doctor_proposals`)
+    agent_run   a heal-agent run id made on the device (`agent_runs`, with `device`)
+    technician_case  "tc_…", a Naïve Technician case (`technician_cases`)
+    naive_session    "ses_…", the Naïve session behind it
+    review      "review:<kind>:<n>", a cluster-review case (no table: its `review.*` events
+                are the record; services/review.py)
 Always include `incident` when it is known, so an incident's story is one `find` query.
 Query refs with `find` (or `Event.refs.contains(...)`, i.e. `@>`), which uses the GIN
 index; `Event.refs["incident"].astext == ...` does not.

@@ -124,10 +124,10 @@ own build. The arm then loops its job three more times to prove it works (with y
 own build running), and the test stops. Everything is checked on the bench.
 
 **The fault:** pod release v1.8 (`firmware/demo/bad-images/08-us-near-hold`). It adds a near-object hold to the
-HC-SR04 driver: a reading under 250 mm is held until nothing has been near for 500 ms, so a hand moving through
-the beam can't fall between two 10 Hz pings. But the hold's keep-alive tests the held distance (`held_mm`)
-instead of the new reading (`mm`), so once anything has come near, the hold refreshes itself on every ping and
-never lets go. The distances are right until a hand comes, and right while it's there. After it leaves they stay
+HC-SR04 driver: the nearest reading under 200 mm is meant to be held until nothing has been near for 500 ms, so
+a hand moving through the beam can't fall between two 10 Hz pings. But the hold has no release: it records when
+something was last near (`held_ms`) and never reads it, and `HCSR04_HOLD_MS` is never used, so once anything has
+come near it never lets go. The distances are right until a hand comes, and right while it's there. After it leaves they stay
 at the hand's until the pod is reset or reflashed. The echo time stays correct, so the pod's own telemetry then
 contradicts itself, and podd's `us_mismatch` rule (`firmware/healer/healer/detect.py`) flags that without any
 model. Details: `firmware/docs/DEMO.md` §8. The older always-on fault, v1.7 (§7), is still in
@@ -263,7 +263,7 @@ name...) outside the firmware source; exit 0 means no leaks. What keeps it clean
   and no explanatory comment.
 - v1.8's commit message and comments describe the feature as meant (a near-object hold), never the mistake.
   `tests/test_heal_loop.py` checks that what wakes the agent on v1.8 has no answer term in it: `held_mm`,
-  refresh, keep-alive, latch, stale, stuck, the version, or the hold's numbers.
+  refresh, keep-alive, latch, stale, stuck, the version, or the hold time.
 - podd's `us_mismatch` finding states only what it measured and what that rules out (not an obstruction),
   never the bug class or the fix. Restart podd after changing `detect.py`: triage runs inside podd.
 - Blind mode hides every record from before the fault: earlier runs' notes, notifications, flash reasons
@@ -280,7 +280,8 @@ What they cover:
 - The v1.0 and v1.7 distance lines, compiled with gcc, checked at every echo value.
 - v1.8's `near_hold()`, compiled from the patch with gcc (and the fix), checked ping for ping against the
   simulator. The checks: right before a hand, right during it, stuck after it (the fix lets go after 500 ms),
-  and the arm's own pass at 338 mm never held.
+  and the arm's own pass at 338 mm never held. The patch never uses `HCSR04_HOLD_MS` and nothing clears
+  `held_mm`.
 - podd's rules and the real gate code on simulated samples.
 - The reflex's limits on the simulated arm: held joints, swing and speed caps under any flags, back home,
   irregular motion, a real obstacle that clears.
@@ -296,3 +297,51 @@ What they cover:
 - What wakes the agent on v1.8: no answer terms in it.
 - `heal_test.py`'s full sequence on the simulated pod, arm and hand, plus two aborts: the sensor really blocked,
   and nobody bringing a hand.
+## Recording and playing primitives by hand (`prims/`, Andre's `arm/teleop-recording`)
+
+_Merged from Andre's branch on Sun Nov 8 so the arm host can drive the real arm with `prims.Arm`. The flat files above (`wave.json`, `recording_*.json`, `naive_follower.json`, `prim-record.sh`) are byte-identical copies of the ones under `prims/library/`, `calibration/` and `bin/`._
+
+One SO-101 arm, no teleoperation: switch its torque off, move it by hand, and save the
+movement as a small JSON trajectory (a *primitive*) in `prims/library/`. LeRobot 0.7.0 is
+pinned (see `docs/so101-research.md`).
+
+### Setup (once per machine)
+```bash
+cd arm && ./setup.sh          # venv + LeRobot; creates arm.env
+ls /dev/tty.usbmodem*         # with the arm plugged in (USB + 12 V power)
+```
+Put that port in `ARM_PORT` in `arm.env`.
+
+The arm's calibration is checked in at `calibration/naive_follower.json` (`ARM_ID`). It is
+written to the motors automatically the first time a machine connects, so no calibration
+step is needed for this arm.
+
+### Record
+```bash
+bin/prim-record.sh wave                  # one movement
+bin/prim-record.sh wave pick present     # several in a row
+bin/prim-record.sh --pose home rest      # single named poses instead (Enter saves each)
+```
+1. **Support the arm**: its torque goes off as soon as the script starts.
+2. Press **Enter** to start a take; the status line shows `[REC 3.2s]`.
+3. Move the arm, then press **Enter** to stop and save. Wait for `Saved '<name>'`.
+4. `r` + Enter while recording discards the take so you can redo it.
+
+Ctrl-C quits and **loses a take in progress**. A take auto-saves after 120 s
+(`--max-seconds`). Idle frames at the start and end are trimmed (`--no-trim` keeps them).
+Joints are in degrees; the gripper is 0 (closed) to 100 (open).
+
+### Recordings
+`prims/library/*.json`: `wave`, `recording_2`. Each file is `{name, fps, joints, frames}`,
+one row of 6 joint values per frame at 50 fps.
+
+To play one back from Python:
+```python
+from prims import Arm
+
+with Arm() as arm:
+    arm.play("wave")               # eases to the start pose, then plays it
+    arm.play("recording_2", speed=0.7)
+```
+Playback switches torque on and drives the arm: keep the area clear. When the script ends
+the torque goes off again, so end recordings in the folded rest pose.

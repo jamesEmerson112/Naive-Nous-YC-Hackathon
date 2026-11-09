@@ -880,11 +880,18 @@ def test_purity_check_sees_the_domain_modules():
 
 @pytest.mark.parametrize("path", sorted(DOMAIN.glob("*.py")), ids=lambda p: p.name)
 def test_domain_module_imports_only_contracts_and_stdlib(path):
-    """Architecture §9 rule 3: every domain/*.py imports only romulus_contracts and the stdlib."""
+    """Architecture §9 rule 3: every domain/*.py imports only romulus_contracts and the stdlib.
+    Another domain module is allowed: it is held to this same check."""
     roots = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.Import):
-            roots.update(alias.name.split(".")[0] for alias in node.names)
+            roots.update(
+                alias.name.split(".")[0]
+                for alias in node.names
+                if not alias.name.startswith("romulus_cloud.domain.")
+            )
         elif isinstance(node, ast.ImportFrom):
-            roots.add((node.module or "").split(".")[0])
+            module = node.module or ""
+            if module != "romulus_cloud.domain" and not module.startswith("romulus_cloud.domain."):
+                roots.add(module.split(".")[0])
     assert roots - {"romulus_contracts"} <= sys.stdlib_module_names, roots

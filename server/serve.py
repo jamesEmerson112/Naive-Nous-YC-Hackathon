@@ -115,7 +115,7 @@ async def main():
     p.add_argument("--allow", help="client subnet let in (default: the /24 around --bind)")
     p.add_argument("--upstream", default="http://127.0.0.1:11434", help="the local Ollama")
     p.add_argument("--model", default="qwen3.5:4b")
-    p.add_argument("--num-ctx", type=int, default=32768, help="match the harness's --num-ctx (its default is 32768)")
+    p.add_argument("--num-ctx", type=int, default=65536, help="match the harness's --num-ctx (its default is 65536)")
     p.add_argument("--keep-alive", default="2h", help="how long Ollama keeps the model loaded after the warm-up")
     p.add_argument("--no-warm", action="store_true", help="don't load the model at startup")
     a = p.parse_args()

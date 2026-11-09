@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hardware Buddy pitch</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --ink: #121214; --muted: #6b6b72; --line: #e2e1dc; --card: #ffffff; --accent: #2563ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0d10; --ink: #eceef1; --muted: #8d95a0; --line: #1f242b; --card: #12161b; --accent: #7c9cff; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 64px 24px 80px; }
+  h1 { font: 700 44px/1.1 -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; letter-spacing: -0.02em; margin: 0 0 8px; }
+  p.lede { color: var(--muted); margin: 0 0 40px; max-width: 640px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  a.card {
+    display: block; text-decoration: none; color: inherit; background: var(--card);
+    border: 1px solid var(--line); border-radius: 16px; padding: 22px 22px 20px;
+    transition: border-color .2s, transform .2s;
+  }
+  a.card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .swatch { height: 96px; border-radius: 10px; margin-bottom: 16px; display: grid; place-items: center; }
+  .swatch span { font: 600 15px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+  .s-mission { background: #07090c; color: #7c9cff; }
+  .s-keynote { background: #f5f5f2; color: #0e0e10; box-shadow: inset 0 0 0 1px #e4e3de; }
+  .s-buddy   { background: #fff8ee; color: #6d5df6; box-shadow: inset 0 0 0 1px #f1e6d6; }
+  .card h2 { margin: 0 0 4px; font-size: 19px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .links { margin-top: 12px; font-size: 14px; color: var(--accent); }
+  h3 { margin: 48px 0 12px; font-size: 15px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  td { padding: 8px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  td:first-child { width: 220px; color: var(--muted); }
+  kbd { font: 13px ui-monospace, "SF Mono", Menlo, monospace; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; background: var(--card); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hardware Buddy pitch</h1>
+  <p class="lede">The animated visuals for the spoken parts of the pitch: scenes 1–8 before the demo video, scene 9 after it. Three styles of the same storyboard; pick one. Everything runs offline.</p>
+
+  <div class="grid">
+    <a class="card" href="mission.html">
+      <div class="swatch s-mission"><span>Mission Control</span></div>
+      <h2>Mission Control</h2>
+      <p>Dark, line-art, telemetry labels.</p>
+      <div class="links">Open →</div>
+    </a>
+    <a class="card" href="keynote.html">
+      <div class="swatch s-keynote"><span>Keynote</span></div>
+      <h2>Keynote</h2>
+      <p>Light, big type, flat shapes.</p>
+      <div class="links">Open →</div>
+    </a>
+    <a class="card" href="buddy.html">
+      <div class="swatch s-buddy"><span>Buddy</span></div>
+      <h2>Buddy</h2>
+      <p>Warm, character-led: the Buddy chip reacts in every scene.</p>
+      <div class="links">Open →</div>
+    </a>
+  </div>
+
+  <h3>Presenter controls</h3>
+  <table>
+    <tr><td>Next beat</td><td><kbd>→</kbd> <kbd>Space</kbd> <kbd>PageDown</kbd> <kbd>Enter</kbd> or click</td></tr>
+    <tr><td>Previous beat</td><td><kbd>←</kbd> <kbd>PageUp</kbd></td></tr>
+    <tr><td>Jump to scene</td><td><kbd>1</kbd>–<kbd>9</kbd>, <kbd>Home</kbd> for the start</td></tr>
+    <tr><td>Autoplay</td><td><kbd>A</kbd>, or add <kbd>?auto=1</kbd> to the URL for screen recording</td></tr>
+    <tr><td>Fullscreen · hide dots</td><td><kbd>F</kbd> · <kbd>H</kbd></td></tr>
+    <tr><td>Demo video</td><td>Cut away after the "A chip-packing line" card; come back and press <kbd>→</kbd> for the closing.</td></tr>
+  </table>
+  <p class="lede" style="margin-top:24px">Storyboard: <code>pitch/storyboard.md</code></p>
+</main>
+</body>
+</html>

@@ -548,3 +548,18 @@ From Kent's review of the Fleet Doctor proposal v2 ([`../fleet-doctor/`](../flee
 - Ishaan's arm healer may not need a bridge: his docs say its report follows the contract (`docs/project-overview.md` §8.1). One sample of its output would settle it.
 
 **History:** decided Sat Nov 7 ~8 PM (Kent, after reviewing what the device side already records).
+
+## Round 5: the Naïve Technician (Sun Nov 8, ~8 AM)
+
+### D30. When a hardware fault has no catalogued part, a Naïve agent diagnoses it, briefs the technician and stages a checked cart; a person checks out. Amends D11. (drafted)
+**Context.** D11 made ordering parts automatic at any amount and the kill switch the only human control. It rejected approval gates for spending and for booking. D12 has a Naïve agent phone the supplier. Both assume an agent that can pay and phone. Faults with no catalogued part dead-end at `needs_human` ([design](../naive-technician/design.md) §1).
+**Decision (draft):**
+- For those faults the Naïve Technician runs on its own: it researches, diagnoses, emails the allowlisted technician from the Naïve persona's inbox (booking stays autonomous, as D11 wants) and stages a cart link that code has checked.
+- Checkout is handed to a person, the way D19b hands over orders that are over the cap. This is **forced by a missing capability**, not a new policy: Naïve agents can't pay (card issuing returns 501, the wallet isn't offered; F:2962, F:12013) and can't place calls (F:8228).
+- The kill switch stays the only *policy* control.
+**When to revisit.** When Naïve agents can pay, checkout under `ORDER_MAX_USD` goes back to automatic, per D11.
+**What this means for the build** *(inferred)*:
+- One new table (`technician_cases`), one new branch in `workorders.resolve` (approve a staged `raw.technician_part`), four event kinds (`technician.*`, APIs §5), off by default (`TECHNICIAN_MODE=off`) until Nov 8, when Kent made `live` the default.
+- `joint_stall` and `us_no_echo` stay out of `parts.yaml` on purpose (a unit test pins it).
+
+**History:** drafted Sun Nov 8 ~7:20 AM (Kent, `docs/naive-technician/design.md` §12); built as T0 Sun Nov 8 ~8 AM.

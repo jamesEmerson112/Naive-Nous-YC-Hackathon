@@ -18,6 +18,13 @@
 #   typical_usd  usual price, shown on the card as the estimate
 #   max_usd      the card's MAX_USD: the agent stops if the price is higher
 #   supplier, phone  placeholders; the card's phone comes from a setting at render time
+#
+# !!! Keep ambiguous kinds OUT of this file (Naïve Technician, D30) !!!
+# `joint_stall` (a jam, a loose cable or a dead servo) and `us_no_echo` (a blocked, unplugged
+# or dead ultrasonic) need a diagnosis, not a catalogue lookup. Left uncatalogued, their work
+# order lands at needs_human with part "(none)", which is exactly what opens a Naïve
+# Technician case (docs/naive-technician/design.md §1). Adding them here would silently turn
+# the Technician off; tests/unit/domain/test_technician.py pins it.
 
 defaults:
   supplier: "Romulus test desk (teammate placeholder, not a business)"

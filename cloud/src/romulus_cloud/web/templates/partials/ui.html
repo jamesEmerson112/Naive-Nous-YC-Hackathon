@@ -1,0 +1,46 @@
+{# Shared macros for the Sunlit Workshop (docs/impeccable-redesign/BUILD.md).
+   Use: {% from "partials/ui.html" import icon, heal_line %}
+
+   icon(name): one icon from the sprite in partials/icons.html (base.html includes it once).
+
+   heal_line(stations, mini=false): the heal line, one station per stage the loop passed
+   through. `stations` is a list of (label, state) pairs, or of dicts with `label` and
+   `state` (the technician view's `stages`). States: done, you (waiting on a person),
+   acted (a person acted: a sun check, no ring), work, bad, todo. The technician's own
+   words map too: active → work, waiting → you, failed and denied → bad, skipped → todo.
+   Unknown states read as todo. The full line is an <ol class="line">; mini=true gives the
+   row-sized dots plus the stage words, with the last one emphasised. #}
+
+{% macro icon(name) %}<svg class="icon" aria-hidden="true"><use href="#i-{{ name }}"/></svg>{% endmacro %}
+
+{% macro heal_line(stations, mini=false) -%}
+{%- set states = {"done": "done", "you": "you", "acted": "acted", "work": "work", "bad": "bad",
+    "todo": "todo", "active": "work", "waiting": "you", "failed": "bad", "denied": "bad",
+    "skipped": "todo"} -%}
+{%- set dots = {"done": "d", "you": "y", "acted": "y", "work": "w", "bad": "b", "todo": "t"} -%}
+{%- if mini -%}
+<span class="mini" aria-hidden="true">
+  {%- for s in stations -%}
+  {%- set raw = s.state if s.state is defined else s[1] -%}
+  <i class="{{ dots[states.get(raw, 'todo')] }}"></i>
+  {%- endfor -%}
+</span><span class="mini-lab">
+  {%- for s in stations -%}
+  {%- set label = s.label if s.label is defined else s[0] -%}
+  {%- set raw = s.state if s.state is defined else s[1] -%}
+  {%- if loop.last %}<b class="{{ dots[states.get(raw, 'todo')] }}">{{ label }}</b>{% else %}{{ label }} · {% endif -%}
+  {%- endfor -%}
+</span>
+{%- else -%}
+<ol class="line" aria-label="Heal path">
+  {%- for s in stations -%}
+  {%- set label = s.label if s.label is defined else s[0] -%}
+  {%- set st = states.get(s.state if s.state is defined else s[1], "todo") %}
+  <li class="st {{ 'you done-human' if st == 'acted' else st }}"{% if st == 'you' %} aria-current="step"{% endif %}>
+    <span class="node">
+      {%- if st in ("done", "acted") %}{{ icon("check") }}{% elif st == "bad" %}{{ icon("x") }}{% endif -%}
+    </span><span class="lab">{{ label }}</span></li>
+  {%- endfor %}
+</ol>
+{%- endif -%}
+{%- endmacro %}

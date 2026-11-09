@@ -1,20 +1,73 @@
+{# The incident list: one surface, a hairline between rows. Each row: a tone icon, device and
+   readable kind, the summary, the agent's numbers as quiet pills, the mini heal line built from
+   the chain (every station done but the last, which takes the row's tone), then the status pill
+   and the time. Needs `incidents` and `unlinked` (api/web.py). #}
+{% from "partials/ui.html" import icon %}
+{% set glyphs = {"good": "check", "you": "hand", "wait": "agent", "bad": "alert", "info": "pause"} %}
+{% set dots = {"good": "d", "you": "y", "wait": "w", "bad": "b", "info": "t"} %}
 {% if incidents %}
-<ol class="incidents">
+<ol class="rows incidents">
   {% for i in incidents %}
-  <li class="incident">
+  <li class="incident tone-edge-{{ i.tone }}">
     <a href="/incidents/{{ i.id }}">
-      <span class="when"><span class="day">{{ i.day }}</span> {{ i.clock }}</span>
+      <span class="glyph tone-{{ i.tone }}">{{ icon(glyphs.get(i.tone, "pause")) }}</span>
       <span class="what">
-        <span class="headline"><strong>{{ i.device }}</strong> · {{ i.kind }}
-          {% if i.touches_safety %}<span class="safety">touches safety</span>{% endif %}</span>
+        <span class="headline"><strong>{{ i.device }}</strong> · <span title="{{ i.kind }}">{{ i.kind | kindword }}</span>
+          {%- if i.touches_safety %} <span class="safety">touches safety</span>{% endif %}</span>
         {% if i.summary %}<span class="summary">{{ i.summary }}</span>{% endif %}
-        {% set links = i.links %}<span class="chain">{% include "partials/chain.html" %}</span>
+        {% if i.agent %}
+        <span class="agent-line">
+          <span class="chip">{{ i.agent.model }}: {{ i.agent.words }}</span>
+          <span class="chip">{{ i.agent.steps }} steps</span>
+          {% if i.agent.flashed %}<span class="chip">{{ i.agent.flashed }} flash{{ 'es' if i.agent.flashed != 1 }}</span>{% endif %}
+          {% if i.agent.bad_images %}<span class="chip">{{ i.agent.bad_images }} bad image{{ 's' if i.agent.bad_images != 1 }}</span>{% endif %}
+          {% if i.help %}<span class="chip">{{ i.help }} help request{{ 's' if i.help != 1 }}</span>{% endif %}
+        </span>
+        {% endif %}
+        {% if i.links %}
+        <span class="row-l">
+          <span class="mini" aria-hidden="true">{% for _ in i.links %}<i class="{{ dots.get(i.tone, 't') if loop.last else 'd' }}"></i>{% endfor %}</span>
+          {%- set links = i.links %}{% set sep = " · " %}
+          <span class="mini-lab chain">{% include "partials/chain.html" %}</span>
+        </span>
+        {% endif %}
       </span>
-      <span class="status tone-{{ i.tone }}">{{ i.status }}</span>
+      <span class="row-r">
+        <span class="status tone-{{ i.tone }}">{{ i.status }}</span>
+        <time><span class="clock">{{ i.clock }}</span> <span class="day">{{ i.day }}</span></time>
+      </span>
     </a>
   </li>
   {% endfor %}
 </ol>
 {% else %}
-<p class="muted">No incidents yet. When a device reports one, it appears here within a few seconds.</p>
+<div class="rows-empty">
+  <p><strong>No incidents yet.</strong> When an arm reports a fault, it appears here within a few seconds, newest first.</p>
+  <p class="muted">Each row shows what broke, the path the healer took (a dot per stage), and where it stands now: fixed, still working, or waiting on a person.</p>
+</div>
+{% endif %}
+
+{% if unlinked %}
+<details id="unlinked-runs" class="runs-more">
+  <summary>{{ icon("chevron") }}Rehearsals and other agent runs ({{ unlinked | length }})</summary>
+  <p class="muted runs-more-note">Agent runs with no incident: rehearsals, and runs that started with nothing open.</p>
+  <ol class="rows runs-mini">
+    {% for r in unlinked %}
+    <li class="incident tone-edge-{{ r.tone }}">
+      <a href="{{ r.url }}">
+        <span class="glyph tone-{{ r.tone }}">{{ icon(glyphs.get(r.tone, "pause")) }}</span>
+        <span class="what">
+          <span class="headline"><strong>{{ r.device_id }}</strong> · agent run · {{ r.model }}{% if r.sim %} <span class="chip">simulated</span>{% endif %}</span>
+          <span class="summary">{{ r.headline }}</span>
+          <span class="agent-line"><span class="chip">{{ r.stats.steps }} steps</span>{% if r.flashed %}<span class="chip">{{ r.flashed }} flash{{ 'es' if r.flashed != 1 }}</span>{% endif %}{% if r.bad_images %}<span class="chip">{{ r.bad_images }} bad image{{ 's' if r.bad_images != 1 }}</span>{% endif %}{% if r.help_requests %}<span class="chip">{{ r.help_requests | length }} help request{{ 's' if r.help_requests | length != 1 }}</span>{% endif %}</span>
+        </span>
+        <span class="row-r">
+          <span class="status tone-{{ r.tone }}">{{ r.status_words }}</span>
+          <time><span class="clock">{{ r.clock }}</span> <span class="day">{{ r.day }}</span></time>
+        </span>
+      </a>
+    </li>
+    {% endfor %}
+  </ol>
+</details>
 {% endif %}

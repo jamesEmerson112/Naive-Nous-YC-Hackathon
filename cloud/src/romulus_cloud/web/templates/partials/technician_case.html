@@ -1,0 +1,244 @@
+{# One Naïve Technician case (design §8; redesign README §4), laid out for one glance on video:
+   the header with the measured figures, the heal line, the verdict (the largest text on the
+   page), the part card with its gate ticks and the one approval, the email card, and the
+   agent's feed. Needs `v` (services.technician.view). While `v.poll` this element re-fetches
+   itself every 2 s and swaps itself out, so polling stops on its own once the case settles.
+   `data-live` marks the two values the Approve moment animates (base.html's change helper). #}
+{% from "partials/ui.html" import icon %}
+{% set working = v.status in ('open', 'diagnosing') %}
+{% set ended_bad = v.status in ('failed', 'stopped') %}
+{% set recorded = v.mode != 'live' %}
+{% set stages = v.stages or [] %}
+{% set feed = v.feed or [] %}
+{% set last_stage = stages[-1] if stages else none %}
+{% set last_label = (last_stage.label if last_stage else '') or '' %}
+{% set approved_by = v.approved_by or (last_label[12:] if last_label.startswith('approved by ') else none) %}
+{% set denied = v.work_order_status == 'denied' or (last_stage and last_stage.state == 'denied') %}
+{% set denied_by = v.denied_by or (last_label[10:] if last_label.startswith('denied by ') else none) %}
+{% set awaiting = not approved_by and not denied and (v.can_approve or v.can_deny) %}
+{% set feed_tail = feed[-7:] %}
+{% set p = v.part %}
+{% set e = v.email %}
+
+{% macro recorded_tag() %}{% if recorded %}<span class="tc-rec-tag" title="{{ v.badge }}">{{ 'recorded session' if v.mode == 'replay' else 'fake' }}</span>{% endif %}{% endmacro %}
+
+{% macro verdict_block() %}
+<section class="tc-verdict{% if working %} is-working{% elif ended_bad and not v.verdict %} is-bad{% endif %}" aria-live="polite">
+  {% if v.verdict %}
+  <h1 class="tc-verdict-text">“{{ v.verdict }}”</h1>
+  {% if ended_bad and v.why %}<p class="tc-why tc-why-bad">{{ v.status | capitalize }}: {{ v.why }}</p>{% endif %}
+  {% elif ended_bad %}
+  <h1 class="tc-verdict-text tc-verdict-bad">{{ 'Stopped' if v.status == 'stopped' else 'Failed' }}: no report</h1>
+  <p class="tc-why tc-why-bad">{{ v.why or 'The session ended without a valid report.' }}</p>
+  {% else %}
+  <h1 class="tc-verdict-text tc-verdict-wait">{{ 'Starting the Naïve session' if v.status == 'open' else 'Diagnosing ' ~ (v.joint or 'the ' ~ ((v.incident_kind or 'fault') | replace('_', ' '))) }} …</h1>
+  <p class="tc-why">The Naïve agent is reading the incident and the web. Its verdict lands here.</p>
+  {% endif %}
+  <p class="tc-kicker tc-verdict-meta">
+    {%- if v.confidence %}<span class="pill chip-info">Verdict · {{ v.confidence }} confidence</span>{% endif %}
+    {%- if v.joint %}<span class="pill chip-info mono">{{ v.joint }}</span>{% endif %}
+    {%- if p and p.staged %}<span class="pill chip-good">{{ icon('check') }}{{ 'spare part' if v.part_needed == 'spare' else 'part' }} staged</span>{% elif v.part_needed == 'spare' %}<span class="pill chip-info">spare suggested</span>{% elif v.part_needed == 'yes' %}<span class="pill chip-info">part needed</span>{% elif v.part_needed == 'no' %}<span class="pill chip-info">no part needed</span>{% endif %}
+    {{- recorded_tag() -}}
+  </p>
+</section>
+{% endmacro %}
+
+{% macro part_card() %}
+{% if p %}
+<section class="tc-card tc-part{% if p.staged %} is-staged{% else %} is-blocked{% endif %}{% if awaiting %} is-waiting{% elif approved_by %} is-approved{% endif %}" aria-label="{{ 'Replacement part' if v.part_needed == 'yes' else 'Spare part' }}">
+  <div class="tc-part-main">
+    <div class="tc-part-name">
+      <h2 class="tc-part-title">{{ p.title }}</h2>
+      <p class="tc-part-vendor">{{ 'Replacement part' if v.part_needed == 'yes' else 'Spare part' }} · {{ p.vendor_label }} · {{ p.origin_host }}{% if p.qty %} · qty {{ p.qty }}{% endif %}{% if not p.staged and not p.blocked_reason %} <span class="pill chip-bad">{{ icon('x') }}not staged</span>{% endif %}{% if recorded %} {{ recorded_tag() }}{% endif %}</p>
+    </div>
+    {% if p.total_usd %}<p class="tc-price">${{ p.total_usd }}{% if p.qty and p.qty > 1 and p.unit_usd %}<small>${{ p.unit_usd }} × {{ p.qty }}</small>{% endif %}</p>
+    {% else %}<p class="tc-price tc-price-none">no price<small>not checked yet</small></p>{% endif %}
+  </div>
+  <ul class="tc-checks" aria-label="Gate checks">
+    {% for c in (p.checks or []) %}
+    <li class="{{ 'ok' if c.ok else 'no' }}" {% if c.detail %}title="{{ c.detail }}"{% endif %}><span class="tc-tick" aria-hidden="true">{{ icon('check' if c.ok else 'x') }}</span>{{ c.label }}<span class="sr-only">: {{ 'passed' if c.ok else 'failed' }}{% if c.detail %}, {{ c.detail }}{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+  {% if p.blocked_reason %}<p class="tc-blocked">Not staged: {{ p.blocked_reason }}</p>{% endif %}
+  {% if approved_by %}
+  <p class="tc-resolved is-good">{{ icon('check') }}<span>Approved by {{ approved_by }}</span>{% if p.cart_url %}<a href="{{ p.cart_url }}" target="_blank" rel="noopener noreferrer">open the cart again{{ icon('out') }}</a>{% endif %}</p>
+  {% elif denied %}
+  <p class="tc-resolved is-bad">{{ icon('x') }}<span>Denied{% if denied_by %} by {{ denied_by }}{% endif %}: no cart staged for purchase.</span></p>
+  {% elif v.can_approve or v.can_deny %}
+  <div class="tc-actions">
+    {% if v.can_approve %}
+    <button type="button" class="btn btn-primary tc-btn tc-approve" data-tech-action="approve" data-url="{{ v.resolve_url }}" data-cart="{{ p.cart_url or '' }}" data-partial="{{ v.partial_url }}" data-what="{{ p.title }} ({{ p.vendor_label }}{% if p.total_usd %}, ${{ p.total_usd }}{% endif %})">{{ 'Approve & open cart' if p.cart_url else 'Approve' }}{% if p.cart_url %}{{ icon('out') }}{% endif %}</button>
+    {% endif %}
+    {% if v.can_deny %}
+    <button type="button" class="btn btn-secondary tc-btn tc-deny" data-tech-action="deny" data-url="{{ v.resolve_url }}" data-partial="{{ v.partial_url }}" data-what="{{ p.title }} ({{ p.vendor_label }}{% if p.total_usd %}, ${{ p.total_usd }}{% endif %})">Deny</button>
+    {% endif %}
+  </div>
+  <p class="tc-fine">{% if p.cart_url %}Opens the {{ p.vendor_label }} cart in a new tab; nothing is bought until a person checks out. {% endif %}Recorded as <b data-tech-by>operator</b> · <button type="button" class="tc-linkbtn" data-tech-rename>change name</button></p>
+  {% endif %}
+</section>
+{% elif working %}
+<section class="tc-card tc-part is-pending" aria-label="Spare part, waiting for the report">
+  <h2 class="tc-part-title tc-ghost">Waiting for the agent's report</h2>
+  <p class="tc-part-vendor">Spare part · Romulus checks the vendor, stock and live price before staging a cart.</p>
+  <ul class="tc-checks is-ghost" aria-hidden="true">
+    <li><span class="tc-tick"></span>allowlisted vendor</li><li><span class="tc-tick"></span>in stock</li><li><span class="tc-tick"></span>price checked</li><li><span class="tc-tick"></span>≤ $50</li>
+  </ul>
+</section>
+{% else %}
+<section class="tc-card tc-part is-none">
+  <h2 class="tc-part-title">{{ 'Hands-on work only' if v.part_needed == 'no' else 'Nothing to buy' }}</h2>
+  <p class="tc-part-vendor">{% if v.part_needed == 'no' %}The agent's report names no part, so there is nothing to approve.{% elif ended_bad and not v.verdict %}No valid report, so no part reached the gate.{% else %}The report's part did not reach the gate.{% endif %}</p>
+  <p class="tc-kicker"><span class="pill chip-info">{{ 'No part needed' if v.part_needed == 'no' else 'No part staged' }}</span>{{ recorded_tag() }}</p>
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro email_card() %}
+{% if e %}
+{% set sent = e.status == 'sent' %}
+{% set unsent = e.status not in ('sent', 'sending') %}
+<section class="tc-card tc-email is-{{ e.status }}" aria-label="Technician email">
+  <div class="tc-email-top">
+    <p class="tc-kicker">{% if sent %}<span class="pill chip-good">{{ icon('check') }}Technician emailed{% if e.sent_at_label %} · {{ e.sent_at_label }}{% endif %}</span>{% elif e.status == 'sending' %}<span class="pill chip-wait">Emailing the technician</span>{% elif e.status == 'failed' %}<span class="pill chip-bad">{{ icon('x') }}Email failed</span>{% else %}<span class="pill chip-info">Email not sent</span>{% endif %}{{ recorded_tag() }}</p>
+    <span class="tc-envelope">{{ icon('mail') }}</span>
+  </div>
+  {% if e.subject %}<h2 class="tc-subject">{% if not sent %}<span class="tc-draft">draft</span> {% endif %}{{ e.subject }}</h2>{% endif %}
+  <p class="tc-email-to">to <b>{{ e.to or 'no address set' }}</b>{% if unsent %} · not sent{% endif %}</p>
+  {% if e.from_label %}<p class="tc-from">From {{ e.from_label }}</p>{% endif %}
+  {% if e.via %}<p class="tc-via{% if unsent %} tc-via-strong{% endif %}">{{ e.via }}</p>{% endif %}
+  {% if e.error %}<p class="{{ 'tc-blocked' if e.status == 'failed' else 'tc-note' }}">{{ e.error }}</p>{% endif %}
+</section>
+{% elif working %}
+<section class="tc-card tc-email is-pending" aria-label="Technician email, not sent yet">
+  <div class="tc-email-top"><h2 class="tc-subject tc-ghost">Technician email</h2><span class="tc-envelope">{{ icon('mail') }}</span></div>
+  <p class="tc-via">Drafted from the verdict. Romulus sends it through the Naïve Technician's inbox once the report is in.</p>
+</section>
+{% else %}
+<section class="tc-card tc-email is-skipped">
+  <h2 class="tc-subject">No email sent</h2>
+  <p class="tc-via">{{ 'No valid report, so no email went out.' if ended_bad and not v.verdict else 'This case sent no email to the technician.' }}</p>
+  {% if recorded %}<p class="tc-kicker">{{ recorded_tag() }}</p>{% endif %}
+</section>
+{% endif %}
+{% endmacro %}
+
+{% macro feed_block() %}
+<section class="tc-card tc-feed{% if working %} is-live{% endif %}">
+  <div class="tc-feed-h">
+    <h2 class="tc-h3">{% if working %}Agent at work{% else %}Agent's work{% endif %}</h2>
+    {{ recorded_tag() }}
+    <span class="tc-kicker-note">{{ feed | length }} step{{ '' if feed | length == 1 else 's' }}{% if v.naive_session_id %} · Naïve session <span class="mono" title="{{ v.naive_session_id }}">{{ v.naive_session_id | shortid }}</span>{% endif %}</span>
+  </div>
+  {% if feed_tail %}
+  <ol class="tc-feed-list">
+    {% for f in feed_tail %}
+    <li{% if loop.last %} class="is-last"{% endif %}><time>{{ f.t }}</time><span>{{ f.text }}</span></li>
+    {% endfor %}
+  </ol>
+  {% if feed | length > feed_tail | length %}<p class="tc-fine">{{ feed | length - feed_tail | length }} earlier step{{ '' if feed | length - feed_tail | length == 1 else 's' }} in the full log below.</p>{% endif %}
+  {% else %}
+  <p class="tc-fine">{{ 'Waiting for the first tool call…' if working else 'No agent steps recorded.' }}</p>
+  {% endif %}
+</section>
+{% endmacro %}
+
+<div id="tech-case" class="tc tc-{{ v.status }}"{% if v.poll %} hx-get="{{ v.partial_url }}" hx-trigger="every 2s [document.visibilityState === 'visible']" hx-swap="outerHTML"{% endif %}>
+
+  <section class="tc-head{% if recorded %} is-recorded{% endif %}">
+    <div class="tc-head-l">
+      <p class="tc-agent"><span class="tc-naive">Naïve agent</span> <span class="tc-seg"><span class="tc-dot-sep">·</span>{{ v.agent_name or 'technician' }}</span>{% if not recorded %} <span class="tc-seg"><span class="tc-dot-sep sr-only">·</span><span class="tc-badge-live"><i aria-hidden="true"></i>{{ v.badge or 'live session' }}</span></span>{% endif %}</p>
+      {% if recorded %}<p class="tc-rec-line"><span class="tc-badge-rec">● {{ v.badge }}</span></p>{% endif %}
+      <p class="tc-sub">{{ v.device_id }} · {{ v.incident_kind | kindword }}{% if v.incident_summary %} · {{ v.incident_summary }}{% endif %}</p>
+    </div>
+    <p class="tc-nums" aria-label="Measured from the case">
+      {%- if v.duration_label %}<span class="tc-fig" title="Naïve session time: created to report"><span class="tc-num">{{ v.duration_label }}</span> Naïve session</span>{% endif %}
+      {%- if v.cost_label %}<span class="tc-fig" title="Naïve session cost"><span class="tc-num">{{ v.cost_label }}</span> cost</span>{% endif %}
+      <span class="tc-fig is-human" title="Work-order events by a person"><span class="tc-num" data-live="tc-clicks">{{ v.human_clicks }}</span> human click{{ '' if v.human_clicks == 1 else 's' }}</span>
+    </p>
+  </section>
+
+  <ol class="tc-stages" aria-label="Heal path">
+    {% for s in stages %}
+    {% set is_email = 'email' in (s.label or '') %}
+    {% set by_person = (s.state == 'active' and loop.last) or (s.state == 'done' and (s.label or '').startswith('approved')) %}
+    <li class="st-{{ s.state }}{% if by_person %} is-you{% endif %}"><span class="tc-st-mark" aria-hidden="true">{% if s.state == 'done' %}{{ icon('check') }}{% elif s.state in ('denied', 'failed') %}{{ icon('x') }}{% endif %}</span><span class="tc-st-label"{% if loop.last %} data-live="tc-last-stage"{% endif %}>{% if is_email and s.state == 'skipped' %}email not sent{% elif is_email and s.state == 'failed' %}email failed{% else %}{{ s.label }}{% endif %}</span>{% if s.state in ('skipped', 'failed') and not is_email %}<span class="tc-st-off">{{ s.state }}</span>{% endif %}<span class="sr-only"> ({{ s.state }})</span></li>
+    {% endfor %}
+  </ol>
+
+  {{ verdict_block() }}
+  {% if working %}
+  {{ feed_block() }}
+  <div class="tc-cards">{{ part_card() }}{{ email_card() }}</div>
+  {% else %}
+  <div class="tc-cards">{{ part_card() }}{{ email_card() }}</div>
+  {{ feed_block() }}
+  {% endif %}
+
+  <section class="tc-more">
+    <h2 class="section-h">How the agent got there <span class="muted">hypotheses, sources, the gate and the brief</span></h2>
+    {% if v.hypotheses or v.sources or p or v.brief_body %}
+    <div class="tc-more-grid">
+      {% if v.hypotheses %}
+      <div class="tc-card">
+        <h3 class="tc-h3">Hypotheses and how to check each</h3>
+        <ol class="tc-hyps">
+          {% for h in v.hypotheses %}
+          <li><p class="claim">{{ h.claim }}</p>{% if h.check %}<p class="how"><span class="why-label">Check:</span> {{ h.check }}</p>{% endif %}</li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% endif %}
+      {% if v.brief_body or v.brief_subject %}
+      <div class="tc-card">
+        <h3 class="tc-h3">Brief to the technician</h3>
+        {% if v.brief_subject %}<p class="tc-brief-subject">{{ v.brief_subject }}</p>{% endif %}
+        {% if v.brief_body %}<div class="tc-brief">{{ v.brief_body }}</div>{% endif %}
+      </div>
+      {% endif %}
+      {% if p %}
+      <div class="tc-card">
+        <h3 class="tc-h3">Gate <span class="muted">what Romulus checked before staging the cart</span></h3>
+        <dl class="tc-dl">
+          <div><dt>Part</dt><dd>{{ p.title }}</dd></div>
+          <div><dt>Vendor</dt><dd>{{ p.vendor_label }} · <span class="mono">{{ p.origin_host }}</span></dd></div>
+          <div><dt>Variant</dt><dd class="mono">{{ p.variant_id }}</dd></div>
+          <div><dt>Price</dt><dd>{% if p.total_usd %}{% if p.unit_usd %}${{ p.unit_usd }} × {{ p.qty }} = {% endif %}${{ p.total_usd }}{% elif p.unit_usd %}${{ p.unit_usd }} each{% else %}<span class="muted">{{ p.blocked_reason or 'not checked yet' }}</span>{% endif %}</dd></div>
+          {% for c in (p.checks or []) %}<div><dt>{{ c.label | capitalize }}</dt><dd class="check {{ 'ok' if c.ok else 'no' }}">{{ icon('check' if c.ok else 'x') }} {{ 'passed' if c.ok else 'failed' }}{% if c.detail %} · {{ c.detail }}{% endif %}</dd></div>{% endfor %}
+          {% if p.cart_url %}<div><dt>Cart</dt><dd><a class="mono tc-wrap" href="{{ p.cart_url }}" target="_blank" rel="noopener noreferrer">{{ p.cart_url }}</a></dd></div>{% endif %}
+          {% if p.why %}<div><dt>Why</dt><dd>{{ p.why }}</dd></div>{% endif %}
+          {% if p.blocked_reason %}<div><dt>Blocked</dt><dd class="check no">{{ p.blocked_reason }}</dd></div>{% endif %}
+        </dl>
+      </div>
+      {% endif %}
+      {% if v.sources %}
+      <div class="tc-card">
+        <h3 class="tc-h3">Sources the agent read</h3>
+        <ul class="tc-sources">
+          {% for s in v.sources %}
+          {% set url = s.url or '' %}
+          <li>{% if url.startswith('https://') %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ s.title or url }}</a> <span class="muted mono">{{ url.split('/')[2] }}</span>{% else %}{{ s.title or url }}{% if url and s.title %} <span class="muted mono">{{ url }}</span>{% endif %}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="muted">These fill in when the agent's report arrives.</p>
+    {% endif %}
+    {% if feed and feed | length > feed_tail | length %}
+    <details class="tc-card tc-log" id="tc-full-log">
+      <summary class="block-h">Full agent log <span class="muted">{{ feed | length }} steps, oldest first</span></summary>
+      <ol class="tc-feed-list">{% for f in feed %}<li><time>{{ f.t }}</time><span>{{ f.text }}</span></li>{% endfor %}</ol>
+    </details>
+    {% endif %}
+    <p class="tc-ids">
+      case <span class="mono" title="{{ v.case_id }}">{{ v.case_id | shortid }}</span>
+      {% if v.naive_session_id %} · Naïve session <span class="mono" title="{{ v.naive_session_id }}">{{ v.naive_session_id | shortid }}</span>{% endif %}
+      · mode {{ v.mode }}
+      {% if v.work_order_id %} · work order <span class="mono" title="{{ v.work_order_id }}">{{ v.work_order_id | shortid }}</span>{% if v.work_order_status %} ({{ v.work_order_status | replace('_', ' ') }}){% endif %}{% endif %}
+      {% if v.incident_id %} · incident {% if v.incident_url %}<a class="mono" href="{{ v.incident_url }}" title="{{ v.incident_id }}">{{ v.incident_id | shortid }}</a>{% else %}<span class="mono" title="{{ v.incident_id }}">{{ v.incident_id | shortid }}</span>{% endif %}{% endif %}
+      {% if v.studio_url %}<a class="btn-link tc-studio" href="{{ v.studio_url }}" target="_blank" rel="noopener noreferrer">Open in Naïve Studio{{ icon('out') }}</a>{% endif %}
+    </p>
+  </section>
+
+</div>

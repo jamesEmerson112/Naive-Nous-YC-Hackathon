@@ -85,6 +85,8 @@ ACTION_KINDS = frozenset(
         "workorder.created",
         "workorder.card_posted",
         "workorder.status_changed",
+        "technician.emailed",
+        "review.published",
         "dataset.snapshotted",
         "export.built",
     }

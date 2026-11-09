@@ -13,6 +13,13 @@
       "runtimeArgs": ["prototypes/naive-console/server.mjs"],
       "port": 5180,
       "url": "http://127.0.0.1:5180"
+    },
+    {
+      "name": "pitch",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "5190", "--bind", "127.0.0.1", "--directory", "pitch"],
+      "port": 5190,
+      "url": "http://127.0.0.1:5190"
     }
   ]
 }
