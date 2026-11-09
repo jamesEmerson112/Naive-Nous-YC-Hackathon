@@ -30,6 +30,25 @@ def test_every_caption_stays_up_long_enough_to_read():
             assert shown >= len(words.split()) / loopgif.WPS - 1 / fps, (name, words, shown)
 
 
+def test_every_character_has_a_glyph():
+    """A character the font lacks draws as an empty box (Avenir Next has no "→", for one)."""
+    from PIL import ImageDraw
+
+    def glyph(kind, ch):
+        im = Image.new("L", (96, 96))
+        ImageDraw.Draw(im).text((8, 8), ch, font=loopgif.font(kind, 20), fill=255)
+        return im.tobytes()
+
+    words = [w for caps in (loopgif.CAPTIONS, loopgif.EXP_CAPTIONS, loopgif.FLEET_CAPTIONS) for *_, w in caps]
+    body = words + [s for _, s, _ in loopgif.OLIR_LINES + loopgif.PROBE_LINES]
+    mono = [s for _, s, _ in loopgif.GATE_LINES + loopgif.AGENT_LINES + loopgif.ASTRA_LINES + loopgif.TRIAL_LINES
+            + loopgif.LOG_ROWS + loopgif.NOTES]
+    for kind, texts in (("body", body), ("bold", words), ("mono", mono)):
+        missing = glyph(kind, "\U0010fffd")                    # a private-use point no font draws
+        for ch in sorted({ch for s in texts for ch in s if ord(ch) > 127}):
+            assert glyph(kind, ch) != missing, (kind, ch)
+
+
 def test_the_palette_keeps_the_theme_colours():
     draw, _, end, times, _ = loopgif.SCENES["heal"]
     pal = loopgif.palette_from(draw, times[:2]).getpalette()[: 3 * 255]
@@ -57,6 +76,7 @@ def test_a_short_gif_stores_only_what_changed():
 
 if __name__ == "__main__":
     for fn in (test_every_scene_draws_its_whole_story, test_every_caption_stays_up_long_enough_to_read,
-               test_the_palette_keeps_the_theme_colours, test_a_short_gif_stores_only_what_changed):
+               test_every_character_has_a_glyph, test_the_palette_keeps_the_theme_colours,
+               test_a_short_gif_stores_only_what_changed):
         fn()
         print("ok ", fn.__name__)

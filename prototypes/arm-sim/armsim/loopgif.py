@@ -1,8 +1,9 @@
 """Animated diagrams of the two autonomous loops, for the READMEs.
 
-    PYTHONPATH=. .venv/bin/python -m armsim.loopgif                       # both GIFs into media/
+    PYTHONPATH=. .venv/bin/python -m armsim.loopgif                       # all three GIFs into media/
     PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene heal          # media/autonomous-loop.gif
     PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene experiment    # media/experiment-loop.gif
+    PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene fleet         # media/fleet-loop.gif
     PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene heal --at 12.5 20 --out /tmp/stills   # PNG stills
 
 They're drawings, not screen recordings, and each step in them happened in a run.
@@ -19,6 +20,10 @@ armsim/stories.py, and what the host sends Romulus from armsim/romulus.py.
 
 experiment: one try of the Nov 8 generate-and-test run on the real arm (armsim/gentest.py), with the values from the
 try log: Astra plans it, gentest runs it on the Pi, the camera and the log report back.
+
+fleet: fleet learning's live run on Romulus (Nov 8, 10:04 AM), with the measured times from
+docs/recursive-self-improvement/runbook.md: a Naïve agent session turns two heals into a skill, the gate ships it,
+and a rule that touches safety code waits for its engineer.
 """
 import argparse
 import math
@@ -594,7 +599,8 @@ def draw_experiment(t):
     lines_in(c, TRYLOG, [(s, col) for t0, s, col in LOG_ROWS if t >= t0], top=30, step=18, size=13)
 
     thinking = 1.2 <= t < 9.0 or 23.2 <= t < 27.4
-    box(c, ASTRA, "Astra", "via Hermes", VIOLET, edge=VIOLET if thinking else BOX_EDGE, glow=VIOLET if thinking else None)
+    box(c, ASTRA, "Astra", "via Hermes", VIOLET, edge=VIOLET if thinking else BOX_EDGE,
+        glow=VIOLET if thinking else None)
     lines_in(c, ASTRA, [(s, col) for t0, s, col in ASTRA_LINES if t >= t0], top=30, step=19, size=13)
 
     for t0, t1 in ((1.4, 2.2), (23.2, 24.0)):
@@ -613,6 +619,158 @@ def draw_experiment(t):
 
     caption(c, t, EXP_CAPTIONS, "Astra planned 96 of the 102 tries, 11:41–14:33. Drawn from the try log, "
                                 "13:47–13:54.")
+    return c.frame()
+
+
+# ---- the third loop: fleet learning, live on the learn stack, Nov 8, 10:04 AM -------------------------------------
+# docs/recursive-self-improvement/runbook.md, "Measured in the live run" and its event table (t+ s from the first
+# session opening): 0 session (servo_read_error) · 22.1 skill accepted, candidate harness v2 · 24.8 replay stub,
+# canary on sim-2 · 28.8 second session (us_frozen) · 31.1 sim-2 on v2 · 54.7 rule staged for Olir · 57.3 promoted
+# (2 ok check-ins), assigned to arm-1, sim-1, sim-3 · 61.2 sim-1, sim-3 on v2, arm-1 queued · 61.3 Naïve Skills
+# romulus-healer-playbook v2 and the board comment. Its honesty rules (demo.md §7) hold here: both faults were
+# seeded in sim, arm-1 stayed queued, the staged rule isn't shipped, and nothing was trained.
+FLEET_OUT = ROOT / "media" / "fleet-loop.gif"
+FLEET_END = 24.0
+FLEET_LANES = [
+    (16, 236, "THE FLEET", "3 sim arms and the real arm-1"),
+    (258, 478, "ROMULUS", "labels, review, the gate"),
+    (500, 720, "NAÏVE", "agent sessions and Skills"),
+    (742, 944, "A PERSON", "only for safety code"),
+]
+CHIP_Y = {"sim-1": 120, "sim-3": 180, "sim-2": 240, "arm-1": 300}
+RUNS, REVIEW, GATE = (270, 120, 466, 184), (270, 192, 466, 248), (270, 256, 466, 384)
+AGENT, SKILLS_BOX, COMMENT = (512, 120, 708, 252), (512, 260, 708, 318), (512, 326, 708, 384)
+OLIR, PROBE = (754, 120, 932, 252), (754, 260, 932, 384)
+F_PATHS = {
+    "s1_runs": [(224, 146), (247, 146), (247, 150), (270, 150)],
+    "s3_runs": [(224, 206), (247, 206), (247, 150), (270, 150)],
+    "review_agent": [(466, 220), (489, 220), (489, 164), (512, 164)],
+    "agent_gate": [(512, 204), (489, 204), (489, 304), (466, 304)],
+    "gate_s2": [(270, 294), (247, 294), (247, 266), (224, 266)],
+    "gate_s1": [(270, 334), (247, 334), (247, 146), (224, 146)],
+    "gate_s3": [(270, 334), (247, 334), (247, 206), (224, 206)],
+    "gate_a1": [(270, 334), (247, 334), (247, 326), (224, 326)],
+    "gate_skills": [(466, 344), (489, 344), (489, 289), (512, 289)],
+    "agent_olir": [(708, 184), (731, 184), (754, 184)],
+}
+F_DOTS = [("s1_runs", 1.6, 2.4, RED), ("s3_runs", 1.6, 2.4, GREEN), ("review_agent", 5.2, 6.0, PINK),
+          ("agent_gate", 9.4, 10.2, PINK), ("gate_s2", 12.8, 13.6, AMBER), ("review_agent", 15.8, 16.6, AMBER),
+          ("agent_olir", 17.8, 18.6, AMBER), ("gate_s1", 20.0, 20.8, GREEN), ("gate_s3", 20.0, 20.8, GREEN),
+          ("gate_a1", 20.0, 20.8, GREEN), ("gate_skills", 21.4, 22.2, GREEN)]
+FLEET_CAPTIONS = [
+    (0.0, 1.4, "", DIM, "Fleet learning, live on Nov 8 at 10:04 AM: every fault should happen once."),
+    (1.4, 4.6, "1", BLUE, "Romulus labels each heal run by what checked it: 9 runs, 4 labelled, 2 passed and 2 "
+                          "failed."),
+    (4.6, 8.4, "2", PINK, "One servo-read fix failed on sim-1 and held on sim-3, so Romulus opens a Naïve agent "
+                          "session."),
+    (8.4, 12.0, "3", PINK, "In 22 s and 3¢, agent fleet-doctor writes the lesson as a skill: check the retry call "
+                           "site, not the config."),
+    (12.0, 15.4, "4", CYAN, "The gate builds harness v2 and runs it on sim-2 for 30 s (replay is a stub: a skill is "
+                            "prose)."),
+    (15.4, 19.6, "5", AMBER, "A second session proposes a frozen-sensor rule. It touches safety code, so it's staged "
+                             "for Olir with the probe's numbers."),
+    (19.6, 24.0, "6", GREEN, "Healthy after 30 s, the skill ships 57 s after the first session: the sims run v2, and "
+                             "the real arm-1 is queued."),
+    (24.0, 99.0, "", GREEN, "A lesson to every arm: 57 s, 3¢, 0 human clicks. Safety code waits for its engineer."),
+]
+GATE_LINES = [(10.2, "t+22 v2 = v1 + skill", TEXT), (12.2, "t+25 replay: stub", MUTED),
+              (12.8, "t+25 canary: sim-2", AMBER), (19.8, "t+57 promoted", GREEN), (20.8, "t+61 sims on v2", GREEN)]
+AGENT_LINES = [(6.0, "1 servo_read_error", PINK), (8.6, "  skill 22 s $0.030", GREEN), (16.6, "2 us_frozen", AMBER),
+               (17.4, "  rule  26 s $0.021", AMBER)]
+OLIR_LINES = [(18.6, "rule staged at t+55", AMBER), (18.6, "port the watchdog's", TEXT),
+              (18.6, "frozen-sensor check", TEXT), (18.6, "touches safe_replay.py", AMBER),
+              (18.6, "so it waits for Olir", MUTED)]
+PROBE_LINES = [(19.0, "freezes of 4 s or more", TEXT), (19.0, "caught: 120 of 120 (was 0)", GREEN),
+               (19.0, "false alarms: 0 (was 0)", TEXT), (19.0, "on 410 healthy windows", MUTED)]
+
+
+def chip(c, y, name, kind, version, vcol, note, ncol, glow=None):
+    """One arm in the fleet: its name, SIM or REAL, its harness version and what happened to it."""
+    b = (28, y, 224, y + 52)
+    if glow:
+        c.rect((b[0] - 3, b[1] - 3, b[2] + 3, b[3] + 3), outline=mix(glow, PANEL, 0.55), r=11, width=2)
+    c.rect(b, fill=BOX, outline=glow or BOX_EDGE, r=9, width=1.2)
+    c.text((40, y + 16), name, "bold", 14, TEXT, "lm")
+    x = 40 + c.width(name, "bold", 14) + 8
+    tag = CYAN if kind == "REAL" else MUTED
+    c.rect((x, y + 8, x + c.width(kind, "mono", 11) + 10, y + 24), outline=tag, r=4, width=1)
+    c.text((x + 5, y + 16), kind, "mono", 11, tag, "lm")
+    c.text((214, y + 16), version, "mono", 13, vcol, "rm")
+    c.text((40, y + 37), note, "body", 13, ncol, "lm")
+
+
+def draw_fleet(t):
+    c = Canvas()
+    for x in range(0, W, 32):
+        c.line([(x, 0), (x, H)], GRID, 1)
+    for y in range(0, H, 32):
+        c.line([(0, y), (W, y)], GRID, 1)
+    c.text((18, 12), "One lesson to every arm, in 57 s", "head", 27, TEXT)
+    c.text((19, 46), "Fleet learning on Romulus: a Naïve agent turns the fleet's heals into a skill, and the gate "
+                     "ships it", "body", 14, MUTED)
+    c.rect((736, 12, 944, 60), fill=mix(PANEL, GREEN, 0.10), outline=mix(GREEN, PANEL, 0.35), r=12, width=1.2)
+    c.text((752, 36), "HUMAN CLICKS", "head", 15, MUTED, "lm")
+    c.text((930, 36), "0", "head", 34, GREEN, "rm")
+    for x0, x1, title, where in FLEET_LANES:
+        panel(c, x0, x1, title, where)
+    for p in F_PATHS.values():
+        c.line(p, mix(EDGE, BG, 0.1), 1.5)
+
+    shipped, canary, ok = t >= 20.8, t >= 13.6, t >= 19.8
+    chip(c, CHIP_Y["sim-1"], "sim-1", "SIM", "harness v2" if shipped else "harness v1", GREEN if shipped else MUTED,
+         "heal failed: retries 3 to 10", RED)
+    chip(c, CHIP_Y["sim-3"], "sim-3", "SIM", "harness v2" if shipped else "harness v1", GREEN if shipped else MUTED,
+         "heal held: retry restored", GREEN)
+    chip(c, CHIP_Y["sim-2"], "sim-2", "SIM", "harness v2" if canary else "harness v1",
+         (GREEN if ok else AMBER) if canary else MUTED,
+         ("canary ok: 2 check-ins" if ok else "canary, 30 s") if canary else "no fault", (GREEN if ok else AMBER)
+         if canary else DIM, glow=AMBER if canary and not ok else None)
+    chip(c, CHIP_Y["arm-1"], "arm-1", "REAL", "queued" if shipped else "harness v1", AMBER if shipped else MUTED,
+         "no Pi on this stack", MUTED)
+
+    box(c, RUNS, "heal runs", glow=BLUE if 2.4 <= t < 4.6 else None)
+    if t >= 2.4:
+        c.text((RUNS[0] + 10, RUNS[1] + 38), "9 runs, 4 labelled", "mono", 13, TEXT, "lm")
+        c.text((RUNS[0] + 10, RUNS[1] + 54), "2 passed, 2 failed", "mono", 13, MUTED, "lm")
+    else:
+        c.text((RUNS[0] + 10, RUNS[1] + 38), "each labelled by a check", "body", 13, DIM, "lm")
+    case = "us_frozen" if t >= 15.6 else "servo_read_error" if t >= 4.8 else ""
+    reviewing = 4.8 <= t < 9.4 or 15.6 <= t < 18.6                  # while its session is open
+    box(c, REVIEW, "review", glow=(AMBER if case == "us_frozen" else PINK) if reviewing else None)
+    c.text((REVIEW[0] + 10, REVIEW[1] + 40), case or "no case yet", "mono", 13,
+           AMBER if case == "us_frozen" else PINK if case else DIM, "lm")
+    box(c, GATE, "the gate", glow=GREEN if 19.8 <= t < 21.4 else None)
+    lines_in(c, GATE, [(s, col) for t0, s, col in GATE_LINES if t >= t0], top=30, step=19, size=13)
+
+    session = 5.8 <= t < 18.6
+    box(c, AGENT, "fleet-doctor", "Naïve agent", PINK, edge=PINK if session else BOX_EDGE,
+        glow=PINK if session else None)
+    lines_in(c, AGENT, [(s, col) for t0, s, col in AGENT_LINES if t >= t0], top=30, step=19, size=13)
+    published = t >= 22.2
+    box(c, SKILLS_BOX, "Naïve Skills", glow=GREEN if published and t < 23.4 else None)
+    c.text((SKILLS_BOX[0] + 10, SKILLS_BOX[1] + 40), f"healer-playbook v{2 if published else 1}", "mono", 13,
+           GREEN if published else MUTED, "lm")
+    box(c, COMMENT, "board comment")
+    c.text((COMMENT[0] + 10, COMMENT[1] + 40), "0 human clicks" if published else "none yet", "mono", 13,
+           GREEN if published else DIM, "lm")
+
+    staged = t >= 18.6
+    box(c, OLIR, "Olir", "firmware", MUTED, edge=AMBER if staged else BOX_EDGE,
+        glow=AMBER if staged and t < 20 else None)
+    if staged:
+        for k, (t0, s, col) in enumerate(OLIR_LINES):
+            c.text((OLIR[0] + 10, OLIR[1] + 40 + k * 19), s, "body", 13, col, "lm")
+    else:
+        c.text((OLIR[0] + 10, OLIR[1] + 40), "nothing to review", "body", 13, DIM, "lm")
+    box(c, PROBE, "the probe")
+    for k, (t0, s, col) in enumerate(PROBE_LINES):
+        if t >= t0:
+            c.text((PROBE[0] + 10, PROBE[1] + 40 + k * 19), s, "body", 13, col, "lm")
+    for key, t0, t1, col in F_DOTS:
+        moving_dot(c, F_PATHS[key], t, t0, t1, col)
+
+    caption(c, t, FLEET_CAPTIONS, "Live run on the learn stack, Nov 8, 10:04 AM PST. Both faults were seeded in "
+                                  "sim; nothing was trained.")
     return c.frame()
 
 
@@ -637,6 +795,8 @@ SCENES = {  # name: draw, GIF, last change, frames whose colours make the palett
     "heal": (draw, OUT, END, [0.0, 3.0, 6.0, 10.5, 12.5, 16.0, 17.5, 20.5, 23.5, 27.5, END], CAPTIONS),
     "experiment": (draw_experiment, EXP_OUT, EXP_END, [0.0, 3.0, 7.0, 10.0, 14.0, 16.2, 19.0, 21.2, 23.0, 27.0,
                                                        EXP_END], EXP_CAPTIONS),
+    "fleet": (draw_fleet, FLEET_OUT, FLEET_END, [0.0, 3.0, 7.0, 11.0, 14.0, 17.0, 19.0, 21.0, 22.5, FLEET_END],
+              FLEET_CAPTIONS),
 }
 WPS = 3.3                                                  # reading speed, words a second
 
@@ -699,7 +859,8 @@ def build(name, out, fps):
 def main():
     ap = argparse.ArgumentParser(prog="python -m armsim.loopgif", description=__doc__.split("\n\n")[0])
     ap.add_argument("--scene", choices=sorted(SCENES), default=None,
-                    help="heal (the self-healing job) or experiment (the real-arm loop); default both")
+                    help="heal (the self-healing job), experiment (the real-arm loop) or fleet (fleet learning); "
+                         "default all three")
     ap.add_argument("--out", default=None, help="the GIF (with --scene), or a folder for --at")
     ap.add_argument("--fps", type=int, default=FPS)
     ap.add_argument("--at", type=float, nargs="+", metavar="SECONDS", help="write PNG stills at these times instead")
