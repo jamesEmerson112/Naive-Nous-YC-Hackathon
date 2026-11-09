@@ -23,7 +23,16 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 - **b:** a stuck sensor (middle)
 - **stall:** a dead elbow servo, handed to a person (right)
 
-**Mission Control watches it live** ([`armsim.mission`](prototypes/arm-sim/README.md#everything-together-in-one-place)). Here a dead elbow servo is planted in the sim, and then an order comes in.
+**Mission Control watches it live** ([`armsim.mission`](prototypes/arm-sim/README.md#everything-together-in-one-place)). Below, two faults are planted from its presenter buttons: the arm heals the first by itself and hands the second to a person.
+
+*A wrong move, healed in 28 s.* The block is bumped 30 mm, so the grip closes on nothing.
+1. The arm reverses: jaws open, backed off.
+2. The manager answers in 500 ms: relocate, then redo. (Here it's a scripted stand-in; the real one is a Hermes profile.) Plain code approves the plan, since the shift stays inside ±40 mm.
+3. The wrist sensor finds the block 30 mm off, and the arm redoes the grip.
+
+<img alt="Mission Control during a wrong move: WORKING at the grip, then WRONG MOVE: missed grasp with the strip wrong move, reversed, corrected, redone; the wrist sensor scans and finds the block +30 mm from where the arm expected it, the arm redoes the approach and grip, the header reads REDONE in 28 s, and the feed logs the order done in 46 s, healed grasp missed" src="prototypes/arm-sim/media/sim/mission-control-wrong-move.gif" width="800">
+
+*A dead elbow, handed to a person.* The elbow servo dies, and then an order comes in.
 1. The watchdog parks the arm.
 2. The checked retry at home fails, so the job goes to a person with a work order.
 3. Once a person fixes the elbow, the check at home passes.
@@ -115,6 +124,7 @@ PYTHONPATH=. .venv/bin/python -m armsim.dispatch --board file --exec scripted & 
 In Mission Control:
 - **1** places an order.
 - **5** plants a dead elbow.
+- **6** bumps the block, so the next grasp misses. The dispatcher heals that only when started with `--manager fake --wrong-action redo`.
 - **7** is "a person fixed it".
 - **V** switches between the twin and the split view.
 
