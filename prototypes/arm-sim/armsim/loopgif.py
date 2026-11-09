@@ -447,7 +447,8 @@ def draw(t):
            GREEN if got else DIM, "lm")
     c.text((ORDERS[0] + 10, ORDERS[1] + 58), "a Naïve card for a person", "body", 13, DIM, "lm")   # romulus.py
 
-    caption(c, t, CAPTIONS, "Drawn from real runs: story b with Hermes in the sim, and a Naïve card on the real arm.")
+    caption(c, t, CAPTIONS, "Drawn from real runs: story b with Hermes in the sim, and a Naïve card on the real arm.",
+            "a drawing of real runs, Nov 7–8")
     return c.frame()
 
 
@@ -618,7 +619,7 @@ def draw_experiment(t):
     moving_dot(c, paths["pi_log"], t, 22.2, 22.8, BLUE)
 
     caption(c, t, EXP_CAPTIONS, "Astra planned 96 of the 102 tries, 11:41–14:33. Drawn from the try log, "
-                                "13:47–13:54.")
+                                "13:47–13:54.", "values from the Nov 8 try log")
     return c.frame()
 
 
@@ -770,11 +771,13 @@ def draw_fleet(t):
         moving_dot(c, F_PATHS[key], t, t0, t1, col)
 
     caption(c, t, FLEET_CAPTIONS, "Live run on the learn stack, Nov 8, 10:04 AM PST. Both faults were seeded in "
-                                  "sim; nothing was trained.")
+                                  "sim; nothing was trained.", "live run, Nov 8, 10:04 AM · faults seeded in sim")
     return c.frame()
 
 
-def caption(c, t, captions, footnote):
+def caption(c, t, captions, footnote, tag):
+    """The caption bar. `tag` says where the drawing comes from, on every frame, so the GIF keeps its source when
+    it travels without the README; the last frame says it in full (`footnote`)."""
     _, _, step, scol, words = latest(captions, t)
     final = step == "" and t >= captions[-1][0]
     c.rect((16, 418, 944, 524), fill=mix(PANEL, scol, 0.10 if final else 0.04), outline=mix(scol, PANEL, 0.45),
@@ -789,6 +792,8 @@ def caption(c, t, captions, footnote):
         c.text((x, 436 + k * 28), s, "bold" if final else "body", size, GREEN if final else TEXT)
     if final:
         c.text((x, 500), footnote, "body", 14, MUTED)
+    else:
+        c.text((930, 510), tag, "body", 12, DIM, "rm")
 
 
 SCENES = {  # name: draw, GIF, last change, frames whose colours make the palette, captions

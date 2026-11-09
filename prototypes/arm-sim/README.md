@@ -188,7 +188,7 @@ The stories in the sim twin: `a` (left), `b` (middle) and `stall` (right). The y
 
 The manager is a Hermes profile on James's Mac: `hermes-manager/README.md`. The design is `docs/worker-manager-healer.md`.
 
-**How the data moves** from a Naïve card through Hermes, the arm host and the watchdog to Romulus, as an animated diagram of story `b --hermes`: [the root README](../../README.md#how-the-pieces-fit). `PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene heal` redraws it into `media/autonomous-loop.gif`.
+**How the data moves** from a Naïve card through Hermes, the arm host and the watchdog to Romulus, as an animated diagram of story `b --hermes`: [the root README](../../README.md#how-the-pieces-fit). `PYTHONPATH=. .venv/bin/python -m armsim.loopgif --scene heal` redraws it into `media/autonomous-loop.gif`. With no `--scene`, it draws all three loop animations: this one, the real-arm experiment (`experiment`) and fleet learning (`fleet`).
 
 <a id="mission-control-in-the-sim"></a>
 <p>
