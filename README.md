@@ -85,6 +85,7 @@ In the sim, a stand-in does the pod healer's rollback ([story a](prototypes/arm-
 It's a drawing ([`armsim/loopgif.py`](prototypes/arm-sim/armsim/loopgif.py)), and each step in it ran:
 - **In the sim,** a Naïve card drove Hermes through a stuck sensor: Hermes healed it, finished the job, commented `RESULT:` and the card went to done ([`MORNING.md`](prototypes/arm-sim/MORNING.md), story `b --hermes`). The readings on screen are rows from the sim's stuck-sensor packet ([`esc-us_stuck.json`](prototypes/arm-sim/hermes-manager/samples/esc-us_stuck.json)).
 - **On the real arm,** a Naïve card + Hermes job ran with no fault: done 107 s after the claim, 25 tool calls, nobody typing ([`HANDOFF-LOCAL.md`](prototypes/arm-sim/HANDOFF-LOCAL.md), Sun 10:27 AM).
+- **Romulus's database from the hackathon** (kept local, like the rest of the data) holds 20 incidents. 17 were resolved with no person: distance faults on the sim twin (stuck, frozen, mismatched), and bad-image and link faults on the sensor pod. The other 3 were the sim twin's dead elbow, each handed to a person as a `needs_human` work order.
 
 **The Nov 8 experiment on the real arm ran hands-off too.** Astra (`gpt-6-astra` through Hermes) planned 96 of the 102 tries from the try log and the bench camera, its only eye. Here is one of them, the 13:50 three-bag carry, with its values from the try log ([the write-up](prototypes/arm-sim/README.md#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8)):
 
