@@ -21,6 +21,10 @@ Team context, working rules and live status: [`CLAUDE.md`](CLAUDE.md). The whole
 - **b:** a stuck sensor (middle)
 - **stall:** a dead elbow servo, handed to a person (right)
 
+**Mission Control watches it live.** An order becomes a card on the job board. A dispatcher claims it, and the arm does the job step by step while the 3D twin, the jobs columns and the commander feed follow along. This one is "pick up the block" in the sim, done in 15 s ([`armsim.mission`](prototypes/arm-sim/README.md#everything-together-in-one-place)):
+
+<img alt="Mission Control during a pick order: the header goes from idle to queued to working, the twin goes home, reaches over the block and approaches it while the wrist distance counts down, the card moves to Done, and the commander feed logs each step" src="prototypes/arm-sim/media/sim/mission-control-pick.gif" width="800">
+
 **On the real arm, an LLM ran the experiments.** On Nov 8 an LLM planner, Astra through Hermes, ran 102 pick-and-place tries on the real SO-101, judging each from the bench camera. The red bag never made it into the box. One try lifted three bags for 20.7 s, though, and the charts show why the rest slipped: [the full write-up](prototypes/arm-sim/README.md#the-real-arm-experiment-astra-picks-up-the-red-bag-nov-8).
 
 <picture>
